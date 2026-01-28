@@ -3,11 +3,12 @@ import shutil
 import uuid
 from pydoc import describe
 
-from fastapi import APIRouter, Depends, File, UploadFile, HTTPException
+from fastapi import APIRouter, Depends, File, UploadFile, HTTPException,BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.db.session import get_db
-from app.models.document import Document
-from app.schemas.document import DocumentResponse
+from app.db import get_db
+from app.models import Document
+from app.schemas import DocumentResponse
+from app.services import file_service
 
 # 创建路由器实例
 router = APIRouter()
@@ -21,6 +22,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 @router.post("/upload", response_model=DocumentResponse)
 async def upload_document(
+        background_tasks: BackgroundTasks,
         file: UploadFile = File(...),  # 接收前端上传的文件
         db: AsyncSession = Depends(get_db)  # 获取数据库连接
 ):
@@ -85,6 +87,10 @@ async def upload_document(
         # 刷新对象 (从数据库重新读取 id 和 created_at 字段)
         await db.refresh(new_doc)
 
+        # ➕ 新增：在后台触发解析任务
+        # 当接口返回给用户 "OK" 后，后台会悄悄执行 run_parsing_task
+        background_tasks.add_task(run_parsing_task, new_doc.id, new_doc.file_path, new_doc.file_type)
+
         # 返回结果 (FastAPI 会自动根据 response_model 转换成 JSON)
         return new_doc
 
@@ -96,3 +102,25 @@ async def upload_document(
         # 否则数据库里可能会有一条脏数据，但文件其实没存下来
         await db.rollback()
         raise HTTPException(status_code=500, detail=f"文件上传失败: {str(e)}")
+
+
+# ➕ 新增：后台任务的具体逻辑
+async def run_parsing_task(doc_id: uuid.UUID, file_path: str, file_type: str):
+    """
+    这是一个后台任务：
+    1. 调用 FileService 提取文字
+    2. (未来) 将文字切块并存入 document_chunks 表
+    3. 更新 document 状态为 completed
+    """
+    print(f"🔄 开始后台解析文档: {doc_id}")
+    try:
+        # 1. 提取文字
+        text_content = file_service.extract_text(file_path, file_type)
+        print(f"✅ 解析成功！提取了 {len(text_content)} 个字符。")
+        print(f"📜 内容预览: {text_content[:100]}...")  # 打印前100个字看看
+
+        # TODO: 下一步我们要把 text_content 存进数据库
+        # 今天我们先打印出来看看效果
+
+    except Exception as e:
+        print(f"❌ 后台解析失败: {e}")
