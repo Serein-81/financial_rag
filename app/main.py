@@ -1,68 +1,58 @@
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
-from sqlalchemy import text  # 用于写测试用的 SQL 语句
+from sqlalchemy import text
 from app.core.config import settings
 from app.db.session import engine
 
+# ➕ 1. 导入 Base (我们的模型基类)
+from app.db.base import Base
+# ➕ 2. 必须导入 models 里的文件！
+# 只有导入了 document，SQLAlchemy 才知道 "哦，原来有一个叫 Document 的子类要建表"
+# 如果不导入这行，Base.metadata 里面是空的，就不会建表。
+from app.models import document
+from app.api.v1.endpoints import document as document_router
 
-# =========================================================
-# 1. 生命周期管理器 (Lifespan)
-# =========================================================
-# 这是一个新概念。它的作用是管理 App "从启动到关闭" 这段时间里要做的事。
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # --- 🟢 启动阶段 (Startup) ---
     print(f"🚀 {settings.PROJECT_NAME} 正在启动...")
+
+    # --- 🟢 自动建表逻辑 (Magic Happens Here) ---
+    print("正在检查并自动创建数据库表...")
+    try:
+        async with engine.begin() as conn:
+            # run_sync: 因为 create_all 是同步方法，所以在异步里要这样运行
+            await conn.run_sync(Base.metadata.create_all)
+        print("✅ 数据库表结构同步完成！")
+    except Exception as e:
+        print(f"❌ 自动建表失败: {e}")
+    # ----------------------------------------------
 
     print("正在尝试连接数据库...")
     try:
-        # 我们向数据库发起一个最简单的查询 "SELECT 1"
-        # 如果数据库回话了，说明连接成功
         async with engine.begin() as conn:
             await conn.execute(text("SELECT 1"))
         print(f"✅ 数据库连接成功！地址: {settings.POSTGRES_SERVER}")
     except Exception as e:
-        # 如果连不上，打印红色错误信息
         print(f"❌ 数据库连接失败: {e}")
-        # 生产环境中，这里通常会直接抛出异常停止启动，但在开发时我们可以先打印出来
 
-    yield  # --- ⏸️ 这里 App 开始正常运行接收请求 ---
+    yield
 
-    # --- 🔴 关闭阶段 (Shutdown) ---
     print(f"🛑 {settings.PROJECT_NAME} 正在关闭...")
-    # 释放数据库连接资源，防止内存泄漏
     await engine.dispose()
 
 
-# =========================================================
-# 2. 初始化 App
-# =========================================================
-app = FastAPI(
-    title=settings.PROJECT_NAME,
-    lifespan=lifespan  # 把上面的生命周期管家注册进去
-)
+# ... 下面的代码保持不变 ...
+app = FastAPI(title=settings.PROJECT_NAME, lifespan=lifespan)
+app.include_router(document_router.router, prefix="/api/v1/documents", tags=["Documents"])
 
 
-# =========================================================
-# 3. 写一个最简单的测试接口
-# =========================================================
 @app.get("/")
 def root():
-    return {
-        "message": "恭喜你，RAG 后端系统已成功启动！",
-        "docs_url": "http://127.0.0.1:8000/docs",
-        "author": "cjh"
-    }
+    return {"message": "RAG Backend is Running", "docs": "/docs"}
 
 
-# =========================================================
-# 4. 本地调试入口
-# =========================================================
-# 只有当你直接运行这个文件时，下面这段才会执行
 if __name__ == "__main__":
     import uvicorn
 
-    # host="127.0.0.1": 只允许本机访问
-    # port=8000: 端口号
-    # reload=True: 热重载模式。你改了代码保存，程序会自动重启，不用手动关了再开
     uvicorn.run("app.main:app", host="127.0.0.1", port=8000, reload=True)
