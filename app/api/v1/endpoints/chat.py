@@ -33,7 +33,11 @@ async def chat_with_rag(request: ChatRequest):
 
     # --- 3. 生成阶段 (Generation) ---
     print(f"🤖 正在调用模型: {llm_service.model_name}")
-    ai_answer = await llm_service.get_answer(request.query, context_texts)
+    ai_answer = await llm_service.get_answer(
+        query=request.query,
+        context_chunks=context_texts,
+        history=request.history  # ✅ 把历史传进去
+    )
 
     total_time = time.time() - start_time
 
