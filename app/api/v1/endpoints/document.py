@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import get_db
 from app.models import Document
 from app.schemas import DocumentResponse
-from app.services import file_service
+from app.services import file_service, embedding_service
 from app.db import AsyncSessionLocal
 from app.models import DocumentChunk
 from app.services import chunk_service
@@ -110,46 +110,48 @@ async def upload_document(
 
 # ➕ 新增：后台任务的具体逻辑
 async def run_parsing_task(doc_id: uuid.UUID, file_path: str, file_type: str):
-    """
-    后台任务完整版：提取 -> 切分 -> 入库 -> 更新状态
-    """
     print(f"🔄 [任务开始] 文档 ID: {doc_id}")
 
-    # 1. 提取文字 (这一步不需要数据库)
+    # --- A. 提取文字 ---
     try:
         text_content = file_service.extract_text(file_path, file_type)
         if not text_content:
-            print(f"⚠️ 文档内容为空，跳过处理")
+            print("⚠️ 内容为空，跳过")
             return
-        print(f"✅ 文字提取成功: {len(text_content)} 字符")
     except Exception as e:
-        print(f"❌ 文字提取失败: {e}")
-        # 这里其实应该去数据库把状态改成 failed，今天先略过
+        print(f"❌ 提取失败: {e}")
         return
 
-    # 2. 切分文字 (不需要数据库)
-    chunks_text = chunk_service.split_text(text_content, chunk_size=500, overlap=50)
-    print(f"✅ 切分完成: 共 {len(chunks_text)} 个片段")
+    # --- B. 切分文字 ---
+    try:
+        # 这里必须用 chunk_service 实例调用 split_text
+        chunks_text = chunk_service.split_text(text_content)
+        print(f"✅ 切分完成: {len(chunks_text)} 段")
+    except Exception as e:
+        print(f"❌ 切分失败: {e}")
+        return
 
-    # 3. 存入数据库 (需要手动创建 Session)
+    # --- C. 向量化 & 入库 ---
     async with AsyncSessionLocal() as db:
         try:
-            # A. 批量创建 Chunk 对象
             new_chunks = []
             for index, chunk_text in enumerate(chunks_text):
+                # 🌟 核心步骤：生成向量 (await 异步调用)
+                vector = await embedding_service.get_embedding(chunk_text)
+
                 new_chunk = DocumentChunk(
                     document_id=doc_id,
                     chunk_index=index,
                     content=chunk_text,
-                    meta_info={}  # 暂时为空，以后可以放页码
+                    meta_info={},
+                    embedding=vector  # 👈 把向量列表存进去
                 )
                 new_chunks.append(new_chunk)
 
-            # B. 写入数据库
+            # 批量保存
             db.add_all(new_chunks)
 
-            # C. 更新 Document 状态为 completed
-            # 我们需要先查出这个 document
+            # 更新父文档状态
             stmt = select(Document).where(Document.id == doc_id)
             result = await db.execute(stmt)
             doc = result.scalar_one_or_none()
@@ -157,10 +159,9 @@ async def run_parsing_task(doc_id: uuid.UUID, file_path: str, file_type: str):
                 doc.status = "completed"
                 db.add(doc)
 
-            # D. 提交事务
             await db.commit()
-            print(f"🎉 [任务完成] 数据已入库，状态已更新！")
+            print(f"🎉 [任务完成] 向量化完成，数据已入库！")
 
         except Exception as e:
-            print(f"❌ 数据库写入失败: {e}")
+            print(f"❌ 数据库操作失败: {e}")
             await db.rollback()

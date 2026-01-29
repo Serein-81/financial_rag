@@ -1,6 +1,6 @@
 import uuid
-from sqlalchemy import Column, String, Integer, Text, DateTime, ForeignKey, func
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy import Column, String, Integer, Text, DateTime, ForeignKey, func, Float
+from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY
 from sqlalchemy.orm import relationship
 from app.db.base import Base
 
@@ -25,6 +25,10 @@ class DocumentChunk(Base):
 
     # 元数据：可以存这段文字所在的页码等信息
     meta_info = Column(JSONB, default={})
+
+    # ✅ 重点修改：使用标准数组类型 ARRAY(Float)
+    # 这对应数据库里的 FLOAT8[]
+    embedding = Column(ARRAY(Float), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

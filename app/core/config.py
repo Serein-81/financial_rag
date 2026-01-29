@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     # 3. 最终的连接字符串
     DATABASE_URL: str
 
+    # 👇 【新增】智谱 API Key
+    # Pydantic 会自动去 .env 里找名字叫 ZHIPU_API_KEY 的值填进来
+    ZHIPU_API_KEY: str = ""
+
     class Config:
         # 指定读取根目录下的 .env 文件
         # 使用 os 模块动态获取绝对路径，防止“找不到文件”的错误
