@@ -10,7 +10,7 @@ from app.db.base import Base
 # 只有导入了 document，SQLAlchemy 才知道 "哦，原来有一个叫 Document 的子类要建表"
 # 如果不导入这行，Base.metadata 里面是空的，就不会建表。
 from app.models import document
-from app.api.v1.endpoints import document as document_router
+from app.api.v1.endpoints import document as document_router, search
 
 
 @asynccontextmanager
@@ -45,6 +45,7 @@ async def lifespan(app: FastAPI):
 # ... 下面的代码保持不变 ...
 app = FastAPI(title=settings.PROJECT_NAME, lifespan=lifespan)
 app.include_router(document_router.router, prefix="/api/v1/documents", tags=["Documents"])
+app.include_router(search.router, prefix="/api/v1/search", tags=["Search"])
 
 
 @app.get("/")
