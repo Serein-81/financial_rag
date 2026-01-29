@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from sqlalchemy import text
 from app.core.config import settings
 from app.db.session import engine
+from fastapi.middleware.cors import CORSMiddleware
 
 # ➕ 1. 导入 Base (我们的模型基类)
 from app.db.base import Base
@@ -42,8 +43,25 @@ async def lifespan(app: FastAPI):
     await engine.dispose()
 
 
+
 # ... 下面的代码保持不变 ...
 app = FastAPI(title=settings.PROJECT_NAME, lifespan=lifespan)
+
+
+
+# 👇 2. 新增：配置 CORS 中间件
+# 允许所有来源访问 (开发阶段图方便，生产环境可以指定域名)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 允许任何前端 (Vue/React/等) 访问
+    allow_credentials=True,
+    allow_methods=["*"],  # 允许 GET, POST, OPTIONS 等所有方法
+    allow_headers=["*"],  # 允许所有 Header
+)
+
+
+
+
 app.include_router(document_router.router, prefix="/api/v1/documents", tags=["Documents"])
 app.include_router(search.router, prefix="/api/v1/search", tags=["Search"])
 

@@ -91,6 +91,51 @@ class LLMService:
             print(f"❌ LLM 调用失败: {e}")
             return "抱歉，AI 思考时遇到了技术问题，请稍后重试。"
 
+    # 👇 新增这个流式生成方法
+    def get_answer_stream(self, query: str, context_chunks: list[str], history: List[Dict] = None):
+        """
+        流式生成回答 (Generator)
+        """
+        if not self.client:
+            yield "AI 服务未初始化"
+            return
+
+        if history is None:
+            history = []
+
+        # 1. 准备 Context
+        if not context_chunks:
+            yield "抱歉，知识库中没有找到相关内容。"
+            return
+
+        formatted_context = "\n".join([f"【资料{i + 1}】: {chunk}" for i, chunk in enumerate(context_chunks)])
+        system_content = self.system_prompt_template.format(context_str=formatted_context)
+
+        # 2. 构建消息
+        messages = [{"role": "system", "content": system_content}]
+        valid_history = [msg for msg in history if msg.get("content")]
+        messages.extend(valid_history[-4:])
+        messages.append({"role": "user", "content": query})
+
+        # 3.流式调用 (注意 stream=True)
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=messages,
+                temperature=0.05,
+                top_p=0.7,
+                stream=True  # 👈 关键开关
+            )
+
+            # 4. 逐个字抛出 (Yield)
+            for chunk in response:
+                if chunk.choices[0].delta.content:
+                    yield chunk.choices[0].delta.content
+
+        except Exception as e:
+            print(f"❌ 流式调用失败: {e}")
+            yield f"生成出错: {str(e)}"
+
 
 # 单例导出
 llm_service = LLMService()
