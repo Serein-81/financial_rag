@@ -9,6 +9,10 @@ from app.db import get_db
 from app.models import Document
 from app.schemas import DocumentResponse
 from app.services import file_service
+from app.db import AsyncSessionLocal
+from app.models import DocumentChunk
+from app.services import chunk_service
+from sqlalchemy import select
 
 # 创建路由器实例
 router = APIRouter()
@@ -107,20 +111,56 @@ async def upload_document(
 # ➕ 新增：后台任务的具体逻辑
 async def run_parsing_task(doc_id: uuid.UUID, file_path: str, file_type: str):
     """
-    这是一个后台任务：
-    1. 调用 FileService 提取文字
-    2. (未来) 将文字切块并存入 document_chunks 表
-    3. 更新 document 状态为 completed
+    后台任务完整版：提取 -> 切分 -> 入库 -> 更新状态
     """
-    print(f"🔄 开始后台解析文档: {doc_id}")
+    print(f"🔄 [任务开始] 文档 ID: {doc_id}")
+
+    # 1. 提取文字 (这一步不需要数据库)
     try:
-        # 1. 提取文字
         text_content = file_service.extract_text(file_path, file_type)
-        print(f"✅ 解析成功！提取了 {len(text_content)} 个字符。")
-        print(f"📜 内容预览: {text_content[:100]}...")  # 打印前100个字看看
-
-        # TODO: 下一步我们要把 text_content 存进数据库
-        # 今天我们先打印出来看看效果
-
+        if not text_content:
+            print(f"⚠️ 文档内容为空，跳过处理")
+            return
+        print(f"✅ 文字提取成功: {len(text_content)} 字符")
     except Exception as e:
-        print(f"❌ 后台解析失败: {e}")
+        print(f"❌ 文字提取失败: {e}")
+        # 这里其实应该去数据库把状态改成 failed，今天先略过
+        return
+
+    # 2. 切分文字 (不需要数据库)
+    chunks_text = chunk_service.split_text(text_content, chunk_size=500, overlap=50)
+    print(f"✅ 切分完成: 共 {len(chunks_text)} 个片段")
+
+    # 3. 存入数据库 (需要手动创建 Session)
+    async with AsyncSessionLocal() as db:
+        try:
+            # A. 批量创建 Chunk 对象
+            new_chunks = []
+            for index, chunk_text in enumerate(chunks_text):
+                new_chunk = DocumentChunk(
+                    document_id=doc_id,
+                    chunk_index=index,
+                    content=chunk_text,
+                    meta_info={}  # 暂时为空，以后可以放页码
+                )
+                new_chunks.append(new_chunk)
+
+            # B. 写入数据库
+            db.add_all(new_chunks)
+
+            # C. 更新 Document 状态为 completed
+            # 我们需要先查出这个 document
+            stmt = select(Document).where(Document.id == doc_id)
+            result = await db.execute(stmt)
+            doc = result.scalar_one_or_none()
+            if doc:
+                doc.status = "completed"
+                db.add(doc)
+
+            # D. 提交事务
+            await db.commit()
+            print(f"🎉 [任务完成] 数据已入库，状态已更新！")
+
+        except Exception as e:
+            print(f"❌ 数据库写入失败: {e}")
+            await db.rollback()

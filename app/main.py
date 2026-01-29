@@ -17,16 +17,16 @@ from app.api.v1.endpoints import document as document_router
 async def lifespan(app: FastAPI):
     print(f"🚀 {settings.PROJECT_NAME} 正在启动...")
 
-    # --- 🟢 自动建表逻辑 (Magic Happens Here) ---
-    print("正在检查并自动创建数据库表...")
-    try:
-        async with engine.begin() as conn:
-            # run_sync: 因为 create_all 是同步方法，所以在异步里要这样运行
-            await conn.run_sync(Base.metadata.create_all)
-        print("✅ 数据库表结构同步完成！")
-    except Exception as e:
-        print(f"❌ 自动建表失败: {e}")
-    # ----------------------------------------------
+    # # --- 🟢 自动建表逻辑 (Magic Happens Here) ---
+    # print("正在检查并自动创建数据库表...")
+    # try:
+    #     async with engine.begin() as conn:
+    #         # run_sync: 因为 create_all 是同步方法，所以在异步里要这样运行
+    #         await conn.run_sync(Base.metadata.create_all)
+    #     print("✅ 数据库表结构同步完成！")
+    # except Exception as e:
+    #     print(f"❌ 自动建表失败: {e}")
+    # # ----------------------------------------------
 
     print("正在尝试连接数据库...")
     try:
