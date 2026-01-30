@@ -6,6 +6,7 @@ from app.models.user import User, KnowledgeBase
 from app.models import Document, DocumentChunk
 from app.db import AsyncSessionLocal
 from app.services.embedding_service import embedding_service
+from app.schemas.knowledge import KnowledgeBaseCreate
 from uuid import UUID
 import shutil
 import os
@@ -130,13 +131,18 @@ async def list_knowledge_bases(current_user: User = Depends(deps.get_current_use
 
 @router.post("/bases")
 async def create_knowledge_base(
-        name: str = Form(...),
-        description: str = Form(None),
+        # 1. 使用 schema 接收 JSON Body
+        kb_in: KnowledgeBaseCreate,
         current_user: User = Depends(deps.get_current_user)
 ):
     """创建新知识库"""
     async with AsyncSessionLocal() as db:
-        new_kb = KnowledgeBase(user_id=current_user.id, name=name, description=description)
+        # 2. 取值时使用对象属性访问 (kb_in.name)
+        new_kb = KnowledgeBase(
+            user_id=current_user.id,
+            name=kb_in.name,
+            description=kb_in.description
+        )
         db.add(new_kb)
         await db.commit()
         await db.refresh(new_kb)
