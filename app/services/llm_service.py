@@ -18,7 +18,11 @@ class LLMService:
             self.client = ZhipuAI(api_key=self.api_key)
 
         # 2. 选定模型
-        self.model_name = "glm-4-plus"
+        # ✅ 修改方案 1 (推荐：免费且极速)
+        # self.model_name = "glm-4-flash"
+
+        # ✅ 修改方案 2 (使用你 1200万 Token 的包)
+        self.model_name = "glm-4-air"
 
         # 3. 定义【结构化系统提示词】
         self.system_prompt_template = """
