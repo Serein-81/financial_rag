@@ -11,7 +11,7 @@ from app.db.base import Base
 # 只有导入了 document，SQLAlchemy 才知道 "哦，原来有一个叫 Document 的子类要建表"
 # 如果不导入这行，Base.metadata 里面是空的，就不会建表。
 from app.models import document
-from app.api.v1.endpoints import document as document_router, search,chat
+from app.api.v1.endpoints import document as document_router, search, chat, auth, session, knowledge
 
 
 @asynccontextmanager
@@ -60,7 +60,7 @@ app.add_middleware(
 )
 
 
-
+app.include_router(auth.router, prefix="/api/v1/auth", tags=["Auth"]) # 👈 注册
 
 app.include_router(document_router.router, prefix="/api/v1/documents", tags=["Documents"])
 app.include_router(search.router, prefix="/api/v1/search", tags=["Search"])
@@ -68,6 +68,9 @@ app.include_router(search.router, prefix="/api/v1/search", tags=["Search"])
 #挂载聊天接口
 app.include_router(chat.router, prefix="/api/v1/chat", tags=["Chat"])
 
+
+app.include_router(session.router, prefix="/api/v1/sessions", tags=["Session"]) # 🆕
+app.include_router(knowledge.router, prefix="/api/v1/knowledge", tags=["Knowledge Base"]) # 🆕
 
 @app.get("/")
 def root():
