@@ -1,6 +1,8 @@
+# app/api/deps.py
 from typing import Generator, Optional
 from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+# 👇 关键修改 1：引入 HTTPBearer 和 HTTPAuthorizationCredentials
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
 from sqlalchemy.future import select
 from pydantic import ValidationError
@@ -11,23 +13,24 @@ from app.db import AsyncSessionLocal
 from app.models.user import User
 from app.schemas.auth import TokenPayload
 
-# 1. 定义 Token 获取路径
-# 这告诉 FastAPI：如果用户没登录，Swagger UI 应该跳转到哪个接口去获取 Token
-# 这里的路径必须对应我们下一个要写的 login 接口路径
-reusable_oauth2 = OAuth2PasswordBearer(
-    tokenUrl=f"{settings.API_V1_STR}/auth/login"
-)
+# 👇 关键修改 2：改用 HTTPBearer
+# 这会让 Swagger UI 的小锁弹窗变成一个简单的 "Value" 输入框，专门用来粘贴 Token
+# 不再绑定具体的 loginUrl，解耦了登录方式
+security = HTTPBearer()
 
 
-# 2. 核心依赖：获取当前用户
-async def get_current_user(token: str = Depends(reusable_oauth2)) -> User:
+# 👇 关键修改 3：参数变了
+async def get_current_user(token_creds: HTTPAuthorizationCredentials = Depends(security)) -> User:
     """
     依赖项：
-    1. 从 Header 拿到 Token
+    1. 从 Header (Authorization: Bearer <token>) 拿到 Token
     2. 解密 Token
     3. 查数据库找用户
     4. 返回用户对象 (或者报错)
     """
+
+    # 从对象中提取出纯字符串 Token
+    token = token_creds.credentials
 
     # 定义通用的 401 错误响应
     credentials_exception = HTTPException(

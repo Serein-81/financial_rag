@@ -1,4 +1,6 @@
 # app/schemas/auth.py
+from datetime import datetime
+
 from pydantic import BaseModel, EmailStr
 from typing import Optional
 from uuid import UUID
@@ -33,8 +35,8 @@ class UserOut(BaseModel):
     email: EmailStr
     full_name: Optional[str] = None
     is_active: bool
-    created_at: Optional[str] = None # 或者 datetime
-
+    # created_at: Optional[str] = None # 或者 datetime
+    created_at: Optional[datetime] = None
     class Config:
         # 允许从 ORM 对象 (数据库模型) 直接读取数据
         from_attributes = True

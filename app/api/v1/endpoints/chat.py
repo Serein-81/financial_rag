@@ -7,6 +7,7 @@ from fastapi.responses import StreamingResponse
 from starlette.concurrency import iterate_in_threadpool
 from sqlalchemy import select
 from pydantic import BaseModel
+from app.models.knowledge_base import KnowledgeBase
 
 # --- 导入基础服务 ---
 from app.schemas.chat import ChatRequest, ChatResponse
