@@ -68,6 +68,7 @@ app.include_router(search.router, prefix="/api/v1/search", tags=["Search"])
 #挂载聊天接口
 app.include_router(chat.router, prefix="/api/v1/chat", tags=["Chat"])
 
+app.router.include_router(auth.router, prefix="/auth", tags=["Auth"]) # 👈 新增这行
 
 app.include_router(session.router, prefix="/api/v1/sessions", tags=["Session"]) # 🆕
 app.include_router(knowledge.router, prefix="/api/v1/knowledge", tags=["Knowledge Base"]) # 🆕
