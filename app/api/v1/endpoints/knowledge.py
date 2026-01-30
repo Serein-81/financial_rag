@@ -89,8 +89,15 @@ async def process_document_task(doc_id: UUID):
 
             print(f"📄 文档被正则切分为 {len(final_chunks)} 个语义片段，开始向量化...")
 
+            # 👇👇👇 修复点：增加计数器 👇👇👇
+            success_count = 0
+            first_error_msg = None
+
             for idx, chunk_text in enumerate(final_chunks):
+                # 调用 Embedding 服务
+                # 注意：这里 embedding_service 内部捕获了异常返回 None，但打印了日志
                 vector = await embedding_service.get_embedding(chunk_text)
+
                 if vector:
                     new_chunk = DocumentChunk(
                         document_id=doc.id,
@@ -100,10 +107,30 @@ async def process_document_task(doc_id: UUID):
                         meta_info={"chunk_index": idx, "source": doc.filename}
                     )
                     db.add(new_chunk)
+                    success_count += 1  # 成功 +1
+                else:
+                    # 记录一下失败原因 (虽然 service 里打印了，但这里记录给数据库用)
+                    if not first_error_msg:
+                        first_error_msg = "AI 接口调用失败 (余额不足或网络错误)"
 
-            doc.status = "completed"
+            # 👇👇👇 核心修复逻辑：根据成功数量判断最终状态 👇👇👇
+            if success_count == 0:
+                # 一个都没成，那就是失败
+                doc.status = "failed"
+                doc.error_msg = first_error_msg or "所有切片向量化均失败"
+                print(f"❌ [后台任务] 文档处理失败：0/{len(final_chunks)} 个片段成功。")
+            elif success_count < len(final_chunks):
+                # 部分成功 (可选逻辑，看你业务需求，通常算 completed 或 partial)
+                doc.status = "completed"
+                doc.error_msg = f"部分成功: {success_count}/{len(final_chunks)} (有丢包)"
+                print(f"⚠️ [后台任务] 文档处理部分成功：{success_count}/{len(final_chunks)}")
+            else:
+                # 全部成功
+                doc.status = "completed"
+                doc.error_msg = None
+                print(f"✅ [后台任务] 文档处理完全成功！ID: {doc_id}")
+
             await db.commit()
-            print(f"✅ [后台任务] 文档处理成功！ID: {doc_id}")
 
         except Exception as e:
             await db.rollback()
