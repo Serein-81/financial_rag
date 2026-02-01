@@ -2,7 +2,9 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
 from sqlalchemy import select
 from app.api import deps
-from app.models.user import User, KnowledgeBase
+from app.models.user import User
+# 👇 从新文件导入
+from app.models.knowledge_base import KnowledgeBase
 from app.models import Document, DocumentChunk
 from app.db import AsyncSessionLocal
 from app.services.embedding_service import embedding_service
