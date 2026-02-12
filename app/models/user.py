@@ -16,8 +16,10 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # 关联关系
+    # back_populates="owner" 意思是：KnowledgeBase 模型里有个属性叫 owner 指向我
     knowledge_bases = relationship("KnowledgeBase", back_populates="owner")
     chat_sessions = relationship("ChatSession", back_populates="user")
+
 
 # class KnowledgeBase(Base):
 #     __tablename__ = "knowledge_bases"

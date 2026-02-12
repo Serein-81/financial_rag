@@ -25,5 +25,8 @@ class KnowledgeBase(Base):
     # 5. 对应 user_id (uuid) - 外键关联到 users 表
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
 
+
     # (可选) 定义反向关系，方便以后 user.knowledge_bases 这样查
-    # owner = relationship("User", back_populates="knowledge_bases")
+    # 👇👇👇 [修复点] 必须取消注释，并定义 owner 关系 👇👇👇
+    # back_populates="knowledge_bases" 意思是：User 模型里有个属性叫 knowledge_bases 指向我
+    owner = relationship("User", back_populates="knowledge_bases")

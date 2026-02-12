@@ -24,6 +24,10 @@ class Document(Base):
 
     # 基础信息
     filename = Column(String(255), nullable=False)  # 文件名
+    # 👇 [新增] 用来存储文件内容的 MD5 哈希值，加索引方便查询
+    hash = Column(String(32), index=True, nullable=True)
+
+
     file_path = Column(String(500), nullable=False)  # 物理存储路径
     file_type = Column(String(50), nullable=True)  # 文件类型 (pdf, docx)
     file_size = Column(Integer, nullable=True)  # 文件大小 (字节)

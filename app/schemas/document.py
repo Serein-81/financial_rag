@@ -242,9 +242,11 @@ from uuid import UUID
 class DocumentResponse(BaseModel):
     id: UUID
     filename: str
-    upload_time: datetime
+    # upload_time: datetime
     chunk_count: int = 0
     status: str = "processed"
+
+    created_at: datetime
 
     class Config:
         from_attributes = True

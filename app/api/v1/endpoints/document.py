@@ -1,9 +1,10 @@
 import os
 import shutil
 import uuid
+import hashlib  # ➕ 新增：用于计算 MD5
 from pydoc import describe
 
-from fastapi import APIRouter, Depends, File, UploadFile, HTTPException,BackgroundTasks
+from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import get_db
 from app.models import Document
@@ -24,6 +25,22 @@ UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
+# ➕ 新增：计算文件 MD5 的辅助函数
+def calculate_md5(file_obj) -> str:
+    """
+    计算文件的 MD5 哈希值。
+    读取完后会将文件指针重置回开头，确保后续保存操作正常。
+    """
+    md5 = hashlib.md5()
+    # 分块读取，防止大文件撑爆内存
+    for chunk in iter(lambda: file_obj.read(4096), b""):
+        md5.update(chunk)
+
+    # 关键一步：计算完必须把指针移回开头，否则后面 shutil.copyfileobj 读不到数据
+    file_obj.seek(0)
+    return md5.hexdigest()
+
+
 @router.post("/upload", response_model=DocumentResponse)
 async def upload_document(
         background_tasks: BackgroundTasks,
@@ -33,8 +50,9 @@ async def upload_document(
     """
     上传文档接口:
     1. 验证文件类型
-    2. 保存文件到本地磁盘
-    3. 在数据库创建记录
+    2. [新增] 验证 MD5 查重
+    3. 保存文件到本地磁盘
+    4. 在数据库创建记录
     """
 
     # -------------------------------------------------------
@@ -53,7 +71,31 @@ async def upload_document(
     if file.content_type not in ALLOWED_TYPES:
         # 如果你想宽容一点，可以把下面这两行注释掉，只打印警告
         print(f"警告: 用户上传了未验证的类型: {file.content_type}")
-        raise HTTPException(status_code=400, detail=r"不支持的文件类型",)
+        raise HTTPException(status_code=400, detail=r"不支持的文件类型", )
+
+    # -------------------------------------------------------
+    # ➕ 1.5 新增：MD5 查重逻辑
+    # -------------------------------------------------------
+    # 计算当前上传文件的 hash
+    file_hash = calculate_md5(file.file)
+
+    # 这里的 kb_id 与下方创建文档时的硬编码 ID 保持一致
+    target_kb_id = uuid.UUID("ee9e1032-10e5-41f8-9de7-7f2804a3350f")
+
+    # 查询数据库：当前知识库下是否已存在该 hash
+    stmt = select(Document).where(
+        Document.hash == file_hash,
+        Document.kb_id == target_kb_id
+    )
+    result = await db.execute(stmt)
+    existing_doc = result.scalars().first()
+
+    if existing_doc:
+        # 如果文件已存在，直接抛出异常，阻止重复上传
+        raise HTTPException(
+            status_code=400,
+            detail=f"文件重复：该文件已存在于知识库中 (Filename: {existing_doc.filename})"
+        )
 
     try:
         # -------------------------------------------------------
@@ -80,8 +122,9 @@ async def upload_document(
             file_path=file_location,
             file_type=file.content_type,
             file_size=file_size,
-            status="pending",# 初始状态设为"等待处理"
-            kb_id = uuid.UUID("ee9e1032-10e5-41f8-9de7-7f2804a3350f")
+            status="pending",  # 初始状态设为"等待处理"
+            hash=file_hash,  # ➕ 新增：保存文件的 MD5 值
+            kb_id=target_kb_id  # 使用上面定义好的变量
         )
 
         # 将对象添加到数据库会话
@@ -105,6 +148,8 @@ async def upload_document(
         # 如果保存文件失败，或者数据库写入失败，我们需要回滚
         # 否则数据库里可能会有一条脏数据，但文件其实没存下来
         await db.rollback()
+        # 注意：如果是上面抛出的 HTTPException (文件重复)，不会进这里，而是直接返回给用户
+        # 这里捕获的是 IO 错误或数据库错误
         raise HTTPException(status_code=500, detail=f"文件上传失败: {str(e)}")
 
 
