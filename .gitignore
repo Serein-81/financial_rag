@@ -4,7 +4,7 @@
 .env
 .env.*
 *.log
-
+!.env.example
 # ❌ 增加：屏蔽 Docker 物理数据 (图片中那 1302 个文件就在这里)
 postgres_data/
 
