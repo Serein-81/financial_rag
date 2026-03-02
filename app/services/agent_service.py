@@ -6,6 +6,7 @@ from app.services.search_service import search_service
 import httpx
 from langchain_core.tools import tool
 from app.core.config import settings
+from langchain_core.messages import HumanMessage, AIMessage
 
 # 引入提示词加载器
 from app.utils.prompt_loader import load_agent_system_prompt
@@ -93,6 +94,7 @@ class EnterpriseAgentService:
             api_key=settings.ZHIPU_API_KEY,
             model="glm-4-flash",
             temperature=0.1
+            # streaming=True
         )
 
         self.tools = [
@@ -143,6 +145,49 @@ class EnterpriseAgentService:
         # 提取最新的一条消息内容作为回答
         return response["messages"][-1].content
 
+    # 新增流式对话方法
+    async def chat_stream(self, user_input: str, kb_id: str, session_id: str, history: list):
+        """流式对话生成器"""
+        print(f"🌊 [Agent 流式生成开始] Session: {session_id}")
+
+        # ==========================================
+        # 🌟 终极修复：使用标准 messages 格式传参
+        # ==========================================
+        messages = []
+
+        # 1. 注入历史记录（在 chat.py 里已经被我们转成了 HumanMessage/AIMessage）
+        if history:
+            messages.extend(history)
+
+        # 2. 注入本次的新问题和工具所需的隐式系统指令
+        agent_input = (
+            f"用户问题：{user_input}\n"
+            f"【系统指令】：如需调用 search_enterprise_knowledge 工具，请务必传入知识库ID：{kb_id}"
+        )
+        messages.append(HumanMessage(content=agent_input))
+
+        # 3. 组装成新版 Agent 唯一认识的字典格式！
+        inputs = {
+            "messages": messages
+        }
+
+        try:
+            # 正常尝试流式请求
+            async for event in self.agent.astream_events(inputs, version="v1"):
+                kind = event["event"]
+                # 捕获大模型输出的文字流
+                if kind == "on_chat_model_stream":
+                    content = event["data"]["chunk"].content
+                    if content:
+                        yield content
+                # 捕获大模型调用工具的状态
+                elif kind == "on_tool_start":
+                    tool_name = event["name"]
+                    yield f"\n*[正在调用工具: {tool_name}...]*\n"
+
+        except Exception as e:
+            print(f"❌ 流式被中断: {e}")
+            yield f"\n[Agent 报错: {str(e)}]"
 
 # 导出单例
 agent_service = EnterpriseAgentService()

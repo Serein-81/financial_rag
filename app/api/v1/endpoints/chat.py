@@ -6,6 +6,7 @@ from fastapi.responses import StreamingResponse
 from starlette.concurrency import iterate_in_threadpool
 from sqlalchemy import select
 from pydantic import BaseModel
+from fastapi.responses import StreamingResponse
 from app.models.knowledge_base import KnowledgeBase
 # --- 导入基础服务 ---
 from app.schemas.chat import ChatRequest, ChatResponse
@@ -14,7 +15,7 @@ from app.services.llm_service import llm_service
 
 # 👇 🌟 新增：导入我们刚刚打造的 Agent 超级大脑
 from app.services.agent_service import agent_service
-
+from langchain_core.messages import HumanMessage, AIMessage
 # --- 导入持久化相关依赖 ---
 from app.api import deps  # 鉴权依赖
 from app.models.user import User
@@ -284,3 +285,76 @@ async def chat_with_agent(
     except Exception as e:
         print(f"❌ [Agent 运行出错]: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/agent_chat_stream")
+async def chat_with_agent_stream(
+        request: AgentChatRequest,
+        current_user: User = Depends(deps.get_current_user)
+):
+    print(f"🌊 [Agent 流式接口被调用] 用户: {current_user.email} | 问题: {request.query}")
+
+    # 1. 越权校验与历史记录获取（逻辑和之前一样）
+    history_formatted = []
+    async with AsyncSessionLocal() as db:
+        # 校验多租户知识库权限
+        kb_check = await db.execute(
+            select(KnowledgeBase)
+            .where(KnowledgeBase.id == request.kb_id)
+            .where(KnowledgeBase.user_id == current_user.id)
+        )
+        if not kb_check.scalar_one_or_none():
+            raise HTTPException(status_code=403, detail="越权访问拦截！")
+
+        if not request.session_id:
+            new_session = ChatSession(user_id=current_user.id, title=request.query[:20])
+            db.add(new_session)
+            await db.commit()
+            await db.refresh(new_session)
+            session_id = str(new_session.id)
+        else:
+            session_id = request.session_id
+            result = await db.execute(
+                select(ChatMessage).where(ChatMessage.session_id == session_id).order_by(ChatMessage.created_at.asc())
+            )
+            history_formatted = []
+            for m in result.scalars().all():
+                if m.role == "user":
+                    history_formatted.append(HumanMessage(content=m.content))
+                elif m.role == "assistant":
+                    history_formatted.append(AIMessage(content=m.content))
+
+        # 存入用户的新问题
+        user_msg = ChatMessage(session_id=session_id, role="user", content=request.query)
+        db.add(user_msg)
+        await db.commit()
+
+    # 2. 构造流式生成器 (Generator)
+    async def event_generator():
+        # SSE 标准要求数据以 "data: " 开头，以 "\n\n" 结尾
+
+        # 先把 session_id 发给前端，让前端知道当前会话的 ID
+        init_data = json.dumps({"type": "init", "session_id": session_id})
+        yield f"data: {init_data}\n\n"
+
+        full_ai_answer = ""  # 用来在后端拼凑完整的回答，最后存入数据库
+
+        # 调用我们刚写好的流式服务
+        async for chunk in agent_service.chat_stream(request.query, request.kb_id, session_id, history_formatted):
+            full_ai_answer += chunk
+            # 将每个文字片段转为 JSON 发送
+            chunk_data = json.dumps({"type": "chunk", "content": chunk}, ensure_ascii=False)
+            yield f"data: {chunk_data}\n\n"
+
+        # 3. 流式输出结束后，把完整的回答静默存入 PostgreSQL 数据库
+        async with AsyncSessionLocal() as db:
+            ai_msg = ChatMessage(session_id=session_id, role="assistant", content=full_ai_answer)
+            db.add(ai_msg)
+            await db.commit()
+
+        # 告诉前端：我说完了！
+        done_data = json.dumps({"type": "done"})
+        yield f"data: {done_data}\n\n"
+
+    # 返回 StreamingResponse，指定媒体类型为 text/event-stream
+    return StreamingResponse(event_generator(), media_type="text/event-stream")

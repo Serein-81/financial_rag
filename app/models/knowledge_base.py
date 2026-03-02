@@ -19,11 +19,13 @@ class KnowledgeBase(Base):
     # 3. 对应 description (text)
     description = Column(Text, nullable=True)
 
-    # 4. 对应 created_at (timestamptz) - 交给数据库自动打时间戳
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    # 4. 对应 created_at
+    # 🌟 [修复] 加上 default=func.now()，让 Python 在生成 INSERT 语句时主动带上当前时间
+    created_at = Column(DateTime(timezone=True), default=func.now(), server_default=func.now())
 
-    # 🌟 [新增] 对应 updated_at (timestamptz) - 数据更新时自动记录时间
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    # 5. 对应 updated_at
+    # 🌟 [修复] 加上 default=func.now()，确保首次创建时也有时间！
+    updated_at = Column(DateTime(timezone=True), default=func.now(), server_default=func.now(), onupdate=func.now())
 
     # 5. 对应 user_id (uuid) - 外键关联到 users 表
     # 🌟 [升级] 加上 ondelete="CASCADE" 级联删除，并加上 index=True 提升鉴权查询速度
