@@ -1,20 +1,21 @@
 import json
 import time
-import asyncio
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Body
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from starlette.concurrency import iterate_in_threadpool
 from sqlalchemy import select
 from pydantic import BaseModel
 from app.models.knowledge_base import KnowledgeBase
-
 # --- 导入基础服务 ---
 from app.schemas.chat import ChatRequest, ChatResponse
 from app.services.search_service import search_service
 from app.services.llm_service import llm_service
 
-# --- 导入持久化相关依赖 (新增) ---
+# 👇 🌟 新增：导入我们刚刚打造的 Agent 超级大脑
+from app.services.agent_service import agent_service
+
+# --- 导入持久化相关依赖 ---
 from app.api import deps  # 鉴权依赖
 from app.models.user import User
 from app.models.chat import ChatSession, ChatMessage
@@ -35,7 +36,6 @@ async def chat_with_rag(request: ChatRequest):
     """
     start_time = time.time()
 
-    # 1. 检索
     print(f"🔍 [V1] 正在搜索: {request.query}")
     search_results = await search_service.search(request.query, request.top_k)
 
@@ -47,10 +47,8 @@ async def chat_with_rag(request: ChatRequest):
             model_used="None"
         )
 
-    # 2. 上下文
     context_texts = [item.content for item in search_results]
 
-    # 3. 生成
     ai_answer = await llm_service.get_answer(
         query=request.query,
         context_chunks=context_texts,
@@ -70,13 +68,10 @@ async def chat_with_rag_stream(request: ChatRequest):
     """
     [V1] 流式 RAG 对话 (无数据库记录)
     """
-    # 1. 检索
     search_results = await search_service.search(request.query, request.top_k)
     context_texts = [item.content for item in search_results] if search_results else []
 
-    # 2. 定义生成器
     async def generate_stream():
-        # 发送引用
         sources_data = [
             {"filename": res.source_file, "score": res.score, "content": res.content[:50]}
             for res in search_results
@@ -87,7 +82,6 @@ async def chat_with_rag_stream(request: ChatRequest):
             yield json.dumps({"type": "content", "delta": "抱歉，未找到相关信息。"}, ensure_ascii=False) + "\n"
             return
 
-        # 发送内容
         sync_generator = llm_service.get_answer_stream(request.query, context_texts, request.history)
         async for char in iterate_in_threadpool(sync_generator):
             yield json.dumps({"type": "content", "delta": char}, ensure_ascii=False) + "\n"
@@ -96,11 +90,10 @@ async def chat_with_rag_stream(request: ChatRequest):
 
 
 # ==========================================
-#  V2: 持久化接口 (Stateful) 🌟 核心升级
-#  用于：正式业务、需要登录、保存历史记录
+#  V2: 持久化接口 (Stateful)
+#  用于：正式业务、需要登录、保存历史记录 (普通 RAG)
 # ==========================================
 
-# 定义 V2 请求体 (继承自原来的，但增加了 session_id)
 class ChatRequestPersistent(ChatRequest):
     session_id: Optional[str] = None  # 如果传了就是继续聊，没传就是新会话
 
@@ -113,24 +106,21 @@ async def chat_stream_persistent(
     async with AsyncSessionLocal() as db:
         # A. 会话管理
         if not request.session_id:
-            # 👇👇👇【修复点：必须显式创建 new_session】👇👇👇
             print(f"🆕 用户 {current_user.email} 正在创建新会话...")
             new_session = ChatSession(
                 user_id=current_user.id,
-                title=request.query[:20]  # 使用问题前20个字作为标题
+                title=request.query[:20]
             )
             db.add(new_session)
             await db.commit()
-            await db.refresh(new_session)  # 刷新以获取数据库生成的 UUID
+            await db.refresh(new_session)
 
             session_id = str(new_session.id)
             history = []
             print(f"✅ 新会话创建成功: {session_id}")
-            # 👆👆👆【修复结束】👆👆👆
         else:
             session_id = request.session_id
 
-            # B. 查询历史记录 (Context)
             print(f"🔄 正在查询数据库历史: Session ID {session_id}")
             result = await db.execute(
                 select(ChatMessage)
@@ -139,7 +129,6 @@ async def chat_stream_persistent(
             )
             messages_objs = result.scalars().all()
 
-            # 转换为 LLM 需要的格式
             history = [
                 {"role": m.role, "content": m.content}
                 for m in messages_objs
@@ -151,44 +140,30 @@ async def chat_stream_persistent(
         db.add(user_msg)
         await db.commit()
 
-    # --- 2. 检索 (RAG) ---
     search_results = await search_service.search(
         query=request.query,
         top_k=request.top_k,
-        kb_id=request.kb_id  # 👈 确保这行参数存在！
+        kb_id=request.kb_id
     )
     context_texts = [item.content for item in search_results] if search_results else []
 
-    # --- 3. 流式生成与后处理 ---
     async def generate_save_stream():
         full_answer = ""
 
-        # 1. 发送 Session ID (协议)
         yield json.dumps({"type": "session", "id": session_id}, ensure_ascii=False) + "\n"
 
-        # 2. 发送引用来源 (协议)
         sources_data = [
             {"filename": res.source_file, "score": res.score, "content": res.content[:50] + "..."}
             for res in search_results
         ]
         yield json.dumps({"type": "sources", "data": sources_data}, ensure_ascii=False) + "\n"
 
-        # 3. 如果没找到资料
-        if not context_texts:
-            # 注意：这里我们让它继续回答，只是告诉 AI 没有资料（由 llm_service 内部 prompt 决定怎么说）
-            # 或者你可以选择直接中断。这里为了体验连贯，我们继续调用 LLM，
-            # 因为我们在 Prompt 里已经教过 AI "如果不在资料里，尝试用历史回答"。
-            pass
-
-            # 4. 发送内容 (LLM 流式)
-        # 注意：context_texts 为空时，LLM 会根据 Prompt 指令决定是拒绝还是根据历史回答
         sync_gen = llm_service.get_answer_stream(request.query, context_texts, history)
 
         async for char in iterate_in_threadpool(sync_gen):
             full_answer += char
             yield json.dumps({"type": "content", "delta": char}, ensure_ascii=False) + "\n"
 
-        # 5. 保存【AI】的消息 (异步存库)
         try:
             async with AsyncSessionLocal() as db:
                 ai_msg = ChatMessage(
@@ -207,3 +182,105 @@ async def chat_stream_persistent(
         generate_save_stream(),
         media_type="text/event-stream"
     )
+
+
+# ==========================================
+#  V3: Agent 智能体接口 🚀 最新加入
+#  用于：让大模型自主决定是否查库、如何查库
+# ==========================================
+
+class AgentChatRequest(BaseModel):
+    kb_id: str  # 必须指定知识库ID，做数据隔离
+    query: str  # 用户问题
+    session_id: Optional[str] = None  # 会话持久化ID
+
+
+# app/api/v1/endpoints/chat.py 中的 chat_with_agent 函数
+
+@router.post("/agent_chat")
+async def chat_with_agent(
+        request: AgentChatRequest,
+        current_user: User = Depends(deps.get_current_user)
+):
+    print(f"🤖 [Agent 接口被调用] 用户: {current_user.email} | 问题: {request.query}")
+
+    try:
+        history_formatted = []  # 👈 准备一个空列表装历史记录
+
+        async with AsyncSessionLocal() as db:
+            # ==========================================
+            # 🚨 核心拦截：多租户越权校验 (防水平越权)
+            # ==========================================
+
+            kb_check = await db.execute(
+                select(KnowledgeBase)
+                .where(KnowledgeBase.id == request.kb_id)
+                .where(KnowledgeBase.user_id == current_user.id)  # 必须同时满足 kb_id 正确且归属当前用户
+            )
+            kb = kb_check.scalar_one_or_none()
+
+            if not kb:
+                # 查不到说明该知识库不存在，或属于其他租户，直接拦截！
+                raise HTTPException(
+                    status_code=403,
+                    detail="越权访问拦截：该知识库不存在或不属于当前用户！"
+                )
+            # ==========================================
+
+            if not request.session_id:
+                # 新会话
+                new_session = ChatSession(user_id=current_user.id, title=request.query[:20])
+                db.add(new_session)
+                await db.commit()
+                await db.refresh(new_session)
+                session_id = str(new_session.id)
+            else:
+                # 老会话：查询历史记录！
+                session_id = request.session_id
+                print(f"🔄 正在提取 Agent 的记忆: Session ID {session_id}")
+                result = await db.execute(
+                    select(ChatMessage)
+                    .where(ChatMessage.session_id == session_id)
+                    .order_by(ChatMessage.created_at.asc())
+                )
+                messages_objs = result.scalars().all()
+                # 转换格式
+                history_formatted = [{"role": m.role, "content": m.content} for m in messages_objs]
+
+            # 把用户本次的问题存入数据库
+            user_msg = ChatMessage(session_id=session_id, role="user", content=request.query)
+            db.add(user_msg)
+            await db.commit()
+
+        # --- 2. 召唤 Agent (把历史记录喂给它) ---
+        ai_answer = await agent_service.chat(
+            user_input=request.query,
+            kb_id=request.kb_id,
+            session_id=session_id,
+            history=history_formatted  # 👈 关键点：将查出来的历史传给 Agent
+        )
+
+        # --- 3. 保存 AI 回答到数据库 ---
+        async with AsyncSessionLocal() as db:
+            ai_msg = ChatMessage(
+                session_id=session_id,
+                role="assistant",
+                content=ai_answer,
+                sources=[]
+            )
+            db.add(ai_msg)
+            await db.commit()
+
+        return {
+            "session_id": session_id,
+            "answer": ai_answer,
+            "status": "success",
+            "mode": "agent"
+        }
+
+    except HTTPException:
+        # 拦截上面主动抛出的 403 等 HTTP 异常，直接向上抛出，避免变成 500
+        raise
+    except Exception as e:
+        print(f"❌ [Agent 运行出错]: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -1,5 +1,5 @@
 # app/models/user.py
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, func
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, func
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID
 import uuid
@@ -14,22 +14,8 @@ class User(Base):
     hashed_password = Column(String, nullable=False)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    avatar_url = Column(String, nullable=True)
 
-    # 关联关系
-    # back_populates="owner" 意思是：KnowledgeBase 模型里有个属性叫 owner 指向我
-    knowledge_bases = relationship("KnowledgeBase", back_populates="owner")
-    chat_sessions = relationship("ChatSession", back_populates="user")
-
-
-# class KnowledgeBase(Base):
-#     __tablename__ = "knowledge_bases"
-#
-#     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-#     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
-#     name = Column(String, nullable=False)
-#     description = Column(String, nullable=True)
-#     created_at = Column(DateTime(timezone=True), server_default=func.now())
-#
-#     owner = relationship("User", back_populates="knowledge_bases")
-#     # 注意：你需要在 Document 模型里加一个 kb_id 外键来关联这里
-#     # documents = relationship("Document", back_populates="knowledge_base")
+    # 🌟 [升级] 加上 cascade="all, delete-orphan"，实现真正的“人走茶凉”（清理关联数据）
+    knowledge_bases = relationship("KnowledgeBase", back_populates="owner", cascade="all, delete-orphan")
+    chat_sessions = relationship("ChatSession", back_populates="user", cascade="all, delete-orphan")

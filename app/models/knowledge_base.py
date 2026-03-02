@@ -1,9 +1,9 @@
 # app/models/knowledge_base.py
 from sqlalchemy import Column, String, Text, DateTime, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
-import uuid
-from datetime import datetime
+from sqlalchemy.sql import func  # 👈 引入 func 用于数据库时间的默认值
 from sqlalchemy.orm import relationship
+import uuid
 from app.db import Base
 
 
@@ -11,7 +11,7 @@ class KnowledgeBase(Base):
     __tablename__ = "knowledge_bases"
 
     # 1. 对应数据库里的 id (UUID)
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
 
     # 2. 对应 name (varchar 255)
     name = Column(String(255), nullable=False)
@@ -19,14 +19,20 @@ class KnowledgeBase(Base):
     # 3. 对应 description (text)
     description = Column(Text, nullable=True)
 
-    # 4. 对应 created_at (timestamptz)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    # 4. 对应 created_at (timestamptz) - 交给数据库自动打时间戳
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # 🌟 [新增] 对应 updated_at (timestamptz) - 数据更新时自动记录时间
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     # 5. 对应 user_id (uuid) - 外键关联到 users 表
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    # 🌟 [升级] 加上 ondelete="CASCADE" 级联删除，并加上 index=True 提升鉴权查询速度
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
 
-
-    # (可选) 定义反向关系，方便以后 user.knowledge_bases 这样查
-    # 👇👇👇 [修复点] 必须取消注释，并定义 owner 关系 👇👇👇
-    # back_populates="knowledge_bases" 意思是：User 模型里有个属性叫 knowledge_bases 指向我
+    # 6. 定义反向关系，方便以后 user.knowledge_bases 这样查
     owner = relationship("User", back_populates="knowledge_bases")

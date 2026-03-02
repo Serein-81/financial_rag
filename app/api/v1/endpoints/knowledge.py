@@ -1,19 +1,21 @@
 # app/api/v1/endpoints/knowledge.py
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
+import os
+import shutil
+import hashlib
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
 from sqlalchemy import select
+
 from app.api import deps
 from app.models.user import User
 from app.models.knowledge_base import KnowledgeBase
 from app.models import Document, DocumentChunk
 from app.db import AsyncSessionLocal
-from app.schemas.knowledge import KnowledgeBaseCreate
-from uuid import UUID
-import shutil
-import os
+from app.schemas.knowledge import KnowledgeBaseCreate, KnowledgeBaseOut
 
-# 👇 1. 引入核心服务 (Service Layer)
-# 这样就把“怎么读文件”和“怎么切文件”的复杂逻辑剥离出去了
+# 引入核心服务
 from app.services.file_service import file_service
 from app.services.chunk_service import chunk_service
 from app.services.embedding_service import embedding_service
@@ -22,12 +24,24 @@ router = APIRouter()
 
 
 # ==========================================
-# 🔧 核心逻辑：后台向量化任务 (V7 Service 调用版)
+# 🛠️ 辅助函数：计算文件 MD5
+# ==========================================
+def calculate_md5(file_obj) -> str:
+    """计算文件的 MD5 哈希值，用于查重"""
+    md5 = hashlib.md5()
+    # 分块读取，防止大文件撑爆内存
+    for chunk in iter(lambda: file_obj.read(4096), b""):
+        md5.update(chunk)
+    # 关键：计算完必须把指针移回开头，否则后续无法保存文件
+    file_obj.seek(0)
+    return md5.hexdigest()
+
+
+# ==========================================
+# 🔧 核心逻辑：后台向量化任务
 # ==========================================
 async def process_document_task(doc_id: UUID):
-    """
-    后台任务：调用 file_service 提取文本 -> chunk_service 切片 -> embedding_service 向量化 -> 存库
-    """
+    """后台任务：提取文本 -> 切片 -> 向量化 -> 存库"""
     print(f"⚙️ [后台任务] 开始处理文档: {doc_id}")
 
     async with AsyncSessionLocal() as db:
@@ -36,12 +50,9 @@ async def process_document_task(doc_id: UUID):
             return
 
         try:
-            # --- 1. 更新状态为处理中 ---
             doc.status = "processing"
             await db.commit()
 
-            # --- 2. 提取文本 (使用 file_service) ---
-            # ✅ 改进：支持 PDF, DOCX, TXT, MD 等多种格式，不再局限于 txt
             print(f"📄 正在解析文件内容: {doc.filename}")
             try:
                 content = file_service.extract_text(doc.file_path, doc.file_type)
@@ -51,8 +62,6 @@ async def process_document_task(doc_id: UUID):
             if not content:
                 raise Exception("文件内容为空或无法提取")
 
-            # --- 3. 文本切片 (使用 chunk_service) ---
-            # ✅ 改进：调用 LangChain 递归分割器，保持语义完整性
             print(f"✂️ 正在进行语义切分...")
             final_chunks = chunk_service.split_text(content)
 
@@ -60,15 +69,11 @@ async def process_document_task(doc_id: UUID):
                 raise Exception("文本切分后为空")
 
             print(f"🧩 文档被切分为 {len(final_chunks)} 个片段，开始向量化...")
-
-            # --- 4. 向量化与存储 ---
             success_count = 0
             first_error_msg = None
 
             for idx, chunk_text in enumerate(final_chunks):
-                # 调用 Embedding 服务
                 vector = await embedding_service.get_embedding(chunk_text)
-
                 if vector:
                     new_chunk = DocumentChunk(
                         document_id=doc.id,
@@ -81,15 +86,14 @@ async def process_document_task(doc_id: UUID):
                     success_count += 1
                 else:
                     if not first_error_msg:
-                        first_error_msg = "AI 接口调用失败 (余额不足或网络错误)"
+                        first_error_msg = "AI 接口调用失败"
 
-            # --- 5. 更新最终状态 ---
             if success_count == 0:
                 doc.status = "failed"
                 doc.error_msg = first_error_msg or "所有切片向量化均失败"
                 print(f"❌ [后台任务] 失败：0/{len(final_chunks)} 成功。")
             elif success_count < len(final_chunks):
-                doc.status = "completed"  # 或者 "partial"
+                doc.status = "completed"
                 doc.error_msg = f"部分成功: {success_count}/{len(final_chunks)}"
                 print(f"⚠️ [后台任务] 部分成功：{success_count}/{len(final_chunks)}")
             else:
@@ -102,7 +106,6 @@ async def process_document_task(doc_id: UUID):
         except Exception as e:
             await db.rollback()
             print(f"❌ [后台任务] 严重错误: {e}")
-            # 重新获取 doc 以防 session 问题，更新错误状态
             async with AsyncSessionLocal() as error_db:
                 error_doc = await error_db.get(Document, doc_id)
                 if error_doc:
@@ -115,19 +118,23 @@ async def process_document_task(doc_id: UUID):
 # 📚 知识库管理接口
 # ==========================================
 
+
+# 获取知识库列表 (只查自己的)
 @router.get("/bases")
-async def list_knowledge_bases(current_user: User = Depends(deps.get_current_user)):
-    """获取我的所有知识库"""
+async def list_knowledge_bases(
+    current_user: User = Depends(deps.get_current_user)
+):
     async with AsyncSessionLocal() as db:
         result = await db.execute(
             select(KnowledgeBase)
-            .where(KnowledgeBase.user_id == current_user.id)
-            .order_by(KnowledgeBase.created_at.desc())
+            .where(KnowledgeBase.user_id == current_user.id) # 👈 核心：数据隔离
         )
-        return result.scalars().all()
+        kbs = result.scalars().all()
+        return kbs
 
 
-@router.post("/bases")
+# 创建知识库 (绑定当前用户)
+@router.post("/bases",response_model=KnowledgeBaseOut)
 async def create_knowledge_base(
         kb_in: KnowledgeBaseCreate,
         current_user: User = Depends(deps.get_current_user)
@@ -184,30 +191,62 @@ async def upload_document_to_kb(
         current_user: User = Depends(deps.get_current_user)
 ):
     """上传文件到指定知识库，并触发后台解析"""
-    # 1. 确保目录存在
-    # 建议：按 KB ID 分隔文件夹，避免所有文件混在一起
-    upload_dir = f"storage/{kb_id}"
-    os.makedirs(upload_dir, exist_ok=True)
 
-    file_location = f"{upload_dir}/{file.filename}"
+    # --- 1. 安全检查：验证文件类型 ---
+    ALLOWED_TYPES = [
+        "application/pdf",
+        "text/plain",
+        "application/msword",
+        "image/png",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    ]
+    if file.content_type not in ALLOWED_TYPES:
+        raise HTTPException(status_code=400, detail="不支持的文件类型")
 
-    with open(file_location, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    # --- 2. 查重逻辑：计算 MD5 ---
+    file_hash = calculate_md5(file.file)
 
     async with AsyncSessionLocal() as db:
-        # 2. 写入数据库记录
+        # 查询当前知识库是否已存在此文件
+        stmt = select(Document).where(
+            Document.hash == file_hash,
+            Document.kb_id == kb_id
+        )
+        result = await db.execute(stmt)
+        existing_doc = result.scalars().first()
+
+        if existing_doc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"文件重复：该文件已存在于知识库中 (Filename: {existing_doc.filename})"
+            )
+
+        # --- 3. 确保存储目录存在并保存文件 ---
+        upload_dir = f"storage/{kb_id}"
+        os.makedirs(upload_dir, exist_ok=True)
+        file_location = f"{upload_dir}/{file.filename}"
+
+        with open(file_location, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        # 获取真实的文件大小
+        file_size = os.path.getsize(file_location)
+
+        # --- 4. 写入数据库记录 ---
         new_doc = Document(
             kb_id=kb_id,
             filename=file.filename,
             file_path=file_location,
             file_type=file.content_type,
+            file_size=file_size,  # 记录文件大小
+            hash=file_hash,  # 记录 MD5
             status="pending"
         )
         db.add(new_doc)
         await db.commit()
         await db.refresh(new_doc)
 
-        # 3. 触发后台任务
+        # --- 5. 触发后台任务 ---
         background_tasks.add_task(process_document_task, new_doc.id)
 
         return {

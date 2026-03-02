@@ -28,6 +28,17 @@ class Settings(BaseSettings):
 
     # 5. 👇 智谱 API Key
     ZHIPU_API_KEY: str = ""
+    # MinIO 配置
+    MINIO_ENDPOINT: str = "127.0.0.1:9000"
+    MINIO_ACCESS_KEY: str = "minioadmin"
+    MINIO_SECRET_KEY: str = "minioadmin"
+    MINIO_SECURE: bool = False
+    MINIO_AVATAR_BUCKET: str = "avatars"
+
+
+    # 工具的api
+    QWEATHER_API_KEY: str = "4669c53415b94ec4b878afdf6bf620de"
+    GAODE_API_KEY: str = "ba0450738c9ca01acd19911bb1459124"
 
     class Config:
         # 指定读取根目录下的 .env 文件

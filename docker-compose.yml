@@ -13,5 +13,20 @@ services:
     volumes:
       - ./postgres_data:/var/lib/postgresql/data
 
+  # 👇 新增的 MinIO 服务
+  minio:
+    image: quay.io/minio/minio:latest
+    container_name: rag_minio
+    restart: always
+    ports:
+      - "9000:9000"  # 后端代码上传图片调用的 API 端口
+      - "9001:9001"  # 你用浏览器访问 Web 控制台的端口
+    environment:
+      MINIO_ROOT_USER: minioadmin    # Web 登录账号
+      MINIO_ROOT_PASSWORD: minioadmin # Web 登录密码
+    volumes:
+      - ./minio_data:/data           # 图片持久化存放在项目下的 minio_data 文件夹
+    command: server /data --console-address ":9001"
+
 volumes:
   postgres_data:
