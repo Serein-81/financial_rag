@@ -36,9 +36,13 @@ class Settings(BaseSettings):
     MINIO_AVATAR_BUCKET: str = "avatars"
 
 
-    # 工具的api
-    QWEATHER_API_KEY: str = "4669c53415b94ec4b878afdf6bf620de"
-    GAODE_API_KEY: str = "ba0450738c9ca01acd19911bb1459124"
+    # 和风天气 API 配置（专属订阅）
+    QWEATHER_API_KEY: str = ""
+    QWEATHER_WEATHER_HOST: str = ""  # 天气查询专属 Host
+    QWEATHER_GEO_HOST: str = ""      # 地理位置查询专属 Host
+    
+    # 高德地图 API 配置
+    GAODE_API_KEY: str = ""
 
     class Config:
         # 指定读取根目录下的 .env 文件

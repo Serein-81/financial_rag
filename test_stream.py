@@ -13,7 +13,7 @@ headers = {
 }
 payload = {
     "kb_id": KB_ID,
-    "query": "讲一个关于程序员的长笑话",
+    "query": "请结合知识库，告诉我备案通过后需要做什么",
     "session_id": ""
 }
 

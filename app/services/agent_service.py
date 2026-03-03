@@ -35,30 +35,59 @@ async def get_weather(city_name: str) -> str:
     """根据城市名称查询实时天气"""
     print(f"🌤️ [Agent 调用工具] 正在查询天气: {city_name}")
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=10.0) as client:
         try:
-            # 1. 和风天气需要先查城市 ID
-            geo_url = f"https://geoapi.qweather.com/v2/city/lookup?location={city_name}&key={settings.QWEATHER_API_KEY}"
+            # 1. 使用专属 Geo Host 查询城市 ID（注意：需要加 /geo 路径）
+            geo_url = f"{settings.QWEATHER_GEO_HOST}/geo/v2/city/lookup?location={city_name}&key={settings.QWEATHER_API_KEY}"
+            print(f"🔍 [调试] 请求城市信息: {geo_url}")
+            
             geo_res = await client.get(geo_url)
             geo_data = geo_res.json()
+            print(f"🔍 [调试] 城市信息响应: {geo_data}")
 
             if geo_data.get("code") != "200":
-                return f"抱歉，未能找到 {city_name} 的城市信息。"
+                error_msg = f"抱歉，未能找到 {city_name} 的城市信息。API 返回码: {geo_data.get('code')}"
+                print(f"❌ [错误] {error_msg}")
+                return error_msg
 
             location_id = geo_data["location"][0]["id"]
+            print(f"✅ [成功] 获取到城市ID: {location_id}")
 
-            # 2. 根据城市 ID 查实时天气
-            weather_url = f"https://devapi.qweather.com/v7/weather/now?location={location_id}&key={settings.QWEATHER_API_KEY}"
+            # 2. 使用专属 Weather Host 查询实时天气
+            weather_url = f"{settings.QWEATHER_WEATHER_HOST}/v7/weather/now?location={location_id}&key={settings.QWEATHER_API_KEY}"
+            print(f"🔍 [调试] 请求天气信息: {weather_url}")
+            
             weather_res = await client.get(weather_url)
             weather_data = weather_res.json()
+            print(f"🔍 [调试] 天气信息响应: {weather_data}")
 
             if weather_data.get("code") == "200":
                 now = weather_data["now"]
-                return f"{city_name}当前的实时天气：{now['text']}，气温 {now['temp']}°C，体感温度 {now['feelsLike']}°C，风向 {now['windDir']}，相对湿度 {now['humidity']}%。"
+                result = f"{city_name}当前的实时天气：{now['text']}，气温 {now['temp']}°C，体感温度 {now['feelsLike']}°C，风向 {now['windDir']}，相对湿度 {now['humidity']}%。"
+                print(f"✅ [成功] 天气查询完成: {result}")
+                return result
             else:
-                return "抱歉，获取天气数据失败，请稍后再试。"
+                error_msg = f"抱歉，获取天气数据失败。API 返回码: {weather_data.get('code')}"
+                print(f"❌ [错误] {error_msg}")
+                return error_msg
+        except httpx.TimeoutException as e:
+            error_msg = f"天气服务请求超时: {str(e)}"
+            print(f"❌ [超时] {error_msg}")
+            return error_msg
+        except httpx.HTTPError as e:
+            error_msg = f"天气服务HTTP错误: {str(e)}"
+            print(f"❌ [HTTP错误] {error_msg}")
+            return error_msg
+        except KeyError as e:
+            error_msg = f"天气数据解析错误，缺少字段: {str(e)}"
+            print(f"❌ [解析错误] {error_msg}")
+            return error_msg
         except Exception as e:
-            return f"天气服务请求异常: {str(e)}"
+            error_msg = f"天气服务请求异常: {type(e).__name__} - {str(e)}"
+            print(f"❌ [未知错误] {error_msg}")
+            import traceback
+            traceback.print_exc()
+            return error_msg
 
 
 @tool(
@@ -103,6 +132,14 @@ class EnterpriseAgentService:
             get_location_info  # 👈 加入地图工具
         ]
 
+        # 打印工具列表，确认工具已注册
+        print("=" * 60)
+        print("🛠️ Agent 工具初始化")
+        print("=" * 60)
+        for i, tool in enumerate(self.tools, 1):
+            print(f"{i}. {tool.name}: {tool.description}")
+        print("=" * 60)
+
         # 2. 读取系统提示词
         system_prompt_text = load_agent_system_prompt()
 
@@ -112,6 +149,9 @@ class EnterpriseAgentService:
             system_prompt=system_prompt_text,
             tools=self.tools
         )
+        
+        print("✅ Agent 初始化完成！")
+        print("=" * 60)
 
     async def chat(self, user_input: str, kb_id: str, session_id: str = None, history: list = None):
         """
@@ -150,43 +190,37 @@ class EnterpriseAgentService:
         """流式对话生成器"""
         print(f"🌊 [Agent 流式生成开始] Session: {session_id}")
 
-        # ==========================================
-        # 🌟 终极修复：使用标准 messages 格式传参
-        # ==========================================
         messages = []
-
-        # 1. 注入历史记录（在 chat.py 里已经被我们转成了 HumanMessage/AIMessage）
         if history:
             messages.extend(history)
 
-        # 2. 注入本次的新问题和工具所需的隐式系统指令
         agent_input = (
             f"用户问题：{user_input}\n"
             f"【系统指令】：如需调用 search_enterprise_knowledge 工具，请务必传入知识库ID：{kb_id}"
         )
         messages.append(HumanMessage(content=agent_input))
 
-        # 3. 组装成新版 Agent 唯一认识的字典格式！
-        inputs = {
-            "messages": messages
-        }
+        inputs = {"messages": messages}
 
         try:
-            # 正常尝试流式请求
-            async for event in self.agent.astream_events(inputs, version="v1"):
-                kind = event["event"]
-                # 捕获大模型输出的文字流
-                if kind == "on_chat_model_stream":
-                    content = event["data"]["chunk"].content
-                    if content:
-                        yield content
-                # 捕获大模型调用工具的状态
-                elif kind == "on_tool_start":
-                    tool_name = event["name"]
-                    yield f"\n*[正在调用工具: {tool_name}...]*\n"
-
+            # 先非流式执行，获取完整结果（包括工具调用）
+            print("🔄 [执行] 开始执行 Agent...")
+            result = await self.agent.ainvoke(inputs)
+            
+            # 获取最终的回答
+            final_message = result["messages"][-1]
+            final_content = final_message.content
+            
+            print(f"✅ [完成] Agent 执行完成，回答长度: {len(final_content)}")
+            
+            # 逐字符流式输出最终结果
+            for char in final_content:
+                yield char
+                
         except Exception as e:
             print(f"❌ 流式被中断: {e}")
+            import traceback
+            traceback.print_exc()
             yield f"\n[Agent 报错: {str(e)}]"
 
 # 导出单例

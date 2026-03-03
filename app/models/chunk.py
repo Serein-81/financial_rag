@@ -30,7 +30,7 @@ class DocumentChunk(Base):
     # 这对应数据库里的 FLOAT8[]
     embedding = Column(ARRAY(Float), nullable=True)
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=func.now(),server_default=func.now())
 
     # 建立关系：方便以后通过 chunk.document 访问父文档
     # document = relationship("Document", back_populates="chunks")

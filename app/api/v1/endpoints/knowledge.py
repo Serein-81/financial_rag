@@ -1,7 +1,5 @@
 # app/api/v1/endpoints/knowledge.py
 
-import os
-import shutil
 import hashlib
 from uuid import UUID
 
@@ -19,6 +17,9 @@ from app.schemas.knowledge import KnowledgeBaseCreate, KnowledgeBaseOut
 from app.services.file_service import file_service
 from app.services.chunk_service import chunk_service
 from app.services.embedding_service import embedding_service
+from app.services.minio_service import minio_service
+
+
 
 router = APIRouter()
 
@@ -182,7 +183,6 @@ async def list_documents(kb_id: UUID, current_user: User = Depends(deps.get_curr
         )
         return result.scalars().all()
 
-
 @router.post("/bases/{kb_id}/upload")
 async def upload_document_to_kb(
         kb_id: UUID,
@@ -221,22 +221,31 @@ async def upload_document_to_kb(
                 detail=f"文件重复：该文件已存在于知识库中 (Filename: {existing_doc.filename})"
             )
 
-        # --- 3. 确保存储目录存在并保存文件 ---
-        upload_dir = f"storage/{kb_id}"
-        os.makedirs(upload_dir, exist_ok=True)
-        file_location = f"{upload_dir}/{file.filename}"
+        # 👇 修复缩进：必须和 if existing_doc 平级！
+        # --- 3. 🌟 全新存储逻辑：存入 MinIO ---
+        # 读取文件字节并计算大小
+        file_bytes = await file.read()
+        file_size = len(file_bytes)
 
-        with open(file_location, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        # 构造 MinIO 里的唯一文件名：kb_id/原始文件名
+        object_name = f"{kb_id}/{file.filename}"
 
-        # 获取真实的文件大小
-        file_size = os.path.getsize(file_location)
+        try:
+            # 上传到 MinIO
+            file_path = minio_service.upload_document(
+                file_bytes=file_bytes,
+                object_name=object_name,
+                content_type=file.content_type
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"文件存储到 MinIO 失败: {str(e)}")
+
 
         # --- 4. 写入数据库记录 ---
         new_doc = Document(
             kb_id=kb_id,
             filename=file.filename,
-            file_path=file_location,
+            file_path=file_path,  # 👈 修复变量名：直接使用上面从 MinIO 返回的 file_path
             file_type=file.content_type,
             file_size=file_size,  # 记录文件大小
             hash=file_hash,  # 记录 MD5

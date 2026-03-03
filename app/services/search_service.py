@@ -2,20 +2,21 @@ import time
 from typing import List, Optional
 from sqlalchemy import text
 from app.db import AsyncSessionLocal
-from app.services import embedding_service
+from app.services.embedding_service import embedding_service
 from app.schemas.chat import SearchResultItem
 from app.models.search_log import SearchLog
 
+
 class SearchService:
     async def search(
-        self,
-        query: str,
-        top_k: int = 5,
-        kb_id: str = None,
-        score_threshold: float = 0.3
+            self,
+            query: str,
+            top_k: int = 5,
+            kb_id: str = None,
+            score_threshold: float = 0.3
     ) -> List[SearchResultItem]:
         """
-        核心搜索方法：修复了 pgvector 类型强转问题
+        核心搜索方法：修复了 pgvector 类型强转问题及 UUID 类型兼容问题
         """
         start_time = time.time()
         results = []
@@ -31,11 +32,26 @@ class SearchService:
             if any(word in query for word in ["总结", "概括", "思想", "全文", "讲了什么"]):
                 actual_top_k = max(top_k, 15)
                 score_threshold = 0.25
-                print(f"📈 检测到总结需求：自动调整参数")
+                print(f"📈 检测到总结需求：自动调整参数 (top_k={actual_top_k}, threshold={score_threshold})")
 
             async with AsyncSessionLocal() as db:
-                # 3. 改进 SQL：显式使用 CAST 函数代替 :: 缩写，避免与占位符冒号冲突
-                sql = text("""
+                # 3. 动态组装 WHERE 条件 (避免 :kb_id IS NULL 导致的数据库类型推断报错)
+                where_clauses = ["(1 - (CAST(c.embedding AS vector) <=> CAST(:vector AS vector))) >= :threshold"]
+                params = {
+                    "vector": "[" + ",".join(map(str, query_vector)) + "]",  # 确保是 pgvector 认识的字符串格式
+                    "threshold": float(score_threshold),
+                    "limit": int(actual_top_k)
+                }
+
+                if kb_id:
+                    # 🌟 核心修复：显式 CAST(:kb_id AS UUID)，防止 asyncpg 报类型不匹配错误
+                    where_clauses.append("d.kb_id = CAST(:kb_id AS UUID)")
+                    params["kb_id"] = str(kb_id)
+
+                where_sql = " AND ".join(where_clauses)
+
+                # 4. 改进 SQL：动态拼接 WHERE
+                sql = text(f"""
                     SELECT 
                         c.id, 
                         c.document_id, 
@@ -45,33 +61,26 @@ class SearchService:
                         (1 - (CAST(c.embedding AS vector) <=> CAST(:vector AS vector))) AS similarity
                     FROM document_chunks c
                     JOIN documents d ON c.document_id = d.id
-                    WHERE (d.kb_id = :kb_id OR :kb_id IS NULL) 
-                      AND (1 - (CAST(c.embedding AS vector) <=> CAST(:vector AS vector))) >= :threshold
+                    WHERE {where_sql}
                     ORDER BY similarity DESC
                     LIMIT :limit
                 """)
 
-                # 确保 query_vector 是字符串格式
-                vector_str = "[" + ",".join(map(str, query_vector)) + "]"
-
-                params = {
-                    "vector": vector_str,
-                    "kb_id": kb_id,
-                    "threshold": float(score_threshold),
-                    "limit": int(actual_top_k)
-                }
-
                 db_res = await db.execute(sql, params)
-                rows = db_res.all()
+                # 使用 mappings() 返回字典形式，比直接用 tuple 的兼容性更好，杜绝 row.id 报错
+                rows = db_res.mappings().all()
 
                 for row in rows:
+                    # 容错处理：获取 meta_info 时防空
+                    meta = row["meta_info"] or {}
+
                     results.append(SearchResultItem(
-                        chunk_id=str(row.id),
-                        document_id=str(row.document_id),
-                        score=round(row.similarity, 4),
-                        content=row.content,
-                        source_file=row.filename,
-                        page_number=row.meta_info.get("page_number") if row.meta_info else None
+                        chunk_id=str(row["id"]),
+                        document_id=str(row["document_id"]),
+                        score=round(row["similarity"], 4),
+                        content=row["content"],
+                        source_file=row["filename"],
+                        page_number=meta.get("page_number")
                     ))
 
             return results
@@ -93,5 +102,6 @@ class SearchService:
                 await db.commit()
             except Exception as e:
                 print(f"⚠️ 日志保存失败: {e}")
+
 
 search_service = SearchService()
