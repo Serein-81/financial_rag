@@ -26,8 +26,27 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
-    # 5. 👇 智谱 API Key
+    # 5. 👇 LLM 大模型配置
+    # 当前使用的提供商：zhipu, openai, claude
+    LLM_PROVIDER: str = "zhipu"
+    
+    # Agent 模式配置
+    # 支持的模式：react, plan, reflect
+    AGENT_MODE: str = "react"
+    
+    # 智谱 AI 配置
     ZHIPU_API_KEY: str = ""
+    ZHIPU_MODEL: str = "glm-4-flash"
+    
+    # OpenAI 配置（可选）
+    OPENAI_API_KEY: str = ""
+    OPENAI_MODEL: str = "gpt-4"
+    OPENAI_BASE_URL: str = "https://api.openai.com/v1"
+    
+    # Claude 配置（可选）
+    CLAUDE_API_KEY: str = ""
+    CLAUDE_MODEL: str = "claude-3-sonnet-20240229"
+    
     # MinIO 配置
     MINIO_ENDPOINT: str = "127.0.0.1:9000"
     MINIO_ACCESS_KEY: str = "minioadmin"
@@ -43,6 +62,27 @@ class Settings(BaseSettings):
     
     # 高德地图 API 配置
     GAODE_API_KEY: str = ""
+    
+    # Tavily 搜索 API 配置
+    TAVILY_API_KEY: str = ""
+    
+    # Redis 配置
+    REDIS_HOST: str = "localhost"
+    REDIS_PORT: int = 6379
+    REDIS_DB: int = 0
+    REDIS_PASSWORD: str = ""
+    
+    # 阿里云短信服务配置
+    ALIYUN_ACCESS_KEY_ID: str = ""
+    ALIYUN_ACCESS_KEY_SECRET: str = ""
+    ALIYUN_SMS_SIGN_NAME: str = ""
+    ALIYUN_SMS_TEMPLATE_CODE: str = ""
+    
+    # 验证码配置
+    SMS_CODE_LENGTH: int = 6
+    SMS_CODE_EXPIRE: int = 300  # 验证码过期时间（秒）
+    SMS_SEND_INTERVAL: int = 3600  # 发送间隔（秒），1小时
+    SMS_DAILY_LIMIT: int = 3  # 每日发送次数限制
 
     class Config:
         # 指定读取根目录下的 .env 文件
