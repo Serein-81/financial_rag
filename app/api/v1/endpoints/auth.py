@@ -3,74 +3,122 @@ from datetime import timedelta
 from sqlalchemy.future import select
 from app.core import security
 from app.core.config import settings
-from app.schemas.auth import UserRegister, UserLogin, Token, UserOut
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException,status
+from app.schemas.auth import (
+    UserRegister, AdminRegister, UserLogin, Token, UserOut, UserProfileUpdate
+)
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, status, Query
 from app.db import AsyncSessionLocal
 from app.api import deps
 from app.models.user import User
 from app.services.minio_service import minio_service
+from app.services.sms_service import sms_service
+from pydantic import BaseModel
 
 router = APIRouter()
 
 
-@router.post("/avatar")
-async def upload_avatar(
-        file: UploadFile = File(...),  # 接收前端传来的 FormData 文件
-        current_user: User = Depends(deps.get_current_user)
-):
-    # 1. 验证文件类型（防止有人上传病毒代码伪装成图片）
-    if not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="只能上传图片文件！")
+# =======================
+# 📱 短信验证码相关模型
+# =======================
+class SendSMSRequest(BaseModel):
+    phone: str
 
-    # 2. 读取文件字节并上传到 MinIO
-    file_bytes = await file.read()
-    try:
-        avatar_url = minio_service.upload_avatar(
-            file_bytes=file_bytes,
-            filename=file.filename,
-            content_type=file.content_type
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"图片上传 MinIO 失败: {str(e)}")
 
-    # 3. 将生成的 URL 存入 PostgreSQL 的 users 表
-    async with AsyncSessionLocal() as db:
-        db_user = await db.get(User, current_user.id)
-        db_user.avatar_url = avatar_url
-        await db.commit()
+class VerifySMSRequest(BaseModel):
+    phone: str
+    code: str
 
+
+# =======================
+# 📱 1. 发送短信验证码
+# =======================
+@router.post("/sms/send")
+async def send_sms_code(request: SendSMSRequest):
+    """
+    发送短信验证码
+    - 1小时内只能发送1次
+    - 每日最多发送3次
+    """
+    result = await sms_service.send_verification_code(request.phone)
+    
+    if not result["success"]:
+        raise HTTPException(status_code=400, detail=result["message"])
+    
     return {
-        "status": "success",
-        "message": "头像上传成功",
-        "avatar_url": avatar_url
+        "success": True,
+        "message": result["message"],
+        "expire_seconds": result.get("expire_seconds"),
+        "debug_code": result.get("debug_code")  # 仅开发模式
     }
 
+
 # =======================
-# 📝 1. 用户注册接口
+# 📱 2. 验证短信验证码
+# =======================
+@router.post("/sms/verify")
+async def verify_sms_code(request: VerifySMSRequest):
+    """验证短信验证码"""
+    result = sms_service.verify_code(request.phone, request.code)
+    
+    if not result["valid"]:
+        raise HTTPException(status_code=400, detail=result["message"])
+    
+    return {
+        "success": True,
+        "message": result["message"]
+    }
+
+
+# =======================
+# 📝 3. 普通用户注册接口（需要验证码）
 # =======================
 @router.post("/register", response_model=UserOut)
-async def register(user_in: UserRegister):
+async def register_user(
+    user_in: UserRegister,
+    sms_code: str = Query(..., description="短信验证码")
+):
     """
-    注册新用户 (接收 JSON)
+    普通用户注册
+    - 需要提供：邮箱、手机号、密码、短信验证码
+    - 可选提供：昵称
+    - 真实姓名等信息可以后续在个人页面补充
     """
+    # 1. 验证短信验证码
+    verify_result = sms_service.verify_code(user_in.phone, sms_code)
+    if not verify_result["valid"]:
+        raise HTTPException(
+            status_code=400,
+            detail=verify_result["message"]
+        )
+    
     async with AsyncSessionLocal() as db:
-        # 1. 检查邮箱是否已存在
+        # 2. 检查邮箱是否已存在
         result = await db.execute(select(User).where(User.email == user_in.email))
         existing_user = result.scalars().first()
-
         if existing_user:
             raise HTTPException(
                 status_code=400,
                 detail="该邮箱已被注册"
             )
+        
+        # 3. 检查手机号是否已存在
+        result = await db.execute(select(User).where(User.phone == user_in.phone))
+        existing_phone = result.scalars().first()
+        if existing_phone:
+            raise HTTPException(
+                status_code=400,
+                detail="该手机号已被注册"
+            )
 
-        # 2. 创建新用户
+        # 4. 创建普通用户
         new_user = User(
             email=user_in.email,
-            # 🔐 必须使用 security.py 里的加密函数
+            phone=user_in.phone,
             hashed_password=security.get_password_hash(user_in.password),
-            full_name=user_in.full_name,
-            is_active=True
+            nickname=user_in.nickname,
+            is_active=True,
+            is_admin=False,  # 普通用户
+            is_phone_verified=True  # 已验证手机号
         )
 
         db.add(new_user)
@@ -81,13 +129,75 @@ async def register(user_in: UserRegister):
 
 
 # =======================
-# 🔑 2. 用户登录接口
+# 📝 4. 企业管理员注册接口（需要验证码）
 # =======================
-# 👇👇👇 重点看这里，这里必须是 UserLogin (JSON)，不能是 Depends() 👇👇👇
+@router.post("/register/admin", response_model=UserOut)
+async def register_admin(
+    admin_in: AdminRegister,
+    sms_code: str = Query(..., description="短信验证码")
+):
+    """
+    企业管理员注册
+    - 需要提供：邮箱、手机号、密码、真实姓名、企业名称、短信验证码
+    - 可选提供：职位、昵称
+    - 注册后自动设置为管理员权限
+    """
+    # 1. 验证短信验证码
+    verify_result = sms_service.verify_code(admin_in.phone, sms_code)
+    if not verify_result["valid"]:
+        raise HTTPException(
+            status_code=400,
+            detail=verify_result["message"]
+        )
+    
+    async with AsyncSessionLocal() as db:
+        # 2. 检查邮箱是否已存在
+        result = await db.execute(select(User).where(User.email == admin_in.email))
+        existing_user = result.scalars().first()
+        if existing_user:
+            raise HTTPException(
+                status_code=400,
+                detail="该邮箱已被注册"
+            )
+        
+        # 3. 检查手机号是否已存在
+        result = await db.execute(select(User).where(User.phone == admin_in.phone))
+        existing_phone = result.scalars().first()
+        if existing_phone:
+            raise HTTPException(
+                status_code=400,
+                detail="该手机号已被注册"
+            )
+
+        # 4. 创建企业管理员用户
+        new_admin = User(
+            email=admin_in.email,
+            phone=admin_in.phone,
+            hashed_password=security.get_password_hash(admin_in.password),
+            full_name=admin_in.full_name,
+            nickname=admin_in.nickname,
+            company_name=admin_in.company_name,
+            company_position=admin_in.company_position,
+            is_active=True,
+            is_admin=True,  # 企业管理员
+            is_phone_verified=True  # 已验证手机号
+        )
+
+        db.add(new_admin)
+        await db.commit()
+        await db.refresh(new_admin)
+
+        return new_admin
+
+
+# =======================
+# 🔑 5. 用户登录接口
+# =======================
 @router.post("/login", response_model=Token)
 async def login(user_in: UserLogin):
     """
     用户登录 (接收 JSON: {"email": "...", "password": "..."})
+    支持普通用户和企业管理员登录
     """
     async with AsyncSessionLocal() as db:
         # 1. 查找用户
@@ -108,7 +218,6 @@ async def login(user_in: UserLogin):
 
         # 4. 签发 Token
         access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-
         access_token = security.create_access_token(
             subject=user.id,
             expires_delta=access_token_expires
@@ -117,17 +226,62 @@ async def login(user_in: UserLogin):
         return {
             "access_token": access_token,
             "token_type": "bearer",
-            "user_name": user.full_name or user.email
+            "user_name": user.nickname or user.full_name or user.email,
+            "is_admin": user.is_admin
         }
 
 
+# =======================
+# 👤 6. 获取当前用户信息
+# =======================
+@router.get("/me", response_model=UserOut)
+async def get_current_user_info(
+    current_user: User = Depends(deps.get_current_user)
+):
+    """获取当前登录用户的详细信息"""
+    return current_user
+
+
+# =======================
+# ✏️ 7. 更新用户信息
+# =======================
+@router.put("/profile", response_model=UserOut)
+async def update_user_profile(
+    profile_update: UserProfileUpdate,
+    current_user: User = Depends(deps.get_current_user)
+):
+    """
+    更新用户个人信息
+    - 可以补充真实姓名、昵称、个人简介等
+    - 企业管理员可以更新企业信息
+    """
+    async with AsyncSessionLocal() as db:
+        # 重新从数据库获取用户实例
+        db_user = await db.get(User, current_user.id)
+        if not db_user:
+            raise HTTPException(status_code=404, detail="用户不存在")
+        
+        # 更新字段（只更新提供的字段）
+        update_data = profile_update.dict(exclude_unset=True)
+        for field, value in update_data.items():
+            setattr(db_user, field, value)
+        
+        await db.commit()
+        await db.refresh(db_user)
+        
+        return db_user
+
+
+# =======================
+# 📷 8. 上传头像
+# =======================
 @router.post("/avatar")
-async def upload_user_avatar(
-        file: UploadFile = File(...),
-        current_user: User = Depends(deps.get_current_user)  # 👈 需要 Token 鉴权
+async def upload_avatar(
+    file: UploadFile = File(...),
+    current_user: User = Depends(deps.get_current_user)
 ):
     """用户上传/更新头像"""
-    # 1. 安全拦截：只允许上传图片
+    # 1. 验证文件类型
     if not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="只能上传图片文件！")
 
@@ -140,12 +294,10 @@ async def upload_user_avatar(
             content_type=file.content_type
         )
     except Exception as e:
-        print(f"MinIO 上传报错: {e}")
-        raise HTTPException(status_code=500, detail="图片上传存储服务器失败")
+        raise HTTPException(status_code=500, detail=f"图片上传失败: {str(e)}")
 
-    # 3. 将生成的图片 URL 更新到数据库的用户表里
+    # 3. 更新数据库
     async with AsyncSessionLocal() as db:
-        # 重新从数据库查出这个用户实例以便修改
         db_user = await db.get(User, current_user.id)
         if db_user:
             db_user.avatar_url = avatar_url
