@@ -1,0 +1,372 @@
+# app/agent_framework/core/plan_agent.py
+
+"""
+Plan Agent - 计划-执行模式
+
+工作流程：
+1. Planning: 分析任务，制定详细计划
+2. Execution: 按计划逐步执行
+3. Monitoring: 监控执行进度
+4. Completion: 汇总结果
+
+适用场景：
+- 复杂的多步骤任务
+- 需要明确规划的任务
+- 对执行顺序有要求的任务
+"""
+
+from typing import Dict, List, Any, Optional
+import json
+import logging
+
+from .base_agent import BaseAgent
+from ..llm.base_adapter import BaseLLMAdapter
+from ..tools.tool_manager import ToolManager
+
+logger = logging.getLogger(__name__)
+
+
+class PlanAgent(BaseAgent):
+    """
+    Plan Agent - 先规划后执行
+    
+    相比 ReAct 的优势：
+    - 有明确的执行计划
+    - 避免重复或无效的工具调用
+    - 更适合复杂任务
+    """
+    
+    def __init__(
+        self,
+        llm_adapter: BaseLLMAdapter,
+        tool_manager: ToolManager,
+        max_iterations: int = 10,
+        **kwargs
+    ):
+        """
+        初始化 Plan Agent
+        
+        Args:
+            llm_adapter: LLM 适配器
+            tool_manager: 工具管理器
+            max_iterations: 最大执行步骤数
+        """
+        super().__init__(llm_adapter, tool_manager, max_iterations, **kwargs)
+        
+        logger.info("✅ Plan Agent 初始化完成")
+        logger.info(f"   - 模式: Plan-Execute")
+        logger.info(f"   - 最大步骤: {max_iterations}")
+    
+    def _build_planning_prompt(self, task: str, tools: List[Dict]) -> str:
+        """
+        构建规划阶段的提示词
+        
+        Args:
+            task: 用户任务
+            tools: 可用工具列表
+            
+        Returns:
+            规划提示词
+        """
+        tools_desc = "\n".join([
+            f"- {tool['name']}: {tool['description']}"
+            for tool in tools
+        ])
+        
+        prompt = f"""你是一个智能规划助手。请为以下任务制定详细的执行计划。
+
+## 任务
+{task}
+
+## 可用工具
+{tools_desc}
+
+## 规划要求
+1. 分析任务目标和需求
+2. 列出完成任务所需的步骤
+3. 为每个步骤指定使用的工具
+4. 确保步骤之间的逻辑顺序
+
+## 输出格式（JSON）
+请严格按照以下 JSON 格式输出计划：
+
+```json
+{{
+    "analysis": "任务分析",
+    "steps": [
+        {{
+            "step": 1,
+            "action": "步骤描述",
+            "tool": "工具名称",
+            "input": "工具输入",
+            "expected_output": "预期输出"
+        }}
+    ]
+}}
+```
+
+现在请开始规划："""
+        
+        return prompt
+    
+    def _build_execution_prompt(
+        self,
+        task: str,
+        plan: Dict,
+        current_step: int,
+        history: List[Dict]
+    ) -> str:
+        """
+        构建执行阶段的提示词
+        
+        Args:
+            task: 用户任务
+            plan: 执行计划
+            current_step: 当前步骤
+            history: 执行历史
+            
+        Returns:
+            执行提示词
+        """
+        step_info = plan["steps"][current_step - 1]
+        
+        # 构建历史记录
+        history_text = ""
+        if history:
+            history_text = "\n## 已完成步骤\n"
+            for h in history:
+                history_text += f"步骤 {h['step']}: {h['action']}\n"
+                history_text += f"结果: {h['result']}\n\n"
+        
+        prompt = f"""你正在执行一个多步骤任务。
+
+## 原始任务
+{task}
+
+## 执行计划
+{json.dumps(plan, ensure_ascii=False, indent=2)}
+
+{history_text}
+
+## 当前步骤（第 {current_step} 步）
+- 动作: {step_info['action']}
+- 工具: {step_info['tool']}
+- 输入: {step_info['input']}
+
+请执行当前步骤，并输出工具调用的 JSON 格式：
+
+```json
+{{
+    "tool": "工具名称",
+    "input": "工具输入参数"
+}}
+```
+
+如果当前步骤不需要调用工具，输出：
+```json
+{{
+    "tool": "none",
+    "result": "步骤结果"
+}}
+```"""
+        
+        return prompt
+    
+    def _build_completion_prompt(
+        self,
+        task: str,
+        plan: Dict,
+        history: List[Dict]
+    ) -> str:
+        """
+        构建完成阶段的提示词
+        
+        Args:
+            task: 用户任务
+            plan: 执行计划
+            history: 执行历史
+            
+        Returns:
+            完成提示词
+        """
+        history_text = "\n".join([
+            f"步骤 {h['step']}: {h['action']}\n结果: {h['result']}"
+            for h in history
+        ])
+        
+        prompt = f"""任务执行完成，请汇总结果。
+
+## 原始任务
+{task}
+
+## 执行计划
+{json.dumps(plan, ensure_ascii=False, indent=2)}
+
+## 执行历史
+{history_text}
+
+请基于以上信息，给出最终答案。要求：
+1. 直接回答用户的问题
+2. 整合所有步骤的结果
+3. 语言简洁清晰
+4. 如果有数据，用结构化方式呈现
+
+最终答案："""
+        
+        return prompt
+    
+    async def run(self, task: str, context: Optional[Dict] = None) -> str:
+        """
+        执行 Plan Agent
+        
+        Args:
+            task: 用户任务
+            context: 上下文信息
+            
+        Returns:
+            最终答案
+        """
+        logger.info(f"🎯 [Plan Agent] 开始执行任务: {task}")
+        
+        try:
+            # 阶段1：制定计划
+            logger.info("📋 [Plan Agent] 阶段1: 制定计划")
+            plan = await self._make_plan(task)
+            logger.info(f"   计划步骤数: {len(plan['steps'])}")
+            
+            # 阶段2：执行计划
+            logger.info("⚙️ [Plan Agent] 阶段2: 执行计划")
+            history = await self._execute_plan(task, plan)
+            
+            # 阶段3：汇总结果
+            logger.info("📊 [Plan Agent] 阶段3: 汇总结果")
+            final_answer = await self._complete_task(task, plan, history)
+            
+            logger.info("✅ [Plan Agent] 任务完成")
+            return final_answer
+            
+        except Exception as e:
+            logger.error(f"❌ [Plan Agent] 执行失败: {e}")
+            return f"抱歉，执行任务时遇到错误: {str(e)}"
+    
+    async def _make_plan(self, task: str) -> Dict:
+        """
+        制定执行计划
+        
+        Args:
+            task: 用户任务
+            
+        Returns:
+            执行计划
+        """
+        tools = self.tool_manager.get_all_tools()
+        prompt = self._build_planning_prompt(task, tools)
+        
+        response = await self.llm_adapter.generate(prompt, temperature=0.1)
+        
+        # 解析计划
+        try:
+            # 提取 JSON
+            json_start = response.find("{")
+            json_end = response.rfind("}") + 1
+            if json_start != -1 and json_end > json_start:
+                json_str = response[json_start:json_end]
+                plan = json.loads(json_str)
+                return plan
+            else:
+                raise ValueError("未找到有效的 JSON 格式")
+        except Exception as e:
+            logger.error(f"解析计划失败: {e}")
+            # 返回默认计划
+            return {
+                "analysis": "无法解析计划",
+                "steps": [
+                    {
+                        "step": 1,
+                        "action": "直接回答",
+                        "tool": "none",
+                        "input": task,
+                        "expected_output": "答案"
+                    }
+                ]
+            }
+    
+    async def _execute_plan(self, task: str, plan: Dict) -> List[Dict]:
+        """
+        执行计划
+        
+        Args:
+            task: 用户任务
+            plan: 执行计划
+            
+        Returns:
+            执行历史
+        """
+        history = []
+        
+        for i, step_info in enumerate(plan["steps"], 1):
+            logger.info(f"   执行步骤 {i}/{len(plan['steps'])}: {step_info['action']}")
+            
+            # 如果不需要工具，直接记录
+            if step_info.get("tool") == "none":
+                history.append({
+                    "step": i,
+                    "action": step_info["action"],
+                    "tool": "none",
+                    "result": step_info.get("expected_output", "完成")
+                })
+                continue
+            
+            # 执行工具调用
+            try:
+                tool_name = step_info["tool"]
+                tool_input = step_info["input"]
+                
+                # 调用工具
+                result = await self.tool_manager.execute_tool(
+                    tool_name,
+                    input=tool_input
+                )
+                
+                history.append({
+                    "step": i,
+                    "action": step_info["action"],
+                    "tool": tool_name,
+                    "input": tool_input,
+                    "result": result
+                })
+                
+                logger.info(f"   ✓ 步骤 {i} 完成")
+                
+            except Exception as e:
+                logger.error(f"   ✗ 步骤 {i} 失败: {e}")
+                history.append({
+                    "step": i,
+                    "action": step_info["action"],
+                    "tool": step_info.get("tool"),
+                    "error": str(e)
+                })
+        
+        return history
+    
+    async def _complete_task(
+        self,
+        task: str,
+        plan: Dict,
+        history: List[Dict]
+    ) -> str:
+        """
+        汇总任务结果
+        
+        Args:
+            task: 用户任务
+            plan: 执行计划
+            history: 执行历史
+            
+        Returns:
+            最终答案
+        """
+        prompt = self._build_completion_prompt(task, plan, history)
+        answer = await self.llm_adapter.generate(prompt, temperature=0.1)
+        
+        return answer
