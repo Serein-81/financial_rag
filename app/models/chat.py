@@ -1,7 +1,8 @@
 # app/models/chat.py
-from sqlalchemy import Column, String, Text, ForeignKey, DateTime, func, JSON
+from sqlalchemy import Column, String, Text, ForeignKey, DateTime, func, JSON, Float, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
+from pgvector.sqlalchemy import Vector
 import uuid
 from app.db.base import Base
 
@@ -31,6 +32,12 @@ class ChatMessage(Base):
 
     # 存放引用来源，JSON格式，方便以后前端回显
     sources = Column(JSON, nullable=True)
+
+    # 🆕 情景记忆增强字段
+    embedding = Column(Vector(1536), nullable=True)  # 向量嵌入（1536维）
+    importance = Column(Float, default=0.5)  # 重要性评分（0.0-1.0）
+    access_count = Column(Integer, default=0)  # 访问次数
+    last_accessed = Column(DateTime(timezone=True), default=func.now())  # 最后访问时间
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

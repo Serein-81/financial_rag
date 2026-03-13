@@ -15,7 +15,7 @@ from app.services.llm_service import llm_service
 
 # 👇 🌟 新增：导入我们刚刚打造的 Agent 超级大脑
 from app.services.agent_service import agent_service
-from langchain_core.messages import HumanMessage, AIMessage
+# 移除 LangChain 消息类型依赖，使用标准字典格式
 # --- 导入持久化相关依赖 ---
 from app.api import deps  # 鉴权依赖
 from app.models.user import User
@@ -319,10 +319,10 @@ async def chat_with_agent_stream(
             )
             history_formatted = []
             for m in result.scalars().all():
-                if m.role == "user":
-                    history_formatted.append(HumanMessage(content=m.content))
-                elif m.role == "assistant":
-                    history_formatted.append(AIMessage(content=m.content))
+                history_formatted.append({
+                    "role": m.role,
+                    "content": m.content
+                })
 
         # 存入用户的新问题
         user_msg = ChatMessage(session_id=session_id, role="user", content=request.query)
