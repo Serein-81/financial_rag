@@ -1,20 +1,31 @@
-# Dockerfile for RAG Backend with Advanced Features
+# Dockerfile for RAG Backend with Advanced Features + OCR Support
 
 FROM python:3.11-slim
 
 # 设置工作目录
 WORKDIR /app
 
-# 安装系统依赖
+# 🆕 安装系统依赖 + Tesseract OCR + 中文语言包
 RUN apt-get update && apt-get install -y \
     curl \
+    tesseract-ocr \
+    tesseract-ocr-chi-sim \
+    tesseract-ocr-eng \
+    libtesseract-dev \
+    libgl1 \
     && rm -rf /var/lib/apt/lists/*
+
+# 验证 Tesseract 安装
+RUN tesseract --version
 
 # 复制依赖文件
 COPY requirements.txt .
 
 # 安装 Python 依赖
 RUN pip install --no-cache-dir -r requirements.txt
+
+# 🆕 确保 OCR 相关库已安装
+RUN pip install --no-cache-dir pillow pytesseract
 
 # 复制应用代码
 COPY . .
