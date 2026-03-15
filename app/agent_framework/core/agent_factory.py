@@ -14,7 +14,7 @@ from ..llm.factory import create_llm_adapter
 from ..llm.base_adapter import BaseLLMAdapter
 from ..tools.tool_manager import ToolManager
 from .base_agent import BaseAgent
-from .react_agent import ReactAgent
+from .react_agent import ReActAgent
 from .plan_agent import PlanAgent
 from .reflect_agent import ReflectAgent
 
@@ -82,7 +82,7 @@ class AgentFactory:
         # 根据模式创建 Agent
         if mode == "react":
             logger.info("   - 模式: ReAct（推理-行动）")
-            return ReactAgent(
+            return ReActAgent(
                 llm_adapter=llm_adapter,
                 tool_manager=tool_manager,
                 **kwargs

@@ -83,6 +83,21 @@ class Settings(BaseSettings):
     SMS_CODE_EXPIRE: int = 300  # 验证码过期时间（秒）
     SMS_SEND_INTERVAL: int = 3600  # 发送间隔（秒），1小时
     SMS_DAILY_LIMIT: int = 3  # 每日发送次数限制
+    
+    # 知识图谱配置
+    ENABLE_KNOWLEDGE_GRAPH: bool = False
+    ENABLE_ENTITY_EXTRACTION: bool = False
+    ENABLE_RELATION_EXTRACTION: bool = False
+    ENABLE_COREFERENCE_RESOLUTION: bool = True  # 指代消解
+    ENTITY_CONFIDENCE_THRESHOLD: float = 0.7  # 实体置信度阈值
+    ENTITY_EXTRACTION_METHOD: str = "llm"  # llm 或 spacy
+    ENTITY_EXTRACTION_MODEL: str = "glm-4-flash"
+    
+    # Neo4j 配置
+    NEO4J_URI: str = "bolt://localhost:7687"
+    NEO4J_USER: str = "neo4j"
+    NEO4J_PASSWORD: str = "REDACTED_NEO4J_PASSWORD"
+    NEO4J_DATABASE: str = "neo4j"
 
     class Config:
         # 指定读取根目录下的 .env 文件

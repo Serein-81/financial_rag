@@ -17,6 +17,15 @@ from .base_memory import BaseMemory, MemoryItem
 from app.services.embedding_service import embedding_service
 from app.db import AsyncSessionLocal
 from app.models.semantic_memory import SemanticMemory as SemanticMemoryModel
+from app.core.config import settings
+
+# 知识图谱相关导入（可选，根据配置启用）
+if settings.ENABLE_KNOWLEDGE_GRAPH:
+    from app.services.graph_builder import GraphBuilder
+    from app.knowledge_graph.entity_extractor import EntityExtractor
+    from app.knowledge_graph.relation_extractor import RelationExtractor
+    from app.knowledge_graph.neo4j_manager import Neo4jManager
+    from app.agent_framework.llm.factory import LLMAdapterFactory
 
 
 class SemanticMemory(BaseMemory):
@@ -43,6 +52,25 @@ class SemanticMemory(BaseMemory):
         self.user_id = user_id
         self.knowledge_graph: Dict[str, List[str]] = {}  # 简单的知识图谱
         self.loaded = False
+        
+        # 初始化知识图谱构建器（如果启用）
+        self.graph_builder = None
+        if settings.ENABLE_KNOWLEDGE_GRAPH:
+            try:
+                # EntityExtractor 和 RelationExtractor 不需要参数
+                entity_extractor = EntityExtractor()
+                relation_extractor = RelationExtractor()
+                neo4j_manager = Neo4jManager()
+                self.graph_builder = GraphBuilder(
+                    entity_extractor,
+                    relation_extractor,
+                    neo4j_manager
+                )
+                print(f"🕸️ [语义记忆] 知识图谱已启用")
+            except Exception as e:
+                print(f"⚠️ [语义记忆] 知识图谱初始化失败: {e}")
+                self.graph_builder = None
+        
         print(f"🧠 [语义记忆] 初始化 | User: {user_id} | 容量: {capacity}")
     
     async def load_from_db(self) -> None:
@@ -169,6 +197,16 @@ class SemanticMemory(BaseMemory):
                 self.memories.append(item)
                 print(f"➕ [语义记忆] 添加新知识 | 当前数量: {len(self.memories)}/{self.capacity}")
                 
+                # 6.5 构建知识图谱（如果启用）
+                if self.graph_builder and settings.ENABLE_ENTITY_EXTRACTION:
+                    try:
+                        await self._build_knowledge_graph_for_memory(
+                            memory_id=int(item.id),
+                            content=item.content
+                        )
+                    except Exception as e:
+                        print(f"⚠️ [语义记忆] 知识图谱构建失败: {e}")
+                
                 # 7. 如果超过容量，触发巩固
                 if len(self.memories) > self.capacity:
                     await self.consolidate()
@@ -178,14 +216,22 @@ class SemanticMemory(BaseMemory):
             # 向量嵌入或数据库操作失败时，不添加到内存
     
     async def retrieve(self, query: str, top_k: int = 5,
-                      query_embedding: Optional[List[float]] = None) -> List[MemoryItem]:
+                      query_embedding: Optional[List[float]] = None,
+                      use_graph: bool = True) -> List[MemoryItem]:
         """
         检索语义记忆
         
         策略：
         1. 使用向量检索找到最相关的知识
-        2. 考虑重要性和访问频率
-        3. 更新访问统计
+        2. 如果启用，使用图检索增强结果
+        3. 考虑重要性和访问频率
+        4. 更新访问统计
+        
+        Args:
+            query: 查询文本
+            top_k: 返回结果数量
+            query_embedding: 查询向量（可选）
+            use_graph: 是否使用知识图谱检索
         """
         # 确保已加载
         await self.load_from_db()
@@ -197,7 +243,7 @@ class SemanticMemory(BaseMemory):
         if not query_embedding:
             query_embedding = await embedding_service.get_embedding(query)
         
-        # 计算相关性分数
+        # 1. 向量检索
         scored_memories = []
         for memory in self.memories:
             if memory.embedding:
@@ -207,16 +253,38 @@ class SemanticMemory(BaseMemory):
         # 按分数排序
         scored_memories.sort(key=lambda x: x[0], reverse=True)
         
-        # 返回 top_k
-        results = [m for _, m in scored_memories[:top_k]]
+        # 获取向量检索结果
+        vector_results = [m for _, m in scored_memories[:top_k]]
         
-        # 更新访问统计（批量更新数据库）
-        if results:
-            memory_ids = [m.id for m in results]
+        # 2. 图检索（如果启用）
+        graph_results = []
+        if use_graph and self.graph_builder and settings.ENABLE_KNOWLEDGE_GRAPH:
+            try:
+                graph_results = await self._retrieve_from_graph(query, top_k=top_k)
+                print(f"🕸️ [知识图谱] 检索到 {len(graph_results)} 条图谱结果")
+            except Exception as e:
+                print(f"⚠️ [知识图谱] 检索失败: {e}")
+        
+        # 3. 合并结果（去重）
+        results = vector_results.copy()
+        seen_ids = {m.id for m in vector_results if m.id}
+        
+        for graph_mem in graph_results:
+            if graph_mem.id not in seen_ids:
+                results.append(graph_mem)
+                if len(results) >= top_k:
+                    break
+        
+        # 限制返回数量
+        results = results[:top_k]
+        
+        # 4. 更新访问统计（仅更新数据库中的记忆）
+        db_memory_ids = [m.id for m in results if m.id and m.id.isdigit()]
+        if db_memory_ids:
             async with AsyncSessionLocal() as db:
                 await db.execute(
                     update(SemanticMemoryModel)
-                    .where(SemanticMemoryModel.id.in_(memory_ids))
+                    .where(SemanticMemoryModel.id.in_(db_memory_ids))
                     .values(
                         access_count=SemanticMemoryModel.access_count + 1,
                         last_accessed=func.now()
@@ -226,9 +294,10 @@ class SemanticMemory(BaseMemory):
             
             # 更新内存中的统计
             for memory in results:
-                memory.access()
+                if memory.id in db_memory_ids:
+                    memory.access()
         
-        print(f"🔍 [语义记忆] 检索到 {len(results)} 条相关知识")
+        print(f"🔍 [语义记忆] 检索到 {len(results)} 条相关知识 (向量: {len(vector_results)}, 图谱: {len(graph_results)})")
         return results
     
     async def update(self, item_id: str, updates: Dict[str, Any]) -> bool:
@@ -381,6 +450,95 @@ class SemanticMemory(BaseMemory):
                 return memory
         
         return None
+    
+    async def _build_knowledge_graph_for_memory(
+        self,
+        memory_id: int,
+        content: str
+    ) -> None:
+        """
+        为记忆构建知识图谱
+        
+        Args:
+            memory_id: 记忆 ID
+            content: 记忆内容
+        """
+        if not self.graph_builder:
+            return
+        
+        try:
+            # 使用 graph_builder 构建图谱
+            async with AsyncSessionLocal() as db:
+                result = await self.graph_builder.build_from_memory(
+                    memory_id=memory_id,
+                    content=content,
+                    db=db
+                )
+                
+                if result.success:
+                    print(f"🕸️ [知识图谱] 为记忆 {memory_id} 创建了 {len(result.entities)} 个实体和 {len(result.relations)} 个关系")
+                else:
+                    print(f"⚠️ [知识图谱] 构建失败: {result.message}")
+        except Exception as e:
+            print(f"❌ [知识图谱] 构建异常: {e}")
+    
+    async def _retrieve_from_graph(
+        self,
+        query: str,
+        top_k: int = 5
+    ) -> List[MemoryItem]:
+        """
+        从知识图谱检索相关记忆
+        
+        Args:
+            query: 查询文本
+            top_k: 返回结果数量
+            
+        Returns:
+            相关的记忆项列表
+        """
+        if not self.graph_builder:
+            return []
+        
+        try:
+            # 使用混合检索器
+            from app.services.hybrid_retriever import HybridRetriever
+            
+            neo4j_manager = self.graph_builder.neo4j_manager
+            retriever = HybridRetriever(neo4j_manager)
+            
+            # 仅使用图检索
+            async with AsyncSessionLocal() as db:
+                results, stats = await retriever.retrieve(
+                    query=query,
+                    db=db,
+                    user_id=int(self.user_id) if self.user_id.isdigit() else None,
+                    top_k=top_k,
+                    vector_weight=0.0,  # 不使用向量检索
+                    graph_weight=1.0,   # 仅使用图检索
+                    use_graph=True
+                )
+                
+                # 将 SearchResult 转换为 MemoryItem
+                memory_items = []
+                for result in results:
+                    if result.source == "graph":
+                        # 从图检索结果创建临时记忆项
+                        item = MemoryItem(
+                            content=result.content,
+                            role="system",
+                            importance=result.score,
+                            metadata={
+                                "source": "knowledge_graph",
+                                **result.metadata
+                            }
+                        )
+                        memory_items.append(item)
+                
+                return memory_items
+        except Exception as e:
+            print(f"⚠️ [知识图谱] 检索失败: {e}")
+            return []
     
     async def extract_knowledge(self, episodic_memories: List[MemoryItem]) -> None:
         """

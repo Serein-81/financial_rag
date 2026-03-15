@@ -29,6 +29,12 @@ class DocumentChunk(Base):
     # ✅ 重点修改：使用标准数组类型 ARRAY(Float)
     # 这对应数据库里的 FLOAT8[]
     embedding = Column(ARRAY(Float), nullable=True)
+    
+    # 新增字段：支持智能切块元数据
+    heading_path = Column(String, nullable=True)  # 标题路径(如: "第一章 > 1.1节")
+    chunk_start = Column(Integer, nullable=True)  # 在原文中的起始位置
+    chunk_end = Column(Integer, nullable=True)    # 在原文中的结束位置
+    token_count = Column(Integer, nullable=True)  # Token 数量
 
     created_at = Column(DateTime(timezone=True), default=func.now(),server_default=func.now())
 

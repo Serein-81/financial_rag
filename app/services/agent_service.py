@@ -20,6 +20,9 @@ from app.tools import get_all_tools
 # 导入提示词加载器
 from app.utils.prompt_loader import load_agent_system_prompt
 
+# 🆕 导入智能路由和统一检索
+from app.services.unified_retriever import unified_retriever
+
 
 class EnterpriseAgentService:
     """
@@ -145,15 +148,47 @@ class EnterpriseAgentService:
     
     async def _chat_custom(self, user_input: str, kb_id: str, session_id: str, history: list) -> str:
         """
-        自定义框架的非流式对话
+        自定义框架的非流式对话（集成智能路由）
         """
         print(f"🎯 [自定义框架] 开始处理: {user_input[:50]}...")
         
-        # 构建增强的用户输入（包含知识库ID指令）
-        enhanced_input = (
-            f"用户问题：{user_input}\n"
-            f"【系统指令】：如需调用 search_enterprise_knowledge 工具，请务必传入知识库ID：{kb_id}"
-        )
+        # 🆕 使用统一检索器（自动智能路由）
+        try:
+            # 从 session_id 提取 user_id（假设格式为 "session_xxx"）
+            # 实际项目中应该从数据库或上下文获取
+            user_id = session_id if session_id else "default_user"
+            
+            # 调用统一检索器
+            retrieval_result = await unified_retriever.retrieve(
+                query=user_input,
+                kb_id=kb_id,
+                session_id=session_id or "default_session",
+                user_id=user_id,
+                top_k=5,
+                enable_routing=True  # 启用智能路由
+            )
+            
+            # 获取合并后的上下文
+            context = retrieval_result["combined_context"]
+            route_mode = retrieval_result["mode"]
+            
+            print(f"📊 [检索模式] {route_mode}")
+            
+        except Exception as e:
+            print(f"⚠️ [统一检索] 失败，使用默认模式: {e}")
+            context = ""
+            route_mode = "FALLBACK"
+        
+        # 构建增强的用户输入（包含上下文和知识库ID指令）
+        enhanced_input = f"""用户问题：{user_input}
+
+【检索上下文】
+{context}
+
+【系统指令】：
+1. 如需调用 search_enterprise_knowledge 工具，请务必传入知识库ID：{kb_id}
+2. 当前检索模式：{route_mode}
+3. 请优先使用上述检索上下文回答问题"""
         
         # 转换历史记录格式
         formatted_history = self._format_history_for_custom(history)

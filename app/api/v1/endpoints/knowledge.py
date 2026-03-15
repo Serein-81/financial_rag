@@ -1,6 +1,5 @@
 # app/api/v1/endpoints/knowledge.py
 
-import hashlib
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
@@ -18,24 +17,13 @@ from app.services.file_service import file_service
 from app.services.chunk_service import chunk_service
 from app.services.embedding_service import embedding_service
 from app.services.minio_service import minio_service
+from app.services.structured_document_service import structured_document_service
 
+# 引入公共工具函数
+from app.utils.file_utils import calculate_md5
 
 
 router = APIRouter()
-
-
-# ==========================================
-# 🛠️ 辅助函数：计算文件 MD5
-# ==========================================
-def calculate_md5(file_obj) -> str:
-    """计算文件的 MD5 哈希值，用于查重"""
-    md5 = hashlib.md5()
-    # 分块读取，防止大文件撑爆内存
-    for chunk in iter(lambda: file_obj.read(4096), b""):
-        md5.update(chunk)
-    # 关键：计算完必须把指针移回开头，否则后续无法保存文件
-    file_obj.seek(0)
-    return md5.hexdigest()
 
 
 # ==========================================
@@ -56,32 +44,57 @@ async def process_document_task(doc_id: UUID):
 
             print(f"📄 正在解析文件内容: {doc.filename}")
             try:
-                content = file_service.extract_text(doc.file_path, doc.file_type)
+                # 🌟 使用结构化文档服务解析
+                file_bytes = minio_service.download_document(doc.file_path)
+                structured_doc = await structured_document_service.parse_document(
+                    file_bytes, doc.filename, doc.file_type
+                )
+                
+                # 获取文档统计信息
+                doc_stats = structured_document_service.get_document_statistics(structured_doc)
+                print(f"📊 文档统计: {doc_stats}")
+                
             except Exception as e:
-                raise Exception(f"文件解析失败: {str(e)}")
+                raise Exception(f"结构化文档解析失败: {str(e)}")
 
-            if not content:
-                raise Exception("文件内容为空或无法提取")
+            print(f"✂️ 正在进行智能切分...")
+            
+            # 🌟 使用结构化切块
+            chunk_results = await structured_document_service.chunk_structured_document(
+                structured_doc,
+                chunk_tokens=500,
+                overlap_tokens=50
+            )
 
-            print(f"✂️ 正在进行语义切分...")
-            final_chunks = chunk_service.split_text(content)
-
-            if not final_chunks:
+            if not chunk_results:
                 raise Exception("文本切分后为空")
 
-            print(f"🧩 文档被切分为 {len(final_chunks)} 个片段，开始向量化...")
+            print(f"🧩 文档被切分为 {len(chunk_results)} 个片段，开始向量化...")
             success_count = 0
             first_error_msg = None
 
-            for idx, chunk_text in enumerate(final_chunks):
-                vector = await embedding_service.get_embedding(chunk_text)
+            for idx, chunk_result in enumerate(chunk_results):
+                vector = await embedding_service.get_embedding(chunk_result.content)
                 if vector:
+                    # 构建元数据
+                    meta_info = {
+                        "chunk_index": idx, 
+                        "source": doc.filename
+                    }
+                    if chunk_result.metadata:
+                        meta_info.update(chunk_result.metadata)
+                    
                     new_chunk = DocumentChunk(
                         document_id=doc.id,
-                        content=chunk_text,
+                        content=chunk_result.content,
                         embedding=vector,
                         chunk_index=idx,
-                        meta_info={"chunk_index": idx, "source": doc.filename}
+                        meta_info=meta_info,
+                        # 🌟 保存新的元数据字段
+                        heading_path=chunk_result.heading_path,
+                        chunk_start=chunk_result.start,
+                        chunk_end=chunk_result.end,
+                        token_count=chunk_result.tokens
                     )
                     db.add(new_chunk)
                     success_count += 1
@@ -92,11 +105,11 @@ async def process_document_task(doc_id: UUID):
             if success_count == 0:
                 doc.status = "failed"
                 doc.error_msg = first_error_msg or "所有切片向量化均失败"
-                print(f"❌ [后台任务] 失败：0/{len(final_chunks)} 成功。")
-            elif success_count < len(final_chunks):
+                print(f"❌ [后台任务] 失败：0/{len(chunk_results)} 成功。")
+            elif success_count < len(chunk_results):
                 doc.status = "completed"
-                doc.error_msg = f"部分成功: {success_count}/{len(final_chunks)}"
-                print(f"⚠️ [后台任务] 部分成功：{success_count}/{len(final_chunks)}")
+                doc.error_msg = f"部分成功: {success_count}/{len(chunk_results)}"
+                print(f"⚠️ [后台任务] 部分成功：{success_count}/{len(chunk_results)}")
             else:
                 doc.status = "completed"
                 doc.error_msg = None
@@ -192,16 +205,13 @@ async def upload_document_to_kb(
 ):
     """上传文件到指定知识库，并触发后台解析"""
 
-    # --- 1. 安全检查：验证文件类型 ---
-    ALLOWED_TYPES = [
-        "application/pdf",
-        "text/plain",
-        "application/msword",
-        "image/png",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    ]
-    if file.content_type not in ALLOWED_TYPES:
-        raise HTTPException(status_code=400, detail="不支持的文件类型")
+    # --- 1. 安全检查：验证文件类型（使用工厂模式动态获取支持的类型）---
+    if not file_service.is_supported_type(file.content_type):
+        supported_types = file_service.get_supported_types()
+        raise HTTPException(
+            status_code=400, 
+            detail=f"不支持的文件类型: {file.content_type}。支持的类型: {', '.join(supported_types)}"
+        )
 
     # --- 2. 查重逻辑：计算 MD5 ---
     file_hash = calculate_md5(file.file)

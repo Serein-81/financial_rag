@@ -6,6 +6,7 @@ OCR 文档识别服务
 
 from typing import List, Dict, Any, Optional
 import os
+import io
 from pathlib import Path
 
 
@@ -69,20 +70,55 @@ class OCRService:
         doc.close()
         return pages
     
-    async def extract_text_from_image(self, image_path: str) -> str:
-        """从图片提取文本"""
+    async def extract_text_from_image_bytes(self, image_bytes: bytes) -> str:
+        """
+        从图片字节流提取文本（异步方法）
+        
+        Args:
+            image_bytes: 图片文件的字节数据
+            
+        Returns:
+            str: 识别出的文本内容
+        """
         try:
             from PIL import Image
             import pytesseract
+            import asyncio
         except ImportError:
             raise ImportError("请安装: pip install pillow pytesseract")
         
-        # 打开图片
-        image = Image.open(image_path)
+        # OCR是CPU密集型操作，放到线程池执行避免阻塞事件循环
+        def _ocr_sync():
+            image = Image.open(io.BytesIO(image_bytes))
+            return pytesseract.image_to_string(image, lang='chi_sim+eng')
         
-        # OCR 识别（支持中英文）
-        text = pytesseract.image_to_string(image, lang='chi_sim+eng')
+        # 在线程池中异步执行OCR
+        text = await asyncio.to_thread(_ocr_sync)
+        return text
+    
+    async def extract_text_from_image(self, image_path: str) -> str:
+        """
+        从图片文件提取文本（异步方法）
         
+        Args:
+            image_path: 图片文件路径
+            
+        Returns:
+            str: 识别出的文本内容
+        """
+        try:
+            from PIL import Image
+            import pytesseract
+            import asyncio
+        except ImportError:
+            raise ImportError("请安装: pip install pillow pytesseract")
+        
+        # OCR是CPU密集型操作，放到线程池执行
+        def _ocr_sync():
+            image = Image.open(image_path)
+            return pytesseract.image_to_string(image, lang='chi_sim+eng')
+        
+        text = await asyncio.to_thread(_ocr_sync)
         return text
     
     async def _ocr_image_bytes(self, image_bytes: bytes) -> str:

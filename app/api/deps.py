@@ -4,6 +4,7 @@ from fastapi import Depends, HTTPException, status
 # 👇 关键修改 1：引入 HTTPBearer 和 HTTPAuthorizationCredentials
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from pydantic import ValidationError
 from uuid import UUID
@@ -77,3 +78,16 @@ async def get_current_user(token_creds: HTTPAuthorizationCredentials = Depends(s
             raise HTTPException(status_code=400, detail="用户账号已停用")
 
         return user
+
+
+async def get_db() -> AsyncSession:
+    """
+    数据库会话依赖
+    
+    用于 FastAPI 的依赖注入，自动管理数据库会话的生命周期
+    """
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+        finally:
+            await session.close()
