@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 import uuid
 
+from app.db.session import AsyncSessionLocal
 from app.api import deps
 from app.models.user import User
 from app.schemas.audit import (
@@ -61,16 +62,16 @@ async def create_audit_task(
             documents=documents
         )
         
-        db.add(db_task)
-        await db.commit()
-        await db.refresh(db_task)
+        db_session.add(db_task)
+        await db_session.commit()
+        await db_session.refresh(db_task)
         
         # 在后台执行审查任务
         background_tasks.add_task(
             execute_audit_task,
             task_id,
-            tenant_id,
-            user_id,
+            tenant_context['tenant_id'],
+            str(current_user.id),
             task_data.audit_type.value,
             documents
         )
@@ -94,8 +95,8 @@ async def create_audit_task(
 @router.get("/tasks/{task_id}", response_model=AuditTaskResponse)
 async def get_audit_task(
     task_id: str,
-    db: AsyncSession = Depends(get_db),
-    tenant_id: str = Depends(get_current_tenant_id)
+    db: AsyncSession = Depends(deps.get_db),
+    tenant_id: str = Depends(deps.get_current_tenant)
 ):
     """
     获取审查任务信息
@@ -132,8 +133,8 @@ async def get_audit_task(
 @router.get("/tasks/{task_id}/results", response_model=AuditResultResponse)
 async def get_audit_results(
     task_id: str,
-    db: AsyncSession = Depends(get_db),
-    tenant_id: str = Depends(get_current_tenant_id)
+    db: AsyncSession = Depends(deps.get_db),
+    tenant_id: str = Depends(deps.get_current_tenant)
 ):
     """
     获取审查结果
@@ -195,8 +196,8 @@ async def get_audit_results(
 @router.get("/tasks/{task_id}/collaborations", response_model=List[AgentCollaborationResponse])
 async def get_agent_collaborations(
     task_id: str,
-    db: AsyncSession = Depends(get_db),
-    tenant_id: str = Depends(get_current_tenant_id)
+    db: AsyncSession = Depends(deps.get_db),
+    tenant_id: str = Depends(deps.get_current_tenant)
 ):
     """
     获取 Agent 协作记录
@@ -245,7 +246,7 @@ async def get_agent_collaborations(
 @router.post("/tasks/decompose", response_model=TaskDecompositionResponse)
 async def decompose_task(
     task_data: AuditTaskCreate,
-    tenant_id: str = Depends(get_current_tenant_id)
+    tenant_id: str = Depends(deps.get_current_tenant)
 ):
     """
     任务分解预览
@@ -274,9 +275,9 @@ async def list_audit_tasks(
     limit: int = 20,
     status: str = None,
     audit_type: str = None,
-    db: AsyncSession = Depends(get_db),
-    tenant_id: str = Depends(get_current_tenant_id),
-    user_id: str = Depends(get_current_user_id)
+    db: AsyncSession = Depends(deps.get_db),
+    tenant_id: str = Depends(deps.get_current_tenant),
+    user_id: str = Depends(deps.get_current_user_id_from_context)
 ):
     """
     获取审查任务列表

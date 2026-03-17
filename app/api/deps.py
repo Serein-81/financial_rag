@@ -288,3 +288,33 @@ def require_active_user(
             detail="User account is not active"
         )
     return current_user
+
+
+# 为了向后兼容，提供别名
+get_current_user = get_current_user_from_token
+
+
+def get_tenant_context() -> dict:
+    """
+    获取租户上下文信息
+    
+    Returns:
+        dict: 租户上下文字典
+    """
+    tenant_id = get_current_tenant_id()
+    user_id = get_current_user_id()
+    
+    return {
+        "tenant_id": tenant_id,
+        "user_id": user_id
+    }
+
+
+def get_tenant_db():
+    """
+    获取租户数据库会话（别名）
+    
+    Returns:
+        AsyncSession: 数据库会话
+    """
+    return get_db_with_tenant_context

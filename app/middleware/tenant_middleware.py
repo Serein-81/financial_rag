@@ -46,7 +46,10 @@ class TenantContextMiddleware(BaseHTTPMiddleware):
     
     async def dispatch(self, request: Request, call_next):
         """处理请求"""
-        
+
+        if request.url.path in ["/", "/docs", "/redoc", "/openapi.json", "/health"]:
+            return await call_next(request)
+
         # 检查是否是排除路径
         if any(request.url.path.startswith(path) for path in self.EXCLUDED_PATHS):
             return await call_next(request)
