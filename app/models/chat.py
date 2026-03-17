@@ -34,7 +34,7 @@ class ChatMessage(Base):
     sources = Column(JSON, nullable=True)
 
     # 🆕 情景记忆增强字段
-    embedding = Column(Vector(1536), nullable=True)  # 向量嵌入（1536维）
+    embedding = Column(Vector(2048), nullable=True)  # 向量嵌入（2048维）
     importance = Column(Float, default=0.5)  # 重要性评分（0.0-1.0）
     access_count = Column(Integer, default=0)  # 访问次数
     last_accessed = Column(DateTime(timezone=True), default=func.now())  # 最后访问时间

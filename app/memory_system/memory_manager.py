@@ -337,62 +337,71 @@ class MemoryManager:
         return results
     
     async def get_formatted_context(self, query: str, 
-                                   max_tokens: int = 2000) -> str:
+                                   max_tokens: int = 2000,
+                                   knowledge_context: str = "",
+                                   system_instructions: str = "") -> str:
         """
-        获取格式化的上下文
-        
-        用于传递给 LLM，包含：
-        1. 当前对话（工作记忆）
-        2. 相关历史（情景记忆）
-        3. 相关知识（语义记忆）
+        获取格式化的上下文 (使用增强版上下文构建器)
         
         Args:
             query: 查询内容
-            max_tokens: 最大 token 数（粗略估算）
+            max_tokens: 最大token数
+            knowledge_context: 知识库上下文
+            system_instructions: 系统指令
             
         Returns:
-            格式化的上下文字符串
+            结构化的上下文字符串
         """
-        # 检索记忆
-        memories = await self.retrieve_context(query)
-        
-        context_parts = []
-        current_length = 0
-        
-        # 1. 工作记忆（优先级最高，完整保留）
-        if memories["working"]:
-            working_context = "【当前对话】\n"
-            for m in memories["working"]:
-                working_context += f"{m.role}: {m.content}\n"
+        try:
+            # 使用增强版上下文构建器
+            from .context_builder import EnhancedContextBuilder, ContextConfig
             
-            context_parts.append(working_context)
-            current_length += len(working_context)
-        
-        # 2. 语义记忆（相关知识）
-        if memories["semantic"] and current_length < max_tokens:
-            semantic_context = "\n【相关知识】\n"
-            for m in memories["semantic"][:3]:  # 最多 3 条
-                if current_length + len(m.content) > max_tokens:
-                    break
-                semantic_context += f"- {m.content}\n"
-                current_length += len(m.content)
+            config = ContextConfig(max_tokens=max_tokens)
+            builder = EnhancedContextBuilder(config)
             
-            if len(semantic_context) > len("\n【相关知识】\n"):
-                context_parts.append(semantic_context)
-        
-        # 3. 情景记忆（历史对话）
-        if memories["episodic"] and current_length < max_tokens:
-            episodic_context = "\n【相关历史】\n"
-            for m in memories["episodic"][:2]:  # 最多 2 条
-                if current_length + len(m.content) > max_tokens:
-                    break
-                episodic_context += f"{m.role}: {m.content[:100]}...\n"
-                current_length += len(m.content)
+            return await builder.build_context(
+                user_query=query,
+                memory_manager=self,
+                knowledge_context=knowledge_context,
+                system_instructions=system_instructions,
+                max_tokens=max_tokens
+            )
             
-            if len(episodic_context) > len("\n【相关历史】\n"):
-                context_parts.append(episodic_context)
-        
-        return "\n".join(context_parts)
+        except Exception as e:
+            print(f"⚠️ [记忆管理器] 上下文构建失败，使用备用方案: {e}")
+            
+            # 备用方案：使用原有逻辑
+            memories = await self.retrieve_context(query)
+            
+            context_parts = []
+            current_length = 0
+            
+            # 工作记忆
+            if memories["working"]:
+                working_context = "【当前对话】\n"
+                for m in memories["working"]:
+                    working_context += f"{m.role}: {m.content}\n"
+                context_parts.append(working_context)
+                current_length += len(working_context)
+            
+            # 知识库上下文
+            if knowledge_context and current_length < max_tokens:
+                context_parts.append(f"\n【知识库】\n{knowledge_context}")
+                current_length += len(knowledge_context)
+            
+            # 语义记忆
+            if memories["semantic"] and current_length < max_tokens:
+                semantic_context = "\n【相关知识】\n"
+                for m in memories["semantic"][:3]:
+                    if current_length + len(m.content) > max_tokens:
+                        break
+                    semantic_context += f"- {m.content}\n"
+                    current_length += len(m.content)
+                
+                if len(semantic_context) > len("\n【相关知识】\n"):
+                    context_parts.append(semantic_context)
+            
+            return "\n".join(context_parts)
     
     async def consolidate_memories(self) -> None:
         """

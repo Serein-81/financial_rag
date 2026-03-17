@@ -1,5 +1,5 @@
 # app/models/semantic_memory.py
-from sqlalchemy import Column, String, Text, ForeignKey, DateTime, func, JSON, Float, Integer
+from sqlalchemy import Column, String, Text, ForeignKey, DateTime, func, JSON, Float, Integer, ARRAY
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from pgvector.sqlalchemy import Vector
@@ -18,8 +18,8 @@ class SemanticMemory(Base):
     content = Column(Text, nullable=False)
     role = Column(String, default="system")  # system, user, assistant
     
-    # 向量嵌入（1536维，适配OpenAI/智谱等模型）
-    embedding = Column(Vector(1536), nullable=True)
+    # 向量嵌入（2048维，适配智谱AI等模型）
+    embedding = Column(Vector(2048), nullable=True)
     
     # 记忆属性
     importance = Column(Float, default=0.5)  # 重要性 0.0-1.0
@@ -28,7 +28,7 @@ class SemanticMemory(Base):
     
     # 分类和标签
     memory_type = Column(String, default="knowledge")  # knowledge, preference, skill, fact
-    tags = Column(JSON, nullable=True)  # 标签数组
+    tags = Column(ARRAY(String), nullable=True)  # 标签数组（使用 ARRAY 类型）
     
     # 元数据
     memory_metadata = Column(JSON, nullable=True)  # 扩展信息

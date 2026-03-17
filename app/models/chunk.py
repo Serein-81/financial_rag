@@ -35,6 +35,9 @@ class DocumentChunk(Base):
     chunk_start = Column(Integer, nullable=True)  # 在原文中的起始位置
     chunk_end = Column(Integer, nullable=True)    # 在原文中的结束位置
     token_count = Column(Integer, nullable=True)  # Token 数量
+    
+    # 租户隔离字段
+    tenant_id = Column(String(50), nullable=True)  # 租户ID，用于多租户隔离
 
     created_at = Column(DateTime(timezone=True), default=func.now(),server_default=func.now())
 

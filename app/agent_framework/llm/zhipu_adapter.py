@@ -169,3 +169,57 @@ class ZhipuAdapter(BaseLLMAdapter):
             error_msg = f"智谱 AI 流式调用失败: {str(e)}"
             print(f"❌ [智谱AI] {error_msg}")
             yield f"[错误: {error_msg}]"
+    
+    async def chat(
+        self,
+        messages: list,
+        temperature: float = 0.1,
+        max_tokens: Optional[int] = None,
+        **kwargs
+    ) -> str:
+        """
+        对话接口（兼容多轮对话格式）
+        
+        Args:
+            messages: 消息列表，格式 [{"role": "user", "content": "..."}]
+            temperature: 温度参数
+            max_tokens: 最大 token 数
+            **kwargs: 其他参数
+            
+        Returns:
+            生成的文本
+        """
+        try:
+            # 准备请求参数
+            request_params = {
+                "model": self.model_name,
+                "messages": messages,
+                "temperature": temperature,
+                "stream": False
+            }
+            
+            # 添加可选参数
+            if max_tokens:
+                request_params["max_tokens"] = max_tokens
+            
+            # 合并其他参数
+            request_params.update(kwargs)
+            
+            print(f"💬 [智谱AI] 对话调用: {self.model_name}")
+            print(f"    消息数量: {len(messages)}")
+            print(f"    温度: {temperature}")
+            
+            # 调用 API
+            response = self.client.chat.completions.create(**request_params)
+            
+            # 提取结果
+            result = response.choices[0].message.content
+            
+            print(f"✅ [智谱AI] 对话完成，长度: {len(result)} 字符")
+            
+            return result
+            
+        except Exception as e:
+            error_msg = f"智谱 AI 对话调用失败: {str(e)}"
+            print(f"❌ [智谱AI] {error_msg}")
+            raise Exception(error_msg)

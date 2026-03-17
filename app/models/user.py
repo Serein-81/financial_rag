@@ -14,9 +14,13 @@ class User(Base):
     phone = Column(String(20), unique=True, index=True, nullable=False)  # 手机号（必填）
     hashed_password = Column(String, nullable=False)
     
+    # 多租户字段
+    tenant_id = Column(String(50), nullable=False, index=True)  # 租户ID，用于多租户隔离
+    
     # 用户信息
     full_name = Column(String(100), nullable=True)  # 真实姓名（可后续补充）
     nickname = Column(String(50), nullable=True)  # 昵称
+    username = Column(String(50), nullable=True)  # 用户名（为了向后兼容）
     avatar_url = Column(String, nullable=True)
     bio = Column(Text, nullable=True)  # 个人简介
     

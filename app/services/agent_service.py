@@ -4,6 +4,7 @@
 企业级 Agent 服务 - 自定义框架版本
 
 使用自定义 Agent 框架替代 LangChain，提供更好的可控性和学习价值
+集成企业记忆系统，支持长期对话记忆和上下文管理
 """
 
 import os
@@ -23,6 +24,9 @@ from app.utils.prompt_loader import load_agent_system_prompt
 # 🆕 导入智能路由和统一检索
 from app.services.unified_retriever import unified_retriever
 
+# 🧠 导入企业记忆系统
+from app.memory_system import MemoryManager
+
 
 class EnterpriseAgentService:
     """
@@ -33,6 +37,7 @@ class EnterpriseAgentService:
     - 工具调用
     - 流式输出
     - LangChain 工具兼容
+    - 🧠 企业记忆系统集成
     """
     
     def __init__(self, use_custom_framework: bool = True):
@@ -43,6 +48,9 @@ class EnterpriseAgentService:
             use_custom_framework: 是否使用自定义框架（True）还是 LangChain（False）
         """
         self.use_custom_framework = use_custom_framework
+        
+        # 🧠 初始化记忆管理器字典 (session_id -> MemoryManager)
+        self.memory_managers: Dict[str, MemoryManager] = {}
         
         print("=" * 60)
         print("🧠 企业级 Agent 服务初始化")
@@ -93,6 +101,23 @@ class EnterpriseAgentService:
             tool_info = self.tool_manager.tools[tool_name]
             print(f"   {i}. {tool_name}: {tool_info['description'][:50]}...")
     
+    def _get_memory_manager(self, session_id: str, user_id: str) -> MemoryManager:
+        """
+        获取或创建记忆管理器
+        
+        Args:
+            session_id: 会话ID
+            user_id: 用户ID
+            
+        Returns:
+            记忆管理器实例
+        """
+        if session_id not in self.memory_managers:
+            print(f"🧠 创建新的记忆管理器: session={session_id[:8]}..., user={user_id}")
+            self.memory_managers[session_id] = MemoryManager(session_id, user_id)
+        
+        return self.memory_managers[session_id]
+    
     def _init_langchain_framework(self):
         """
         初始化 LangChain 框架（备用方案）
@@ -108,90 +133,105 @@ class EnterpriseAgentService:
         self.llm = langchain_service.llm
         self.tools = langchain_service.tools
     
-    async def chat(self, user_input: str, kb_id: str, session_id: str = None, history: list = None) -> str:
+    async def chat(self, user_input: str, kb_id: str, session_id: str = None, history: list = None, user_id: str = None) -> str:
         """
-        非流式对话
+        非流式对话（集成记忆系统）
         
         Args:
             user_input: 用户输入
             kb_id: 知识库ID
             session_id: 会话ID
-            history: 对话历史
+            history: 对话历史（已废弃，使用记忆系统替代）
+            user_id: 用户ID
             
         Returns:
             Agent 回答
         """
         if self.use_custom_framework:
-            return await self._chat_custom(user_input, kb_id, session_id, history)
+            return await self._chat_custom(user_input, kb_id, session_id, history, user_id)
         else:
-            return await self._chat_langchain(user_input, kb_id, session_id, history)
+            return await self._chat_langchain(user_input, kb_id, session_id, history, user_id)
     
-    async def chat_stream(self, user_input: str, kb_id: str, session_id: str, history: list) -> AsyncGenerator[str, None]:
+    async def chat_stream(self, user_input: str, kb_id: str, session_id: str, history: list, user_id: str = None) -> AsyncGenerator[str, None]:
         """
-        流式对话
+        流式对话（集成记忆系统）
         
         Args:
             user_input: 用户输入
             kb_id: 知识库ID
             session_id: 会话ID
-            history: 对话历史
+            history: 对话历史（已废弃，使用记忆系统替代）
+            user_id: 用户ID
             
         Yields:
             逐步生成的内容
         """
         if self.use_custom_framework:
-            async for chunk in self._chat_stream_custom(user_input, kb_id, session_id, history):
+            async for chunk in self._chat_stream_custom(user_input, kb_id, session_id, history, user_id):
                 yield chunk
         else:
-            async for chunk in self._chat_stream_langchain(user_input, kb_id, session_id, history):
+            async for chunk in self._chat_stream_langchain(user_input, kb_id, session_id, history, user_id):
                 yield chunk
     
-    async def _chat_custom(self, user_input: str, kb_id: str, session_id: str, history: list) -> str:
+    async def _chat_custom(self, user_input: str, kb_id: str, session_id: str, history: list, user_id: str) -> str:
         """
-        自定义框架的非流式对话（集成智能路由）
+        自定义框架的非流式对话（集成智能路由和记忆系统）
         """
         print(f"🎯 [自定义框架] 开始处理: {user_input[:50]}...")
         
+        # 🧠 获取记忆管理器
+        if session_id and user_id:
+            memory_manager = self._get_memory_manager(session_id, user_id)
+            
+            # 添加用户消息到记忆系统
+            await memory_manager.add_message("user", user_input)
+            
+            # 从记忆系统获取增强的上下文（使用新的上下文构建器）
+            memory_context = await memory_manager.get_formatted_context(
+                query=user_input,
+                max_tokens=1500,  # 控制上下文长度
+                knowledge_context=kb_context,
+                system_instructions=f"当前检索模式：{route_mode}。如需调用search_enterprise_knowledge工具，请传入知识库ID：{kb_id}"
+            )
+            
+            print(f"🧠 [记忆系统] 获取增强上下文: {len(memory_context)} 字符")
+        else:
+            memory_manager = None
+            memory_context = ""
+            print("⚠️ [记忆系统] 缺少session_id或user_id，跳过记忆系统")
+        
         # 🆕 使用统一检索器（自动智能路由）
         try:
-            # 从 session_id 提取 user_id（假设格式为 "session_xxx"）
-            # 实际项目中应该从数据库或上下文获取
-            user_id = session_id if session_id else "default_user"
-            
             # 调用统一检索器
             retrieval_result = await unified_retriever.retrieve(
                 query=user_input,
                 kb_id=kb_id,
                 session_id=session_id or "default_session",
-                user_id=user_id,
+                user_id=user_id or "default_user",
                 top_k=5,
                 enable_routing=True  # 启用智能路由
             )
             
             # 获取合并后的上下文
-            context = retrieval_result["combined_context"]
+            kb_context = retrieval_result["combined_context"]
             route_mode = retrieval_result["mode"]
             
             print(f"📊 [检索模式] {route_mode}")
             
         except Exception as e:
             print(f"⚠️ [统一检索] 失败，使用默认模式: {e}")
-            context = ""
+            kb_context = ""
             route_mode = "FALLBACK"
         
-        # 构建增强的用户输入（包含上下文和知识库ID指令）
+        # 构建增强的用户输入（简化版，主要逻辑已在上下文构建器中）
         enhanced_input = f"""用户问题：{user_input}
 
-【检索上下文】
-{context}
+{memory_context}
 
-【系统指令】：
-1. 如需调用 search_enterprise_knowledge 工具，请务必传入知识库ID：{kb_id}
-2. 当前检索模式：{route_mode}
-3. 请优先使用上述检索上下文回答问题"""
+请基于以上上下文信息回答用户问题。"""
         
-        # 转换历史记录格式
-        formatted_history = self._format_history_for_custom(history)
+        # 不再使用手动历史记录，改用记忆系统的上下文
+        formatted_history = []
         
         try:
             # 调用自定义 Agent
@@ -201,6 +241,11 @@ class EnterpriseAgentService:
                 kb_id=kb_id
             )
             
+            # 🧠 将AI回答添加到记忆系统
+            if memory_manager:
+                await memory_manager.add_message("assistant", result)
+                print(f"🧠 [记忆系统] 已保存AI回答")
+            
             print(f"✅ [自定义框架] 处理完成，回答长度: {len(result)}")
             return result
             
@@ -208,20 +253,47 @@ class EnterpriseAgentService:
             print(f"❌ [自定义框架] 处理失败: {str(e)}")
             return f"抱歉，处理过程中出现错误：{str(e)}"
     
-    async def _chat_stream_custom(self, user_input: str, kb_id: str, session_id: str, history: list) -> AsyncGenerator[str, None]:
+    async def _chat_stream_custom(self, user_input: str, kb_id: str, session_id: str, history: list, user_id: str) -> AsyncGenerator[str, None]:
         """
-        自定义框架的流式对话
+        自定义框架的流式对话（集成记忆系统）
         """
         print(f"🌊 [自定义框架] 开始流式处理: {user_input[:50]}...")
         
-        # 构建增强的用户输入
-        enhanced_input = (
-            f"用户问题：{user_input}\n"
-            f"【系统指令】：如需调用 search_enterprise_knowledge 工具，请务必传入知识库ID：{kb_id}"
-        )
+        # 🧠 获取记忆管理器
+        if session_id and user_id:
+            memory_manager = self._get_memory_manager(session_id, user_id)
+            
+            # 添加用户消息到记忆系统
+            await memory_manager.add_message("user", user_input)
+            
+            # 从记忆系统获取上下文
+            memory_context = await memory_manager.get_formatted_context(
+                query=user_input,
+                max_tokens=1500
+            )
+            
+            print(f"🧠 [记忆系统] 获取上下文: {len(memory_context)} 字符")
+        else:
+            memory_manager = None
+            memory_context = ""
+            print("⚠️ [记忆系统] 缺少session_id或user_id，跳过记忆系统")
         
-        # 转换历史记录格式
-        formatted_history = self._format_history_for_custom(history)
+        # 构建增强的用户输入
+        enhanced_input = f"""用户问题：{user_input}
+
+【记忆上下文】
+{memory_context}
+
+【系统指令】：
+1. 如需调用 search_enterprise_knowledge 工具，请务必传入知识库ID：{kb_id}
+2. 请优先使用上述记忆上下文回答问题
+3. 记忆上下文包含了用户的历史对话和重要信息，请充分利用"""
+        
+        # 不再使用手动历史记录
+        formatted_history = []
+        
+        # 用于收集完整回答
+        full_response = ""
         
         try:
             # 调用自定义 Agent 的流式方法
@@ -230,7 +302,13 @@ class EnterpriseAgentService:
                 history=formatted_history,
                 kb_id=kb_id
             ):
+                full_response += chunk
                 yield chunk
+            
+            # 🧠 将完整的AI回答添加到记忆系统
+            if memory_manager and full_response:
+                await memory_manager.add_message("assistant", full_response)
+                print(f"🧠 [记忆系统] 已保存AI回答")
             
             print(f"✅ [自定义框架] 流式处理完成")
             
@@ -238,7 +316,7 @@ class EnterpriseAgentService:
             print(f"❌ [自定义框架] 流式处理失败: {str(e)}")
             yield f"\n[处理错误: {str(e)}]"
     
-    async def _chat_langchain(self, user_input: str, kb_id: str, session_id: str, history: list) -> str:
+    async def _chat_langchain(self, user_input: str, kb_id: str, session_id: str, history: list, user_id: str) -> str:
         """
         LangChain 框架的非流式对话（备用）
         """
@@ -248,7 +326,7 @@ class EnterpriseAgentService:
         # 这里需要根据原有实现调整
         pass
     
-    async def _chat_stream_langchain(self, user_input: str, kb_id: str, session_id: str, history: list) -> AsyncGenerator[str, None]:
+    async def _chat_stream_langchain(self, user_input: str, kb_id: str, session_id: str, history: list, user_id: str) -> AsyncGenerator[str, None]:
         """
         LangChain 框架的流式对话（备用）
         """
@@ -307,7 +385,9 @@ class EnterpriseAgentService:
                 "llm_model": self.llm_adapter.model_name,
                 "tools_count": len(self.tool_manager.tools),
                 "max_iterations": self.agent.max_iterations,
-                "timeout": self.agent.timeout
+                "timeout": self.agent.timeout,
+                "memory_sessions": len(self.memory_managers),
+                "memory_enabled": True
             }
         else:
             return {
@@ -315,6 +395,8 @@ class EnterpriseAgentService:
                 "agent_type": "LangChain Agent",
                 "llm_model": "glm-4-flash",
                 "tools_count": len(getattr(self, 'tools', [])),
+                "memory_sessions": len(self.memory_managers),
+                "memory_enabled": True
             }
 
 

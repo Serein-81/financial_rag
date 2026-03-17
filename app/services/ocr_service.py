@@ -145,6 +145,7 @@ class OCRService:
             {
                 "file_name": "...",
                 "file_type": "pdf/image",
+                "doc_category": "invoice/contract/bank_statement/...",  # 新增
                 "total_pages": 10,
                 "content": "完整文本",
                 "pages": [...]
@@ -159,6 +160,7 @@ class OCRService:
         result = {
             "file_name": file_path.name,
             "file_type": "",
+            "doc_category": "unknown",  # 新增
             "total_pages": 0,
             "content": "",
             "pages": []
@@ -190,7 +192,60 @@ class OCRService:
             result["total_pages"] = 1
             result["pages"] = [{"page": 1, "text": text}]
         
+        # 🎯 新增: 文档分类
+        if result["content"]:
+            result["doc_category"] = self._classify_ocr_document(result["content"])
+        
         return result
+    
+    def _classify_ocr_document(self, text: str) -> str:
+        """
+        分类OCR识别的文档类型
+        
+        Args:
+            text: OCR识别的文本内容
+            
+        Returns:
+            str: 文档类型 (invoice/contract/bank_statement/id_card/business_license/unknown)
+        """
+        text_lower = text.lower()
+        
+        # 发票识别
+        invoice_keywords = ['发票', '税号', '增值税', '纳税人识别号', '价税合计', '开票日期']
+        if any(keyword in text for keyword in invoice_keywords):
+            return 'invoice'
+        
+        # 合同识别
+        contract_keywords = ['合同', '甲方', '乙方', '协议', '签订日期', '违约责任', '争议解决']
+        if any(keyword in text for keyword in contract_keywords):
+            return 'contract'
+        
+        # 银行流水识别
+        bank_keywords = ['银行', '账号', '余额', '交易', '借方', '贷方', '流水', '对账单']
+        if any(keyword in text for keyword in bank_keywords):
+            return 'bank_statement'
+        
+        # 身份证识别
+        id_keywords = ['居民身份证', '公民身份', '出生', '住址', '签发机关']
+        if any(keyword in text for keyword in id_keywords):
+            return 'id_card'
+        
+        # 营业执照识别
+        license_keywords = ['营业执照', '统一社会信用代码', '注册资本', '法定代表人', '经营范围']
+        if any(keyword in text for keyword in license_keywords):
+            return 'business_license'
+        
+        # 财务报表识别
+        financial_keywords = ['资产负债表', '利润表', '现金流量表', '所有者权益', '营业收入', '净利润']
+        if any(keyword in text for keyword in financial_keywords):
+            return 'financial_statement'
+        
+        # 税务申报表识别
+        tax_keywords = ['税务申报', '应纳税额', '税款所属期', '申报表', '增值税纳税申报']
+        if any(keyword in text for keyword in tax_keywords):
+            return 'tax_return'
+        
+        return 'unknown'
     
     async def extract_structured_data(self, text: str) -> Dict[str, Any]:
         """

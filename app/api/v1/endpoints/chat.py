@@ -31,21 +31,32 @@ router = APIRouter()
 # ==========================================
 
 @router.post("/completions", response_model=ChatResponse)
-async def chat_with_rag(request: ChatRequest):
+async def chat_with_rag(
+    request: ChatRequest,
+    tenant_context: dict = Depends(deps.get_tenant_context),
+    db_session = Depends(deps.get_tenant_db)
+):
     """
-    [V1] 普通 RAG 对话 (非流式，一次性返回)
+    [V1] 普通 RAG 对话 (非流式，一次性返回) - 支持租户隔离
     """
     start_time = time.time()
 
-    print(f"🔍 [V1] 正在搜索: {request.query}")
-    search_results = await search_service.search(request.query, request.top_k)
+    print(f"🔍 [V1] 租户 {tenant_context['tenant_id']} 正在搜索: {request.query}")
+    
+    # 添加租户过滤器
+    search_results = await search_service.search(
+        request.query, 
+        request.top_k,
+        filters={'tenant_id': tenant_context['tenant_id']}  # 🔒 租户隔离
+    )
 
     if not search_results:
         return ChatResponse(
             answer="抱歉，知识库中没有找到相关信息。",
             sources=[],
             total_time=time.time() - start_time,
-            model_used="None"
+            model_used="None",
+            tenant_id=tenant_context['tenant_id']
         )
 
     context_texts = [item.content for item in search_results]
@@ -206,8 +217,6 @@ async def chat_with_agent(
     print(f"🤖 [Agent 接口被调用] 用户: {current_user.email} | 问题: {request.query}")
 
     try:
-        history_formatted = []  # 👈 准备一个空列表装历史记录
-
         async with AsyncSessionLocal() as db:
             # ==========================================
             # 🚨 核心拦截：多租户越权校验 (防水平越权)
@@ -236,47 +245,28 @@ async def chat_with_agent(
                 await db.refresh(new_session)
                 session_id = str(new_session.id)
             else:
-                # 老会话：查询历史记录！
                 session_id = request.session_id
-                print(f"🔄 正在提取 Agent 的记忆: Session ID {session_id}")
-                result = await db.execute(
-                    select(ChatMessage)
-                    .where(ChatMessage.session_id == session_id)
-                    .order_by(ChatMessage.created_at.asc())
-                )
-                messages_objs = result.scalars().all()
-                # 转换格式
-                history_formatted = [{"role": m.role, "content": m.content} for m in messages_objs]
 
-            # 把用户本次的问题存入数据库
-            user_msg = ChatMessage(session_id=session_id, role="user", content=request.query)
-            db.add(user_msg)
-            await db.commit()
+            # 🧠 不再手动查询和存储历史记录，改用记忆系统
+            # 移除了手动历史查询和存储代码，记忆系统会自动管理
 
-        # --- 2. 召唤 Agent (把历史记录喂给它) ---
+        # --- 2. 召唤 Agent (使用记忆系统) ---
         ai_answer = await agent_service.chat(
             user_input=request.query,
             kb_id=request.kb_id,
             session_id=session_id,
-            history=history_formatted  # 👈 关键点：将查出来的历史传给 Agent
+            history=[],  # 空历史，使用记忆系统替代
+            user_id=str(current_user.id)  # 🧠 传入user_id
         )
 
-        # --- 3. 保存 AI 回答到数据库 ---
-        async with AsyncSessionLocal() as db:
-            ai_msg = ChatMessage(
-                session_id=session_id,
-                role="assistant",
-                content=ai_answer,
-                sources=[]
-            )
-            db.add(ai_msg)
-            await db.commit()
+        # 🧠 不再手动保存AI回答，记忆系统会自动处理
+        # 移除了手动保存AI回答的代码
 
         return {
             "session_id": session_id,
             "answer": ai_answer,
             "status": "success",
-            "mode": "agent"
+            "mode": "agent_with_memory"  # 标识使用了记忆系统
         }
 
     except HTTPException:
@@ -294,8 +284,7 @@ async def chat_with_agent_stream(
 ):
     print(f"🌊 [Agent 流式接口被调用] 用户: {current_user.email} | 问题: {request.query}")
 
-    # 1. 越权校验与历史记录获取（逻辑和之前一样）
-    history_formatted = []
+    # 1. 越权校验（保留知识库权限检查）
     async with AsyncSessionLocal() as db:
         # 校验多租户知识库权限
         kb_check = await db.execute(
@@ -306,6 +295,7 @@ async def chat_with_agent_stream(
         if not kb_check.scalar_one_or_none():
             raise HTTPException(status_code=403, detail="越权访问拦截！")
 
+        # 处理session_id
         if not request.session_id:
             new_session = ChatSession(user_id=current_user.id, title=request.query[:20])
             db.add(new_session)
@@ -314,20 +304,12 @@ async def chat_with_agent_stream(
             session_id = str(new_session.id)
         else:
             session_id = request.session_id
-            result = await db.execute(
-                select(ChatMessage).where(ChatMessage.session_id == session_id).order_by(ChatMessage.created_at.asc())
-            )
-            history_formatted = []
-            for m in result.scalars().all():
-                history_formatted.append({
-                    "role": m.role,
-                    "content": m.content
-                })
 
-        # 存入用户的新问题
-        user_msg = ChatMessage(session_id=session_id, role="user", content=request.query)
-        db.add(user_msg)
-        await db.commit()
+        # 🧠 不再手动查询历史记录，改用记忆系统
+        # 移除了手动历史查询代码，记忆系统会自动管理对话历史
+
+        # 🧠 不再手动存储用户消息，记忆系统会自动处理
+        # 移除了手动存储用户消息的代码
 
     # 2. 构造流式生成器 (Generator)
     async def event_generator():
@@ -337,20 +319,20 @@ async def chat_with_agent_stream(
         init_data = json.dumps({"type": "init", "session_id": session_id})
         yield f"data: {init_data}\n\n"
 
-        full_ai_answer = ""  # 用来在后端拼凑完整的回答，最后存入数据库
-
-        # 调用我们刚写好的流式服务
-        async for chunk in agent_service.chat_stream(request.query, request.kb_id, session_id, history_formatted):
-            full_ai_answer += chunk
+        # 🧠 调用集成了记忆系统的流式服务，传入user_id
+        async for chunk in agent_service.chat_stream(
+            user_input=request.query, 
+            kb_id=request.kb_id, 
+            session_id=session_id, 
+            history=[],  # 空历史，使用记忆系统替代
+            user_id=str(current_user.id)  # 🧠 传入user_id
+        ):
             # 将每个文字片段转为 JSON 发送
             chunk_data = json.dumps({"type": "chunk", "content": chunk}, ensure_ascii=False)
             yield f"data: {chunk_data}\n\n"
 
-        # 3. 流式输出结束后，把完整的回答静默存入 PostgreSQL 数据库
-        async with AsyncSessionLocal() as db:
-            ai_msg = ChatMessage(session_id=session_id, role="assistant", content=full_ai_answer)
-            db.add(ai_msg)
-            await db.commit()
+        # 🧠 不再手动存储AI回答，记忆系统会自动处理
+        # 移除了手动存储AI回答的代码
 
         # 告诉前端：我说完了！
         done_data = json.dumps({"type": "done"})

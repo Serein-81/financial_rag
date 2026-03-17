@@ -11,7 +11,10 @@ from app.db.base import Base
 # 只有导入了 document，SQLAlchemy 才知道 "哦，原来有一个叫 Document 的子类要建表"
 # 如果不导入这行，Base.metadata 里面是空的，就不会建表。
 from app.models import document
-from app.api.v1.endpoints import document as document_router, search, chat, auth, session, knowledge, agent_trace, tool_trace, prompt_optimization, memory, knowledge_graph
+from app.api.v1.endpoints import document as document_router, search, chat, auth, session, knowledge, agent_trace, tool_trace, prompt_optimization, memory, knowledge_graph, audit
+
+# 🔒 导入租户中间件
+from app.middleware.tenant_middleware import TenantContextMiddleware
 
 
 @asynccontextmanager
@@ -59,6 +62,9 @@ app.add_middleware(
     allow_headers=["*"],  # 允许所有 Header
 )
 
+# 🔒 添加租户上下文中间件（在 CORS 之后）
+app.add_middleware(TenantContextMiddleware)
+
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Auth"]) # 👈 注册
 
@@ -77,10 +83,21 @@ app.include_router(tool_trace.router, prefix="/api/v1/tool_trace", tags=["Tool T
 app.include_router(prompt_optimization.router, prefix="/api/v1/prompt", tags=["Prompt Optimization"]) # 🆕 Prompt 优化
 app.include_router(memory.router, prefix="/api/v1/memory", tags=["Memory System"]) # 🆕 记忆系统
 app.include_router(knowledge_graph.router, prefix="/api/v1/knowledge_graph", tags=["Knowledge Graph"]) # 🆕 知识图谱
+app.include_router(audit.router, prefix="/api/v1/audit", tags=["Multi-Agent Audit"]) # 🆕 多智能体审查
 
 @app.get("/")
 def root():
     return {"message": "RAG Backend is Running", "docs": "/docs"}
+
+@app.get("/health")
+def health_check():
+    """健康检查端点"""
+    return {"status": "healthy", "message": "Service is running"}
+
+@app.get("/api/health")
+def api_health_check():
+    """API健康检查端点"""
+    return {"status": "healthy", "message": "API is running"}
 
 
 if __name__ == "__main__":

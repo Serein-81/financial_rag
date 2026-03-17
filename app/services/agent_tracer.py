@@ -8,7 +8,7 @@ Agent 追踪服务
 
 import time
 from typing import Dict, Any, List, Optional
-from sqlalchemy import select
+from sqlalchemy import select, func
 from app.db.session import AsyncSessionLocal
 from app.models.agent_trace import AgentTrace, AgentStep
 

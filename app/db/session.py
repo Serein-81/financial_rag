@@ -1,9 +1,25 @@
+from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, Session
 from app.core import settings
 
 # =========================================================
-# 1. 创建异步引擎 (Engine)
+# 1. 创建同步引擎 (用于测试和脚本)
+# =========================================================
+# 将异步 URL 转换为同步 URL
+sync_database_url = settings.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
+sync_engine = create_engine(sync_database_url, echo=False, pool_pre_ping=True)
+
+# 创建同步 Session 工厂
+SessionLocal = sessionmaker(
+    bind=sync_engine,
+    class_=Session,
+    autocommit=False,
+    autoflush=False
+)
+
+# =========================================================
+# 2. 创建异步引擎 (Engine)
 # =========================================================
 # 这是一个连接池对象。它不会马上连接数据库，只有当真正有请求时才会建立连接。
 # echo=True 表示会在控制台打印出每一条生成的 SQL 语句，方便你调试代码。
@@ -11,7 +27,7 @@ from app.core import settings
 engine = create_async_engine(settings.DATABASE_URL, echo=True)
 
 # =========================================================
-# 2. 创建 Session 工厂 (SessionLocal)
+# 3. 创建异步 Session 工厂 (SessionLocal)
 # =========================================================
 # 我们不能直接用 engine 查数据，必须用 Session。
 # 这个工厂负责源源不断地生产 Session 对象。
@@ -22,7 +38,7 @@ AsyncSessionLocal = sessionmaker(
 )
 
 # =========================================================
-# 3. 定义依赖注入函数 (Dependency)
+# 4. 定义依赖注入函数 (Dependency)
 # =========================================================
 # 这是 FastAPI 最核心的用法。
 # 以后在写 API 接口时，只需要写 `db: AsyncSession = Depends(get_db)`

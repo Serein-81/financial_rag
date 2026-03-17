@@ -30,22 +30,22 @@ class MinioService:
         try:
             if not self.client.bucket_exists(bucket_name):
                 self.client.make_bucket(bucket_name)
-                print(f"📦 自动创建了 MinIO Bucket: {bucket_name}")
+                print(f"[MinIO] 自动创建了 Bucket: {bucket_name}")
                 
                 # 如果是头像桶，设置为公开读取
                 if bucket_name == self.avatar_bucket:
                     self._set_public_read_policy(bucket_name)
-                    print(f"🔓 已将 {bucket_name} 设置为公开读取")
+                    print(f"[MinIO] 已将 {bucket_name} 设置为公开读取")
             else:
                 # 桶已存在，检查是否需要设置策略
                 if bucket_name == self.avatar_bucket:
                     try:
                         self._set_public_read_policy(bucket_name)
-                        print(f"🔓 已更新 {bucket_name} 的公开读取策略")
+                        print(f"[MinIO] 已更新 {bucket_name} 的公开读取策略")
                     except Exception as e:
-                        print(f"⚠️ 设置策略时出错: {e}")
+                        print(f"[MinIO] 警告: 设置策略时出错: {e}")
         except S3Error as e:
-            print(f"❌ 检查 MinIO Bucket 失败: {e}")
+            print(f"[MinIO] 错误: 检查 Bucket 失败: {e}")
     
     def _set_public_read_policy(self, bucket_name: str):
         """设置桶为公开读取"""
@@ -67,11 +67,11 @@ class MinioService:
         try:
             self.client.set_bucket_policy(bucket_name, json.dumps(policy))
         except Exception as e:
-            print(f"❌ 设置桶策略失败: {e}")
-            print(f"💡 提示: 请手动在 MinIO 控制台设置 {bucket_name} 桶为公开访问")
+            print(f"[MinIO] 错误: 设置桶策略失败: {e}")
+            print(f"[MinIO] 提示: 请手动在 MinIO 控制台设置 {bucket_name} 桶为公开访问")
 
     # ==========================================
-    # 🖼️ 头像管理
+    # [头像管理]
     # ==========================================
     def upload_avatar(self, file_bytes: bytes, filename: str, content_type: str) -> str:
         """上传头像并返回文件的直链 URL"""
@@ -91,7 +91,7 @@ class MinioService:
         return f"{protocol}://{settings.MINIO_ENDPOINT}/{self.avatar_bucket}/{new_filename}"
 
     # ==========================================
-    # 📄 知识库文档管理
+    # [知识库文档管理]
     # ==========================================
     def upload_document(self, file_bytes: bytes, object_name: str, content_type: str) -> str:
         """

@@ -98,100 +98,162 @@ Thought:"""
         prompt = self._build_react_prompt(user_input, history, **kwargs)
         
         current_prompt = prompt
+        final_answer = None
         
-        while self.current_iteration < self.max_iterations:
-            self.current_iteration += 1
-            
-            if self._check_timeout():
-                self._log_action("⏰ 执行超时")
-                return "抱歉，处理时间过长，请稍后重试。"
-            
-            try:
-                # 调用 LLM 生成回应
-                self._log_action(f"🤖 LLM 调用 (第 {self.current_iteration} 轮)")
-                response = await self.llm.generate(current_prompt, temperature=0.1)
+        try:
+            while self.current_iteration < self.max_iterations:
+                self.current_iteration += 1
                 
-                self._log_action("📝 LLM 响应", {"response": response})
+                if self._check_timeout():
+                    self._log_action("⏰ 执行超时")
+                    final_answer = "抱歉，处理时间过长，请稍后重试。"
+                    break
                 
-                # 解析响应
-                parsed = self._parse_response(response)
-                
-                if parsed["type"] == "final_answer":
-                    self._log_action("✅ 获得最终答案", {"answer": parsed["content"]})
-                    return parsed["content"]
-                
-                elif parsed["type"] == "tool_call":
-                    # 更新历史记录
-                    tool_call_info = {
-                        "tool_name": parsed["tool_name"],
-                        "parameters": parsed["parameters"]
-                    }
-                    self._update_history(response, tool_call_info)
+                try:
+                    # 调用 LLM 生成回应
+                    self._log_action(f"🤖 LLM 调用 (第 {self.current_iteration} 轮)")
+                    response = await self.llm.generate(current_prompt, temperature=0.1)
                     
-                    # 执行工具调用
-                    tool_result = await self.call_tool(
-                        parsed["tool_name"], 
-                        **parsed["parameters"]
-                    )
+                    self._log_action("📝 LLM 响应", {"response": response})
                     
-                    # 检查是否应该强制结束
-                    force_check = self._should_force_final_answer(response, tool_result)
-                    if force_check["should_stop"]:
-                        self._log_action("🛑 触发早停机制", {
-                            "reasons": force_check["reasons"],
-                            "iteration": self.current_iteration
-                        })
-                        
-                        # 尝试生成基于现有信息的答案
-                        fallback_prompt = (
-                            f"{current_prompt}{response}\nObservation: {tool_result}\n\n"
-                            f"由于检测到循环或重复失败，请基于已有信息直接给出最终答案：\n"
-                            f"Final Answer:"
+                    # 解析响应
+                    parsed = self._parse_response(response)
+                    
+                    if parsed["type"] == "final_answer":
+                        # 记录最终答案步骤
+                        await self._log_step(
+                            step_type="final_answer",
+                            content=parsed["content"]
                         )
                         
-                        try:
-                            fallback_response = await self.llm.generate(fallback_prompt, temperature=0.1)
-                            final_answer = self._extract_final_answer(fallback_response)
-                            if final_answer:
-                                return final_answer
-                        except:
-                            pass
+                        self._log_action("✅ 获得最终答案", {"answer": parsed["content"]})
+                        final_answer = parsed["content"]
+                        break
+                    
+                    elif parsed["type"] == "tool_call":
+                        # 记录思考步骤（从响应中提取思考部分）
+                        thought_content = self._extract_thought_from_response(response)
+                        if thought_content:
+                            await self._log_step(
+                                step_type="thought",
+                                content=thought_content
+                            )
                         
-                        return force_check["suggestion"]
+                        # 记录行动步骤
+                        await self._log_step(
+                            step_type="action",
+                            content=f"调用工具: {parsed['tool_name']}",
+                            tool_name=parsed["tool_name"],
+                            tool_input=parsed["parameters"]
+                        )
+                        
+                        # 更新历史记录
+                        tool_call_info = {
+                            "tool_name": parsed["tool_name"],
+                            "parameters": parsed["parameters"]
+                        }
+                        self._update_history(response, tool_call_info)
+                        
+                        # 执行工具调用
+                        start_time = time.time()
+                        tool_result = await self.call_tool(
+                            parsed["tool_name"], 
+                            **parsed["parameters"]
+                        )
+                        tool_duration = (time.time() - start_time) * 1000  # 转换为毫秒
+                        
+                        # 记录观察步骤
+                        await self._log_step(
+                            step_type="observation",
+                            content=tool_result,
+                            tool_name=parsed["tool_name"],
+                            tool_output=tool_result,
+                            tool_duration=tool_duration
+                        )
+                        
+                        # 检查是否应该强制结束
+                        force_check = self._should_force_final_answer(response, tool_result)
+                        if force_check["should_stop"]:
+                            self._log_action("🛑 触发早停机制", {
+                                "reasons": force_check["reasons"],
+                                "iteration": self.current_iteration
+                            })
+                            
+                            # 尝试生成基于现有信息的答案
+                            fallback_prompt = (
+                                f"{current_prompt}{response}\nObservation: {tool_result}\n\n"
+                                f"由于检测到循环或重复失败，请基于已有信息直接给出最终答案：\n"
+                                f"Final Answer:"
+                            )
+                            
+                            try:
+                                fallback_response = await self.llm.generate(fallback_prompt, temperature=0.1)
+                                fallback_answer = self._extract_final_answer(fallback_response)
+                                if fallback_answer:
+                                    final_answer = fallback_answer
+                                else:
+                                    final_answer = force_check["suggestion"]
+                            except:
+                                final_answer = force_check["suggestion"]
+                            
+                            break
+                        
+                        # 更新提示词，添加观察结果
+                        observation = f"Observation: {tool_result}\nThought:"
+                        current_prompt = current_prompt + response + "\n" + observation
+                        
+                        self._log_action("🔄 继续循环", {"observation": tool_result[:100]})
                     
-                    # 更新提示词，添加观察结果
-                    observation = f"Observation: {tool_result}\nThought:"
-                    current_prompt = current_prompt + response + "\n" + observation
+                    elif parsed["type"] == "thinking":
+                        # 记录思考步骤
+                        await self._log_step(
+                            step_type="thought",
+                            content=parsed["content"]
+                        )
+                        
+                        # 更新历史记录
+                        self._update_history(response)
+                        
+                        # 检查循环
+                        loop_check = self._check_loop_detection(response)
+                        if loop_check["should_stop"]:
+                            self._log_action("🛑 检测到思考循环", {"reason": loop_check["reason"]})
+                            final_answer = self._generate_fallback_answer()
+                            break
+                        
+                        # 纯思考，继续等待行动或最终答案
+                        current_prompt = current_prompt + response + "\n"
+                        self._log_action("💭 继续思考")
                     
-                    self._log_action("🔄 继续循环", {"observation": tool_result[:100]})
+                    else:
+                        # 无法解析，尝试引导
+                        guidance = "\n请按照格式继续：\nThought: [你的思考]\nAction: [工具名] 或 Final Answer: [最终答案]"
+                        current_prompt = current_prompt + response + guidance
+                        self._log_action("❓ 响应格式不正确，添加引导")
                 
-                elif parsed["type"] == "thinking":
-                    # 更新历史记录
-                    self._update_history(response)
-                    
-                    # 检查循环
-                    loop_check = self._check_loop_detection(response)
-                    if loop_check["should_stop"]:
-                        self._log_action("🛑 检测到思考循环", {"reason": loop_check["reason"]})
-                        return self._generate_fallback_answer()
-                    
-                    # 纯思考，继续等待行动或最终答案
-                    current_prompt = current_prompt + response + "\n"
-                    self._log_action("💭 继续思考")
-                
-                else:
-                    # 无法解析，尝试引导
-                    guidance = "\n请按照格式继续：\nThought: [你的思考]\nAction: [工具名] 或 Final Answer: [最终答案]"
-                    current_prompt = current_prompt + response + guidance
-                    self._log_action("❓ 响应格式不正确，添加引导")
+                except Exception as e:
+                    self._log_action("❌ 执行出错", {"error": str(e)})
+                    final_answer = f"抱歉，处理过程中出现错误：{str(e)}"
+                    break
             
-            except Exception as e:
-                self._log_action("❌ 执行出错", {"error": str(e)})
-                return f"抱歉，处理过程中出现错误：{str(e)}"
+            # 如果没有得到最终答案
+            if final_answer is None:
+                self._log_action("🔄 达到最大迭代次数")
+                final_answer = "抱歉，问题比较复杂，我需要更多时间思考。请尝试简化问题或稍后重试。"
         
-        # 达到最大迭代次数
-        self._log_action("🔄 达到最大迭代次数")
-        return "抱歉，问题比较复杂，我需要更多时间思考。请尝试简化问题或稍后重试。"
+        finally:
+            # 结束追踪
+            if self.enable_tracing and self.current_trace_id:
+                try:
+                    await self.tracer.end_trace(
+                        trace_id=self.current_trace_id,
+                        final_answer=final_answer or "执行未完成",
+                        success=final_answer is not None
+                    )
+                except Exception as e:
+                    print(f"⚠️ 结束追踪失败: {e}")
+        
+        return final_answer
     
     async def stream_run(self, user_input: str, history: List[Dict] = None, **kwargs) -> AsyncGenerator[str, None]:
         """
@@ -377,6 +439,28 @@ Thought:"""
         
         if match:
             return match.group(1).strip()
+        
+        return None
+    
+    def _extract_thought_from_response(self, response: str) -> Optional[str]:
+        """
+        从响应中提取思考内容
+        
+        Args:
+            response: LLM响应文本
+            
+        Returns:
+            思考内容，如果没有找到则返回 None
+        """
+        # 匹配 Thought: 到 Action: 之间的内容
+        pattern = r'Thought:\s*(.*?)(?=Action:|$)'
+        match = re.search(pattern, response, re.DOTALL | re.IGNORECASE)
+        
+        if match:
+            thought = match.group(1).strip()
+            # 清理可能的换行和多余空格
+            thought = re.sub(r'\s+', ' ', thought)
+            return thought
         
         return None
     

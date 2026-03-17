@@ -13,10 +13,13 @@ class KnowledgeBase(Base):
     # 1. 对应数据库里的 id (UUID)
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
 
-    # 2. 对应 name (varchar 255)
+    # 2. 多租户字段
+    tenant_id = Column(String(50), nullable=False, index=True)  # 租户ID，用于多租户隔离
+
+    # 3. 对应 name (varchar 255)
     name = Column(String(255), nullable=False)
 
-    # 3. 对应 description (text)
+    # 4. 对应 description (text)
     description = Column(Text, nullable=True)
 
     # 4. 对应 created_at

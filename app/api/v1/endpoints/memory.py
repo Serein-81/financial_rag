@@ -16,10 +16,12 @@ async def search_current_conversation(
     role: Optional[str] = Query(None, description="角色过滤 (user/assistant/system)"),
     importance_min: Optional[float] = Query(None, ge=0.0, le=1.0, description="最小重要性"),
     top_k: int = Query(10, ge=1, le=50, description="返回结果数量"),
-    current_user: User = Depends(deps.get_current_user)
+    current_user: User = Depends(deps.get_current_user),
+    tenant_context: dict = Depends(deps.get_tenant_context),
+    db_session = Depends(deps.get_tenant_db)
 ):
     """
-    在当前对话中搜索记忆
+    在当前对话中搜索记忆 - 支持租户隔离
     
     Args:
         keywords: 关键词列表
@@ -29,15 +31,20 @@ async def search_current_conversation(
         top_k: 返回结果数量
     """
     try:
-        # 创建记忆管理器
-        memory_manager = MemoryManager(session_id, str(current_user.id))
+        # 创建记忆管理器 - 传入租户上下文
+        memory_manager = MemoryManager(
+            session_id, 
+            str(current_user.id),
+            tenant_id=tenant_context['tenant_id']
+        )
         
-        # 搜索记忆
+        # 搜索记忆 - 租户隔离
         results = await memory_manager.search_current_conversation(
             keywords=keywords,
             role=role,
             importance_min=importance_min,
-            top_k=top_k
+            top_k=top_k,
+            tenant_id=tenant_context['tenant_id']  # 🔒 租户隔离
         )
         
         # 格式化结果
@@ -51,7 +58,8 @@ async def search_current_conversation(
                 "importance": memory.importance,
                 "access_count": memory.access_count,
                 "decay_factor": memory.decay_factor,
-                "metadata": memory.metadata
+                "metadata": memory.metadata,
+                "tenant_id": tenant_context['tenant_id']  # 包含租户信息
             })
         
         return {
@@ -59,7 +67,8 @@ async def search_current_conversation(
             "results": formatted_results,
             "total": len(formatted_results),
             "keywords": keywords,
-            "session_id": session_id
+            "session_id": session_id,
+            "tenant_id": tenant_context['tenant_id']
         }
         
     except Exception as e:
@@ -69,24 +78,33 @@ async def search_current_conversation(
 @router.get("/statistics/{session_id}")
 async def get_memory_statistics(
     session_id: str,
-    current_user: User = Depends(deps.get_current_user)
+    current_user: User = Depends(deps.get_current_user),
+    tenant_context: dict = Depends(deps.get_tenant_context),
+    db_session = Depends(deps.get_tenant_db)
 ):
     """
-    获取记忆系统统计信息
+    获取记忆系统统计信息 - 支持租户隔离
     
     Args:
         session_id: 会话ID
     """
     try:
-        # 创建记忆管理器
-        memory_manager = MemoryManager(session_id, str(current_user.id))
+        # 创建记忆管理器 - 传入租户上下文
+        memory_manager = MemoryManager(
+            session_id, 
+            str(current_user.id),
+            tenant_id=tenant_context['tenant_id']
+        )
         
-        # 获取统计信息
-        stats = await memory_manager.get_memory_statistics()
+        # 获取统计信息 - 租户隔离
+        stats = await memory_manager.get_memory_statistics(
+            tenant_id=tenant_context['tenant_id']
+        )
         
         return {
             "success": True,
-            "statistics": stats
+            "statistics": stats,
+            "tenant_id": tenant_context['tenant_id']
         }
         
     except Exception as e:
@@ -96,24 +114,33 @@ async def get_memory_statistics(
 @router.get("/summary/{session_id}")
 async def export_session_summary(
     session_id: str,
-    current_user: User = Depends(deps.get_current_user)
+    current_user: User = Depends(deps.get_current_user),
+    tenant_context: dict = Depends(deps.get_tenant_context),
+    db_session = Depends(deps.get_tenant_db)
 ):
     """
-    导出会话摘要
+    导出会话摘要 - 支持租户隔离
     
     Args:
         session_id: 会话ID
     """
     try:
-        # 创建记忆管理器
-        memory_manager = MemoryManager(session_id, str(current_user.id))
+        # 创建记忆管理器 - 传入租户上下文
+        memory_manager = MemoryManager(
+            session_id, 
+            str(current_user.id),
+            tenant_id=tenant_context['tenant_id']
+        )
         
-        # 导出摘要
-        summary = await memory_manager.export_session_summary()
+        # 导出摘要 - 租户隔离
+        summary = await memory_manager.export_session_summary(
+            tenant_id=tenant_context['tenant_id']
+        )
         
         return {
             "success": True,
-            "summary": summary
+            "summary": summary,
+            "tenant_id": tenant_context['tenant_id']
         }
         
     except Exception as e:

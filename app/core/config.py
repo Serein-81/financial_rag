@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     MINIO_ACCESS_KEY: str = "minioadmin"
     MINIO_SECRET_KEY: str = "minioadmin"
     MINIO_SECURE: bool = False
+    MINIO_BUCKET: str = "documents"  # 修复：添加默认bucket配置
     MINIO_AVATAR_BUCKET: str = "avatars"
 
 
