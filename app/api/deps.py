@@ -32,9 +32,16 @@ async def get_db() -> AsyncSession:
             tenant_id = get_current_tenant_id()
             user_id = get_current_user_id()
             
-            # 为数据库会话设置租户上下文
+            # 为数据库会话设置租户上下文（如果有租户ID）
             if tenant_id:
-                await set_tenant_context_for_db(session, tenant_id, user_id)
+                try:
+                    await set_tenant_context_for_db(session, tenant_id, user_id)
+                except Exception as e:
+                    logger.warning(f"设置租户上下文失败: {e}")
+                    # 🔥 修复：回滚事务，避免进入失败状态
+                    await session.rollback()
+                    # 重新开始事务
+                    await session.begin()
             
             yield session
         except Exception as e:

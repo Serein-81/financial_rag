@@ -18,8 +18,8 @@ class ChatSession(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     user = relationship("User", back_populates="chat_sessions")
-    messages = relationship("ChatMessage", back_populates="session", cascade="all, delete")
-
+    # 💡 修复点：加上级联删除。这样当你删 session 时，它名下的 messages 也会被自动删干净。
+    messages = relationship("ChatMessage", back_populates="session", cascade="all, delete-orphan")
 
 class ChatMessage(Base):
     """具体的每一条对话记录"""

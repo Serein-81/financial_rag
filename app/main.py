@@ -11,7 +11,7 @@ from app.db.base import Base
 # 只有导入了 document，SQLAlchemy 才知道 "哦，原来有一个叫 Document 的子类要建表"
 # 如果不导入这行，Base.metadata 里面是空的，就不会建表。
 from app.models import document
-from app.api.v1.endpoints import document as document_router, search, chat, auth, session, knowledge, agent_trace, tool_trace, prompt_optimization, memory, knowledge_graph, audit
+from app.api.v1.endpoints import document as document_router, search, chat, auth, session, knowledge, agent_trace, tool_trace, prompt_optimization, memory, knowledge_graph, audit, invite_code, enterprise, logs
 
 # 🔒 导入租户中间件
 from app.middleware.tenant_middleware import TenantContextMiddleware
@@ -84,6 +84,9 @@ app.include_router(prompt_optimization.router, prefix="/api/v1/prompt", tags=["P
 app.include_router(memory.router, prefix="/api/v1/memory", tags=["Memory System"]) # 🆕 记忆系统
 app.include_router(knowledge_graph.router, prefix="/api/v1/knowledge_graph", tags=["Knowledge Graph"]) # 🆕 知识图谱
 app.include_router(audit.router, prefix="/api/v1/audit", tags=["Multi-Agent Audit"]) # 🆕 多智能体审查
+app.include_router(invite_code.router, prefix="/api/v1/invite-codes", tags=["Invite Codes"]) # 🆕 邀请码管理
+app.include_router(enterprise.router, prefix="/api/v1/enterprise", tags=["Enterprise Management"]) # 🆕 企业用户管理
+app.include_router(logs.router, prefix="/api/v1/logs", tags=["Logging System"]) # 🆕 日志系统
 
 @app.get("/")
 def root():

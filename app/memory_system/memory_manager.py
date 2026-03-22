@@ -64,14 +64,29 @@ class MemoryManager:
 
         # 🆕 重要话题关键词库（方案一）
         self.important_topic_keywords = {
-            "health": ["过敏", "疾病", "糖尿病", "高血压", "心脏病", "癌症", 
+            "health": ["过敏", "疾病", "糖尿病", "高血压", "心脏病", "癌症",
                       "手术", "住院", "药物", "治疗", "诊断", "症状"],
-            "finance": ["密码", "账号", "银行卡", "信用卡", "支付", "转账", 
+            "finance": ["密码", "账号", "银行卡", "信用卡", "支付", "转账",
                        "贷款", "投资", "理财"],
             "personal": ["生日", "纪念日", "地址", "电话", "身份证", "护照"],
             "preference": ["喜欢", "讨厌", "偏好", "习惯", "爱好"],
             "work": ["项目", "任务", "截止日期", "会议", "客户", "合同"]
         }
+
+        # 🆕 低价值闲聊词表（这类内容不持久化到情景记忆）
+        self.chit_chat_patterns = {
+            "你好", "您好", "hi", "hello", "hey", "嗨", "哈喽",
+            "再见", "拜拜", "bye", "goodbye", "晚安", "早安", "早上好", "下午好",
+            "谢谢", "谢谢你", "谢谢您", "感谢", "thanks", "thank you",
+            "好的", "好", "嗯", "嗯嗯", "ok", "okay", "是的", "对的", "知道了",
+            "没问题", "可以", "行", "行吧", "哦", "哦哦", "啊", "啊啊"
+        }
+
+        # 🆕 错误响应标记（助手返回的错误/降级内容不持久化）
+        self.error_response_markers = [
+            "[检测到循环", "[工具调用多次失败", "[达到最大迭代次数",
+            "[执行超时", "[处理出错", "[处理错误"
+        ]
 
         print("=" * 60)
         print("🧠 记忆管理器初始化完成")
@@ -121,19 +136,35 @@ class MemoryManager:
             metadata=metadata or {}
         )
         
-        # 1. 添加到工作记忆
+        # 1. 添加到工作记忆（无条件，用于当次会话上下文）
         await self.working_memory.add(item)
-        
-        # 2. 添加到情景记忆（持久化）
-        await self.episodic_memory.add(item)
-        
+
+        # 2. 情景记忆准入过滤：低价值内容不持久化到数据库
+        should_persist = True
+        skip_reason = ""
+
+        if role == "user" and self._is_chit_chat(content):
+            should_persist = False
+            skip_reason = "用户闲聊"
+        elif role == "assistant" and self._is_error_response(content):
+            should_persist = False
+            skip_reason = "错误/降级响应"
+        elif len(content.strip()) < 3:
+            should_persist = False
+            skip_reason = "内容过短"
+
+        if should_persist:
+            await self.episodic_memory.add(item)
+        else:
+            print(f"🚫 [记忆管理器] 跳过情景记忆持久化 | 原因: {skip_reason} | 内容: {content[:20]}")
+
         # 3. 如果是高重要性知识，添加到语义记忆
-        if importance >= 0.8:
+        if importance >= 0.8 and should_persist:
             # 生成向量嵌入
             item.embedding = await embedding_service.get_embedding(content)
             await self.semantic_memory.add(item)
             print(f"⭐ [记忆管理器] 高重要性知识已添加到语义记忆 (importance={importance:.2f})")
-        
+
         return item
     
     async def _evaluate_importance(self, content: str, role: str, base_importance: float) -> float:
@@ -202,6 +233,34 @@ class MemoryManager:
             print(f"📈 [重要性评估] {base_importance:.2f} → {importance:.2f} | 原因: {', '.join(boost_reasons)}")
         
         return min(1.0, importance)  # 确保不超过 1.0
+
+    def _is_chit_chat(self, content: str) -> bool:
+        """
+        🆕 判断内容是否为低价值闲聊
+
+        策略：
+        1. 精确匹配闲聊词表
+        2. 对短文本（<=8字）进行模糊检查
+        """
+        stripped = content.strip().rstrip("！!。.？?，,").lower()
+
+        # 精确匹配
+        if stripped in self.chit_chat_patterns:
+            return True
+
+        # 对 8 字以内的短文本，检查是否以闲聊词开头
+        if len(stripped) <= 8:
+            for pattern in self.chit_chat_patterns:
+                if stripped.startswith(pattern):
+                    return True
+
+        return False
+
+    def _is_error_response(self, content: str) -> bool:
+        """
+        🆕 判断助手回复是否为错误/降级响应（不值得持久化）
+        """
+        return any(marker in content for marker in self.error_response_markers)
     
     def _extract_keywords(self, content: str, max_keywords: int = 10) -> List[str]:
         """
@@ -376,37 +435,42 @@ class MemoryManager:
             context_parts = []
             current_length = 0
             
-            # 工作记忆
+            # 工作记忆修复逻辑
             if memories["working"]:
-                working_context = "【当前对话】\n"
+                working_lines = ["【当前对话】"]
                 for m in memories["working"]:
-                    working_context += f"{m.role}: {m.content}\n"
+                    working_lines.append(f"{m.role}: {m.content}")
+
+                working_context = "\n".join(working_lines)
                 context_parts.append(working_context)
                 current_length += len(working_context)
-            
+
             # 知识库上下文
             if knowledge_context and current_length < max_tokens:
                 context_parts.append(f"\n【知识库】\n{knowledge_context}")
                 current_length += len(knowledge_context)
-            
-            # 语义记忆
+
+            # 语义记忆修复逻辑
             if memories["semantic"] and current_length < max_tokens:
-                semantic_context = "\n【相关知识】\n"
+                semantic_lines = ["\n【相关知识】"]
+                has_semantic_content = False
+
                 for m in memories["semantic"][:3]:
                     if current_length + len(m.content) > max_tokens:
                         break
-                    semantic_context += f"- {m.content}\n"
+                    semantic_lines.append(f"- {m.content}")
                     current_length += len(m.content)
-                
-                if len(semantic_context) > len("\n【相关知识】\n"):
-                    context_parts.append(semantic_context)
-            
+                    has_semantic_content = True
+
+                if has_semantic_content:
+                    context_parts.append("\n".join(semantic_lines))
+
             return "\n".join(context_parts)
-    
+
     async def consolidate_memories(self) -> None:
         """
         记忆巩固
-        
+
         定期执行的记忆整理任务：
         1. 清理过期的工作记忆
         2. 压缩情景记忆
@@ -414,32 +478,32 @@ class MemoryManager:
         4. 清理低价值记忆
         """
         print("🔄 [记忆管理器] 开始记忆巩固...")
-        
+
         # 1. 工作记忆巩固
         await self.working_memory.consolidate()
-        
+
         # 2. 情景记忆巩固
         await self.episodic_memory.consolidate()
-        
+
         # 3. 从情景记忆提取知识
         await self.episodic_memory.load_from_db()
         await self.semantic_memory.extract_knowledge(self.episodic_memory.memories)
-        
+
         # 4. 语义记忆巩固
         await self.semantic_memory.consolidate()
-        
+
         print("✅ [记忆管理器] 记忆巩固完成")
-    
+
     async def get_memory_statistics(self) -> Dict[str, Any]:
         """
         获取记忆系统统计信息
-        
+
         Returns:
             统计信息字典
         """
         # 加载情景记忆
         await self.episodic_memory.load_from_db()
-        
+
         return {
             "session_id": self.session_id,
             "user_id": self.user_id,
@@ -452,15 +516,15 @@ class MemoryManager:
                 self.semantic_memory.get_size()
             )
         }
-    
+
     async def export_session_summary(self) -> Dict[str, Any]:
         """
         导出会话摘要
-        
+
         用于会话结束时生成报告
         """
         await self.episodic_memory.load_from_db()
-        
+
         return {
             "session_id": self.session_id,
             "user_id": self.user_id,
@@ -472,8 +536,8 @@ class MemoryManager:
             "knowledge_extracted": self.semantic_memory.get_knowledge_summary(),
             "statistics": await self.get_memory_statistics()
         }
-    
-    async def search_current_conversation(self, 
+
+    async def search_current_conversation(self,
                                         keywords: List[str] = None,
                                         role: str = None,
                                         content_pattern: str = None,
@@ -481,14 +545,14 @@ class MemoryManager:
                                         top_k: int = 10) -> List[MemoryItem]:
         """
         在当前对话中搜索记忆
-        
+
         Args:
             keywords: 关键词列表，支持多个关键词
             role: 角色过滤 (user/assistant/system)
             content_pattern: 内容模式匹配
             importance_min: 最小重要性阈值
             top_k: 返回结果数量限制
-            
+
         Returns:
             匹配的记忆项列表
         """
@@ -496,22 +560,22 @@ class MemoryManager:
         print(f"   关键词: {keywords}")
         print(f"   角色: {role}")
         print(f"   重要性: >={importance_min}")
-        
+
         results = []
-        
+
         # 1. 搜索工作记忆（当前对话）
-        working_results = await self._search_memory_list(
+        working_results = self._search_memory_list(
             self.working_memory.memories, keywords, role, content_pattern, importance_min
         )
         results.extend(working_results)
-        
+
         # 2. 搜索情景记忆（当前会话的历史）
         await self.episodic_memory.load_from_db()
-        episodic_results = await self._search_memory_list(
+        episodic_results = self._search_memory_list(
             self.episodic_memory.memories, keywords, role, content_pattern, importance_min
         )
         results.extend(episodic_results)
-        
+
         # 3. 去重（基于内容和时间戳）
         unique_results = []
         seen_content = set()
@@ -520,20 +584,20 @@ class MemoryManager:
             if content_key not in seen_content:
                 seen_content.add(content_key)
                 unique_results.append(item)
-        
+
         # 4. 按相关性和时间排序
         unique_results.sort(key=lambda x: (
             self._calculate_relevance_score(x, keywords),
             x.timestamp
         ), reverse=True)
-        
+
         # 5. 限制返回数量
         final_results = unique_results[:top_k]
-        
+
         print(f"🎯 [记忆搜索] 找到 {len(final_results)} 条匹配记忆")
         return final_results
-    
-    async def _search_memory_list(self, 
+
+    def _search_memory_list(self,
                                  memories: List[MemoryItem],
                                  keywords: List[str] = None,
                                  role: str = None,
@@ -543,65 +607,65 @@ class MemoryManager:
         在记忆列表中搜索
         """
         results = []
-        
+
         for memory in memories:
             # 角色过滤
             if role and memory.role != role:
                 continue
-            
+
             # 重要性过滤
             if importance_min and memory.importance < importance_min:
                 continue
-            
+
             # 关键词匹配
             if keywords:
                 content_lower = memory.content.lower()
                 keyword_match = any(
-                    keyword.lower() in content_lower 
+                    keyword.lower() in content_lower
                     for keyword in keywords
                 )
                 if not keyword_match:
                     continue
-            
+
             # 内容模式匹配
             if content_pattern:
                 import re
                 if not re.search(content_pattern, memory.content, re.IGNORECASE):
                     continue
-            
+
             # 更新访问统计
             memory.access()
             results.append(memory)
-        
+
         return results
-    
+
     def _calculate_relevance_score(self, memory: MemoryItem, keywords: List[str] = None) -> float:
         """
         计算记忆项的相关性分数
         """
         score = memory.importance  # 基础分数为重要性
-        
+
         if keywords:
             content_lower = memory.content.lower()
             keyword_matches = sum(
-                1 for keyword in keywords 
+                1 for keyword in keywords
                 if keyword.lower() in content_lower
             )
             # 关键词匹配度加分
             score += keyword_matches * 0.2
-        
+
         # 访问频率加分
         score += min(memory.access_count * 0.1, 0.5)
-        
+
         # 衰减因子影响
         score *= memory.decay_factor
-        
+
         return score
 
     def get_context_for_llm(self) -> List[Dict[str, str]]:
         """
         获取用于 LLM 的上下文
-        
+
         返回标准的对话格式
         """
         return self.working_memory.get_context_window()

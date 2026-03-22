@@ -1,23 +1,12 @@
 # app/schemas/user.py
-from pydantic import BaseModel, EmailStr
+"""用户个人资料管理相关的Schema模型"""
+from pydantic import BaseModel, Field
 from typing import Optional
-from uuid import UUID
 
-# 注册/登录请求体
-class UserCreate(BaseModel):
-    email: EmailStr
-    password: str
-
-# Token 响应体
-class Token(BaseModel):
-    access_token: str
-    token_type: str
-
-# 用户信息响应体
-class UserResponse(BaseModel):
-    id: UUID
-    email: EmailStr
-    is_active: bool
-
-    class Config:
-        from_attributes = True
+class UserProfileUpdate(BaseModel):
+    """用户信息更新请求模型"""
+    full_name: Optional[str] = Field(None, max_length=100, description="真实姓名")
+    nickname: Optional[str] = Field(None, max_length=50, description="昵称")
+    bio: Optional[str] = Field(None, max_length=500, description="个人简介")
+    company_name: Optional[str] = Field(None, max_length=200, description="企业名称")
+    company_position: Optional[str] = Field(None, max_length=100, description="职位")

@@ -3,9 +3,9 @@ from datetime import timedelta
 from sqlalchemy.future import select
 from app.core import security
 from app.core.config import settings
-from app.schemas.auth import (
-    UserRegister, AdminRegister, UserLogin, Token, UserOut, UserProfileUpdate
-)
+from app.schemas.auth_request import UserRegister, AdminRegister, UserLogin
+from app.schemas.auth_response import Token, UserProfile
+from app.schemas.user import UserProfileUpdate
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, status, Query
 from app.db import AsyncSessionLocal
 from app.api import deps
@@ -13,8 +13,34 @@ from app.models.user import User
 from app.services.minio_service import minio_service
 from app.services.sms_service import sms_service
 from pydantic import BaseModel
+import uuid
 
 router = APIRouter()
+
+
+# =======================
+# 🏢 租户ID生成工具函数
+# =======================
+def generate_tenant_id(user_type: str, company_name: str = None) -> str:
+    """
+    生成租户ID
+    
+    Args:
+        user_type: 用户类型 ("user" 或 "admin")
+        company_name: 企业名称（仅管理员需要）
+    
+    Returns:
+        str: 生成的租户ID
+    """
+    if user_type == "admin" and company_name:
+        # 企业租户：基于公司名生成
+        company_slug = company_name.lower().replace(" ", "_").replace("-", "_")[:20]
+        # 移除特殊字符，只保留字母数字和下划线
+        company_slug = ''.join(c for c in company_slug if c.isalnum() or c == '_')
+        return f"company_{company_slug}_{uuid.uuid4().hex[:8]}"
+    else:
+        # 个人租户：基于用户ID生成
+        return f"user_{uuid.uuid4().hex[:12]}"
 
 
 # =======================
@@ -39,17 +65,27 @@ async def send_sms_code(request: SendSMSRequest):
     - 1小时内只能发送1次
     - 每日最多发送3次
     """
-    result = await sms_service.send_verification_code(request.phone)
-    
-    if not result["success"]:
-        raise HTTPException(status_code=400, detail=result["message"])
-    
-    return {
-        "success": True,
-        "message": result["message"],
-        "expire_seconds": result.get("expire_seconds"),
-        "debug_code": result.get("debug_code")  # 仅开发模式
-    }
+    try:
+        result = await sms_service.send_verification_code(request.phone)
+        
+        if not result["success"]:
+            raise HTTPException(status_code=400, detail=result["message"])
+        
+        return {
+            "success": True,
+            "message": result["message"],
+            "expire_seconds": result.get("expire_seconds"),
+            "debug_code": result.get("debug_code")  # 仅开发模式
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500, 
+            detail=f"短信服务异常: {str(e)}"
+        )
 
 
 # =======================
@@ -58,41 +94,44 @@ async def send_sms_code(request: SendSMSRequest):
 @router.post("/sms/verify")
 async def verify_sms_code(request: VerifySMSRequest):
     """验证短信验证码"""
-    result = sms_service.verify_code(request.phone, request.code)
-    
-    if not result["valid"]:
-        raise HTTPException(status_code=400, detail=result["message"])
-    
-    return {
-        "success": True,
-        "message": result["message"]
-    }
+    try:
+        result = sms_service.verify_code(request.phone, request.code)
+        
+        if not result["valid"]:
+            raise HTTPException(status_code=400, detail=result["message"])
+        
+        return {
+            "success": True,
+            "message": result["message"]
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500, 
+            detail=f"验证码验证异常: {str(e)}"
+        )
 
 
 # =======================
-# 📝 3. 普通用户注册接口（需要验证码）
+# 📝 3. 普通用户注册接口（无需验证码）
 # =======================
-@router.post("/register", response_model=UserOut)
+@router.post("/register", response_model=UserProfile)
 async def register_user(
     user_in: UserRegister,
-    sms_code: str = Query(..., description="短信验证码")
+    invite_code: str = Query(None, description="企业邀请码（可选）")
 ):
     """
     普通用户注册
-    - 需要提供：邮箱、手机号、密码、短信验证码
-    - 可选提供：昵称
-    - 真实姓名等信息可以后续在个人页面补充
+    - 需要提供：邮箱、密码
+    - 可选提供：手机号、昵称、企业邀请码
+    - 如果有邀请码，用户将加入对应的企业租户
+    - 如果没有邀请码，创建个人租户
     """
-    # 1. 验证短信验证码
-    verify_result = sms_service.verify_code(user_in.phone, sms_code)
-    if not verify_result["valid"]:
-        raise HTTPException(
-            status_code=400,
-            detail=verify_result["message"]
-        )
-    
     async with AsyncSessionLocal() as db:
-        # 2. 检查邮箱是否已存在
+        # 1. 检查邮箱是否已存在
         result = await db.execute(select(User).where(User.email == user_in.email))
         existing_user = result.scalars().first()
         if existing_user:
@@ -101,57 +140,72 @@ async def register_user(
                 detail="该邮箱已被注册"
             )
         
-        # 3. 检查手机号是否已存在
-        result = await db.execute(select(User).where(User.phone == user_in.phone))
-        existing_phone = result.scalars().first()
-        if existing_phone:
-            raise HTTPException(
-                status_code=400,
-                detail="该手机号已被注册"
-            )
+        # 2. 检查手机号是否已存在（如果提供了手机号）
+        if user_in.phone:
+            result = await db.execute(select(User).where(User.phone == user_in.phone))
+            existing_phone = result.scalars().first()
+            if existing_phone:
+                raise HTTPException(
+                    status_code=400,
+                    detail="该手机号已被注册"
+                )
+
+        # 3. 处理租户分配
+        tenant_id = None
+        if invite_code:
+            # 验证邀请码并获取企业租户ID
+            from app.services.invite_code_service import InviteCodeService
+            validation_result = InviteCodeService.validate_invite_code(db, invite_code)
+            if not validation_result.valid:
+                raise HTTPException(status_code=400, detail=validation_result.message)
+            tenant_id = validation_result.tenant_id
+        else:
+            # 创建个人租户
+            tenant_id = generate_tenant_id("user")
 
         # 4. 创建普通用户
         new_user = User(
             email=user_in.email,
-            phone=user_in.phone,
+            phone=user_in.phone,  # 可能为None
             hashed_password=security.get_password_hash(user_in.password),
             nickname=user_in.nickname,
+            tenant_id=tenant_id,  # 🔥 关键修复：分配租户ID（个人或企业）
             is_active=True,
             is_admin=False,  # 普通用户
-            is_phone_verified=True  # 已验证手机号
+            is_phone_verified=bool(user_in.phone)  # 如果提供了手机号就标记为已验证
         )
 
         db.add(new_user)
         await db.commit()
         await db.refresh(new_user)
 
+        # 5. 如果使用了邀请码，记录使用情况
+        if invite_code:
+            from app.services.invite_code_service import InviteCodeService
+            InviteCodeService.use_invite_code(
+                db=db,
+                code=invite_code,
+                user_id=str(new_user.id)
+            )
+
         return new_user
 
 
 # =======================
-# 📝 4. 企业管理员注册接口（需要验证码）
+# 📝 4. 企业管理员注册接口（无需验证码）
 # =======================
-@router.post("/register/admin", response_model=UserOut)
+@router.post("/register/admin", response_model=UserProfile)
 async def register_admin(
-    admin_in: AdminRegister,
-    sms_code: str = Query(..., description="短信验证码")
+    admin_in: AdminRegister
 ):
     """
     企业管理员注册
-    - 需要提供：邮箱、手机号、密码、真实姓名、企业名称、短信验证码
-    - 可选提供：职位、昵称
+    - 需要提供：邮箱、密码、真实姓名、企业名称
+    - 可选提供：手机号、职位、昵称
     - 注册后自动设置为管理员权限
     """
-    # 1. 验证短信验证码
-    verify_result = sms_service.verify_code(admin_in.phone, sms_code)
-    if not verify_result["valid"]:
-        raise HTTPException(
-            status_code=400,
-            detail=verify_result["message"]
-        )
-    
     async with AsyncSessionLocal() as db:
-        # 2. 检查邮箱是否已存在
+        # 1. 检查邮箱是否已存在
         result = await db.execute(select(User).where(User.email == admin_in.email))
         existing_user = result.scalars().first()
         if existing_user:
@@ -160,27 +214,29 @@ async def register_admin(
                 detail="该邮箱已被注册"
             )
         
-        # 3. 检查手机号是否已存在
-        result = await db.execute(select(User).where(User.phone == admin_in.phone))
-        existing_phone = result.scalars().first()
-        if existing_phone:
-            raise HTTPException(
-                status_code=400,
-                detail="该手机号已被注册"
-            )
+        # 2. 检查手机号是否已存在（如果提供了手机号）
+        if admin_in.phone:
+            result = await db.execute(select(User).where(User.phone == admin_in.phone))
+            existing_phone = result.scalars().first()
+            if existing_phone:
+                raise HTTPException(
+                    status_code=400,
+                    detail="该手机号已被注册"
+                )
 
-        # 4. 创建企业管理员用户
+        # 3. 创建企业管理员用户
         new_admin = User(
             email=admin_in.email,
-            phone=admin_in.phone,
+            phone=admin_in.phone,  # 可能为None
             hashed_password=security.get_password_hash(admin_in.password),
             full_name=admin_in.full_name,
             nickname=admin_in.nickname,
             company_name=admin_in.company_name,
             company_position=admin_in.company_position,
+            tenant_id=generate_tenant_id("admin", admin_in.company_name),  # 🔥 关键修复：分配企业租户ID
             is_active=True,
             is_admin=True,  # 企业管理员
-            is_phone_verified=True  # 已验证手机号
+            is_phone_verified=bool(admin_in.phone)  # 如果提供了手机号就标记为已验证
         )
 
         db.add(new_admin)
@@ -234,7 +290,7 @@ async def login(user_in: UserLogin):
 # =======================
 # 👤 6. 获取当前用户信息
 # =======================
-@router.get("/me", response_model=UserOut)
+@router.get("/me", response_model=UserProfile)
 async def get_current_user_info(
     current_user: User = Depends(deps.get_current_user)
 ):
@@ -245,7 +301,7 @@ async def get_current_user_info(
 # =======================
 # ✏️ 7. 更新用户信息
 # =======================
-@router.put("/profile", response_model=UserOut)
+@router.put("/profile", response_model=UserProfile)
 async def update_user_profile(
     profile_update: UserProfileUpdate,
     current_user: User = Depends(deps.get_current_user)

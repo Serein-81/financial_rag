@@ -13,3 +13,4 @@ from .tenant_audit_log import TenantAuditLog
 from .audit_task import AuditTask
 from .audit_result import AuditResult
 from .agent_collaboration import AgentCollaboration
+from .invite_code import InviteCode, InviteCodeUsage

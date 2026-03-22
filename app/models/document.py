@@ -12,6 +12,9 @@ class Document(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
+    # 🟢 租户隔离字段
+    tenant_id = Column(String(50), nullable=False, index=True)
+
     # 🌟 [关键修复 1] 绑定到 knowledge_bases 表，加上级联删除和索引！
     kb_id = Column(
         UUID(as_uuid=True),

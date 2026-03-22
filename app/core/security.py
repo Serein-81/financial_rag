@@ -23,13 +23,13 @@ def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
 
 
-def create_access_token(data: dict, expires_delta: timedelta = None) -> str:
+def create_access_token(subject: Union[str, Any], expires_delta: timedelta = None) -> str:
     """
     生成 JWT 访问令牌
-    :param data: 要编码的数据字典
+    :param subject: 用户ID或其他标识符
     :param expires_delta: 过期时间，如果不传则使用配置文件的默认值
     """
-    to_encode = data.copy()
+    to_encode = {"sub": str(subject)}
     
     if expires_delta:
         expire = datetime.utcnow() + expires_delta

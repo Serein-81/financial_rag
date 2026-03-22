@@ -105,24 +105,25 @@ class EpisodicMemory(BaseMemory):
         await self.load_from_db()
         
         # 3. 生成向量嵌入（如果没有）
-        if not item.embedding:
+        # 💡 修复点 5：安全判断数组
+        if item.embedding is None or len(item.embedding) == 0:
             try:
                 item.embedding = await embedding_service.get_embedding(item.content.strip())
                 print(f"🔮 [情景记忆] 生成向量嵌入")
             except Exception as e:
                 print(f"⚠️ [情景记忆] 向量生成失败: {e}")
                 item.embedding = None
-        
+
         # 4. 计算重要性评分
         item.importance = self._calculate_importance(item)
-        
+
         # 5. 检查会话存在性并持久化到数据库
         try:
             async with AsyncSessionLocal() as db:
                 # 添加会话ID到元数据
                 if "session_id" not in item.metadata:
                     item.metadata["session_id"] = self.session_id
-                
+
                 db_message = ChatMessage(
                     session_id=self.session_id,
                     role=item.role,
@@ -136,29 +137,29 @@ class EpisodicMemory(BaseMemory):
                 db.add(db_message)
                 await db.commit()
                 await db.refresh(db_message)
-                
+
                 # 更新 item 的 id
                 item.id = str(db_message.id)
-                
+
             print(f"💾 [情景记忆] 保存记忆到数据库 | ID: {item.id} | 重要性: {item.importance:.2f}")
-            
+
         except Exception as e:
             print(f"❌ [情景记忆] 数据库保存失败: {e}")
             # 如果数据库保存失败，不添加到内存
             return
-        
+
         # 6. 添加到内存（只有数据库保存成功后才添加）
         self.memories.append(item)
-        
+
         # 7. 如果超过容量，触发压缩
         if len(self.memories) > self.capacity:
             await self._compress()
-    
-    async def retrieve(self, query: str, top_k: int = 5, 
+
+    async def retrieve(self, query: str, top_k: int = 5,
                       query_embedding: Optional[List[float]] = None) -> List[MemoryItem]:
         """
         增强版检索情景记忆
-        
+
         策略：
         1. 如果有 query_embedding，使用向量检索 + 相关性评分
         2. 否则返回最近的 top_k 条
@@ -166,92 +167,92 @@ class EpisodicMemory(BaseMemory):
         4. 更新访问统计
         """
         await self.load_from_db()
-        
+
         if not self.memories:
             return []
-        
+
         # 如果有向量，使用智能检索
         if query_embedding:
             return await self._smart_retrieve(query, query_embedding, top_k)
         else:
             # 简单检索：返回最近的 top_k 条
             results = self.memories[-top_k:]
-            
+
             # 更新访问统计
             await self._update_access_stats([m.id for m in results])
-            
+
             return results
-    
+
     async def _smart_retrieve(self, query: str, query_embedding: List[float], top_k: int) -> List[MemoryItem]:
         """
         智能检索：向量相似度 + 时间衰减 + 重要性权重
         """
         scored_memories = []
-        
+
         for memory in self.memories:
-            if not memory.embedding:
+            # 💡 修复点 6：安全判断数组
+            if memory.embedding is None or len(memory.embedding) == 0:
                 continue
-            
+
             # 1. 计算向量相似度
             vector_score = self._calculate_cosine_similarity(memory.embedding, query_embedding)
-            
+
             # 2. 计算时间衰减因子
             time_decay = self._calculate_time_decay(memory.timestamp)
-            
+
             # 3. 计算重要性权重
             importance_weight = 0.8 + (memory.importance * 0.4)  # 0.8-1.2 范围
-            
+
             # 4. 计算访问热度加成
             access_boost = min(memory.access_count * 0.05, 0.3)  # 最多30%加成
-            
+
             # 5. 综合评分
             # 公式：(向量相似度 * 0.7 + 时间衰减 * 0.3) * 重要性权重 + 访问热度
             base_relevance = vector_score * 0.7 + time_decay * 0.3
             final_score = base_relevance * importance_weight + access_boost
-            
+
             if final_score > 0:
                 scored_memories.append((final_score, memory))
-        
+
         # 按分数排序
         scored_memories.sort(key=lambda x: x[0], reverse=True)
-        
+
         # 返回 top_k
         results = [m for _, m in scored_memories[:top_k]]
-        
+
         # 更新访问统计
         await self._update_access_stats([m.id for m in results])
-        
+
         print(f"🎯 [情景记忆] 智能检索完成 | 候选: {len(scored_memories)} | 返回: {len(results)}")
         return results
-    
+
     def _calculate_cosine_similarity(self, vec1: List[float], vec2: List[float]) -> float:
         """计算余弦相似度"""
         try:
             dot_product = sum(a * b for a, b in zip(vec1, vec2))
             norm_a = math.sqrt(sum(a * a for a in vec1))
             norm_b = math.sqrt(sum(b * b for b in vec2))
-            
+
             if norm_a == 0 or norm_b == 0:
                 return 0.0
-            
+
             return dot_product / (norm_a * norm_b)
         except Exception:
             return 0.0
-    
+
     def _calculate_time_decay(self, timestamp: datetime) -> float:
-        """
-        计算时间衰减因子
-        
-        策略：
-        - 1小时内：1.0（无衰减）
-        - 1天内：0.8
-        - 1周内：0.6
-        - 1月内：0.4
-        - 更久：0.2
-        """
-        now = datetime.now()
+        """计算时间衰减因子"""
+        from datetime import timezone
+
+        # 💡 修复点 1：统一使用带时区的时间进行计算
+        # 如果数据库里的时间是带时区的 (offset-aware)
+        if timestamp.tzinfo is not None:
+            now = datetime.now(timezone.utc)
+        else:
+            now = datetime.now()
+
         time_diff = now - timestamp
-        
+
         if time_diff <= timedelta(hours=1):
             return 1.0
         elif time_diff <= timedelta(days=1):
@@ -262,39 +263,42 @@ class EpisodicMemory(BaseMemory):
             return 0.4
         else:
             return 0.2
-    
+
     def _calculate_importance(self, item: MemoryItem) -> float:
         """
-        计算记忆重要性
-        
+        计算记忆重要性（修复版）
+
         策略：
-        - 用户问题：0.7（重要）
-        - AI回答：0.6（中等）
-        - 系统消息：0.3（较低）
-        - 长文本加成：+0.1
-        - 包含关键词加成：+0.1
+        - 以外部传入的 item.importance 为基准（memory_manager 已做过智能评估）
+        - 角色基准值作为下限参考，取两者中的较小值（避免强制覆盖外部评估）
+        - 长文本加成：+0.05
+        - 包含关键词加成：+0.05
         """
-        base_importance = {
+        # 🔧 修复：不再用角色固定值强制覆盖，而是取外部 importance 与角色基准的较小值
+        role_baseline = {
             "user": 0.7,
             "assistant": 0.6,
             "system": 0.3
         }.get(item.role, 0.5)
-        
-        # 长度加成
-        length_bonus = 0.1 if len(item.content) > 100 else 0
-        
-        # 关键词加成（简单实现）
+
+        # 以外部 importance 为主，角色基准仅作为上限参考
+        base_importance = min(item.importance, role_baseline)
+
+        # 长度加成（适度减半，避免通货膨胀）
+        length_bonus = 0.05 if len(item.content) > 100 else 0
+
+        # 关键词加成
         keywords = ["重要", "关键", "问题", "错误", "帮助", "谢谢"]
-        keyword_bonus = 0.1 if any(kw in item.content for kw in keywords) else 0
-        
+        keyword_bonus = 0.05 if any(kw in item.content for kw in keywords) else 0
+
         final_importance = min(1.0, base_importance + length_bonus + keyword_bonus)
         return final_importance
-    
+
     async def _update_access_stats(self, memory_ids: List[str]) -> None:
         """批量更新访问统计"""
         if not memory_ids:
             return
-        
+
         try:
             async with AsyncSessionLocal() as db:
                 # 批量更新数据库
@@ -307,27 +311,27 @@ class EpisodicMemory(BaseMemory):
                     )
                 )
                 await db.commit()
-                
+
                 # 更新内存中的统计
                 for memory in self.memories:
                     if memory.id in memory_ids:
                         memory.access()
-                
+
                 print(f"📊 [情景记忆] 更新访问统计: {len(memory_ids)} 条")
-                
+
         except Exception as e:
             print(f"⚠️ [情景记忆] 访问统计更新失败: {e}")
-    
+
     async def update(self, item_id: str, updates: Dict[str, Any]) -> bool:
         """更新记忆项"""
         await self.load_from_db()
-        
+
         for memory in self.memories:
             if memory.id == item_id:
                 for key, value in updates.items():
                     if hasattr(memory, key):
                         setattr(memory, key, value)
-                
+
                 # 同步到数据库
                 async with AsyncSessionLocal() as db:
                     result = await db.execute(
@@ -338,18 +342,18 @@ class EpisodicMemory(BaseMemory):
                         if "content" in updates:
                             db_message.content = updates["content"]
                         await db.commit()
-                
+
                 return True
         return False
-    
+
     async def forget(self, item_id: str) -> bool:
         """删除指定记忆"""
         await self.load_from_db()
-        
+
         for i, memory in enumerate(self.memories):
             if memory.id == item_id:
                 self.memories.pop(i)
-                
+
                 # 从数据库删除
                 async with AsyncSessionLocal() as db:
                     result = await db.execute(
@@ -359,15 +363,15 @@ class EpisodicMemory(BaseMemory):
                     if db_message:
                         await db.delete(db_message)
                         await db.commit()
-                
+
                 print(f"🗑️ [情景记忆] 删除记忆: {item_id}")
                 return True
         return False
-    
+
     async def _compress(self) -> None:
         """
         压缩情景记忆
-        
+
         策略：
         1. 保留最近的 20% 记忆（完整保留）
         2. 中间的 60% 记忆进行摘要
@@ -376,13 +380,13 @@ class EpisodicMemory(BaseMemory):
         total = len(self.memories)
         keep_recent = int(total * 0.2)
         compress_middle = int(total * 0.6)
-        
+
         # 保留最近的
         recent_memories = self.memories[-keep_recent:]
-        
+
         # 中间的进行摘要（这里简化处理，实际可以调用 LLM 生成摘要）
         middle_memories = self.memories[-(keep_recent + compress_middle):-keep_recent]
-        
+
         # 创建摘要记忆
         if middle_memories:
             summary_content = f"[摘要] 共 {len(middle_memories)} 条对话"
@@ -393,16 +397,16 @@ class EpisodicMemory(BaseMemory):
                 metadata={"type": "summary", "count": len(middle_memories)}
             )
             recent_memories.insert(0, summary_item)
-        
+
         # 更新记忆列表
         self.memories = recent_memories
-        
+
         print(f"🗜️ [情景记忆] 压缩完成 | 原始: {total} → 压缩后: {len(self.memories)}")
-    
+
     async def consolidate(self) -> None:
         """
         情景记忆巩固
-        
+
         专门针对情景记忆的巩固策略：
         1. 清理衰减严重的记忆
         2. 压缩过多的历史对话
@@ -410,48 +414,53 @@ class EpisodicMemory(BaseMemory):
         4. 更新数据库中的记忆状态
         """
         await self.load_from_db()
-        
+
         if not self.memories:
             print("📚 [情景记忆] 无记忆需要巩固")
             return
-        
+
         original_count = len(self.memories)
-        
+
         # 1. 应用基础巩固逻辑（删除衰减严重的记忆）
         await super().consolidate()
-        
+
         # 2. 情景记忆特有的巩固：如果记忆过多，进行会话级压缩
         if len(self.memories) > self.capacity * 0.8:  # 超过容量的80%时开始压缩
             await self._compress()
-        
+
         # 3. 更新记忆的衰减状态
-        now = datetime.now()
+        from datetime import timezone
         for memory in self.memories:
+            # 💡 修复点 2：时区安全的时间相减
+            if memory.timestamp.tzinfo is not None:
+                now = datetime.now(timezone.utc)
+            else:
+                now = datetime.now()
             # 计算时间差（小时）
             time_diff = (now - memory.timestamp).total_seconds() / 3600
             memory.decay(time_diff)
-        
+
         consolidated_count = len(self.memories)
         print(f"🔄 [情景记忆] 巩固完成 | 原始: {original_count} → 巩固后: {consolidated_count}")
-    
+
     async def get_session_summary(self) -> str:
         """
         获取会话摘要
-        
+
         返回整个会话的简短摘要
         """
         await self.load_from_db()
-        
+
         if not self.memories:
             return "暂无对话记录"
-        
+
         total_messages = len(self.memories)
         user_messages = sum(1 for m in self.memories if m.role == "user")
         assistant_messages = sum(1 for m in self.memories if m.role == "assistant")
-        
+
         first_message = self.memories[0].content[:50] + "..." if len(self.memories[0].content) > 50 else self.memories[0].content
         last_message = self.memories[-1].content[:50] + "..." if len(self.memories[-1].content) > 50 else self.memories[-1].content
-        
+
         summary = (
             f"会话摘要:\n"
             f"- 总消息数: {total_messages}\n"
@@ -460,5 +469,5 @@ class EpisodicMemory(BaseMemory):
             f"- 首条消息: {first_message}\n"
             f"- 最后消息: {last_message}"
         )
-        
+
         return summary

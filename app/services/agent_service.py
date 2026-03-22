@@ -172,35 +172,15 @@ class EnterpriseAgentService:
         else:
             async for chunk in self._chat_stream_langchain(user_input, kb_id, session_id, history, user_id):
                 yield chunk
-    
+
     async def _chat_custom(self, user_input: str, kb_id: str, session_id: str, history: list, user_id: str) -> str:
         """
         自定义框架的非流式对话（集成智能路由和记忆系统）
         """
         print(f"🎯 [自定义框架] 开始处理: {user_input[:50]}...")
-        
-        # 🧠 获取记忆管理器
-        if session_id and user_id:
-            memory_manager = self._get_memory_manager(session_id, user_id)
-            
-            # 添加用户消息到记忆系统
-            await memory_manager.add_message("user", user_input)
-            
-            # 从记忆系统获取增强的上下文（使用新的上下文构建器）
-            memory_context = await memory_manager.get_formatted_context(
-                query=user_input,
-                max_tokens=1500,  # 控制上下文长度
-                knowledge_context=kb_context,
-                system_instructions=f"当前检索模式：{route_mode}。如需调用search_enterprise_knowledge工具，请传入知识库ID：{kb_id}"
-            )
-            
-            print(f"🧠 [记忆系统] 获取增强上下文: {len(memory_context)} 字符")
-        else:
-            memory_manager = None
-            memory_context = ""
-            print("⚠️ [记忆系统] 缺少session_id或user_id，跳过记忆系统")
-        
-        # 🆕 使用统一检索器（自动智能路由）
+
+        # 🆕 第一步：先使用统一检索器（自动智能路由），提取外部知识
+        # 必须先执行这里，才能拿到后续需要的 kb_context 和 route_mode
         try:
             # 调用统一检索器
             retrieval_result = await unified_retriever.retrieve(
@@ -211,28 +191,50 @@ class EnterpriseAgentService:
                 top_k=5,
                 enable_routing=True  # 启用智能路由
             )
-            
+
             # 获取合并后的上下文
             kb_context = retrieval_result["combined_context"]
             route_mode = retrieval_result["mode"]
-            
+
             print(f"📊 [检索模式] {route_mode}")
-            
+
         except Exception as e:
             print(f"⚠️ [统一检索] 失败，使用默认模式: {e}")
             kb_context = ""
             route_mode = "FALLBACK"
-        
+
+        # 🧠 第二步：获取记忆管理器，并结合刚刚检索到的外部知识构建终极上下文
+        if session_id and user_id:
+            memory_manager = self._get_memory_manager(session_id, user_id)
+
+            # 🔧 Bug1修复：先构建上下文（检索历史记忆），再保存当次消息
+            # 避免当次输入被立刻存入情景记忆后又被检索出来，造成自引用
+            memory_context = await memory_manager.get_formatted_context(
+                query=user_input,
+                max_tokens=1500,  # 控制上下文长度
+                knowledge_context=kb_context,
+                system_instructions=f"当前检索模式：{route_mode}。如需调用search_enterprise_knowledge工具，请传入知识库ID：{kb_id}"
+            )
+
+            # 构建完上下文后，再将用户消息持久化到记忆系统
+            await memory_manager.add_message("user", user_input)
+
+            print(f"🧠 [记忆系统] 获取增强上下文: {len(memory_context)} 字符")
+        else:
+            memory_manager = None
+            memory_context = ""
+            print("⚠️ [记忆系统] 缺少session_id或user_id，跳过记忆系统")
+
         # 构建增强的用户输入（简化版，主要逻辑已在上下文构建器中）
         enhanced_input = f"""用户问题：{user_input}
 
 {memory_context}
 
 请基于以上上下文信息回答用户问题。"""
-        
+
         # 不再使用手动历史记录，改用记忆系统的上下文
         formatted_history = []
-        
+
         try:
             # 调用自定义 Agent
             result = await self.agent.run(
@@ -240,15 +242,15 @@ class EnterpriseAgentService:
                 history=formatted_history,
                 kb_id=kb_id
             )
-            
+
             # 🧠 将AI回答添加到记忆系统
             if memory_manager:
                 await memory_manager.add_message("assistant", result)
                 print(f"🧠 [记忆系统] 已保存AI回答")
-            
+
             print(f"✅ [自定义框架] 处理完成，回答长度: {len(result)}")
             return result
-            
+
         except Exception as e:
             print(f"❌ [自定义框架] 处理失败: {str(e)}")
             return f"抱歉，处理过程中出现错误：{str(e)}"
@@ -262,16 +264,17 @@ class EnterpriseAgentService:
         # 🧠 获取记忆管理器
         if session_id and user_id:
             memory_manager = self._get_memory_manager(session_id, user_id)
-            
-            # 添加用户消息到记忆系统
-            await memory_manager.add_message("user", user_input)
-            
-            # 从记忆系统获取上下文
+
+            # 🔧 Bug1修复：先构建上下文（检索历史记忆），再保存当次消息
+            # 避免当次输入被立刻存入情景记忆后又被检索出来，造成自引用
             memory_context = await memory_manager.get_formatted_context(
                 query=user_input,
                 max_tokens=1500
             )
-            
+
+            # 构建完上下文后，再将用户消息持久化到记忆系统
+            await memory_manager.add_message("user", user_input)
+
             print(f"🧠 [记忆系统] 获取上下文: {len(memory_context)} 字符")
         else:
             memory_manager = None

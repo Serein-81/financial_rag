@@ -104,16 +104,18 @@ class TenantSecurityService:
             # 创建审计日志
             async with AsyncSessionLocal() as session:
                 # 设置租户上下文（使用系统权限）
+                # 🔥 修复：SET LOCAL 不支持参数化查询，使用字符串格式化
+                safe_tenant_id = tenant_id.replace("'", "''")  # 防止 SQL 注入
                 await session.execute(
-                    text("SET LOCAL app.current_tenant_id = :tenant_id"),
-                    {"tenant_id": tenant_id}
+                    text(f"SET LOCAL app.current_tenant_id = '{safe_tenant_id}'")
                 )
                 
                 audit_log = TenantAuditLog(
                     tenant_id=tenant_id,
                     user_id=user_id,
                     action=event_type,
-                    table_name="security_audit",
+                    resource_type="security_audit",  # 🔥 修复：使用 resource_type 而不是 table_name
+                    access_result="logged",  # 🔥 添加必需字段
                     details={
                         "event_type": event_type,
                         "severity": severity,
@@ -167,7 +169,7 @@ class TenantSecurityService:
                     FROM tenant_audit_logs 
                     WHERE tenant_id = :tenant_id 
                         AND created_at >= NOW() - INTERVAL ':days days'
-                        AND table_name = 'security_audit'
+                        AND resource_type = 'security_audit'
                     GROUP BY action
                     ORDER BY count DESC
                 """)
@@ -191,7 +193,7 @@ class TenantSecurityService:
                     FROM tenant_audit_logs 
                     WHERE tenant_id = :tenant_id 
                         AND created_at >= NOW() - INTERVAL ':days days'
-                        AND table_name = 'security_audit'
+                        AND resource_type = 'security_audit'
                 """)
                 
                 total_result = await session.execute(total_query, {

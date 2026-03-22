@@ -67,7 +67,8 @@ class MemoryItem:
         3. 重要性
         4. 访问频率
         """
-        if not self.embedding or not query_embedding:
+        # 💡 终极修复：完美兼容 Python 列表和 NumPy 数组
+        if self.embedding is None or len(self.embedding) == 0 or query_embedding is None or len(query_embedding) == 0:
             return 0.0
         
         # 1. 计算余弦相似度

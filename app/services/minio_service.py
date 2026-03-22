@@ -87,8 +87,10 @@ class MinioService:
             content_type=content_type
         )
 
+        # 🔥 修复：使用公开端点生成浏览器可访问的 URL
+        public_endpoint = getattr(settings, "MINIO_PUBLIC_ENDPOINT", settings.MINIO_ENDPOINT)
         protocol = "https" if settings.MINIO_SECURE else "http"
-        return f"{protocol}://{settings.MINIO_ENDPOINT}/{self.avatar_bucket}/{new_filename}"
+        return f"{protocol}://{public_endpoint}/{self.avatar_bucket}/{new_filename}"
 
     # ==========================================
     # [知识库文档管理]

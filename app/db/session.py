@@ -24,7 +24,7 @@ SessionLocal = sessionmaker(
 # 这是一个连接池对象。它不会马上连接数据库，只有当真正有请求时才会建立连接。
 # echo=True 表示会在控制台打印出每一条生成的 SQL 语句，方便你调试代码。
 # (生产环境通常会把 echo 设为 False)
-engine = create_async_engine(settings.DATABASE_URL, echo=True)
+engine = create_async_engine(settings.DATABASE_URL, echo=False)
 
 # =========================================================
 # 3. 创建异步 Session 工厂 (SessionLocal)

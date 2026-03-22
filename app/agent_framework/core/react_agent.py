@@ -54,10 +54,12 @@ Final Answer: 最终答案
 
 重要规则：
 1. 每次只能调用一个工具
-2. Action Input 必须是有效的 JSON 格式
+2. Action Input 必须是有效的 JSON 格式，且包含工具所需的全部参数
 3. 如果不需要工具，直接给出 Final Answer
 4. 最多进行 {max_iterations} 轮思考
 5. 如果工具调用连续失败，请直接基于已有信息给出答案
+6. 对于问候语、闲聊、感谢等简单对话（如"你好"、"谢谢"、"再见"等），必须直接给出 Final Answer，禁止调用任何工具
+7. 只有当问题明确需要查询知识库或外部信息时，才允许调用工具；若无法确定查询内容，请直接回答
 
 {tools_description}
 
@@ -285,28 +287,26 @@ Thought:"""
                 self._log_action(f"🤖 LLM 流式调用 (第 {self.current_iteration} 轮)")
                 
                 response_text = ""
-                
-                # 流式获取 LLM 响应
+
+                # 流式获取 LLM 响应（仅在此阶段收集工具调用信号）
                 async for chunk in self.llm.stream_generate(current_prompt, temperature=0.1):
                     response_text += chunk
-                    
-                    # 检查是否包含最终答案
-                    if "Final Answer:" in response_text:
-                        # 提取最终答案并流式输出
-                        final_answer = self._extract_final_answer(response_text)
-                        if final_answer:
-                            # 只输出最终答案部分
-                            for char in final_answer:
-                                yield char
-                            self._log_action("✅ 流式输出完成")
-                            return
-                    
-                    # 检查是否需要工具调用
+
+                    # 🔧 注意：不在此处检查 Final Answer
+                    # 原因：流式传输中途 response_text 不完整，提取会截断答案
+                    # 例如收到 "Final Answer: 你\n" 时提取只得到"你"，后续"好！..."全部丢失
+
+                    # 检查是否需要工具调用（可在流式中途判断，有完整 Action Input 即可）
                     tool_call = self.tool_manager.parse_tool_call_from_text(response_text)
                     if tool_call and "Action Input:" in response_text:
+                        # 🔧 参数为空说明 Action Input 的 JSON 尚未接收完整（如只到达了"{"）
+                        # 继续等待更多 chunks，直到 JSON 完整（parameters 非空）再执行
+                        if not tool_call["parameters"]:
+                            continue
+
                         # 更新历史记录
                         self._update_history(response_text, tool_call)
-                        
+
                         # 检查是否应该强制结束
                         force_check = self._should_force_final_answer(response_text)
                         if force_check["should_stop"]:
@@ -315,38 +315,49 @@ Thought:"""
                             })
                             yield f"\n\n[检测到循环，基于现有信息回答]\n{force_check['suggestion']}"
                             return
-                        
+
                         # 执行工具调用
                         self._log_action("🔧 检测到工具调用", tool_call)
-                        
+
                         tool_result = await self.call_tool(
                             tool_call["tool_name"],
                             **tool_call["parameters"]
                         )
-                        
+
                         # 检查连续失败
                         if self._check_consecutive_failures(tool_result):
                             self._log_action("🛑 连续工具调用失败，强制结束")
                             yield f"\n\n[工具调用多次失败，基于现有信息回答]\n{self._generate_fallback_answer()}"
                             return
-                        
+
                         # 更新提示词
                         observation = f"Observation: {tool_result}\nThought:"
                         current_prompt = current_prompt + response_text + "\n" + observation
-                        
+
                         # 继续下一轮循环
                         break
-                
+
                 else:
-                    # 如果没有检测到工具调用或最终答案，检查循环
-                    self._update_history(response_text)
-                    
+                    # 🔧 流式响应完整接收后，统一检查 Final Answer
+                    # 此时 response_text 是完整的，提取结果不会被截断
+                    if "Final Answer:" in response_text:
+                        final_answer = self._extract_final_answer(response_text)
+                        if final_answer:
+                            for char in final_answer:
+                                yield char
+                            self._log_action("✅ 流式输出完成")
+                            return
+
+                    # 没有 Final Answer 也没有工具调用，检查是否陷入循环
+                    # 🔧 必须先检测再存入：若先 _update_history 后检测，
+                    #    last_responses 已含当前响应，会与自身比较得到 1.00 的误判相似度
                     loop_check = self._check_loop_detection(response_text)
+                    self._update_history(response_text)
                     if loop_check["should_stop"]:
                         self._log_action("🛑 流式执行检测到循环", {"reason": loop_check["reason"]})
                         yield f"\n\n[检测到重复思考，直接回答]\n{self._generate_fallback_answer()}"
                         return
-                    
+
                     # 继续累积响应
                     current_prompt = current_prompt + response_text + "\n"
             
@@ -434,7 +445,8 @@ Thought:"""
         Returns:
             最终答案，如果没有找到则返回 None
         """
-        pattern = r'Final Answer:\s*(.*?)(?:\n|$)'
+        # 🔧 Bug3修复：匹配到下一个 ReAct 关键词或字符串结尾，支持多行答案
+        pattern = r'Final Answer:\s*(.*?)(?=\nThought:|\nAction:|\nObservation:|$)'
         match = re.search(pattern, text, re.DOTALL)
         
         if match:

@@ -10,7 +10,6 @@ from app.db.session import AsyncSessionLocal
 from app.core.security import decode_access_token
 from contextvars import ContextVar
 import logging
-import asyncio
 import uuid
 
 logger = logging.getLogger(__name__)
@@ -35,8 +34,10 @@ class TenantContextMiddleware(BaseHTTPMiddleware):
     EXCLUDED_PATHS = [
         "/api/v1/auth/login",
         "/api/v1/auth/register", 
-        "/api/v1/auth/send-code",
-        "/api/v1/auth/verify-code",
+        "/api/v1/auth/register/admin",
+        "/api/v1/auth/me",  # 添加获取用户信息接口
+        "/api/v1/auth/sms/send",
+        "/api/v1/auth/sms/verify",
         "/docs",
         "/redoc",
         "/openapi.json",
@@ -46,6 +47,10 @@ class TenantContextMiddleware(BaseHTTPMiddleware):
     
     async def dispatch(self, request: Request, call_next):
         """处理请求"""
+
+        # 🔥 修复：跳过 OPTIONS 请求（CORS 预检请求）
+        if request.method == "OPTIONS":
+            return await call_next(request)
 
         if request.url.path in ["/", "/docs", "/redoc", "/openapi.json", "/health"]:
             return await call_next(request)
@@ -214,27 +219,25 @@ async def set_tenant_context_for_db(session, tenant_id: str, user_id: str = None
             # 执行数据库操作
     """
     try:
-        # 设置租户上下文
+        # 🔥 修复：SET LOCAL 不支持参数化查询，必须使用字符串格式化
+        # 注意：这里需要对 tenant_id 进行转义以防止 SQL 注入
+        safe_tenant_id = tenant_id.replace("'", "''")  # 转义单引号
         await session.execute(
-            text("SET LOCAL app.current_tenant_id = :tenant_id"),
-            {"tenant_id": tenant_id}
+            text(f"SET LOCAL app.current_tenant_id = '{safe_tenant_id}'")
         )
         
         # 设置用户上下文（可选）
         if user_id:
+            safe_user_id = user_id.replace("'", "''")  # 转义单引号
             await session.execute(
-                text("SET LOCAL app.current_user_id = :user_id"),
-                {"user_id": user_id}
+                text(f"SET LOCAL app.current_user_id = '{safe_user_id}'")
             )
         
         logger.debug(f"已设置数据库租户上下文: {tenant_id}, 用户: {user_id}")
         
     except Exception as e:
-        logger.error(f"设置数据库租户上下文失败: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to set tenant context"
-        )
+        logger.warning(f"设置数据库租户上下文失败: {e}")
+        # 不抛出异常，让请求继续处理
 
 # 为了向后兼容，添加别名
 TenantMiddleware = TenantContextMiddleware

@@ -185,7 +185,13 @@ class ToolManager:
                     missing_params.append(param_name)
             
             if missing_params:
-                error_msg = f"错误: 缺少必需参数: {', '.join(missing_params)}"
+                # 🔧 构建带示例的错误提示，引导模型正确重试
+                example_json = {k: f"<{k}的具体内容>" for k, v in tool_info["parameters"].items() if v.get("required", False)}
+                error_msg = (
+                    f"错误: 缺少必需参数: {', '.join(missing_params)}。"
+                    f"请使用以下格式重试: "
+                    f"Action Input: {json.dumps(example_json, ensure_ascii=False)}"
+                )
                 if call_id:
                     await self.tracer.end_call(
                         call_id=call_id,
@@ -240,30 +246,42 @@ class ToolManager:
     def get_tools_description(self) -> str:
         """
         获取所有工具的描述（用于提示词）
-        
-        Returns:
-            格式化的工具描述
+        包含 JSON 调用示例，帮助模型正确格式化 Action Input
         """
         if not self.tools:
             return "当前没有可用的工具。"
-        
+
         descriptions = []
         for name, info in self.tools.items():
             desc_parts = [f"- {name}: {info['description']}"]
-            
-            # 添加参数信息
+
+            # 添加参数说明
             if info["parameters"]:
-                params_desc = []
+                required_params = []
+                optional_params = []
+                example_json = {}
+
                 for param_name, param_info in info["parameters"].items():
                     param_desc = f"{param_name}({param_info['type']})"
                     if param_info.get("required", False):
-                        param_desc += "*"  # 标记必需参数
-                    params_desc.append(param_desc)
-                
-                desc_parts.append(f"  参数: {', '.join(params_desc)}")
-            
+                        required_params.append(param_desc)
+                        example_json[param_name] = f"<{param_name}的值>"
+                    else:
+                        optional_params.append(param_desc)
+
+                if required_params:
+                    desc_parts.append(f"  必需参数: {', '.join(required_params)}")
+                if optional_params:
+                    desc_parts.append(f"  可选参数: {', '.join(optional_params)}")
+
+                # 🔧 新增：展示 JSON 调用格式示例
+                desc_parts.append(
+                    f"  调用示例: Action: {name}\n"
+                    f"           Action Input: {json.dumps(example_json, ensure_ascii=False)}"
+                )
+
             descriptions.append("\n".join(desc_parts))
-        
+
         return "\n".join(descriptions)
     
     def get_tool_names(self) -> List[str]:

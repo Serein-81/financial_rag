@@ -48,7 +48,8 @@ class Settings(BaseSettings):
     CLAUDE_MODEL: str = "claude-3-sonnet-20240229"
     
     # MinIO 配置
-    MINIO_ENDPOINT: str = "127.0.0.1:9000"
+    MINIO_ENDPOINT: str = "127.0.0.1:9000"  # MinIO 服务端点（内部访问）
+    MINIO_PUBLIC_ENDPOINT: str = "127.0.0.1:9000"  # MinIO 公开端点（浏览器访问）
     MINIO_ACCESS_KEY: str = "minioadmin"
     MINIO_SECRET_KEY: str = "minioadmin"
     MINIO_SECURE: bool = False

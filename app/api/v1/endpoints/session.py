@@ -44,9 +44,22 @@ async def get_session_history(session_id: UUID, current_user: User = Depends(dep
 async def delete_session(session_id: UUID, current_user: User = Depends(deps.get_current_user)):
     """删除会话"""
     async with AsyncSessionLocal() as db:
-        stmt = delete(ChatSession).where(ChatSession.id == session_id, ChatSession.user_id == current_user.id)
-        result = await db.execute(stmt)
-        if result.rowcount == 0:
+        # 1. 先验证会话是否存在，并且是否属于当前用户 (防止越权删除别人的会话)
+        session = await db.get(ChatSession, session_id)
+        if not session or session.user_id != current_user.id:
             raise HTTPException(status_code=404, detail="会话不存在")
+
+        # 2. 💡 核心修复：先删除这个会话下的所有消息记录 (让住户先搬走)
+        await db.execute(
+            delete(ChatMessage).where(ChatMessage.session_id == session_id)
+        )
+
+        # 3. 💡 核心修复：再删除会话本身 (炸楼)
+        await db.execute(
+            delete(ChatSession).where(ChatSession.id == session_id)
+        )
+
+        # 最后统一提交事务，如果在上面任何一步报错，数据库会自动回滚，保证数据安全
         await db.commit()
+
         return {"msg": "删除成功"}
