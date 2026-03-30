@@ -1,51 +1,122 @@
 # ==========================
 # 1. 绝对不能提交的敏感信息与本地数据
 # ==========================
-.env
-.env.*
-*.log
-!.env.example
+rag_backend/.env
+rag_backend/.env.*
+rag_backend/*.log
+!rag_backend/.env.example
+
+# 前端环境变量
+rag_frontend/.env
+rag_frontend/.env.*
+rag_frontend/*.log
+!rag_frontend/.env.example
+
+# MCP服务环境变量
+mcp_server/.env
+mcp_server/.env.*
+
 # ❌ 增加：屏蔽 Docker 物理数据 (图片中那 1302 个文件就在这里)
-postgres_data/
+rag_backend/postgres_data/
 
 # ❌ 增加：屏蔽本地上传的文档和对话记录
-app/storage/
-app/uploads/
-#chat_history/
+rag_backend/app/storage/
+rag_backend/app/uploads/
+# rag_backend/chat_history/
 
 # ==========================
 # 2. Python 编译产生的垃圾文件
 # ==========================
-__pycache__/
-*.py[cod]
-*$py.class
+rag_backend/__pycache__/
+rag_backend/*.py[cod]
+rag_backend/*$py.class
 
 # ========================
 # 本地存储卷与数据库数据
+rag_backend/tests/
+rag_backend/mass_/
+rag_backend/migrations/
+rag_backend/logs/
+
 # ========================
 # 忽略 MinIO 的本地持久化数据
-minio_data/
-
-neo4j_data/
+rag_backend/minio_data/
+rag_backend/neo4j_data/
 
 # ==========================
 # 3. 虚拟环境
 # ==========================
-venv/
-.venv/
-env/
-.env/
+rag_backend/venv/
+rag_backend/.venv/
+rag_backend/env/
+rag_backend/.env/
 
 # ==========================
-# 4. IDE 产生的配置文件
+# 4. 数据库备份与缓存 (绝对不能传)
 # ==========================
+rag_backend/*.dump
+rag_backend/*.sql
+rag_backend/redis_data/
+rag_backend/chat_history/
+
+# ==========================
+# 5. 测试报告与日志
+# ==========================
+rag_backend/test_reports/
+rag_backend/*.json
+rag_backend/test_data_output.txt
+
+# ==========================
+# 6. 本地测试与调试脚本 (如果你不想公开它们)
+# 如果这些脚本包含 API Key 或数据库密码，请务必忽略！
+# ==========================
+rag_backend/get_valid_token.py
+rag_backend/minio_data/generate_secret_key.py
+
+
+# =================================================================
+# 👇 下方为全局通用屏蔽（建议不加前缀，让整个 Monorepo 都生效）
+# =================================================================
+
+# IDE 产生的配置文件
 .idea/
 .vscode/
 *.swp
 *.swo
 
-# ==========================
-# 5. 操作系统产生的文件
-# ==========================
+# 操作系统产生的文件
 .DS_Store
 Thumbs.db
+
+# ==========================
+# 前端构建产物
+# ==========================
+rag_frontend/dist/
+rag_frontend/dist-ssr/
+rag_frontend/node_modules/
+rag_frontend/.cache/
+
+# ==========================
+# MCP 服务相关
+# ==========================
+mcp_server/logs/
+mcp_server/data/
+
+# ==========================
+# 本地测试脚本（包含敏感信息）
+# ==========================
+# create_test_users.py
+# 111chat.py
+# 1111enbeding
+# file111
+# quick_tavily_test.py
+# add_level_column.py
+# add_token_columns.py
+
+# ==========================
+# 上传文件和存储（包含用户数据）
+# ==========================
+rag_backend/storage/
+rag_backend/uploads/
+!rag_backend/uploads/.gitkeep
+!rag_backend/storage/.gitkeep

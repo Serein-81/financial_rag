@@ -1,6 +1,8 @@
 {
   "permissions": {
     "allow": [
+      "Bash(tree:*)",
+      "Bash(cat:*)",
       "Bash(dir:*)"
     ],
     "deny": [],

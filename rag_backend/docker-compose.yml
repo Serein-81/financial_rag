@@ -1,0 +1,178 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: rag_db
+    restart: always
+    environment:
+
+      # Docker 会自动从 .env 中读取这些变量
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Redis 服务 - 支持缓存和会话管理
+  redis:
+    image: redis:7-alpine
+    container_name: rag_redis
+    restart: always
+    ports:
+      - "${REDIS_PORT}:6379"
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - ./redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Neo4j 图数据库
+  neo4j:
+    image: neo4j:5.15-community
+    container_name: rag_neo4j
+    restart: always
+    ports:
+      - "7474:7474"  # Web UI
+      - "7687:7687"  # Bolt 协议
+    environment:
+      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD}
+      - NEO4J_PLUGINS=["apoc"]
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*
+      - NEO4J_dbms_memory_heap_max__size=512M
+    volumes:
+      - ./neo4j_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p ${NEO4J_PASSWORD} 'RETURN 1'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # MinIO 对象存储服务
+  minio:
+    image: quay.io/minio/minio:latest
+    container_name: rag_minio
+    restart: always
+    ports:
+      - "9000:9000"  # 后端代码上传图片调用的 API 端口
+      - "9001:9001"  # 你用浏览器访问 Web 控制台的端口
+    environment:
+      MINIO_ROOT_USER: minioadmin    # Web 登录账号
+      MINIO_ROOT_PASSWORD: minioadmin # Web 登录密码
+    volumes:
+      - ./minio_data:/data           # 图片持久化存放在项目下的 minio_data 文件夹
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # 后端服务 - 包含新增的高级特性
+  backend:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag_backend
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      # 数据库配置
+      POSTGRES_SERVER: db
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_PORT: ${POSTGRES_PORT}
+      
+      # Redis 配置
+      REDIS_HOST: redis
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_DB: ${REDIS_DB}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      
+      # MinIO 配置
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_SECURE: ${MINIO_SECURE}
+      MINIO_AVATAR_BUCKET: ${MINIO_AVATAR_BUCKET}
+      
+      # API 密钥
+      ZHIPU_API_KEY: ${ZHIPU_API_KEY}
+      QWEATHER_API_KEY: ${QWEATHER_API_KEY}
+      GAODE_API_KEY: ${GAODE_API_KEY}
+      TAVILY_API_KEY: ${TAVILY_API_KEY}
+      
+      # 安全配置
+      SECRET_KEY: ${SECRET_KEY}
+      ALGORITHM: ${ALGORITHM}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES}
+      
+      # 高级特性配置
+      ENABLE_AGENT_TRACING: ${ENABLE_AGENT_TRACING:-true}
+      ENABLE_TOOL_TRACING: ${ENABLE_TOOL_TRACING:-true}
+      ENABLE_PROMPT_OPTIMIZATION: ${ENABLE_PROMPT_OPTIMIZATION:-true}
+      TRACE_DATA_RETENTION_DAYS: ${TRACE_DATA_RETENTION_DAYS:-30}
+      
+      # 知识图谱配置
+      ENABLE_KNOWLEDGE_GRAPH: ${ENABLE_KNOWLEDGE_GRAPH:-false}
+      ENABLE_ENTITY_EXTRACTION: ${ENABLE_ENTITY_EXTRACTION:-false}
+      ENABLE_RELATION_EXTRACTION: ${ENABLE_RELATION_EXTRACTION:-false}
+      
+      # Neo4j 配置
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD}
+      
+      # MinerU OCR 配置
+      MINERU_APISERVER: ${MINERU_APISERVER:-}
+      MINERU_OUTPUT_DIR: ${MINERU_OUTPUT_DIR:-/tmp/mineru_output}
+      MINERU_BACKEND: ${MINERU_BACKEND:-pipeline}
+      MINERU_SERVER_URL: ${MINERU_SERVER_URL:-}
+      MINERU_DELETE_OUTPUT: ${MINERU_DELETE_OUTPUT:-1}
+      
+      # PaddleOCR 配置
+      PADDLEOCR_API_URL: ${PADDLEOCR_API_URL:-}
+      PADDLEOCR_ALGORITHM: ${PADDLEOCR_ALGORITHM:-PaddleOCR-VL}
+      PADDLEOCR_ACCESS_TOKEN: ${PADDLEOCR_ACCESS_TOKEN:-}
+      
+      # OCR引擎选择 (可选: mineru, paddleocr, tesseract)
+      OCR_ENGINE: ${OCR_ENGINE:-}
+      
+      # Neo4j数据库
+      NEO4J_DATABASE: neo4j
+    
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    
+    volumes:
+      - .:/app
+      - ./logs:/app/logs
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  neo4j_data:
