@@ -12,7 +12,7 @@ export const knowledgeApi = {
   async createKnowledgeBase(data: CreateKnowledgeBaseRequest): Promise<KnowledgeBase> {
     return request<KnowledgeBase>('/knowledge/bases', {
       method: 'POST',
-      body: JSON.stringify(data),
+      data: JSON.stringify(data),
     })
   },
 
@@ -50,7 +50,7 @@ export const knowledgeApi = {
   async downloadDocument(doc_id: string): Promise<Blob> {
     const token = getToken()
     console.log('downloadDocument - Token:', token ? `${token.substring(0, 20)}...` : 'null')
-    const response = await fetch(`/knowledge/documents/${doc_id}/download`, {
+    const response = await fetch(`/api/v1/knowledge/documents/${doc_id}/download`, {
       headers: {
         'Authorization': `Bearer ${token}`,
       },
@@ -66,5 +66,12 @@ export const knowledgeApi = {
       throw new Error(errorMsg)
     }
     return response.blob()
+  },
+
+  // Delete document
+  async deleteDocument(doc_id: string): Promise<void> {
+    return request<void>(`/knowledge/documents/${doc_id}`, {
+      method: 'DELETE',
+    })
   },
 }

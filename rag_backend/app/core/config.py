@@ -29,17 +29,44 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
     # 5. 👇 LLM 大模型配置
-    # 当前使用的提供商：zhipu, openai, claude, minimax, xinference, huggingface, modelscope, baichuan
+    # 当前使用的提供商：zhipu, openai, claude, minimax, xinference, huggingface, modelscope, baichuan, gpt, deepseek, qwen
     LLM_PROVIDER: str = "zhipu"
+    
+    # 默认智能体 LLM 配置（问候语、普通对话等）
+    # 为空时使用 LLM_PROVIDER 的值
+    LLM_PROVIDER_DEFAULT: str = ""
+    
+    # 专家智能体 LLM 配置（金融、税务、法律等专家）
+    # 为空时所有智能体都使用 LLM_PROVIDER 或 LLM_PROVIDER_DEFAULT 的值
+    # 可选：deepseek, qwen, zhipu, gpt, openai, claude, minimax 等
+    LLM_PROVIDER_SPECIALIST: str = ""
     
     # Agent 模式配置
     # 支持的模式：react, plan, reflect
     AGENT_MODE: str = "react"
     
+    # 工具来源配置
+    # 支持的模式：cloud（云端 MCP）、local（本地）、auto（自动选择）
+    # - cloud: 强制使用云端 MCP 工具
+    # - local: 强制使用本地工具
+    # - auto: 优先使用云端，云端不可用时降级到本地
+    MCP_MODE: str = "cloud"
+    
     # 通用 LLM 重试配置
     LLM_MAX_RETRIES: int = 5
     LLM_BASE_DELAY: float = 2.0
     LLM_TIMEOUT_SECONDS: int = 600
+    
+    # 知识图谱提取配置
+    KG_EXTRACTION_MODEL: str = "deepseek/deepseek-chat"  # 实体/关系提取模型
+    EXTRACTION_MAX_RETRIES: int = 1  # 提取重试次数
+    EXTRACTION_CONCURRENCY: int = 3  # 并发提取数量
+    
+    # GPT 配置（OpenRouter API）
+    GPT_API_KEY: str = ""
+    GPT_MODEL: str = "openai/gpt-5.4-nano"
+    GPT_BASE_URL: str = "https://openrouter.ai/api/v1"
+    GPT_VERIFY_SSL: bool = True
     
     # 智谱 AI 配置
     ZHIPU_API_KEY: str = ""
@@ -81,6 +108,18 @@ class Settings(BaseSettings):
     BAICHUAN_MODEL: str = "baichuan4"
     BAICHUAN_BASE_URL: str = "https://api.baichuan-ai.com/v1"
     BAICHUAN_SECRET_KEY: str = ""
+    
+    # DeepSeek 配置（OpenRouter API）
+    DEEPSEEK_API_KEY: str = ""
+    DEEPSEEK_MODEL: str = "deepseek/deepseek-chat-v3-0324"
+    DEEPSEEK_BASE_URL: str = "https://openrouter.ai/api/v1"
+    DEEPSEEK_VERIFY_SSL: bool = False
+    
+    # Qwen 配置（OpenRouter API）
+    QWEN_API_KEY: str = ""
+    QWEN_MODEL: str = "qwen/qwen3.6-plus:free"
+    QWEN_BASE_URL: str = "https://openrouter.ai/api/v1"
+    QWEN_VERIFY_SSL: bool = False
     
     # 👇 Embedding 向量化配置
     # 当前使用的提供商：zhipu, openai, ollama, siliconflow
@@ -140,6 +179,30 @@ class Settings(BaseSettings):
     REDIS_DB: int = 0
     REDIS_PASSWORD: str = ""
     
+    # 记忆缓存配置
+    ENABLE_MEMORY_CACHE: bool = True
+
+    # 批量处理配置
+    BATCH_MAX_CONCURRENCY: int = 10
+    BATCH_PROGRESS_WS_ENABLED: bool = True
+
+    # API 限流配置
+    RATE_LIMIT_ENABLED: bool = True
+    RATE_LIMIT_REQUESTS_PER_MINUTE: int = 60
+    RATE_LIMIT_REQUESTS_PER_HOUR: int = 1000
+    RATE_LIMIT_BURST_SIZE: int = 10
+    RATE_LIMIT_STRATEGY: str = "sliding_window"  # sliding_window, token_bucket, fixed_window
+    RATE_LIMIT_STORAGE: str = "memory"  # memory, redis
+    MEMORY_CACHE_TTL: int = 1800
+    MEMORY_CACHE_PREFIX: str = "memory:"
+    
+    # 智能存储调度配置
+    ENABLE_STORAGE_TIERING: bool = False
+    HOT_THRESHOLD: int = 10
+    COLD_THRESHOLD: int = 2
+    HOT_TTL: int = 3600
+    COLD_BATCH_SIZE: int = 50
+    
     # 阿里云短信服务配置
     ALIYUN_ACCESS_KEY_ID: str = ""
     ALIYUN_ACCESS_KEY_SECRET: str = ""
@@ -166,6 +229,33 @@ class Settings(BaseSettings):
     NEO4J_USER: str = "neo4j"
     NEO4J_PASSWORD: str = "REDACTED_NEO4J_PASSWORD"
     NEO4J_DATABASE: str = "neo4j"
+    
+    # 专家智能体类型列表
+    SPECIALIST_AGENT_TYPES: set = {
+        "finance", "tax", "legal", "financial", "taxation", "legislation",
+        "finance_specialist", "tax_specialist", "legal_specialist",
+        "FinanceSpecialist", "TaxSpecialist", "LegalSpecialist"
+    }
+    
+    def get_llm_provider_for_agent(self, agent_type: str) -> str:
+        """
+        根据智能体类型获取合适的 LLM 提供商
+        
+        Args:
+            agent_type: 智能体类型（如 "finance", "tax", "chat" 等）
+            
+        Returns:
+            LLM 提供商名称
+        """
+        is_specialist = agent_type.lower() in self.SPECIALIST_AGENT_TYPES
+        
+        if is_specialist and self.LLM_PROVIDER_SPECIALIST:
+            return self.LLM_PROVIDER_SPECIALIST
+        
+        if self.LLM_PROVIDER_DEFAULT:
+            return self.LLM_PROVIDER_DEFAULT
+        
+        return self.LLM_PROVIDER
 
     class Config:
         # 指定读取根目录下的 .env 文件

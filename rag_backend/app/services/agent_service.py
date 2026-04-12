@@ -10,11 +10,42 @@
 
 import os
 import json
-from typing import List, Dict, AsyncGenerator
+import asyncio
+import logging
+from typing import List, Dict, Any, AsyncGenerator, Optional
+
+logger = logging.getLogger(__name__)
+
 from app.core.config import settings
+from app.core.exceptions import (
+    ServiceException,
+    LLMServiceException,
+    ValidationException
+)
+
+
+class _SingletonMeta(type):
+    """
+    单例元类
+    
+    确保一个类只有一个实例，并提供全局访问点
+    """
+    _instances: Dict[type, Any] = {}
+    
+    def __call__(cls, *args, **kwargs):
+        if cls not in cls._instances:
+            instance = super().__call__(*args, **kwargs)
+            cls._instances[cls] = instance
+        return cls._instances[cls]
+    
+    @classmethod
+    def reset_instance(cls, target_cls: type) -> None:
+        """重置单例实例（主要用于测试）"""
+        if target_cls in cls._instances:
+            del cls._instances[target_cls]
 
 # 导入自定义 Agent 框架
-from app.agent_framework import ReActAgent, ToolManager, ZhipuAdapter
+from app.agent_framework import ReActAgent, ToolManager
 from app.agent_framework.tools import LangChainCompatLayer
 
 # 导入现有的工具
@@ -27,9 +58,18 @@ from app.services.prompt_service import load_agent_system_prompt
 from app.services.unified_retriever import unified_retriever
 from app.services.smart_router import is_greeting_query
 
+# 🆕 导入提示词管理
+from app.prompts import load_greeting_prompt
+
+# 导入输出格式化工具
+from app.utils.output_formatter import output_formatter
+
 # 🧠 导入企业记忆系统
 from app.memory_system import MemoryManager
 
+# 📊 导入监控服务
+from app.services.monitor_service import monitor_service
+ 
 
 class EnterpriseAgentService:
     """
@@ -56,7 +96,7 @@ class EnterpriseAgentService:
         self.memory_managers: Dict[str, MemoryManager] = {}
         
         print("=" * 60)
-        print("🧠 企业级 Agent 服务初始化")
+        print("企业级 Agent 服务初始化")
         print("=" * 60)
         
         if use_custom_framework:
@@ -64,20 +104,20 @@ class EnterpriseAgentService:
         else:
             self._init_langchain_framework()
         
-        print("✅ Agent 服务初始化完成！")
+        print("Agent 服务初始化完成！")
         print("=" * 60)
     
     def _init_custom_framework(self):
         """
         初始化自定义框架
         """
-        print("🎯 使用自定义 Agent 框架")
+        print("使用自定义 Agent 框架")
         
-        # 1. 初始化 LLM 适配器
-        self.llm_adapter = ZhipuAdapter(
-            api_key=settings.ZHIPU_API_KEY,
-            model_name="glm-4-flash"
-        )
+        default_provider = settings.get_llm_provider_for_agent("chat")
+        print(f"[SETUP] [Agent服务] 默认智能体使用 LLM: {default_provider}")
+        
+        from app.agent_framework.llm.factory import LLMAdapterFactory
+        self.llm_adapter = LLMAdapterFactory.create_adapter(default_provider)
         
         # 2. 初始化工具管理器
         self.tool_manager = ToolManager()
@@ -89,23 +129,41 @@ class EnterpriseAgentService:
         compat_layer.register_langchain_tools(langchain_tools)
         
         # 4. 注册 MCP 工具（异步）
-        import asyncio
         try:
             from app.mcp.mcp_tool_proxy import get_all_mcp_tools_as_langchain_tools
             loop = asyncio.get_event_loop()
+            
+            # 在__init__中（同步上下文），使用run_until_complete
+            # 如果已经在异步环境中，建议在外部async方法中调用此初始化
             if loop.is_running():
-                mcp_tools = asyncio.create_task(get_all_mcp_tools_as_langchain_tools())
+                logger.warning("在异步环境中调用AgentService.__init__，跳过MCP工具注册（应在外部await）")
+                mcp_tools = []
             else:
                 mcp_tools = loop.run_until_complete(get_all_mcp_tools_as_langchain_tools())
             
-            if asyncio.iscoroutine(mcp_tools):
-                mcp_tools = loop.run_until_complete(mcp_tools)
-            
-            if mcp_tools:
+            # 确保结果是列表
+            if mcp_tools and isinstance(mcp_tools, list):
                 compat_layer.register_langchain_tools(mcp_tools)
-                print(f"☁️ 已注册 {len(mcp_tools)} 个 MCP 远程工具")
+                print(f"[CLOUD] 已注册 {len(mcp_tools)} 个 MCP 远程工具")
+            elif mcp_tools:
+                # 如果不是列表，尝试转换为列表
+                try:
+                    mcp_tools_list = list(mcp_tools)
+                    if mcp_tools_list:
+                        compat_layer.register_langchain_tools(mcp_tools_list)
+                        print(f"[CLOUD] 已注册 {len(mcp_tools_list)} 个 MCP 远程工具")
+                except (TypeError, AttributeError) as e:
+                    logger.warning(f"MCP 工具列表转换失败: {e}")
+        except ImportError as e:
+            print(f"[WARNING] MCP工具模块导入失败: {e}")
+        except RuntimeError as e:
+            print(f"[WARNING] 异步运行时错误(MCP工具): {e}")
+        except (ValueError, KeyError) as e:
+            print(f"[WARNING] MCP 工具注册数据错误: {e}")
+        except (OSError, IOError) as e:
+            print(f"[WARNING] MCP 工具注册IO错误: {e}")
         except Exception as e:
-            print(f"⚠️ MCP 工具注册失败: {e}")
+            print(f"[WARNING] MCP 工具注册失败: {e}")
         
         # 5. 加载系统提示词并添加工具使用策略
         system_prompt = load_agent_system_prompt()
@@ -121,10 +179,10 @@ class EnterpriseAgentService:
             timeout=300.0
         )
         
-        print(f"🛠️ 已注册 {len(self.tool_manager.tools)} 个工具:")
+        print(f"[TOOL] 已注册 {len(self.tool_manager.tools)} 个工具:")
         for i, tool_name in enumerate(self.tool_manager.get_tool_names(), 1):
             tool_info = self.tool_manager.tools[tool_name]
-            tool_type = "📍本地" if tool_info.get("type") == "langchain" else "☁️MCP"
+            tool_type = "[LOCAL]" if tool_info.get("type") == "langchain" else "[MCP]"
             print(f"   {i}. [{tool_type}] {tool_name}: {tool_info['description'][:40]}...")
     
     def _get_memory_manager(self, session_id: str, user_id: str) -> MemoryManager:
@@ -139,7 +197,7 @@ class EnterpriseAgentService:
             记忆管理器实例
         """
         if session_id not in self.memory_managers:
-            print(f"🧠 创建新的记忆管理器: session={session_id[:8]}..., user={user_id}")
+            print(f"[MEMORY] 创建新的记忆管理器: session={session_id[:8]}..., user={user_id}")
             self.memory_managers[session_id] = MemoryManager(session_id, user_id)
         
         return self.memory_managers[session_id]
@@ -148,7 +206,7 @@ class EnterpriseAgentService:
         """
         初始化 LangChain 框架（备用方案）
         """
-        print("🔗 使用 LangChain 框架")
+        print("使用 LangChain 框架")
         
         # 导入原有的 LangChain 实现
         from .agent_service_langchain import EnterpriseAgentService as LangChainAgentService
@@ -203,11 +261,15 @@ class EnterpriseAgentService:
         """
         自定义框架的非流式对话（集成智能路由和记忆系统）
         """
-        print(f"🎯 [自定义框架] 开始处理: {user_input[:50]}...")
+        print(f"[START] [自定义框架] 开始处理: {user_input[:50]}...")
 
         # 问候语检测 - 跳过所有检索，直接回答
         if is_greeting_query(user_input):
-            print("💬 [问候语检测] 跳过 RAG 和记忆系统，直接调用 LLM")
+            print("[CHAT] [问候语检测] 跳过 RAG 和记忆系统，直接调用 LLM")
+            
+            from app.agent_framework.llm.specialist_llm_router import SpecialistLLMRouter
+            greeting_adapter = SpecialistLLMRouter.get_greeting_adapter()
+            print(f"[CHAT] [问候语检测] 使用模型: {greeting_adapter.model_name}")
             
             greeting_system_prompt = """你是一个友好的AI助手。用户向你问好时，请只回复一句简短、热情的问候语。
 
@@ -220,14 +282,21 @@ class EnterpriseAgentService:
 
 用户消息：""" + user_input
             
-            result = await self.llm_adapter.chat(
-                messages=[
-                    {"role": "system", "content": greeting_system_prompt},
-                    {"role": "user", "content": user_input}
-                ],
-                stream=False
-            )
-            return result
+            async with monitor_service.trace_agent(
+                user_id=user_id or "anonymous",
+                query=user_input,
+                kb_id=kb_id,
+                session_id=session_id
+            ) as trace:
+                result = await greeting_adapter.chat(
+                    messages=[
+                        {"role": "system", "content": greeting_system_prompt},
+                        {"role": "user", "content": user_input}
+                    ],
+                    stream=False
+                )
+                trace.set_result(result)
+            return result.content if hasattr(result, 'content') else str(result)
             
         # 🆕 第一步：先使用统一检索器（自动智能路由），提取外部知识
         try:
@@ -243,8 +312,22 @@ class EnterpriseAgentService:
             kb_context = retrieval_result["combined_context"]
             route_mode = retrieval_result["mode"]
 
+        except ValidationException as e:
+            print(f"[WARNING] [统一检索] 验证失败: {e}")
+            kb_context = ""
+            route_mode = "FALLBACK"
+        except ServiceException as e:
+            print(f"[WARNING] [统一检索] 服务异常: {e}")
+            kb_context = ""
+            route_mode = "FALLBACK"
+        except (ValueError, KeyError) as e:
+            print(f"[WARNING] [统一检索] 数据错误: {e}")
+            kb_context = ""
+        except (OSError, IOError) as e:
+            print(f"[WARNING] [统一检索] IO错误: {e}")
+            kb_context = ""
         except Exception as e:
-            print(f"⚠️ [统一检索] 失败: {e}")
+            print(f"[WARNING] [统一检索] 失败: {e}")
             kb_context = ""
             route_mode = "FALLBACK"
 
@@ -263,11 +346,11 @@ class EnterpriseAgentService:
             # 构建完上下文后，再将用户消息持久化到记忆系统
             await memory_manager.add_message("user", user_input)
 
-            print(f"🧠 [记忆系统] 获取增强上下文: {len(memory_context)} 字符")
+            print(f"[MEMORY] [记忆系统] 获取增强上下文: {len(memory_context)} 字符")
         else:
             memory_manager = None
             memory_context = ""
-            print("⚠️ [记忆系统] 缺少session_id或user_id，跳过记忆系统")
+            print("[WARNING] [记忆系统] 缺少session_id或user_id，跳过记忆系统")
 
         # 构建增强的用户输入（简化版，主要逻辑已在上下文构建器中）
         enhanced_input = f"""用户问题：{user_input}
@@ -280,56 +363,81 @@ class EnterpriseAgentService:
         formatted_history = []
 
         try:
-            # 调用自定义 Agent
-            result = await self.agent.run(
-                user_input=enhanced_input,
-                history=formatted_history,
-                kb_id=kb_id
-            )
+            async with monitor_service.trace_agent(
+                user_id=user_id or "anonymous",
+                query=user_input,
+                kb_id=kb_id,
+                session_id=session_id
+            ) as trace:
+                # 调用自定义 Agent
+                result = await self.agent.run(
+                    user_input=enhanced_input,
+                    history=formatted_history,
+                    kb_id=kb_id
+                )
+                
+                # 确保结果是字符串
+                if result is None:
+                    result = "抱歉，未能获取到有效回答。"
+                elif not isinstance(result, str):
+                    result = str(result)
+                
+                # 记录回答到监控
+                trace.set_result(result)
 
             # 🧠 将AI回答添加到记忆系统
-            if memory_manager:
+            if memory_manager and result:
                 await memory_manager.add_message("assistant", result)
-                print(f"🧠 [记忆系统] 已保存AI回答")
+                print(f"[MEMORY] [记忆系统] 已保存AI回答")
 
-            print(f"✅ [自定义框架] 处理完成，回答长度: {len(result)}")
+            print(f"[OK] [自定义框架] 处理完成，回答长度: {len(result)}")
             return result
 
+        except LLMServiceException as e:
+            print(f"[ERROR] [自定义框架] LLM服务异常: {e}")
+            return f"抱歉，AI服务暂时不可用，请稍后再试。"
+        except ValidationException as e:
+            print(f"[ERROR] [自定义框架] 输入验证失败: {e}")
+            return f"抱歉，输入参数验证失败：{str(e)}"
+        except ServiceException as e:
+            print(f"[ERROR] [自定义框架] 服务异常: {e}")
+            return f"抱歉，服务处理失败：{str(e)}"
+        except (ValueError, KeyError) as e:
+            print(f"[ERROR] [自定义框架] 数据错误: {str(e)}")
+            return f"抱歉，数据处理错误：{str(e)}"
+        except (OSError, IOError) as e:
+            print(f"[ERROR] [自定义框架] IO错误: {str(e)}")
+            return f"抱歉，IO处理错误：{str(e)}"
         except Exception as e:
-            print(f"❌ [自定义框架] 处理失败: {str(e)}")
+            print(f"[ERROR] [自定义框架] 处理失败: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return f"抱歉，处理过程中出现错误：{str(e)}"
     
     async def _chat_stream_custom(self, user_input: str, kb_id: str, session_id: str, history: list, user_id: str) -> AsyncGenerator[str, None]:
         """
         自定义框架的流式对话（集成记忆系统）
         """
-        print(f"🌊 [自定义框架] 开始流式处理: {user_input[:50]}...")
+        print(f"[STREAM] [自定义框架] 开始流式处理: {user_input[:50]}...")
         
         # 问候语检测 - 跳过所有检索，直接流式回答
         if is_greeting_query(user_input):
-            print("💬 [问候语检测] 跳过 RAG 和记忆系统，直接调用 LLM")
+            print("[CHAT] [问候语检测] 跳过 RAG 和记忆系统，直接调用 LLM")
             
-            greeting_system_prompt = """你是一个友好的AI助手。用户向你问好时，请只回复一句简短、热情的问候语。
-
-要求：
-1. 绝对不要提及任何"知识库"、"文档"、"资料"、"企业"等词汇
-2. 不要列出任何期刊、论文、文档名称
-3. 只回复一句简单的问候，如"你好！很高兴见到你。"
-4. 如果用户说"你是谁"，回复"我是你的AI助手，很高兴为你服务。"
-5. 回复要简短，不要超过20个字
-
-用户消息：""" + user_input
+            from app.agent_framework.llm.specialist_llm_router import SpecialistLLMRouter
+            greeting_adapter = SpecialistLLMRouter.get_greeting_adapter()
+            print(f"[CHAT] [问候语检测] 使用模型: {greeting_adapter.model_name}")
+            
+            greeting_system_prompt = load_greeting_prompt()
             
             messages = [
                 {"role": "system", "content": greeting_system_prompt},
                 {"role": "user", "content": user_input}
             ]
             
-            # 非流式调用，然后模拟流式输出
-            response = await self.llm_adapter.chat(messages, stream=False)
+            response = await greeting_adapter.chat(messages, stream=False)
             full_text = response.content if hasattr(response, 'content') else str(response)
             
-            # 模拟流式输出（每次yield一小段）
             for i in range(0, len(full_text), 10):
                 yield full_text[i:i+10]
             return
@@ -348,13 +456,28 @@ class EnterpriseAgentService:
             rag_results = retrieval_result.get("rag_results", [])
             kb_context = retrieval_result.get("combined_context", "")
             route_mode = retrieval_result.get("mode", "HYBRID")
-            print(f"📊 [检索模式] {route_mode}，获取到 {len(rag_results)} 条 RAG 结果")
+            print(f"[STATS] [检索模式] {route_mode}，获取到 {len(rag_results)} 条 RAG 结果")
+        except ValidationException as e:
+            print(f"[WARNING] [统一检索] 验证失败: {e}")
+            kb_context = ""
+            route_mode = "FALLBACK"
+        except ServiceException as e:
+            print(f"[WARNING] [统一检索] 服务异常: {e}")
+            kb_context = ""
+            route_mode = "FALLBACK"
+        except (ValueError, KeyError) as e:
+            print(f"[WARNING] [统一检索] 数据错误: {e}")
+            kb_context = ""
+        except (OSError, IOError) as e:
+            print(f"[WARNING] [统一检索] IO错误: {e}")
+            kb_context = ""
         except Exception as e:
-            print(f"⚠️ [统一检索] 失败: {e}")
+            print(f"[WARNING] [统一检索] 失败: {e}")
             kb_context = ""
             route_mode = "FALLBACK"
         
         # 🆕 在流式开始前，先发送 sources 信息
+        # 使用特殊标记让 chat.py 可以识别并单独处理
         if rag_results:
             sources_data = [
                 {
@@ -364,7 +487,7 @@ class EnterpriseAgentService:
                 }
                 for res in rag_results
             ]
-            yield f"__SOURCES__:{json.dumps(sources_data, ensure_ascii=False)}"
+            yield f"__SOURCES_EVENT__:{json.dumps(sources_data, ensure_ascii=False)}"
         
         # 🧠 获取记忆管理器
         if session_id and user_id:
@@ -380,11 +503,11 @@ class EnterpriseAgentService:
             # 构建完上下文后，再将用户消息持久化到记忆系统
             await memory_manager.add_message("user", user_input)
 
-            print(f"🧠 [记忆系统] 获取上下文: {len(memory_context)} 字符")
+            print(f"[MEMORY] [记忆系统] 获取上下文: {len(memory_context)} 字符")
         else:
             memory_manager = None
             memory_context = ""
-            print("⚠️ [记忆系统] 缺少session_id或user_id，跳过记忆系统")
+            print("[WARNING] [记忆系统] 缺少session_id或user_id，跳过记忆系统")
         
         # 构建增强的用户输入
         enhanced_input = f"""用户问题：{user_input}
@@ -404,31 +527,54 @@ class EnterpriseAgentService:
         full_response = ""
         
         try:
-            # 调用自定义 Agent 的流式方法
-            async for chunk in self.agent.stream_run(
-                user_input=enhanced_input,
-                history=formatted_history,
-                kb_id=kb_id
-            ):
-                full_response += chunk
-                yield chunk
+            async with monitor_service.trace_agent(
+                user_id=user_id or "anonymous",
+                query=user_input,
+                kb_id=kb_id,
+                session_id=session_id
+            ) as trace:
+                # 调用自定义 Agent 的流式方法
+                async for chunk in self.agent.stream_run(
+                    user_input=enhanced_input,
+                    history=formatted_history,
+                    kb_id=kb_id
+                ):
+                    full_response += chunk
+                    yield chunk
+                # 记录回答到监控
+                trace.set_result(full_response)
             
             # 🧠 将完整的AI回答添加到记忆系统
             if memory_manager and full_response:
                 await memory_manager.add_message("assistant", full_response)
-                print(f"🧠 [记忆系统] 已保存AI回答")
+                print(f"[MEMORY] [记忆系统] 已保存AI回答")
             
-            print(f"✅ [自定义框架] 流式处理完成")
+            print(f"[OK] [自定义框架] 流式处理完成")
             
+        except LLMServiceException as e:
+            print(f"[ERROR] [自定义框架] 流式处理LLM服务异常: {e}")
+            yield output_formatter.format_error_answer("AI服务暂时不可用，请稍后再试。")
+        except ValidationException as e:
+            print(f"[ERROR] [自定义框架] 流式处理输入验证失败: {e}")
+            yield output_formatter.format_error_answer(f"输入参数验证失败：{str(e)}")
+        except ServiceException as e:
+            print(f"[ERROR] [自定义框架] 流式处理服务异常: {e}")
+            yield output_formatter.format_error_answer(f"服务处理失败：{str(e)}")
+        except (ValueError, KeyError) as e:
+            print(f"[ERROR] [自定义框架] 流式处理数据错误: {str(e)}")
+            yield output_formatter.format_error_answer(f"数据处理错误：{str(e)}")
+        except (OSError, IOError) as e:
+            print(f"[ERROR] [自定义框架] 流式处理IO错误: {str(e)}")
+            yield output_formatter.format_error_answer(f"IO处理错误：{str(e)}")
         except Exception as e:
-            print(f"❌ [自定义框架] 流式处理失败: {str(e)}")
-            yield f"\n[处理错误: {str(e)}]"
+            print(f"[ERROR] [自定义框架] 流式处理失败: {str(e)}")
+            yield output_formatter.format_error_answer(str(e))
     
     async def _chat_langchain(self, user_input: str, kb_id: str, session_id: str, history: list, user_id: str) -> str:
         """
         LangChain 框架的非流式对话（备用）
         """
-        print(f"🔗 [LangChain] 开始处理: {user_input[:50]}...")
+        print(f"[LANGCHAIN] 开始处理: {user_input[:50]}...")
         
         # 调用原有的 LangChain 实现
         # 这里需要根据原有实现调整
@@ -438,7 +584,7 @@ class EnterpriseAgentService:
         """
         LangChain 框架的流式对话（备用）
         """
-        print(f"🌊 [LangChain] 开始流式处理: {user_input[:50]}...")
+        print(f"[LANGCHAIN] 开始流式处理: {user_input[:50]}...")
         
         # 调用原有的 LangChain 实现
         # 这里需要根据原有实现调整
@@ -508,8 +654,80 @@ class EnterpriseAgentService:
             }
 
 
-# 创建全局实例
-# 可以通过环境变量控制使用哪个框架
-USE_CUSTOM_FRAMEWORK = os.getenv("USE_CUSTOM_AGENT", "true").lower() == "true"
+def get_agent_service(use_custom_framework: bool = None) -> EnterpriseAgentService:
+    """
+    获取 Agent 服务单例实例（依赖注入函数）
+    
+    推荐使用此函数获取 Agent 服务，而不是直接导入 agent_service 变量
+    
+    Args:
+        use_custom_framework: 是否强制使用自定义框架（可选，默认使用环境变量配置）
+        
+    Returns:
+        EnterpriseAgentService 单例实例
+        
+    Example:
+        ```python
+        from app.services.agent_service import get_agent_service
+        
+        async def my_endpoint():
+            agent = get_agent_service()
+            result = await agent.chat(...)
+        ```
+    """
+    global _agent_service_instance
+    
+    if _agent_service_instance is None:
+        if use_custom_framework is None:
+            use_custom_framework = os.getenv("USE_CUSTOM_AGENT", "true").lower() == "true"
+        _agent_service_instance = EnterpriseAgentService(use_custom_framework=use_custom_framework)
+    
+    return _agent_service_instance
 
-agent_service = EnterpriseAgentService(use_custom_framework=USE_CUSTOM_FRAMEWORK)
+
+def reset_agent_service() -> None:
+    """
+    重置 Agent 服务单例实例
+    
+    主要用于测试或需要重新初始化 Agent 服务的场景
+    
+    Warning:
+        调用此函数后，之前的 agent_service 引用将变为无效
+    """
+    global _agent_service_instance
+    _agent_service_instance = None
+    _SingletonMeta.reset_instance(EnterpriseAgentService)
+
+
+def create_agent_service_dependency():
+    """
+    创建 FastAPI 依赖注入函数
+    
+    Returns:
+        FastAPI 依赖函数
+        
+    Example:
+        ```python
+        from fastapi import Depends
+        from app.services.agent_service import create_agent_service_dependency
+        
+        get_agent = create_agent_service_dependency()
+        
+        @app.post("/chat")
+        async def chat_endpoint(agent: EnterpriseAgentService = Depends(get_agent)):
+            ...
+        ```
+    """
+    from typing import Annotated
+    from fastapi import Depends
+    
+    async def _get_agent_service() -> EnterpriseAgentService:
+        return get_agent_service()
+    
+    return _get_agent_service
+
+
+_agent_service_instance: Optional[EnterpriseAgentService] = None
+
+USE_CUSTOM_FRAMEWORK = os.getenv("USE_CUSTOM_AGENT", "true").lower() == "true"
+agent_service = get_agent_service(use_custom_framework=USE_CUSTOM_FRAMEWORK)

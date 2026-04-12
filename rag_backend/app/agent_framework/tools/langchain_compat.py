@@ -26,7 +26,7 @@ class LangChainCompatLayer:
         """
         self.tool_manager = tool_manager
         
-        print("🔗 LangChain 兼容层初始化完成")
+        print("LangChain 兼容层初始化完成")
     
     def register_langchain_tools(self, langchain_tools: List[Any]):
         """
@@ -35,7 +35,7 @@ class LangChainCompatLayer:
         Args:
             langchain_tools: LangChain 工具列表
         """
-        print(f"📦 开始注册 {len(langchain_tools)} 个 LangChain 工具...")
+        print(f"开始注册 {len(langchain_tools)} 个 LangChain 工具...")
         
         success_count = 0
         for tool in langchain_tools:
@@ -43,9 +43,9 @@ class LangChainCompatLayer:
                 self.tool_manager.register_langchain_tool(tool)
                 success_count += 1
             except Exception as e:
-                print(f"❌ 注册工具失败: {getattr(tool, 'name', 'unknown')} - {str(e)}")
+                print(f"[ERROR] 注册工具失败: {getattr(tool, 'name', 'unknown')} - {str(e)}")
         
-        print(f"✅ 成功注册 {success_count}/{len(langchain_tools)} 个工具")
+        print(f"成功注册 {success_count}/{len(langchain_tools)} 个工具")
         
         return success_count
     

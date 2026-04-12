@@ -142,6 +142,12 @@ class ModelScopeAdapter(BaseLLMAdapter):
         except httpx.HTTPStatusError as e:
             logger.error(f"[ModelScope] HTTP 错误: {e.response.status_code}")
             raise Exception(f"ModelScope API 错误: {e.response.status_code}")
+        except (ValueError, KeyError) as e:
+            logger.error(f"[ModelScope] 请求数据错误: {str(e)}")
+            raise
+        except (OSError, IOError) as e:
+            logger.error(f"[ModelScope] 请求IO错误: {str(e)}")
+            raise
         except Exception as e:
             logger.error(f"[ModelScope] 请求异常: {str(e)}")
             raise
@@ -207,6 +213,12 @@ class ModelScopeAdapter(BaseLLMAdapter):
         except httpx.HTTPStatusError as e:
             logger.error(f"[ModelScope] 流式 HTTP 错误: {e.response.status_code}")
             yield {"type": "error", "content": f"{ERROR_PREFIX}: ModelScope API 错误: {e.response.status_code}"}
+        except (ValueError, KeyError) as e:
+            logger.error(f"[ModelScope] 流式请求数据错误: {str(e)}")
+            yield {"type": "error", "content": f"{ERROR_PREFIX}: {str(e)}"}
+        except (OSError, IOError) as e:
+            logger.error(f"[ModelScope] 流式请求IO错误: {str(e)}")
+            yield {"type": "error", "content": f"{ERROR_PREFIX}: {str(e)}"}
         except Exception as e:
             logger.error(f"[ModelScope] 流式请求异常: {str(e)}")
             yield {"type": "error", "content": f"{ERROR_PREFIX}: {str(e)}"}

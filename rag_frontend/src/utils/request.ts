@@ -2,7 +2,7 @@
  * Axios 请求工具 - 全局拦截器 + 统一请求函数 + 认证函数
  */
 
-import axios, { AxiosRequestConfig, AxiosResponse } from 'axios'
+import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import router from '@/router'
 
@@ -16,15 +16,79 @@ export function isAuthenticated(): boolean {
   return !!getToken()
 }
 
+// 从 JWT token 中解码获取用户 ID
+export function getUserIdFromToken(): string | null {
+  const token = getToken()
+  if (!token) return null
+
+  try {
+    const base64Url = token.split('.')[1]
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
+    const jsonPayload = decodeURIComponent(
+      atob(base64)
+        .split('')
+        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join('')
+    )
+    const payload = JSON.parse(jsonPayload)
+    return payload.sub || null
+  } catch (error) {
+    console.error('Failed to decode token:', error)
+    return null
+  }
+}
+
+// 从 JWT token 中解码获取租户 ID
+export function getTenantIdFromToken(): string | null {
+  const token = getToken()
+  if (!token) return null
+
+  try {
+    const base64Url = token.split('.')[1]
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
+    const jsonPayload = decodeURIComponent(
+      atob(base64)
+        .split('')
+        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join('')
+    )
+    const payload = JSON.parse(jsonPayload)
+    return payload.tenant_id || null
+  } catch (error) {
+    console.error('Failed to decode tenant_id from token:', error)
+    return null
+  }
+}
+
+// 获取企业 ID（优先从 token 获取 tenant_id）
+export function getEnterpriseId(): string {
+  const fromToken = getTenantIdFromToken()
+  if (fromToken && fromToken !== 'undefined') {
+    return fromToken
+  }
+  const fromStorage = localStorage.getItem('enterprise_id')
+  if (fromStorage && fromStorage !== 'undefined') {
+    return fromStorage
+  }
+  return 'default'
+}
+
 // 创建全局 axios 实例
-const instance = axios.create()
+const instance = axios.create({
+  baseURL: '/api/v1',
+})
 
 // 全局请求拦截器
 instance.interceptors.request.use(
-  (config) => {
+  (config: any) => {
     const token = getToken()
     if (token) {
+      config.headers = config.headers || {}
       config.headers.Authorization = `Bearer ${token}`
+      console.log(`[REQUEST] URL: ${config.url}, Token set, length: ${token.length}`)
+      console.log(`[REQUEST] Authorization header: Bearer ${token.substring(0, 30)}...`)
+    } else {
+      console.log(`[REQUEST] URL: ${config.url}, No token found!`)
     }
     return config
   },
@@ -38,121 +102,133 @@ instance.interceptors.response.use(
   (response) => response,
   (error) => {
     const status = error.response?.status
-    const errorMessage = error.response?.data?.detail || 
+    const errorMessage = error.response?.data?.detail ||
                          error.response?.data?.message ||
                          error.message
 
-    // 认证错误
-    if (status === 401 || status === 403) {
+    if (status === 401) {
       localStorage.removeItem('rag_token')
       localStorage.removeItem('user')
-      
-      const message = status === 401 
-        ? '登录已过期，请重新登录' 
-        : (errorMessage?.includes('tenant') ? '会话无效，请重新登录' : '登录已过期，请重新登录')
-      
+
       ElMessage.error({
-        message,
+        message: '登录已过期，请重新登录',
         duration: 3000,
         onClose: () => {
           router.push('/login')
         }
       })
-    } 
-    // 服务器错误
+    } else if (status === 403) {
+      if (errorMessage?.includes('tenant')) {
+        localStorage.removeItem('rag_token')
+        localStorage.removeItem('user')
+        ElMessage.error({
+          message: '会话无效，请重新登录',
+          duration: 3000,
+          onClose: () => {
+            router.push('/login')
+          }
+        })
+      } else {
+        console.warn(`[REQUEST] 权限错误 (403): ${errorMessage}`)
+      }
+    }
     else if (status === 500) {
       ElMessage.error({
         message: '服务器错误，请稍后重试',
         duration: 3000
       })
     }
-    // 网络错误
     else if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
       ElMessage.error({
         message: '请求超时，请检查网络连接',
         duration: 3000
       })
     }
-    // 其他错误
     else if (status) {
+      let friendlyMessage = errorMessage || '请求失败'
+
+      if (friendlyMessage.includes('文件为空')) {
+        friendlyMessage = `⚠️ 上传失败：${friendlyMessage}`
+      }
+
       ElMessage.error({
-        message: errorMessage || '请求失败',
-        duration: 3000
+        message: friendlyMessage,
+        duration: 5000
       })
     }
-    
+
     return Promise.reject(error)
   }
 )
 
-// 通用的 request 函数
-export function request<T = any>(
+export async function request<T = any>(
   url: string,
-  config: AxiosRequestConfig = {}
+  config: any = {}
 ): Promise<T> {
-  return instance.request<T>({
+  const response = await instance.request<T>({
     url,
     baseURL: '/api/v1',
-    timeout: 30000,
+    timeout: 120000,
     headers: {
       'Content-Type': 'application/json',
-      ...config.headers,
+      ...(config.headers || {}),
     },
     ...config,
-  }).then((response: AxiosResponse<T>) => response.data)
+  })
+  return response.data
 }
 
-// 表单请求函数
-export function requestForm<T = any>(
+export async function requestForm<T = any>(
   url: string,
   formData: FormData,
-  config: AxiosRequestConfig = {}
+  config: any = {}
 ): Promise<T> {
-  return instance.request<T>({
+  const response = await instance.request<T>({
     url,
     baseURL: '/api/v1',
     method: 'POST',
     data: formData,
     headers: {
       'Content-Type': 'multipart/form-data',
-      ...config.headers,
+      ...(config.headers || {}),
     },
     ...config,
-  }).then((response: AxiosResponse<T>) => response.data)
+  })
+  return response.data
 }
 
-// 登录函数
 export async function login(email: string, password: string): Promise<{
   access_token: string
   token_type: string
   user_name: string
   avatar_url?: string
 }> {
-  const response = await instance.post<{
+  const data = await request<{
     access_token: string
     token_type: string
     user_name: string
     avatar_url?: string
   }>('/auth/login', {
-    email: email,
-    password: password
+    method: 'POST',
+    data: {
+      email: email,
+      password: password
+    }
   })
-  
-  const data = response.data
+
   localStorage.setItem('rag_token', data.access_token)
   localStorage.setItem('rag_user_name', data.user_name)
   if (data.avatar_url) {
     localStorage.setItem('rag_avatar_url', data.avatar_url)
   }
-  
+
   return data
 }
 
-// 注册函数
 export async function register(
-  email: string, 
-  password: string, 
-  full_name: string, 
+  email: string,
+  password: string,
+  full_name: string,
   invite_code?: string
 ): Promise<{
   access_token: string
@@ -171,22 +247,21 @@ export async function register(
     full_name,
     invite_code
   })
-  
+
   const data = response.data
   localStorage.setItem('rag_token', data.access_token)
   localStorage.setItem('rag_user_name', data.user_name)
   if (data.avatar_url) {
     localStorage.setItem('rag_avatar_url', data.avatar_url)
   }
-  
+
   return data
 }
 
-// 企业管理员注册
 export async function registerAdmin(
-  email: string, 
-  password: string, 
-  full_name: string, 
+  email: string,
+  password: string,
+  full_name: string,
   company_name: string
 ): Promise<{
   access_token: string
@@ -205,18 +280,17 @@ export async function registerAdmin(
     full_name,
     company_name
   })
-  
+
   const data = response.data
   localStorage.setItem('rag_token', data.access_token)
   localStorage.setItem('rag_user_name', data.user_name)
   if (data.avatar_url) {
     localStorage.setItem('rag_avatar_url', data.avatar_url)
   }
-  
+
   return data
 }
 
-// 登出函数
 export function logout(): void {
   localStorage.removeItem('rag_token')
   localStorage.removeItem('rag_user_name')

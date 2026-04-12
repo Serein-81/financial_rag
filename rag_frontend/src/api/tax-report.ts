@@ -98,7 +98,7 @@ export const taxReportApiClient = {
       params.append('tax_type', options.tax_type)
     }
 
-    const url = `${API_BASE}/api/v1/tax-reports/upload?${params.toString()}`
+    const url = `${API_BASE || ''}/api/v1/tax-reports/upload?${params.toString()}`
     const token = localStorage.getItem('rag_token')
 
     console.log('📤 [TaxUpload] 准备上传文件:', file.name, file.size, file.type)
@@ -107,14 +107,22 @@ export const taxReportApiClient = {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest()
       
+      xhr.timeout = 120000
+      
       xhr.upload.onprogress = (event) => {
         if (event.lengthComputable && options.onProgress) {
           const progress = Math.round((event.loaded * 100) / event.total)
           options.onProgress(progress)
+          console.log(`📤 [TaxUpload] 上传进度: ${progress}%`)
         }
       }
 
+      xhr.onloadstart = () => {
+        console.log('📤 [TaxUpload] 请求开始发送')
+      }
+
       xhr.onload = () => {
+        console.log('📤 [TaxUpload] 请求完成:', xhr.status, xhr.statusText)
         if (xhr.status >= 200 && xhr.status < 300) {
           console.log('📤 [TaxUpload] 上传成功:', xhr.responseText)
           resolve(JSON.parse(xhr.responseText))
@@ -122,21 +130,41 @@ export const taxReportApiClient = {
           console.error('📤 [TaxUpload] 上传失败:', xhr.status, xhr.responseText)
           try {
             const errorData = JSON.parse(xhr.responseText)
-            reject(new Error(errorData.detail || '上传失败'))
+            const error = new Error(errorData.message || errorData.detail || '上传失败') as any
+            error.response = { data: errorData }
+            error.status = xhr.status
+            reject(error)
           } catch {
             reject(new Error(`上传失败: ${xhr.status}`))
           }
         }
       }
 
+      xhr.ontimeout = () => {
+        console.error('📤 [TaxUpload] 上传超时 - 120秒内未收到响应')
+        console.error('📤 [TaxUpload] 可能原因: 后端未启动、路由错误、网络问题')
+        reject(new Error('上传超时，请重试或检查文件大小'))
+      }
+
       xhr.onerror = () => {
         console.error('📤 [TaxUpload] 网络错误')
+        console.error('📤 [TaxUpload] readyState:', xhr.readyState)
+        console.error('📤 [TaxUpload] status:', xhr.status)
         reject(new Error('网络错误，请检查网络连接'))
       }
 
+      xhr.onabort = () => {
+        console.error('📤 [TaxUpload] 请求被取消')
+        reject(new Error('请求被取消'))
+      }
+
+      console.log('📤 [TaxUpload] 准备发送请求...')
       xhr.open('POST', url)
+      console.log('📤 [TaxUpload] 设置 Authorization header')
       xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+      console.log('📤 [TaxUpload] 发送表单数据')
       xhr.send(formData)
+      console.log('📤 [TaxUpload] send() 已调用，等待响应...')
     })
   },
 
@@ -199,8 +227,13 @@ export const taxReportApiClient = {
     if (filter.start_date) params.append('start_date', filter.start_date)
     if (filter.end_date) params.append('end_date', filter.end_date)
     if (filter.keyword) params.append('keyword', filter.keyword)
-    if (filter.page) params.append('page', String(filter.page))
-    if (filter.page_size) params.append('page_size', String(filter.page_size))
+    
+    // 后端使用 skip/limit，前端使用 page/page_size，需要转换
+    if (filter.page !== undefined) {
+      const skip = (filter.page - 1) * (filter.page_size || 20)
+      params.append('skip', String(skip))
+    }
+    if (filter.page_size) params.append('limit', String(filter.page_size))
 
     const response = await taxReportApi.get<TaxReportListResponse>(
       `/tax-reports?${params.toString()}`
@@ -317,6 +350,106 @@ export const taxReportApiClient = {
 
       poll()
     })
+  },
+
+  /**
+   * 手动录入税务报告
+   */
+  async createManualTaxReport(inputData: {
+    tax_type: TaxTypeEnum
+    fiscal_year: number
+    fiscal_period?: string
+    company_name?: string
+    tax_id?: string
+    revenue: number
+    taxable_sales: number
+    tax_free_sales: number
+    input_tax: number
+    output_tax: number
+    vat_rate: number
+    total_expenses: number
+    deductible_expenses: number
+    taxable_income: number
+    corporate_tax_rate: number
+    total_payroll: number
+    total_invoices: number
+    input_invoice_count: number
+    output_invoice_count: number
+    financial_data_id?: string
+    notes?: string
+    run_analysis: boolean
+  }): Promise<{
+    success: boolean
+    message: string
+    data: {
+      id: string
+      tenant_id: string
+      user_id: string
+      filename: string
+      original_filename: string
+      tax_type: string
+      status: string
+      created_at: string
+      key_metrics: Record<string, any>
+      needs_analysis: boolean
+      analysis_triggered?: boolean
+      analysis_error?: string
+    }
+  }> {
+    const response = await taxReportApi.post('/tax-reports/manual', {
+      input_data: inputData
+    })
+    return response.data
+  },
+
+  /**
+   * 获取财务数据列表（用于关联）
+   */
+  async getFinancialDataList(params: {
+    skip?: number
+    limit?: number
+    fiscal_year?: number
+  } = {}): Promise<{
+    items: Array<{
+      id: string
+      fiscal_year: number
+      period_type: string
+      period_start: string
+      period_end: string
+      total_revenue: number
+      taxable_sales: number
+      input_tax: number
+      output_tax: number
+    }>
+    total: number
+  }> {
+    const queryParams = new URLSearchParams()
+    if (params.skip) queryParams.append('skip', String(params.skip))
+    if (params.limit) queryParams.append('limit', String(params.limit))
+    if (params.fiscal_year) queryParams.append('fiscal_year', String(params.fiscal_year))
+    
+    const response = await taxReportApi.get(`/financial-data?${queryParams.toString()}`)
+    return response.data
+  },
+
+  /**
+   * 获取税务报告统计信息
+   */
+  async statistics(): Promise<{
+    total: number
+    by_status: {
+      pending: number
+      processing: number
+      completed: number
+      failed: number
+      pending_review?: number
+      [key: string]: number
+    }
+    by_tax_type: Record<string, number>
+    needs_review: number
+  }> {
+    const response = await taxReportApi.get('/tax-reports/statistics')
+    return response.data
   }
 }
 

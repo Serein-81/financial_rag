@@ -22,7 +22,7 @@ class ToolCategory(Enum):
 
 TOOL_ROUTING_CONFIG: Dict[str, Dict] = {
     # ==========================================
-    # 本地工具（LOCAL）- 数据库、RAG、文件操作
+    # 本地工具（LOCAL）- 数据库、RAG、文件操作、网络搜索
     # ==========================================
     "search_enterprise_knowledge": {
         "category": ToolCategory.LOCAL,
@@ -42,17 +42,52 @@ TOOL_ROUTING_CONFIG: Dict[str, Dict] = {
         "fallback": None,
         "retry": True,
     },
+    "list_knowledge_documents": {
+        "category": ToolCategory.LOCAL,
+        "description": "列出知识库文档 - 查看知识库中已上传的所有文档列表",
+        "fallback": None,
+        "retry": True,
+    },
     "get_knowledge_statistics": {
         "category": ToolCategory.LOCAL,
         "description": "知识库统计 - 获取关键词在知识库中的统计信息",
         "fallback": None,
         "retry": True,
     },
-    "search_web": {
+    
+    # ==========================================
+    # 本地财务数据库查询工具（LOCAL）- 直接访问本地财务数据库
+    # ==========================================
+    "query_financial_data": {
         "category": ToolCategory.LOCAL,
-        "description": "网络搜索 - 搜索互联网上的公开信息",
+        "description": "财务数据查询 - 从数据库查询详细财务记录，支持聚合分析",
         "fallback": None,
         "retry": True,
+    },
+    "get_financial_overview": {
+        "category": ToolCategory.LOCAL,
+        "description": "财务概览 - 获取企业财务汇总信息（总收入、总支出、利润等）",
+        "fallback": None,
+        "retry": True,
+    },
+    "get_financial_trend": {
+        "category": ToolCategory.LOCAL,
+        "description": "财务趋势 - 获取财务数据趋势分析（同比、环比变化）",
+        "fallback": None,
+        "retry": True,
+    },
+    "search_financial_data": {
+        "category": ToolCategory.LOCAL,
+        "description": "财务搜索 - 按关键词或条件搜索财务数据记录",
+        "fallback": None,
+        "retry": True,
+    },
+    
+    "search_web": {
+        "category": ToolCategory.MCP,
+        "description": "网络搜索工具 - 搜索互联网获取实时信息和最新资讯",
+        "input_params": ["query", "max_results"],
+        "example": "search_web(query='最新税法政策 2024', max_results=5)",
     },
 
     # ==========================================
@@ -130,6 +165,23 @@ TOOL_ROUTING_CONFIG: Dict[str, Dict] = {
         "input_params": ["enterprise_id", "risk_types"],
         "example": "assess_enterprise_risk(enterprise_id='91110000xxxx', risk_types=['operational', 'legal'])",
     },
+
+    # ==========================================
+    # MCP 外部服务工具 - 天气、位置（这些是真正的 MCP 工具）
+    # ==========================================
+    "get_weather": {
+        "category": ToolCategory.MCP,
+        "description": "天气查询工具 - 查询指定城市的实时天气，包括温度、湿度、风向等",
+        "input_params": ["city_name"],
+        "example": "get_weather(city_name='北京')",
+    },
+    "get_location_info": {
+        "category": ToolCategory.MCP,
+        "description": "地理位置查询工具 - 查询地址的经纬度和行政区划信息",
+        "input_params": ["address"],
+        "example": "get_location_info(address='北京市海淀区中关村大街1号')",
+    },
+    # ⚠️ search_web 已移至 agent_tools.py 作为本地工具，直接调用 Tavily API
 }
 
 

@@ -196,7 +196,8 @@ class LLMService:
         query: str, 
         context_chunks: List[str], 
         history: List[Dict] = None,
-        add_truncation_notification: bool = True
+        add_truncation_notification: bool = True,
+        model: Optional[str] = None
     ) -> str:
         """
         非流式回答
@@ -206,6 +207,7 @@ class LLMService:
             context_chunks: 检索到的参考资料
             history: 对话历史
             add_truncation_notification: 是否添加截断通知
+            model: 可选的模型名称覆盖
 
         Returns:
             AI 生成的回答
@@ -214,12 +216,18 @@ class LLMService:
             prompt = self._build_prompt(query, context_chunks, history)
             estimated_tokens = self._estimate_prompt_tokens(prompt)
 
-            logger.info(f"[LLM] 提供商: {settings.LLM_PROVIDER} | 历史: {len(history or [])}条 | 资料: {len(context_chunks)}段 | 估算Token: {estimated_tokens}")
+            model_info = model or settings.LLM_PROVIDER
+            logger.info(f"[LLM] 提供商: {model_info} | 历史: {len(history or [])}条 | 资料: {len(context_chunks)}段 | 估算Token: {estimated_tokens}")
+
+            generate_kwargs = {}
+            if model:
+                generate_kwargs["model"] = model
 
             llm_response = await self.adapter.generate(
                 prompt=prompt,
                 temperature=0.1,
-                max_tokens=None
+                max_tokens=None,
+                **generate_kwargs
             )
 
             if isinstance(llm_response, LLMResponse):
@@ -421,6 +429,21 @@ class LLMService:
             logger.error(f"流式调用失败: {e}")
             error_msg = self._handle_error(e, settings.LLM_PROVIDER)
             yield {"delta": error_msg, "error": True}
+
+    async def check_health(self) -> bool:
+        """
+        健康检查方法
+        
+        Returns:
+            bool: 服务是否健康
+        """
+        try:
+            if self.adapter and hasattr(self.adapter, 'model_name'):
+                return True
+            return False
+        except Exception as e:
+            logger.warning(f"LLM服务健康检查失败: {e}")
+            return False
 
 
 llm_service = LLMService()

@@ -14,10 +14,11 @@ class EntityExtractor:
 
     def __init__(self):
         self.confidence_threshold = getattr(settings, 'ENTITY_CONFIDENCE_THRESHOLD', 0.7)
-        self.max_concurrency = 5
+        self.max_concurrency = getattr(settings, 'EXTRACTION_CONCURRENCY', 5)
         self.enable_summary = True
         self.summary_threshold = 5
-        self.max_retries = 3
+        self.max_retries = getattr(settings, 'EXTRACTION_MAX_RETRIES', 1)
+        self.model = getattr(settings, 'KG_EXTRACTION_MODEL', 'deepseek/deepseek-chat')
         self.merging_similarity_threshold = 0.8
 
     async def extract(
@@ -122,11 +123,12 @@ class EntityExtractor:
 返回：[{{"name":"苹果","type":"ORGANIZATION","confidence":0.95,"disambiguated_name":"苹果公司"}},{{"name":"手机","type":"PRODUCT","confidence":0.9}}]
 """
 
-        logger.info("调用 LLM 提取实体...")
+        logger.info(f"调用 LLM 提取实体，使用模型: {self.model}...")
         response = await llm_service.get_answer(
             query=prompt,
             context_chunks=[],
-            history=[]
+            history=[],
+            model=self.model
         )
 
         logger.debug(f"LLM 原始响应: {response[:200]}...")

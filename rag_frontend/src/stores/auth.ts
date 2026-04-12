@@ -9,6 +9,7 @@ export const useAuthStore = defineStore('auth', () => {
   const token = ref<string | null>(getToken())
   const userName = ref<string | null>(localStorage.getItem('rag_user_name'))
   const userEmail = ref<string | null>(localStorage.getItem('rag_user_email'))
+  const userId = ref<string | null>(localStorage.getItem('rag_user_id'))
   const avatarUrl = ref<string | null>(localStorage.getItem('rag_avatar_url'))
   const userProfile = ref<UserProfile | null>(null)
   const isAdmin = ref<boolean>(localStorage.getItem('rag_user_role') === 'admin')
@@ -31,6 +32,10 @@ export const useAuthStore = defineStore('auth', () => {
   async function fetchUserProfile() {
     try {
       userProfile.value = await authApi.getMe()
+      if (userProfile.value.id) {
+        userId.value = userProfile.value.id
+        localStorage.setItem('rag_user_id', userProfile.value.id)
+      }
       if (userProfile.value.avatar_url) {
         avatarUrl.value = userProfile.value.avatar_url
         localStorage.setItem('rag_avatar_url', userProfile.value.avatar_url)
@@ -79,11 +84,10 @@ export const useAuthStore = defineStore('auth', () => {
       avatarUrl.value = data.avatar_url
       localStorage.setItem('rag_avatar_url', data.avatar_url)
       console.log('📸 [STORE] 头像 URL 已保存:', data.avatar_url)
-    } else {
-      console.log('📸 [STORE] 后端未返回头像 URL，尝试获取用户信息')
-      // 尝试从用户信息接口获取头像
-      await fetchUserProfile()
     }
+    
+    // 获取用户完整信息（包括 user_id）
+    await fetchUserProfile()
   }
 
   async function register(email: string, password: string, full_name: string, invite_code?: string) {
@@ -98,10 +102,10 @@ export const useAuthStore = defineStore('auth', () => {
     if (data.avatar_url) {
       avatarUrl.value = data.avatar_url
       localStorage.setItem('rag_avatar_url', data.avatar_url)
-    } else {
-      // 尝试从用户信息接口获取头像
-      await fetchUserProfile()
     }
+    
+    // 获取用户完整信息（包括 user_id）
+    await fetchUserProfile()
   }
 
   // 企业管理员注册
@@ -119,10 +123,10 @@ export const useAuthStore = defineStore('auth', () => {
     if (data.avatar_url) {
       avatarUrl.value = data.avatar_url
       localStorage.setItem('rag_avatar_url', data.avatar_url)
-    } else {
-      // 尝试从用户信息接口获取头像
-      await fetchUserProfile()
     }
+    
+    // 获取用户完整信息（包括 user_id）
+    await fetchUserProfile()
   }
 
   // 发送短信验证码
@@ -139,6 +143,10 @@ export const useAuthStore = defineStore('auth', () => {
   async function updateProfile(data: { full_name?: string; nickname?: string; bio?: string }) {
     const updatedProfile = await authApi.updateProfile(data)
     userProfile.value = updatedProfile
+    if (updatedProfile.id) {
+      userId.value = updatedProfile.id
+      localStorage.setItem('rag_user_id', updatedProfile.id)
+    }
     if (updatedProfile.full_name) {
       userName.value = updatedProfile.full_name
       localStorage.setItem('rag_user_name', updatedProfile.full_name)
@@ -159,11 +167,13 @@ export const useAuthStore = defineStore('auth', () => {
     token.value = null
     userName.value = null
     userEmail.value = null
+    userId.value = null
     avatarUrl.value = null
     userProfile.value = null
     isAdmin.value = false
     localStorage.removeItem('rag_user_name')
     localStorage.removeItem('rag_user_email')
+    localStorage.removeItem('rag_user_id')
     localStorage.removeItem('rag_avatar_url')
     localStorage.removeItem('rag_user_role')
   }
@@ -186,6 +196,7 @@ export const useAuthStore = defineStore('auth', () => {
     token,
     userName,
     userEmail,
+    userId,
     avatarUrl,
     userProfile,
     isAdmin,

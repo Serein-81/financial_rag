@@ -85,7 +85,7 @@ function getStatusColor(status: string): string {
   switch (status) {
     case 'completed': return 'text-green-600'
     case 'failed': return 'text-red-600'
-    case 'processing': return 'text-blue-600'
+    case 'processing': return 'text-emerald-600'
     case 'pending': return 'text-yellow-600'
     default: return 'text-gray-500'
   }
@@ -95,7 +95,7 @@ function getStatusBgColor(status: string): string {
   switch (status) {
     case 'completed': return 'bg-green-50 border-green-200'
     case 'failed': return 'bg-red-50 border-red-200'
-    case 'processing': return 'bg-blue-50 border-blue-200'
+    case 'processing': return 'bg-emerald-50 border-emerald-200'
     case 'pending': return 'bg-yellow-50 border-yellow-200'
     default: return 'bg-gray-50 border-gray-200'
   }
@@ -137,7 +137,7 @@ function formatDate(dateString: string): string {
 </script>
 
 <template>
-  <div class="min-h-screen bg-gradient-to-br from-blue-50 via-purple-50 to-pink-50">
+  <div class="min-h-screen bg-gradient-to-br from-slate-100 via-emerald-50/30 to-teal-50/30">
     <!-- Header -->
     <div class="bg-white border-b border-gray-200 shadow-sm">
       <div class="max-w-7xl mx-auto px-6 py-4">
@@ -150,7 +150,7 @@ function formatDate(dateString: string): string {
               <ArrowLeft :size="20" class="text-gray-600" />
             </button>
             <div class="flex items-center gap-3">
-              <div class="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center shadow-lg">
+              <div class="w-12 h-12 bg-gradient-to-br from-emerald-600 to-teal-600 rounded-xl flex items-center justify-center shadow-lg">
                 <Database :size="24" class="text-white" />
               </div>
               <div>
@@ -181,8 +181,8 @@ function formatDate(dateString: string): string {
               <p class="text-sm text-gray-500 mb-1">总文档数</p>
               <p class="text-3xl font-bold text-gray-900">{{ documents.length }}</p>
             </div>
-            <div class="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
-              <FileText :size="24" class="text-blue-600" />
+            <div class="w-12 h-12 bg-emerald-100 rounded-xl flex items-center justify-center">
+              <FileText :size="24" class="text-emerald-600" />
             </div>
           </div>
         </div>
@@ -205,12 +205,12 @@ function formatDate(dateString: string): string {
           <div class="flex items-center justify-between">
             <div>
               <p class="text-sm text-gray-500 mb-1">处理中</p>
-              <p class="text-3xl font-bold text-blue-600">
+              <p class="text-3xl font-bold text-emerald-600">
                 {{ documents.filter(d => d.status === 'processing').length }}
               </p>
             </div>
-            <div class="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
-              <Loader2 :size="24" class="text-blue-600 animate-spin" />
+            <div class="w-12 h-12 bg-emerald-100 rounded-xl flex items-center justify-center">
+              <Loader2 :size="24" class="text-emerald-600 animate-spin" />
             </div>
           </div>
         </div>
@@ -253,7 +253,7 @@ function formatDate(dateString: string): string {
           >
             <div class="flex items-start justify-between gap-4">
               <div class="flex items-start gap-4 flex-1 min-w-0">
-                <div class="w-12 h-12 bg-gradient-to-br from-blue-400 to-purple-500 rounded-xl flex items-center justify-center flex-shrink-0 shadow-md">
+                <div class="w-12 h-12 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-xl flex items-center justify-center flex-shrink-0 shadow-md">
                   <FileText :size="24" class="text-white" />
                 </div>
                 
@@ -288,7 +288,7 @@ function formatDate(dateString: string): string {
               <div class="flex items-center gap-2 flex-shrink-0">
                 <button
                   @click="viewDocumentDetail(doc)"
-                  class="px-4 py-2 bg-blue-100 text-blue-600 rounded-xl hover:bg-blue-200 transition-all font-medium"
+                  class="px-4 py-2 bg-emerald-100 text-emerald-600 rounded-xl hover:bg-emerald-200 transition-all font-medium"
                 >
                   查看详情
                 </button>
@@ -340,7 +340,7 @@ function formatDate(dateString: string): string {
           </div>
 
           <div v-else class="space-y-3">
-            <FileText :size="48" class="mx-auto text-blue-500" />
+            <FileText :size="48" class="mx-auto text-emerald-500" />
             <div>
               <p class="text-lg font-medium text-gray-900 truncate">{{ selectedFile.name }}</p>
               <p class="text-sm text-gray-600">{{ formatFileSize(selectedFile.size) }}</p>
@@ -407,9 +407,9 @@ function formatDate(dateString: string): string {
         
         <div class="space-y-6">
           <!-- 基本信息 -->
-          <div class="bg-gradient-to-r from-blue-50 to-purple-50 rounded-xl p-6">
+          <div class="bg-gradient-to-r from-emerald-50 to-teal-50 rounded-xl p-6">
             <div class="flex items-start gap-4">
-              <div class="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center flex-shrink-0 shadow-lg">
+              <div class="w-16 h-16 bg-gradient-to-br from-emerald-600 to-teal-600 rounded-xl flex items-center justify-center flex-shrink-0 shadow-lg">
                 <FileText :size="32" class="text-white" />
               </div>
               <div class="flex-1">
@@ -460,6 +460,11 @@ function formatDate(dateString: string): string {
               <p class="text-sm font-medium text-gray-900">{{ formatDate(selectedDoc.created_at) }}</p>
             </div>
             
+            <div class="bg-emerald-50 rounded-xl p-4 border border-emerald-200">
+              <p class="text-xs text-emerald-600 mb-1">切块数量</p>
+              <p class="text-lg font-bold text-emerald-700">{{ selectedDoc.chunk_count || 0 }}</p>
+            </div>
+            
             <div class="bg-gray-50 rounded-xl p-4">
               <p class="text-xs text-gray-500 mb-1">文件路径</p>
               <p class="text-sm font-mono text-gray-900 truncate" :title="selectedDoc.file_path">
@@ -496,12 +501,12 @@ function formatDate(dateString: string): string {
             </div>
           </div>
 
-          <div v-else-if="selectedDoc.status === 'processing'" class="bg-blue-50 border border-blue-200 rounded-xl p-4">
+          <div v-else-if="selectedDoc.status === 'processing'" class="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
             <div class="flex items-start gap-3">
-              <Loader2 :size="20" class="text-blue-500 flex-shrink-0 mt-0.5 animate-spin" />
+              <Loader2 :size="20" class="text-emerald-500 flex-shrink-0 mt-0.5 animate-spin" />
               <div>
-                <p class="text-sm font-medium text-blue-900 mb-1">正在处理</p>
-                <p class="text-sm text-blue-700">系统正在进行文本提取、切分和向量化，请稍候...</p>
+                <p class="text-sm font-medium text-emerald-900 mb-1">正在处理</p>
+                <p class="text-sm text-emerald-700">系统正在进行文本提取、切分和向量化，请稍候...</p>
               </div>
             </div>
           </div>

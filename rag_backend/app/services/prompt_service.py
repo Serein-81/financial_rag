@@ -38,8 +38,11 @@ class PromptEngine:
         )
     """
     
-    def __init__(self, templates_dir: Optional[str] = None, skills_dir: Optional[str] = None, prompts_root: Optional[str] = None):
+    def __init__(self, templates_dir: Optional[str] = None, skills_dir: Optional[str] = None, prompts_root: Optional[str] = None, verbose: bool = False):
         """初始化提示词引擎"""
+        import os
+        verbose = verbose or os.environ.get("PROMPT_ENGINE_VERBOSE", "0") == "1"
+        
         if templates_dir is None:
             current_dir = Path(__file__).parent.parent
             templates_dir = current_dir / "prompts" / "templates"
@@ -62,10 +65,11 @@ class PromptEngine:
         self.templates_dir.mkdir(parents=True, exist_ok=True)
         self.skills_dir.mkdir(parents=True, exist_ok=True)
         
-        print(f"📝 [PromptEngine] 初始化完成")
-        print(f"   ├─ 模板目录: {self.templates_dir}")
-        print(f"   ├─ Skills 目录: {self.skills_dir}")
-        print(f"   └─ 根目录: {self.prompts_root}")
+        if verbose:
+            print(f"📝 [PromptEngine] 初始化完成")
+            print(f"   ├─ 模板目录: {self.templates_dir}")
+            print(f"   ├─ Skills 目录: {self.skills_dir}")
+            print(f"   └─ 根目录: {self.prompts_root}")
     
     def render(
         self, 
@@ -185,12 +189,25 @@ class PromptEngine:
         def replace_condition(match):
             if_condition = match.group(1).strip()
             if_content = match.group(2)
+            
+            elif_conditions = []
+            elif_contents = []
+            
+            temp_str = match.group(3)
+            if temp_str:
+                elif_conditions.append(temp_str.strip())
+                elif_contents.append(match.group(4))
+            
             else_content = match.group(5) if match.group(5) else ""
             
             if self._evaluate_condition(if_condition, context):
                 return if_content
-            else:
-                return else_content
+            
+            for i, elif_cond in enumerate(elif_conditions):
+                if self._evaluate_condition(elif_cond, context):
+                    return elif_contents[i]
+            
+            return else_content
         
         return re.sub(pattern, replace_condition, template, flags=re.DOTALL)
     

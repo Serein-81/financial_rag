@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from app.agent_framework.core.base_agent import BaseAgent
 from app.agent_framework.llm.base_adapter import BaseLLMAdapter
 from app.agent_framework.tools.tool_manager import ToolManager
+from app.multi_agent_system.agents.base_agent_prompt import load_agent_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -90,22 +91,8 @@ class ReflectionSpecialist(BaseAgent):
             tool_manager: 工具管理器
             confidence_threshold: 置信度阈值，低于此值需要人工审核
         """
-        system_prompt = """你是一位专业的质量审查专家，具有以下能力：
-        1. 对专业回答进行严格的质量评估
-        2. 识别回答中的潜在错误、不一致或遗漏
-        3. 评估置信度和可靠性
-        4. 提供建设性的改进建议
-        5. 判断是否需要人工专家介入
-        
-        在审查时，请关注：
-        - 事实准确性和数据可靠性
-        - 逻辑一致性和推理正确性
-        - 回答的完整性和全面性
-        - 表达的清晰度和专业性
-        - 风险识别和合规性检查
-        
-        请给出客观、公正、严谨的评估。
-        """
+        self.confidence_threshold = confidence_threshold
+        system_prompt = self._load_system_prompt()
         
         super().__init__(
             llm_adapter=llm_adapter,
@@ -115,9 +102,47 @@ class ReflectionSpecialist(BaseAgent):
             timeout=30.0
         )
         
-        self.confidence_threshold = confidence_threshold
         self.review_history: List[Dict[str, Any]] = []
-        
+    
+    def _load_system_prompt(self) -> str:
+        """从外部文件加载系统提示词"""
+        try:
+            return load_agent_prompt(
+                agent_name="reflection",
+                filename="reflection_agent.md",
+                context=self._get_prompt_context()
+            )
+        except Exception as e:
+            print(f"⚠️ [质量审查智能体] 加载提示词失败，使用默认提示词: {e}")
+            return self._build_default_prompt()
+    
+    def _get_prompt_context(self) -> Dict[str, Any]:
+        """获取提示词渲染上下文"""
+        return {
+            "quality_levels": [q.value for q in QualityLevel],
+            "review_focuses": [r.value for r in ReviewFocus],
+            "confidence_threshold": self.confidence_threshold,
+        }
+    
+    def _build_default_prompt(self) -> str:
+        """构建默认提示词"""
+        return """你是一位专业的质量审查专家，具有以下能力：
+1. 对专业回答进行严格的质量评估
+2. 识别回答中的潜在错误、不一致或遗漏
+3. 评估置信度和可靠性
+4. 提供建设性的改进建议
+5. 判断是否需要人工专家介入
+
+在审查时，请关注：
+- 事实准确性和数据可靠性
+- 逻辑一致性和推理正确性
+- 回答的完整性和全面性
+- 表达的清晰度和专业性
+- 风险识别和合规性检查
+
+请给出客观、公正、严谨的评估。
+"""
+    
     def evaluate_quality_scores(
         self,
         specialist_response: Dict[str, Any],
@@ -423,6 +448,22 @@ class ReflectionSpecialist(BaseAgent):
                 "overall_score": quality_scores["overall_score"]
             }
             
+        except (ValueError, KeyError) as e:
+            logger.error(f"质量审查数据失败: {e}")
+            return {
+                "success": False,
+                "error": f"数据错误: {str(e)}",
+                "needs_human_review": True,
+                "quality_level": QualityLevel.UNACCEPTABLE.value
+            }
+        except (OSError, IOError) as e:
+            logger.error(f"质量审查IO失败: {e}")
+            return {
+                "success": False,
+                "error": f"IO错误: {str(e)}",
+                "needs_human_review": True,
+                "quality_level": QualityLevel.UNACCEPTABLE.value
+            }
         except Exception as e:
             logger.error(f"质量审查失败: {e}")
             return {
@@ -430,6 +471,81 @@ class ReflectionSpecialist(BaseAgent):
                 "error": str(e),
                 "needs_human_review": True,
                 "quality_level": QualityLevel.UNACCEPTABLE.value
+            }
+    
+    async def review(
+        self,
+        user_input: str,
+        specialist_results: List[Dict[str, Any]],
+        intent_result: Any = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        执行综合质量审查（编排器专用方法）
+        
+        Args:
+            user_input: 用户原始问题
+            specialist_results: 专家结果列表
+            intent_result: 意图分析结果
+            
+        Returns:
+            审查结果
+        """
+        if not specialist_results:
+            return {
+                "confidence": 1.0,
+                "needs_revision": False,
+                "suggestions": [],
+                "quality_score": 1.0
+            }
+        
+        try:
+            overall_confidence = 1.0
+            needs_revision = False
+            all_suggestions = []
+            quality_scores = []
+            
+            for specialist_result in specialist_results:
+                specialist_type = specialist_result.get('specialist_type', 'unknown')
+                specialist_response = specialist_result.get('response', {})
+                
+                if isinstance(specialist_response, dict):
+                    specialist_response = {
+                        'result': specialist_response,
+                        'success': specialist_result.get('success', False)
+                    }
+                
+                result = await self.run(
+                    specialist_type=specialist_type,
+                    original_query=user_input,
+                    specialist_response=specialist_response,
+                    context={"intent_result": intent_result}
+                )
+                
+                if result.get("success"):
+                    quality_scores.append(result.get("overall_score", 0.8))
+                    if result.get("needs_human_review"):
+                        needs_revision = True
+                    all_suggestions.extend(
+                        result.get("review_result", {}).get("suggestions", [])
+                    )
+            
+            avg_quality = sum(quality_scores) / len(quality_scores) if quality_scores else 0.8
+            
+            return {
+                "confidence": avg_quality,
+                "needs_revision": needs_revision,
+                "suggestions": all_suggestions[:5],
+                "quality_score": avg_quality
+            }
+            
+        except Exception as e:
+            logger.error(f"综合审查失败: {e}")
+            return {
+                "confidence": 0.8,
+                "needs_revision": False,
+                "suggestions": [],
+                "quality_score": 0.8
             }
     
     async def _revise_response(
@@ -469,14 +585,22 @@ class ReflectionSpecialist(BaseAgent):
 请直接输出改进后的回答，不需要解释。
 """
             
+            full_prompt = f"{self.system_prompt}\n\n{prompt}" if self.system_prompt else prompt
             revised = await self.llm_adapter.generate(
-                prompt=prompt,
-                system_prompt=self.system_prompt,
+                prompt=full_prompt,
                 temperature=0.3
             )
             
-            return revised
+            if hasattr(revised, 'content'):
+                return revised.content
+            return str(revised) if revised else None
             
+        except (ValueError, KeyError) as e:
+            logger.warning(f"改进回答数据失败: {e}")
+            return None
+        except (OSError, IOError) as e:
+            logger.warning(f"改进回答IO失败: {e}")
+            return None
         except Exception as e:
             logger.warning(f"改进回答失败: {e}")
             return None
@@ -666,3 +790,72 @@ class ReflectionSpecialist(BaseAgent):
             "compliance_status": compliance_status,
             "notes": f"合规状态：{compliance_status}"
         }
+    
+    async def stream_run(
+        self,
+        user_input: str,
+        history: List[Dict] = None,
+        **kwargs
+    ):
+        """
+        流式执行质量审查智能体
+        
+        实现基类的抽象方法
+        
+        Args:
+            user_input: 用户输入
+            history: 对话历史
+            
+        Yields:
+            处理结果片段
+        """
+        result = await self.run(user_input, history, **kwargs)
+        result_str = json.dumps(result, ensure_ascii=False, indent=2)
+        
+        for char in result_str:
+            yield char
+    
+    async def audit(
+        self,
+        state: Dict[str, Any],
+        documents: List[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        执行专业审查（协调器专用方法）
+        
+        实现与其他专业智能体一致的接口
+        
+        Args:
+            state: 全局状态
+            documents: 待审查文档
+            
+        Returns:
+            审查发现列表（空列表，因为反思智能体不产生发现）
+        """
+        try:
+            print(f"🔍 [反思智能体] 开始审查全局状态")
+            
+            specialist_results = state.get("specialist_results", [])
+            user_input = state.get("user_input", "")
+            intent_result = state.get("intent_result")
+            
+            review_result = await self.review(
+                user_input=user_input,
+                specialist_results=specialist_results,
+                intent_result=intent_result
+            )
+            
+            state["reflection_result"] = review_result
+            
+            if review_result.get("confidence", 1.0) < 0.7:
+                state["needs_human_review"] = True
+                state["review_trigger_reason"] = f"反思审查置信度低: {review_result.get('confidence', 1.0)}"
+            
+            print(f"✅ [反思智能体] 审查完成，置信度: {review_result.get('confidence', 1.0):.2f}")
+            return []
+            
+        except Exception as e:
+            print(f"❌ [反思智能体] 审查失败: {str(e)}")
+            state["needs_human_review"] = True
+            state["review_trigger_reason"] = f"反思审查异常: {str(e)}"
+            return []

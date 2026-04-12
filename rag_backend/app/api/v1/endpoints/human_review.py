@@ -119,6 +119,10 @@ async def create_review_request(
             age_hours=review_request.age_hours
         )
         
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"创建审核请求失败: {str(e)}")
 
@@ -231,6 +235,10 @@ async def list_review_requests(
             total_pages=total_pages
         )
         
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
 
@@ -305,6 +313,10 @@ async def get_review_statistics(
             avg_processing_hours=round(avg_processing_hours, 1)
         )
         
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取统计失败: {str(e)}")
 
@@ -356,6 +368,10 @@ async def get_review_request(
         
     except HTTPException:
         raise
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
 
@@ -432,6 +448,10 @@ async def update_review_request(
         
     except HTTPException:
         raise
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"更新失败: {str(e)}")
 
@@ -484,6 +504,10 @@ async def add_review_comment(
         
     except HTTPException:
         raise
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"添加评论失败: {str(e)}")
 
@@ -535,6 +559,10 @@ async def list_review_comments(
         
     except HTTPException:
         raise
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
 
@@ -582,6 +610,10 @@ async def list_review_actions(
         
     except HTTPException:
         raise
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
 
@@ -598,6 +630,10 @@ async def _log_action(db: AsyncSession, review_id: str, user_id: str, action: st
         )
         db.add(action_record)
         await db.commit()
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         print(f"⚠️ 记录操作日志失败: {str(e)}")
 
@@ -616,5 +652,9 @@ async def _publish_review_event(tenant_id: str, event_type: str, data: dict):
             f"review:events:{tenant_id}",
             json.dumps(event)
         )
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         print(f"⚠️ 发布审核事件失败: {str(e)}")

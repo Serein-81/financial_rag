@@ -31,7 +31,8 @@ class LLMResponse:
         total_tokens: Optional[int] = None,
         model: Optional[str] = None,
         finish_reason: Optional[str] = None,
-        reasoning_content: Optional[str] = None
+        reasoning_content: Optional[str] = None,
+        raw_response: Optional[Dict[str, Any]] = None
     ):
         self.content = content
         self.prompt_tokens = prompt_tokens
@@ -40,6 +41,7 @@ class LLMResponse:
         self.model = model
         self.finish_reason = finish_reason
         self.reasoning_content = reasoning_content
+        self.raw_response = raw_response
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -52,6 +54,7 @@ class LLMResponse:
             "model": self.model,
             "finish_reason": self.finish_reason,
             "reasoning_content": self.reasoning_content,
+            "raw_response": self.raw_response,
         }
 
 
@@ -92,6 +95,8 @@ class BaseLLMAdapter(ABC):
         self.base_delay = float(os.environ.get("LLM_BASE_DELAY", kwargs.get("retry_interval", 2.0)))
         self.max_rounds = kwargs.get("max_rounds", 5)
         self.timeout = int(os.environ.get("LLM_TIMEOUT_SECONDS", kwargs.get("timeout", 600)))
+
+        self.enable_langsmith = os.environ.get("LANGSMITH_TRACING", "false").lower() in ("true", "1", "yes")
 
         self.is_tools = False
         self.tools: List[Dict[str, Any]] = []
@@ -355,6 +360,16 @@ class BaseLLMAdapter(ABC):
             try:
                 response = await self._chat(messages, temperature, max_tokens, **kwargs)
                 return response
+            except (ValueError, KeyError) as e:
+                error_msg = await self._handle_error(e, attempt)
+                if error_msg:
+                    return LLMResponse(content=error_msg)
+                continue
+            except (OSError, IOError) as e:
+                error_msg = await self._handle_error(e, attempt)
+                if error_msg:
+                    return LLMResponse(content=error_msg)
+                continue
             except Exception as e:
                 error_msg = await self._handle_error(e, attempt)
                 if error_msg:

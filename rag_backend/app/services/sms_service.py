@@ -1,211 +1,276 @@
-# app/services/sms_service.py
-
 """
 短信服务
-
-使用阿里云短信服务发送验证码
+提供短信发送功能
 """
 
-import random
-import string
 import json
 import logging
-from typing import Dict, Optional
-
-try:
-    from aliyunsdkcore.client import AcsClient
-    from aliyunsdkcore.request import CommonRequest
-    ALIYUN_SDK_AVAILABLE = True
-except ImportError:
-    ALIYUN_SDK_AVAILABLE = False
-    logging.warning("⚠️ 阿里云SDK未安装，短信功能将使用模拟模式")
-
-from app.core.config import settings
-from app.services.redis_service import redis_service
+from typing import Optional, List
 
 logger = logging.getLogger(__name__)
 
 
 class SMSService:
-    """短信服务类"""
+    """
+    短信服务
     
+    支持多种短信网关（阿里云、腾讯云等）
+    """
+
     def __init__(self):
-        """初始化阿里云短信客户端"""
-        if ALIYUN_SDK_AVAILABLE and settings.ALIYUN_ACCESS_KEY_ID:
-            try:
-                self.client = AcsClient(
-                    settings.ALIYUN_ACCESS_KEY_ID,
-                    settings.ALIYUN_ACCESS_KEY_SECRET,
-                    'cn-hangzhou'
+        self.provider = None
+        self.api_key = None
+        self.api_secret = None
+        self.signature = None
+        self.enabled = False
+        
+        self._load_config()
+
+    def _load_config(self):
+        """加载短信配置"""
+        try:
+            from app.core.config import settings
+            
+            self.provider = getattr(settings, 'SMS_PROVIDER', None)
+            self.api_key = getattr(settings, 'SMS_API_KEY', None)
+            self.api_secret = getattr(settings, 'SMS_API_SECRET', None)
+            self.signature = getattr(settings, 'SMS_SIGNATURE', '智能税务')
+            
+            self.enabled = bool(self.provider and self.api_key)
+            
+            if self.enabled:
+                logger.info(f"✅ 短信服务已配置: {self.provider}")
+            else:
+                logger.warning("⚠️ 短信服务未配置，将使用模拟模式")
+                
+        except (ValueError, KeyError) as e:
+            logger.warning(f"⚠️ 短信配置加载数据错误: {e}")
+        except (OSError, IOError) as e:
+            logger.warning(f"⚠️ 短信配置加载IO错误: {e}")
+        except Exception as e:
+            logger.warning(f"⚠️ 短信配置加载失败: {e}")
+
+    async def send_sms(
+        self,
+        phone_number: str,
+        message: str,
+        template_id: Optional[str] = None,
+        template_params: Optional[dict] = None
+    ) -> bool:
+        """
+        发送短信
+        
+        Args:
+            phone_number: 手机号
+            message: 短信内容
+            template_id: 模板ID（模板短信用）
+            template_params: 模板参数
+            
+        Returns:
+            是否发送成功
+        """
+        try:
+            if not self.enabled:
+                logger.info(f"📱 [模拟] 发送短信到: {phone_number}")
+                logger.info(f"   内容: {message}")
+                return True
+
+            if not self._validate_phone_number(phone_number):
+                logger.error(f"❌ 无效的手机号: {phone_number}")
+                return False
+
+            if self.provider == "aliyun":
+                return await self._send_aliyun_sms(phone_number, message, template_id, template_params)
+            elif self.provider == "tencent":
+                return await self._send_tencent_sms(phone_number, message, template_id, template_params)
+            else:
+                return await self._send_generic_sms(phone_number, message)
+
+        except (ValueError, KeyError) as e:
+            logger.error(f"❌ 短信发送数据错误: {e}", exc_info=True)
+            return False
+        except (OSError, IOError) as e:
+            logger.error(f"❌ 短信发送IO错误: {e}", exc_info=True)
+            return False
+        except Exception as e:
+            logger.error(f"❌ 短信发送失败: {e}", exc_info=True)
+            return False
+
+    def _validate_phone_number(self, phone: str) -> bool:
+        """验证手机号格式"""
+        import re
+        pattern = r'^1[3-9]\d{9}$'
+        return bool(re.match(pattern, phone))
+
+    async def _send_aliyun_sms(
+        self,
+        phone_number: str,
+        message: str,
+        template_id: Optional[str],
+        template_params: Optional[dict]
+    ) -> bool:
+        """通过阿里云发送短信"""
+        try:
+            from aliyunsdkdysmsapi.request.v20170525 import SendSmsRequest
+            from aliyunsdkcore.client import AcsClient
+            
+            client = AcsClient(self.api_key, self.api_secret, 'cn-hangzhou')
+            
+            if template_id:
+                request = SendSmsRequest.SendSmsRequest()
+                request.set_PhoneNumbers(phone_number)
+                request.set_SignName(self.signature)
+                request.set_TemplateCode(template_id)
+                request.set_TemplateParam(json.dumps(template_params) if template_params else None)
+            else:
+                logger.warning("⚠️ 阿里云短信需要使用模板")
+                return False
+            
+            response = client.do_action_with_exception(request)
+            logger.info(f"✅ 阿里云短信发送成功: {phone_number}")
+            return True
+            
+        except (ValueError, KeyError) as e:
+            logger.error(f"❌ 阿里云短信发送数据错误: {e}")
+            return False
+        except (OSError, IOError) as e:
+            logger.error(f"❌ 阿里云短信发送IO错误: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"❌ 阿里云短信发送失败: {e}")
+            return False
+
+    async def _send_tencent_sms(
+        self,
+        phone_number: str,
+        message: str,
+        template_id: Optional[str],
+        template_params: Optional[dict]
+    ) -> bool:
+        """通过腾讯云发送短信"""
+        try:
+            from qcloudsms_py import SmsMultiSender
+            
+            appid = self.api_key
+            appkey = self.api_secret
+            sender = SmsMultiSender(appid, appkey)
+            
+            if template_id:
+                result = sender.send_with_param(
+                    86,
+                    phone_number,
+                    template_id,
+                    template_params or [],
+                    sign=self.signature
                 )
-                logger.info("✅ 阿里云短信服务初始化成功")
-            except Exception as e:
-                logger.error(f"❌ 阿里云短信服务初始化失败: {e}")
-                self.client = None
-        else:
-            self.client = None
-            logger.warning("⚠️ 阿里云短信服务未配置，将使用模拟模式")
-    
-    def generate_code(self, length: int = 6) -> str:
-        """生成随机验证码"""
-        return ''.join(random.choices(string.digits, k=length))
-    
-    def check_send_limit(self, phone: str) -> Dict[str, any]:
-        """
-        检查发送频率限制
-        - 1小时内只能发送1次
-        - 每日最多发送3次
-        """
-        # 检查1小时内是否已发送
-        limit_key = f"sms:limit:{phone}"
-        if redis_service.exists(limit_key):
-            return {
-                "can_send": False,
-                "reason": "发送过于频繁，请1小时后再试"
-            }
-        
-        # 检查每日发送次数
-        daily_key = f"sms:daily:{phone}"
-        daily_count = redis_service.get(daily_key)
-        if daily_count and int(daily_count) >= settings.SMS_DAILY_LIMIT:
-            return {
-                "can_send": False,
-                "reason": f"今日发送次数已达上限（{settings.SMS_DAILY_LIMIT}次）"
-            }
-        
-        return {"can_send": True}
-    
-    async def send_verification_code(self, phone: str) -> Dict[str, any]:
-        """发送验证码"""
-        # 1. 检查发送限制
-        limit_check = self.check_send_limit(phone)
-        if not limit_check["can_send"]:
-            logger.warning(f"发送限制: {phone} - {limit_check['reason']}")
-            return {
-                "success": False,
-                "message": limit_check["reason"]
-            }
-        
-        # 2. 生成验证码
-        code = self.generate_code(settings.SMS_CODE_LENGTH)
-        logger.info(f"生成验证码: {phone} -> {code}")
-        
-        # 3. 存储验证码到Redis
-        code_key = f"sms:code:{phone}"
-        redis_service.set_with_expire(
-            code_key, 
-            code, 
-            settings.SMS_CODE_EXPIRE
-        )
-        
-        # 4. 设置发送频率限制（1小时）
-        limit_key = f"sms:limit:{phone}"
-        redis_service.set_with_expire(
-            limit_key, 
-            "1", 
-            settings.SMS_SEND_INTERVAL
-        )
-        
-        # 5. 更新每日发送次数
-        daily_key = f"sms:daily:{phone}"
-        count = redis_service.incr(daily_key)
-        if count == 1:
-            redis_service.expire(daily_key, 86400)  # 24小时
-        
-        # 6. 调用阿里云短信API
-        if self.client:
-            try:
-                request = CommonRequest()
-                request.set_accept_format('json')
-                request.set_domain('dysmsapi.aliyuncs.com')
-                request.set_method('POST')
-                request.set_protocol_type('https')
-                request.set_version('2017-05-25')
-                request.set_action_name('SendSms')
-                
-                request.add_query_param('PhoneNumbers', phone)
-                request.add_query_param('SignName', settings.ALIYUN_SMS_SIGN_NAME)
-                request.add_query_param('TemplateCode', settings.ALIYUN_SMS_TEMPLATE_CODE)
-                # 短信认证服务模板需要 code 和 min 两个参数
-                request.add_query_param('TemplateParam', json.dumps({
-                    "code": code,
-                    "min": str(settings.SMS_CODE_EXPIRE // 60)  # 转换为分钟
-                }))
-                
-                response = self.client.do_action_with_exception(request)
-                result = json.loads(response)
-                
-                if result.get('Code') == 'OK':
-                    logger.info(f"✅ 短信发送成功: {phone}")
-                    return {
-                        "success": True,
-                        "message": "验证码发送成功",
-                        "expire_seconds": settings.SMS_CODE_EXPIRE
-                    }
-                else:
-                    logger.error(f"❌ 短信发送失败: {result.get('Message')}")
-                    # 发送失败，删除Redis中的验证码和限制
-                    redis_service.delete(code_key)
-                    redis_service.delete(limit_key)
-                    return {
-                        "success": False,
-                        "message": f"发送失败: {result.get('Message')}"
-                    }
+            else:
+                logger.warning("⚠️ 腾讯云短信需要使用模板")
+                return False
             
-            except Exception as e:
-                logger.error(f"❌ 短信发送异常: {e}")
-                # 发送失败，删除Redis中的验证码和限制
-                redis_service.delete(code_key)
-                redis_service.delete(limit_key)
-                return {
-                    "success": False,
-                    "message": f"短信发送异常: {str(e)}"
-                }
-        else:
-            # 模拟模式：直接返回成功，验证码打印到日志
-            logger.warning(f"📱 [模拟模式] 验证码: {phone} -> {code}")
-            print(f"\n{'='*50}")
-            print(f"📱 短信验证码（模拟模式）")
-            print(f"手机号: {phone}")
-            print(f"验证码: {code}")
-            print(f"有效期: {settings.SMS_CODE_EXPIRE}秒")
-            print(f"{'='*50}\n")
+            if result.get('result') == 0:
+                logger.info(f"✅ 腾讯云短信发送成功: {phone_number}")
+                return True
+            else:
+                logger.error(f"❌ 腾讯云短信发送失败: {result}")
+                return False
+                
+        except (ValueError, KeyError) as e:
+            logger.error(f"❌ 腾讯云短信发送数据错误: {e}")
+            return False
+        except (OSError, IOError) as e:
+            logger.error(f"❌ 腾讯云短信发送IO错误: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"❌ 腾讯云短信发送失败: {e}")
+            return False
+
+    async def _send_generic_sms(self, phone_number: str, message: str) -> bool:
+        """通用短信发送（HTTP API）"""
+        try:
+            import httpx
             
-            return {
-                "success": True,
-                "message": "验证码发送成功（模拟模式，请查看控制台）",
-                "expire_seconds": settings.SMS_CODE_EXPIRE,
-                "debug_code": code  # 仅在开发模式下返回
-            }
-    
-    def verify_code(self, phone: str, code: str) -> Dict[str, any]:
-        """验证验证码"""
-        code_key = f"sms:code:{phone}"
-        stored_code = redis_service.get(code_key)
+            if hasattr(self, 'api_url'):
+                response = await httpx.AsyncClient().post(
+                    self.api_url,
+                    json={
+                        "phone": phone_number,
+                        "message": message,
+                        "signature": self.signature
+                    },
+                    headers={"Authorization": f"Bearer {self.api_key}"},
+                    timeout=10.0
+                )
+                response.raise_for_status()
+                logger.info(f"✅ 短信发送成功: {phone_number}")
+                return True
+            
+            logger.warning("⚠️ 未配置短信API URL")
+            return False
+            
+        except (ValueError, KeyError) as e:
+            logger.error(f"❌ 短信发送数据错误: {e}")
+            return False
+        except (OSError, IOError) as e:
+            logger.error(f"❌ 短信发送IO错误: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"❌ 短信发送失败: {e}")
+            return False
+
+    async def send_batch_sms(
+        self,
+        phone_numbers: List[str],
+        message: str,
+        template_id: Optional[str] = None,
+        template_params: Optional[dict] = None
+    ) -> dict:
+        """
+        批量发送短信
         
-        if not stored_code:
-            logger.warning(f"验证码不存在或已过期: {phone}")
-            return {
-                "valid": False,
-                "message": "验证码已过期或不存在"
-            }
-        
-        if stored_code != code:
-            logger.warning(f"验证码错误: {phone} - 输入:{code}, 正确:{stored_code}")
-            return {
-                "valid": False,
-                "message": "验证码错误"
-            }
-        
-        # 验证成功，删除验证码
-        redis_service.delete(code_key)
-        logger.info(f"✅ 验证码验证成功: {phone}")
-        
-        return {
-            "valid": True,
-            "message": "验证成功"
+        Args:
+            phone_numbers: 手机号列表
+            message: 短信内容
+            template_id: 模板ID
+            template_params: 模板参数
+            
+        Returns:
+            发送结果统计
+        """
+        results = {
+            "total": len(phone_numbers),
+            "success": 0,
+            "failed": 0,
+            "failed_phones": []
         }
+        
+        for phone in phone_numbers:
+            try:
+                success = await self.send_sms(
+                    phone_number=phone,
+                    message=message,
+                    template_id=template_id,
+                    template_params=template_params
+                )
+                
+                if success:
+                    results["success"] += 1
+                else:
+                    results["failed"] += 1
+                    results["failed_phones"].append(phone)
+                    
+            except (ValueError, KeyError) as e:
+                logger.error(f"❌ 批量短信发送数据错误 ({phone}): {e}")
+                results["failed"] += 1
+            except (OSError, IOError) as e:
+                logger.error(f"❌ 批量短信发送IO错误 ({phone}): {e}")
+                results["failed"] += 1
+            except Exception as e:
+                logger.error(f"❌ 批量短信发送失败 ({phone}): {e}")
+                results["failed"] += 1
+                results["failed_phones"].append(phone)
+        
+        logger.info(f"📱 批量短信发送完成: 成功 {results['success']}/{results['total']}")
+        return results
 
 
-# 创建全局实例
 sms_service = SMSService()

@@ -59,7 +59,7 @@ function getStatusColor(status: string): string {
     case 'failed':
       return 'text-red-600'
     case 'processing':
-      return 'text-blue-600'
+      return 'text-emerald-600'
     case 'pending':
       return 'text-yellow-600'
     default:
@@ -74,7 +74,7 @@ function getStatusBgColor(status: string): string {
     case 'failed':
       return 'bg-red-50 border-red-200'
     case 'processing':
-      return 'bg-blue-50 border-blue-200'
+      return 'bg-emerald-50 border-emerald-200'
     case 'pending':
       return 'bg-yellow-50 border-yellow-200'
     default:
@@ -124,11 +124,11 @@ function formatDate(dateString: string): string {
 </script>
 
 <template>
-  <div class="flex-1 flex flex-col bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 h-full">
+  <div class="flex-1 flex flex-col bg-gradient-to-br from-slate-100 via-emerald-50/30 to-teal-50/30 h-full">
     <!-- Top Bar -->
     <div class="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-6 shadow-sm">
       <div class="flex items-center gap-3">
-        <div class="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center">
+        <div class="w-10 h-10 bg-gradient-to-br from-emerald-600 to-teal-600 rounded-xl flex items-center justify-center">
           <FileText :size="20" class="text-white" />
         </div>
         <div>
@@ -179,7 +179,7 @@ function formatDate(dateString: string): string {
       <!-- Loading -->
       <div v-else-if="knowledgeStore.isLoading" class="h-full flex items-center justify-center">
         <div class="text-center space-y-4">
-          <Loader2 :size="48" class="mx-auto text-indigo-500 animate-spin" />
+          <Loader2 :size="48" class="mx-auto text-emerald-500 animate-spin" />
           <p class="text-gray-600">加载中...</p>
         </div>
       </div>
@@ -194,7 +194,7 @@ function formatDate(dateString: string): string {
           <p class="text-gray-600">这个知识库还没有上传任何文档</p>
           <router-link
             to="/upload"
-            class="inline-block px-6 py-3 bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-xl hover:from-indigo-600 hover:to-purple-700 transition-all shadow-lg font-medium"
+            class="inline-block px-6 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-xl hover:from-emerald-700 hover:to-teal-700 transition-all shadow-lg font-medium"
           >
             立即上传
           </router-link>
@@ -211,7 +211,7 @@ function formatDate(dateString: string): string {
           <!-- Header -->
           <div class="p-6 border-b border-gray-100">
             <div class="flex items-start gap-3">
-              <div class="w-12 h-12 bg-gradient-to-br from-blue-400 to-blue-500 rounded-xl flex items-center justify-center flex-shrink-0 shadow-md">
+              <div class="w-12 h-12 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-xl flex items-center justify-center flex-shrink-0 shadow-md">
                 <FileText :size="24" class="text-white" />
               </div>
               <div class="flex-1 min-w-0">
@@ -268,7 +268,7 @@ function formatDate(dateString: string): string {
           <div class="px-6 py-4 bg-gray-50 border-t border-gray-100 flex gap-2">
             <button
               @click="viewDocumentDetail(doc)"
-              class="flex-1 py-2.5 px-4 bg-white border border-gray-200 text-gray-700 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-600 rounded-xl transition-all flex items-center justify-center gap-2 text-sm font-medium"
+              class="flex-1 py-2.5 px-4 bg-white border border-gray-200 text-gray-700 hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-600 rounded-xl transition-all flex items-center justify-center gap-2 text-sm font-medium"
             >
               <Eye :size="16" />
               查看详情
@@ -300,9 +300,9 @@ function formatDate(dateString: string): string {
         
         <div class="space-y-6">
           <!-- 基本信息 -->
-          <div class="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-xl p-6">
+          <div class="bg-gradient-to-r from-emerald-50 to-teal-50 rounded-xl p-6">
             <div class="flex items-start gap-4">
-              <div class="w-16 h-16 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center flex-shrink-0 shadow-lg">
+              <div class="w-16 h-16 bg-gradient-to-br from-emerald-600 to-teal-600 rounded-xl flex items-center justify-center flex-shrink-0 shadow-lg">
                 <FileText :size="32" class="text-white" />
               </div>
               <div class="flex-1">
@@ -353,6 +353,11 @@ function formatDate(dateString: string): string {
               <p class="text-sm font-medium text-gray-900">{{ formatDate(selectedDoc.created_at) }}</p>
             </div>
             
+            <div class="bg-emerald-50 rounded-xl p-4 border border-emerald-200">
+              <p class="text-xs text-emerald-600 mb-1">切块数量</p>
+              <p class="text-lg font-bold text-emerald-700">{{ selectedDoc.chunk_count || 0 }}</p>
+            </div>
+            
             <div class="bg-gray-50 rounded-xl p-4">
               <p class="text-xs text-gray-500 mb-1">文件路径</p>
               <p class="text-sm font-mono text-gray-900 truncate" :title="selectedDoc.file_path">
@@ -389,12 +394,12 @@ function formatDate(dateString: string): string {
             </div>
           </div>
 
-          <div v-else-if="selectedDoc.status === 'processing'" class="bg-blue-50 border border-blue-200 rounded-xl p-4">
+          <div v-else-if="selectedDoc.status === 'processing'" class="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
             <div class="flex items-start gap-3">
-              <Loader2 :size="20" class="text-blue-500 flex-shrink-0 mt-0.5 animate-spin" />
+              <Loader2 :size="20" class="text-emerald-500 flex-shrink-0 mt-0.5 animate-spin" />
               <div>
-                <p class="text-sm font-medium text-blue-900 mb-1">正在处理</p>
-                <p class="text-sm text-blue-700">系统正在进行文本提取、切分和向量化，请稍候...</p>
+                <p class="text-sm font-medium text-emerald-900 mb-1">正在处理</p>
+                <p class="text-sm text-emerald-700">系统正在进行文本提取、切分和向量化，请稍候...</p>
               </div>
             </div>
           </div>

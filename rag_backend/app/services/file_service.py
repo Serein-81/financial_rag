@@ -38,8 +38,8 @@ class FileService:
             Exception: 文件解析失败
         """
         try:
-            # 1. 从 MinIO 下载文件到内存
-            file_bytes = minio_service.download_document(file_path)
+            # 1. 从 MinIO 下载文件到内存 - 使用异步版本避免阻塞
+            file_bytes = await minio_service.download_document_async(file_path)
             
             # 2. 使用工厂模式获取对应的解析器
             parser = self.parser_factory.get_parser(file_type)

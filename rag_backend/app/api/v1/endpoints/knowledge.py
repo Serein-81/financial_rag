@@ -7,7 +7,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, Request, Form
 from fastapi.responses import StreamingResponse
 from fastapi.responses import JSONResponse
-from sqlalchemy import select, or_, and_
+from sqlalchemy import select, or_, and_, func as sqlalchemy_func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import (
@@ -22,7 +22,7 @@ from app.db.session import AsyncSessionLocal
 from app.models.user import User
 from app.models.knowledge_base import KnowledgeBase
 from app.models import Document, DocumentChunk
-from app.schemas.knowledge import KnowledgeBaseCreate, KnowledgeBaseOut
+from app.schemas.knowledge import KnowledgeBaseCreate, KnowledgeBaseOut, DocumentOut
 from app.services.tenant_security_service import tenant_security
 from app.middleware.tenant_middleware import set_tenant_context_for_db
 
@@ -41,6 +41,32 @@ from app.utils.log_decorators import log_user_action
 
 
 router = APIRouter()
+
+
+@router.get("/debug/doc/{doc_id}")
+async def debug_doc(
+    doc_id: str,
+    db: AsyncSession = Depends(get_db_with_tenant_context),
+    current_user: User = Depends(get_current_user_from_token),
+    tenant_id: str = Depends(validate_read_access)
+):
+    """调试接口：查看文档详情"""
+    from app.models.document import Document
+    result = await db.execute(select(Document).where(Document.id == doc_id))
+    doc = result.scalar_one_or_none()
+    if not doc:
+        return {"error": "文档不存在"}
+    return {
+        "id": str(doc.id),
+        "filename": doc.filename,
+        "file_path": doc.file_path,
+        "file_size": doc.file_size,
+        "file_type": doc.file_type,
+        "status": doc.status,
+        "hash": doc.hash,
+        "tenant_id": doc.tenant_id,
+        "kb_id": str(doc.kb_id)
+    }
 
 
 @router.get("/bases", response_model=List[KnowledgeBaseOut])
@@ -93,8 +119,13 @@ async def get_knowledge_bases(
 
         return knowledge_bases
 
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"获取知识库列表数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"获取知识库列表IO错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
-        # 记录错误
         await tenant_security.log_security_event(
             event_type="knowledge_base_access_error",
             details={
@@ -182,6 +213,14 @@ async def create_knowledge_base(
 
         return knowledge_base
         
+    except (ValueError, KeyError) as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=f"创建知识库数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"创建知识库IO错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         await db.rollback()
         
@@ -231,8 +270,9 @@ async def process_document_task(doc_id: UUID, tenant_id: str):
 
             print(f"📄 正在解析文件内容: {doc.filename}")
             try:
-                # 🌟 使用结构化文档服务解析
-                file_bytes = minio_service.download_document(doc.file_path)
+                # 🌟 使用结构化文档服务解析 - 使用异步版本避免阻塞
+                file_bytes = await minio_service.download_document_async(doc.file_path)
+                print(f"📥 从MinIO下载文件大小: {len(file_bytes)} bytes, file_path: {doc.file_path}")
                 structured_doc = await structured_document_service.parse_document(
                     file_bytes, doc.filename, doc.file_type
                 )
@@ -241,8 +281,14 @@ async def process_document_task(doc_id: UUID, tenant_id: str):
                 doc_stats = structured_document_service.get_document_statistics(structured_doc)
                 print(f"📊 文档统计: {doc_stats}")
                 
+            except (ValueError, KeyError) as e:
+                raise HTTPException(status_code=400, detail=f"结构化文档解析数据错误: {str(e)}")
+            except (OSError, IOError) as e:
+                raise HTTPException(status_code=500, detail=f"结构化文档解析IO错误: {str(e)}")
+            except (OSError, IOError) as e:
+                raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
             except Exception as e:
-                raise Exception(f"结构化文档解析失败: {str(e)}")
+                raise HTTPException(status_code=500, detail=f"结构化文档解析失败: {str(e)}")
 
             print(f"✂️ 正在进行智能切分...")
             
@@ -305,6 +351,14 @@ async def process_document_task(doc_id: UUID, tenant_id: str):
 
             await db.commit()
 
+        except (ValueError, KeyError) as e:
+            await db.rollback()
+            print(f"❌ [后台任务] 数据错误: {e}")
+        except (OSError, IOError) as e:
+            await db.rollback()
+            print(f"❌ [后台任务] IO错误: {e}")
+        except (OSError, IOError) as e:
+            raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
         except Exception as e:
             await db.rollback()
             print(f"❌ [后台任务] 严重错误: {e}")
@@ -379,6 +433,14 @@ async def delete_knowledge_base(
         
     except HTTPException:
         raise
+    except (ValueError, KeyError) as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=f"更新知识库数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"更新知识库IO错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         await db.rollback()
         
@@ -464,6 +526,37 @@ async def list_documents(
             .order_by(Document.created_at.desc())
         )
         documents = result.scalars().all()
+
+        if not documents:
+            return []
+
+        doc_ids = [doc.id for doc in documents]
+        chunk_count_result = await db.execute(
+            select(DocumentChunk.document_id, sqlalchemy_func.count(DocumentChunk.id))
+            .where(DocumentChunk.document_id.in_(doc_ids))
+            .group_by(DocumentChunk.document_id)
+        )
+        chunk_counts = {row[0]: row[1] for row in chunk_count_result.all()}
+
+        document_outs = []
+        for doc in documents:
+            doc_dict = {
+                "id": doc.id,
+                "kb_id": doc.kb_id,
+                "user_id": doc.user_id,
+                "filename": doc.filename,
+                "file_path": doc.file_path,
+                "file_type": doc.file_type,
+                "file_size": doc.file_size,
+                "hash": doc.hash,
+                "status": doc.status,
+                "error_msg": doc.error_msg,
+                "visibility": doc.visibility,
+                "meta_info": doc.meta_info or {},
+                "created_at": doc.created_at,
+                "chunk_count": chunk_counts.get(doc.id, 0)
+            }
+            document_outs.append(DocumentOut(**doc_dict))
         
         # 记录访问日志
         await tenant_security.log_security_event(
@@ -472,17 +565,22 @@ async def list_documents(
                 "user_id": str(current_user.id),
                 "tenant_id": tenant_id,
                 "kb_id": str(kb_id),
-                "count": len(documents)
+                "count": len(document_outs)
             },
             severity="info"
         )
         
-        return documents
+        return document_outs
         
     except HTTPException:
         raise
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"删除知识库数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"删除知识库IO错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
-        # 记录错误
         await tenant_security.log_security_event(
             event_type="documents_list_error",
             details={
@@ -552,9 +650,17 @@ async def download_document(
         if not doc.file_path:
             raise HTTPException(status_code=404, detail="File path not found")
         
-        # 从 MinIO 获取文件
+        # 从 MinIO 获取文件 - 使用异步版本避免阻塞
         try:
-            file_bytes = minio_service.download_document(doc.file_path)
+            file_bytes = await minio_service.download_document_async(doc.file_path)
+        except (ValueError, KeyError) as e:
+            print(f"❌ MinIO download data error: {e}")
+            raise HTTPException(status_code=400, detail=f"下载数据错误: {str(e)}")
+        except (OSError, IOError) as e:
+            print(f"❌ MinIO download IO error: {e}")
+            raise HTTPException(status_code=500, detail=f"下载IO错误: {str(e)}")
+        except (OSError, IOError) as e:
+            raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
         except Exception as e:
             print(f"❌ MinIO download error: {e}")
             raise HTTPException(status_code=500, detail=f"Failed to download from storage: {str(e)}")
@@ -569,16 +675,113 @@ async def download_document(
             BytesIO(file_bytes),
             media_type="application/octet-stream",
             headers={
-                "Content-Disposition": f'attachment; filename="{encoded_filename}"; filename*=UTF-8\'\'{encoded_filename}'
+                "Content-Disposition": f'attachment; filename*=UTF-8\'\'{encoded_filename}'
             }
         )
         
     except HTTPException:
         raise
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Download failed: {str(e)}")
+
+
+@router.delete("/documents/{doc_id}")
+@log_user_action(
+    action_type="DOCUMENT",
+    action_name="delete_document",
+    resource_type="document",
+    description="删除文档"
+)
+async def delete_document(
+    doc_id: UUID,
+    db: AsyncSession = Depends(get_db_with_tenant_context),
+    current_user: User = Depends(get_current_user_from_token),
+    tenant_id: str = Depends(validate_delete_access)
+):
+    """
+    删除文档（租户隔离）
+    🔐 权限控制：
+       - 企业知识库文档：任何租户用户可删除
+       - 私人知识库文档：只有创建者可删除
+       - 私人文档：只有上传者可删除
+    
+    Args:
+        doc_id: 文档ID
+        db: 数据库会话
+        current_user: 当前用户
+        tenant_id: 当前租户ID
+    
+    Returns:
+        删除成功消息
+    """
+    try:
+        doc_result = await db.execute(
+            select(Document).where(Document.id == doc_id)
+        )
+        doc = doc_result.scalar_one_or_none()
+        
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        if doc.tenant_id != tenant_id:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        kb_result = await db.execute(
+            select(KnowledgeBase).where(KnowledgeBase.id == doc.kb_id)
+        )
+        kb = kb_result.scalar_one_or_none()
+        
+        if kb and kb.visibility == "private" and kb.user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Access denied")
+        
+        if doc.visibility == "private" and doc.user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Access denied")
+        
+        if doc.file_path:
+            try:
+                minio_service.delete_document(doc.file_path)
+            except (ValueError, KeyError) as e:
+                print(f"⚠️ MinIO delete data error: {e}")
+            except (OSError, IOError) as e:
+                print(f"⚠️ MinIO delete IO error: {e}")
+            except (OSError, IOError) as e:
+                raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
+            except Exception as e:
+                print(f"⚠️ MinIO delete warning: {e}")
+        
+        await db.delete(doc)
+        await db.commit()
+        
+        await tenant_security.log_security_event(
+            event_type="document_deleted",
+            details={
+                "user_id": str(current_user.id),
+                "tenant_id": tenant_id,
+                "doc_id": str(doc_id),
+                "filename": doc.filename
+            },
+            severity="info"
+        )
+        
+        return {"msg": "Document deleted successfully", "doc_id": str(doc_id)}
+        
+    except HTTPException:
+        raise
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Delete failed: {str(e)}")
 
 
 @router.post("/bases/{kb_id}/upload")
@@ -711,20 +914,35 @@ async def upload_document_to_kb(
         file_bytes = await file.read()
         file_size = len(file_bytes)
         print(f"✅ 文件大小: {file_size} bytes")
+        
+        if file_size == 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"文件为空，请确保您选择了正确的文件。文件名: {file.filename}"
+            )
 
-        # 构造 MinIO 里的唯一文件名：tenant_id/kb_id/原始文件名
-        object_name = f"{tenant_id}/{kb_id}/{file.filename}"
+        # 构造 MinIO 里的唯一文件名：tenant_id/user_id/knowledge/kb_id/原始文件名
+        user_id = str(current_user.id)
+        object_name = f"{tenant_id}/{user_id}/knowledge/{kb_id}/{file.filename}"
         print(f"📦 MinIO object_name: {object_name}")
 
         try:
-            # 上传到 MinIO
-            print(f"☁️ 开始上传到 MinIO...")
-            file_path = minio_service.upload_document(
+            # 上传到 MinIO - 使用异步版本避免阻塞
+            print(f"☁️ 开始上传到 MinIO, 文件大小: {file_size} bytes")
+            file_path = await minio_service.upload_document_async(
                 file_bytes=file_bytes,
                 object_name=object_name,
                 content_type=file.content_type
             )
-            print(f"✅ MinIO 上传成功: {file_path}")
+            print(f"✅ MinIO 上传成功: {file_path}, 实际文件大小: {file_size} bytes")
+        except (ValueError, KeyError) as e:
+            print(f"❌ MinIO 上传数据错误: {e}")
+            raise HTTPException(status_code=400, detail=f"上传数据错误: {str(e)}")
+        except (OSError, IOError) as e:
+            print(f"❌ MinIO 上传IO错误: {e}")
+            raise HTTPException(status_code=500, detail=f"上传IO错误: {str(e)}")
+        except (OSError, IOError) as e:
+            raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
         except Exception as e:
             print(f"❌ MinIO 上传失败: {e}")
             raise HTTPException(
@@ -769,11 +987,22 @@ async def upload_document_to_kb(
         return {
             "msg": "File uploaded successfully, processing in background",
             "doc_id": new_doc.id,
-            "status": "pending"
+            "status": "pending",
+            "chunk_count": 0
         }
         
     except HTTPException:
         raise
+    except (ValueError, KeyError) as e:
+        import traceback
+        print(f"❌ 上传文档数据错误: {e}")
+        raise HTTPException(status_code=400, detail=f"上传文档数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        import traceback
+        print(f"❌ 上传文档IO错误: {e}")
+        raise HTTPException(status_code=500, detail=f"上传文档IO错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         import traceback
         print(f"❌ 上传文档时发生错误: {e}")

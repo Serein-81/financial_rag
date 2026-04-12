@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pydantic import BaseModel, Field
 
 from .base_specialist import BaseSpecialistAgent
+from .base_agent_prompt import load_agent_prompt
 from app.agent_framework.llm.base_adapter import BaseLLMAdapter
 from app.agent_framework.tools.tool_manager import ToolManager
 from ..state import AuditState, Finding, RiskLevel
@@ -87,18 +88,7 @@ class TaxSpecialist(BaseSpecialistAgent):
             tool_manager: 工具管理器
             specialty: 专业领域标识
         """
-        system_prompt = """你是一位专业的税务顾问，具有以下能力：
-        1. 精通中国现行税制，包括增值税、企业所得税、个人所得税等
-        2. 熟悉最新税收政策和法规
-        3. 能够进行税务计算和风险评估
-        4. 提供合规的税收筹划建议
-        
-        在回答时，请：
-        - 引用相关法规条款
-        - 提供具体的计算过程
-        - 指出潜在的合规风险
-        - 建议合理的筹划方案（合法合规范围内）
-        """
+        system_prompt = self._load_system_prompt()
         
         super().__init__(
             specialty=specialty,
@@ -111,7 +101,40 @@ class TaxSpecialist(BaseSpecialistAgent):
         
         self.entity_patterns = self._compile_entity_patterns()
         self.tax_calculations = self._load_tax_calculations()
-        
+    
+    def _load_system_prompt(self) -> str:
+        """从外部文件加载系统提示词"""
+        try:
+            return load_agent_prompt(
+                agent_name="tax",
+                filename="tax_agent.md",
+                context=self._get_prompt_context()
+            )
+        except Exception as e:
+            print(f"⚠️ [税务专家智能体] 加载提示词失败，使用默认提示词: {e}")
+            return self._build_default_prompt()
+    
+    def _get_prompt_context(self) -> Dict[str, Any]:
+        """获取提示词渲染上下文"""
+        return {
+            "tax_types": [t.value for t in TaxType],
+        }
+    
+    def _build_default_prompt(self) -> str:
+        """构建默认提示词"""
+        return """你是一位专业的税务顾问，具有以下能力：
+1. 精通中国现行税制，包括增值税、企业所得税、个人所得税等
+2. 熟悉最新税收政策和法规
+3. 能够进行税务计算和风险评估
+4. 提供合规的税收筹划建议
+
+在回答时，请：
+- 引用相关法规条款
+- 提供具体的计算过程
+- 指出潜在的合规风险
+- 建议合理的筹划方案（合法合规范围内）
+"""
+    
     def _compile_entity_patterns(self) -> Dict[str, re.Pattern]:
         """编译税务实体提取正则表达式"""
         return {
@@ -202,10 +225,17 @@ class TaxSpecialist(BaseSpecialistAgent):
             "环保税": TaxType.ENVIRONMENT_TAX
         }
         
+        general_tax_keywords = ["税务", "纳税", "税金", "报税", "合规"]
+        
         for keyword, tax_type in tax_type_keywords.items():
             if keyword in text:
                 entity.tax_type = tax_type.value
                 break
+        else:
+            for keyword in general_tax_keywords:
+                if keyword in text:
+                    entity.tax_type = TaxType.OTHER.value
+                    break
         
         return entity
     
@@ -310,15 +340,35 @@ class TaxSpecialist(BaseSpecialistAgent):
             
             prompt = self._build_tax_prompt(user_input, entities)
             
-            response = await self.llm_adapter.generate(
-                prompt=prompt,
-                system_prompt=self.system_prompt,
+            full_prompt = f"{self.system_prompt}\n\n{prompt}" if self.system_prompt else prompt
+            llm_response = await self.llm_adapter.generate(
+                prompt=full_prompt,
                 temperature=0.3
             )
             
-            analysis = self._parse_llm_response(response, entities)
+            response_text = llm_response.content if hasattr(llm_response, 'content') else str(llm_response)
+            analysis = self._parse_llm_response(response_text, entities)
             
             risk_assessment = self.assess_tax_risk(analysis, entities)
+            
+            if not entities.tax_type and not entities.tax_rate and not entities.tax_amount:
+                return {
+                    "success": True,
+                    "tax_type": analysis.tax_type,
+                    "analysis": analysis.dict(),
+                    "risk_assessment": risk_assessment,
+                    "entities": {
+                        "tax_rate": entities.tax_rate,
+                        "tax_amount": entities.tax_amount,
+                        "tax_id": entities.tax_id,
+                        "period": entities.period
+                    },
+                    "recommendations": self._generate_recommendations(analysis),
+                    "confidence": analysis.confidence,
+                    "needs_more_info": True,
+                    "missing_fields": ["tax_type", "tax_rate", "tax_amount"],
+                    "suggestion": "为了提供更准确的税务分析，请提供以下信息：\n1. 具体税种（如增值税、企业所得税、个人所得税等）\n2. 税务金额或计算基数\n3. 适用税率（如已知）\n4. 税务期间（如季度、年度）\n5. 相关业务背景或特殊情况"
+                }
             
             return {
                 "success": True,
@@ -335,6 +385,20 @@ class TaxSpecialist(BaseSpecialistAgent):
                 "confidence": analysis.confidence
             }
             
+        except (ValueError, KeyError) as e:
+            logger.error(f"税务分析数据失败: {e}")
+            return {
+                "success": False,
+                "error": f"数据错误: {str(e)}",
+                "fallback": "建议您咨询专业税务顾问获取准确信息"
+            }
+        except (OSError, IOError) as e:
+            logger.error(f"税务分析IO失败: {e}")
+            return {
+                "success": False,
+                "error": f"IO错误: {str(e)}",
+                "fallback": "建议您咨询专业税务顾问获取准确信息"
+            }
         except Exception as e:
             logger.error(f"税务分析失败: {e}")
             return {
@@ -377,13 +441,21 @@ class TaxSpecialist(BaseSpecialistAgent):
         """解析LLM响应"""
         try:
             if entities.tax_type:
-                tax_type = TaxType(entities.tax_type)
+                try:
+                    tax_type = TaxType(entities.tax_type)
+                except ValueError:
+                    tax_type = TaxType.OTHER
             else:
                 tax_type = TaxType.OTHER
             
             risk_points = []
-            if "风险" in response or "违规" in response:
-                risk_points.append("可能存在税务风险")
+            
+            if not entities.tax_amount and not entities.tax_rate:
+                risk_points.append("缺少关键税务信息，无法完整评估")
+            elif "违规" in response or "不合规" in response or "违法行为" in response:
+                risk_points.append("存在合规性问题")
+            elif "警告" in response or "需关注" in response:
+                risk_points.append("存在需要关注的事项")
             
             confidence = 0.8
             if entities.tax_type and entities.tax_rate:
@@ -397,6 +469,20 @@ class TaxSpecialist(BaseSpecialistAgent):
                 risk_points=risk_points,
                 compliance_status="review_required" if risk_points else "compliant",
                 confidence=confidence
+            )
+        except (ValueError, KeyError) as e:
+            logger.warning(f"解析税务响应数据失败: {e}")
+            return TaxAnalysisResult(
+                tax_type=TaxType.OTHER,
+                confidence=0.0,
+                compliance_status="error"
+            )
+        except (OSError, IOError) as e:
+            logger.warning(f"解析税务响应IO失败: {e}")
+            return TaxAnalysisResult(
+                tax_type=TaxType.OTHER,
+                confidence=0.0,
+                compliance_status="error"
             )
         except Exception as e:
             logger.warning(f"解析税务响应失败: {e}")
@@ -492,34 +578,43 @@ class TaxSpecialist(BaseSpecialistAgent):
             
             if entities.invoice_number:
                 findings.append(Finding(
-                    finding_id=f"TAX_INV_{len(findings) + 1}",
+                    id=f"TAX_INV_{len(findings) + 1}",
+                    agent_name="tax",
                     category="发票管理",
                     description=f"发现发票号码：{entities.invoice_number}",
-                    severity="info",
-                    document_id=doc.get("doc_id"),
-                    recommendation="核实发票真实性"
+                    risk_level=RiskLevel.INFO,
+                    risk_score=10.0,
+                    confidence=0.8,
+                    evidence=[],
+                    recommendations=["核实发票真实性"]
                 ))
             
             if entities.tax_rate and entities.tax_rate > 0.20:
                 findings.append(Finding(
-                    finding_id=f"TAX_RATE_{len(findings) + 1}",
+                    id=f"TAX_RATE_{len(findings) + 1}",
+                    agent_name="tax",
                     category="税率合规",
                     description=f"发现异常高税率：{entities.tax_rate}%",
-                    severity="warning",
-                    document_id=doc.get("doc_id"),
-                    recommendation="核实适用税率是否正确"
+                    risk_level=RiskLevel.MEDIUM,
+                    risk_score=40.0,
+                    confidence=0.7,
+                    evidence=[],
+                    recommendations=["核实适用税率是否正确"]
                 ))
             
             for rule in self.knowledge_base:
                 if rule.get("rule_id", "").startswith("TAX"):
                     if any(keyword in content for keyword in ["不符", "异常", "错误"]):
                         findings.append(Finding(
-                            finding_id=f"TAX_KB_{len(findings) + 1}",
+                            id=f"TAX_KB_{len(findings) + 1}",
+                            agent_name="tax",
                             category=rule.get("category", "税务合规"),
                             description=rule.get("description", ""),
-                            severity="high",
-                            document_id=doc.get("doc_id"),
-                            recommendation="进行税务合规性检查"
+                            risk_level=RiskLevel.HIGH,
+                            risk_score=70.0,
+                            confidence=0.8,
+                            evidence=[],
+                            recommendations=["进行税务合规性检查"]
                         ))
         
         return findings
@@ -566,3 +661,27 @@ class TaxSpecialist(BaseSpecialistAgent):
         }
         
         return tax_knowledge_map.get(tax_type, [])
+    
+    async def stream_run(
+        self,
+        user_input: str,
+        history: List[Dict[str, Any]] = None,
+        **kwargs
+    ):
+        """
+        流式执行税务专家智能体
+        
+        实现基类的抽象方法
+        
+        Args:
+            user_input: 用户输入
+            history: 对话历史
+            
+        Yields:
+            处理结果片段
+        """
+        result = await self.run(user_input, history, **kwargs)
+        result_str = json.dumps(result, ensure_ascii=False, indent=2)
+        
+        for char in result_str:
+            yield char

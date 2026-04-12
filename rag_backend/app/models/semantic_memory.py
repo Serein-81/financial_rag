@@ -18,8 +18,8 @@ class SemanticMemory(Base):
     content = Column(Text, nullable=False)
     role = Column(String, default="system")  # system, user, assistant
     
-    # 向量嵌入（2048维，适配智谱AI等模型）
-    embedding = Column(Vector(2048), nullable=True)
+    # 向量嵌入（1024维，适配BAAI/bge-m3模型）
+    embedding = Column(Vector(1024), nullable=True)
     
     # 记忆属性
     importance = Column(Float, default=0.5)  # 重要性 0.0-1.0

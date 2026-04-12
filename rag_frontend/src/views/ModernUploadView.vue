@@ -75,6 +75,15 @@ async function handleUpload() {
     return
   }
 
+  // 检查文件大小
+  if (selectedFile.value.size === 0) {
+    uploadResult.value = {
+      success: false,
+      error: '⚠️ 文件为空！请检查您选择的文件是否有效。\n\n可能的原因：\n• 文件已损坏\n• 文件下载不完整\n• 文件路径指向了空文件\n\n请尝试重新下载或选择其他文件。'
+    }
+    return
+  }
+
   isUploading.value = true
   uploadResult.value = null
 
@@ -92,9 +101,24 @@ async function handleUpload() {
       ...result
     }
   } catch (error: any) {
+    // 提取更友好的错误消息
+    let errorMessage = '上传失败'
+    
+    if (error.response?.data?.detail) {
+      // 后端返回的详细错误
+      errorMessage = error.response.data.detail
+    } else if (error.message) {
+      errorMessage = error.message
+    }
+    
+    // 针对空文件错误的特殊提示
+    if (errorMessage.includes('文件为空')) {
+      errorMessage = `⚠️ ${errorMessage}\n\n这可能是因为：\n• 文件已损坏或下载不完整\n• 文件正在被其他程序使用\n\n请尝试：\n1. 关闭可能正在使用该文件的程序\n2. 重新下载或创建文件\n3. 选择其他文件上传`
+    }
+    
     uploadResult.value = {
       success: false,
-      error: error.message || '上传失败'
+      error: errorMessage
     }
   } finally {
     isUploading.value = false
@@ -144,8 +168,8 @@ function getVisibilityLabel(visibility: VisibilityType): string {
 
 function getVisibilityColor(visibility: VisibilityType): string {
   return visibility === 'enterprise'
-    ? 'bg-purple-100 text-purple-700'
-    : 'bg-blue-100 text-blue-700'
+    ? 'bg-emerald-100 text-emerald-700'
+    : 'bg-teal-100 text-teal-700'
 }
 
 </script>
@@ -229,15 +253,15 @@ function getVisibilityColor(visibility: VisibilityType): string {
                   class="p-4 rounded-xl border-2 transition-all text-left"
                   :class="[
                     newKBVisibility === 'private'
-                      ? 'border-blue-500 bg-blue-50'
+                      ? 'border-emerald-500 bg-emerald-50'
                       : 'border-gray-200 bg-gray-50 hover:border-gray-300'
                   ]"
                 >
                   <div class="flex items-center gap-2 mb-1">
-                    <User :size="18" :class="newKBVisibility === 'private' ? 'text-blue-600' : 'text-gray-500'" />
-                    <span class="font-medium text-sm" :class="newKBVisibility === 'private' ? 'text-blue-700' : 'text-gray-700'">私人</span>
+                    <User :size="18" :class="newKBVisibility === 'private' ? 'text-emerald-600' : 'text-gray-500'" />
+                    <span class="font-medium text-sm" :class="newKBVisibility === 'private' ? 'text-emerald-700' : 'text-gray-700'">私人</span>
                   </div>
-                  <p class="text-xs" :class="newKBVisibility === 'private' ? 'text-blue-600' : 'text-gray-500'">仅自己可见</p>
+                  <p class="text-xs" :class="newKBVisibility === 'private' ? 'text-emerald-600' : 'text-gray-500'">仅自己可见</p>
                 </button>
 
                 <button
@@ -245,25 +269,25 @@ function getVisibilityColor(visibility: VisibilityType): string {
                   class="p-4 rounded-xl border-2 transition-all text-left"
                   :class="[
                     newKBVisibility === 'enterprise'
-                      ? 'border-purple-500 bg-purple-50'
+                      ? 'border-emerald-500 bg-emerald-50'
                       : 'border-gray-200 bg-gray-50 hover:border-gray-300'
                   ]"
                 >
                   <div class="flex items-center gap-2 mb-1">
-                    <Building2 :size="18" :class="newKBVisibility === 'enterprise' ? 'text-purple-600' : 'text-gray-500'" />
-                    <span class="font-medium text-sm" :class="newKBVisibility === 'enterprise' ? 'text-purple-700' : 'text-gray-700'">企业</span>
+                    <Building2 :size="18" :class="newKBVisibility === 'enterprise' ? 'text-emerald-600' : 'text-gray-500'" />
+                    <span class="font-medium text-sm" :class="newKBVisibility === 'enterprise' ? 'text-emerald-700' : 'text-gray-700'">企业</span>
                   </div>
-                  <p class="text-xs" :class="newKBVisibility === 'enterprise' ? 'text-purple-600' : 'text-gray-500'">全公司可见</p>
+                  <p class="text-xs" :class="newKBVisibility === 'enterprise' ? 'text-emerald-600' : 'text-gray-500'">全公司可见</p>
                 </button>
               </div>
             </div>
             <div v-else>
-              <div class="p-3 bg-blue-50 rounded-xl border border-blue-200">
-                <div class="flex items-center gap-2 text-blue-700">
+              <div class="p-3 bg-emerald-50 rounded-xl border border-emerald-200">
+                <div class="flex items-center gap-2 text-emerald-700">
                   <Lock :size="16" />
                   <span class="text-sm font-medium">私人知识库</span>
                 </div>
-                <p class="text-xs text-blue-600 mt-1">普通用户只能创建私人知识库</p>
+                <p class="text-xs text-emerald-600 mt-1">普通用户只能创建私人知识库</p>
               </div>
             </div>
           </div>
@@ -337,7 +361,7 @@ function getVisibilityColor(visibility: VisibilityType): string {
           </div>
 
           <div v-else class="space-y-4">
-            <div class="w-20 h-20 bg-gradient-to-br from-blue-400 to-blue-500 rounded-3xl flex items-center justify-center mx-auto shadow-xl">
+            <div class="w-20 h-20 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-3xl flex items-center justify-center mx-auto shadow-xl">
               <FileText :size="40" class="text-white" />
             </div>
             <div class="space-y-2">
@@ -358,10 +382,10 @@ function getVisibilityColor(visibility: VisibilityType): string {
         </div>
 
         <!-- 🔐 Document Visibility Selection for Enterprise KB -->
-        <div v-if="selectedFile && selectedKB && showUploadVisibilityOption" class="bg-purple-50 border border-purple-200 rounded-2xl p-4">
+        <div v-if="selectedFile && selectedKB && showUploadVisibilityOption" class="bg-emerald-50 border border-emerald-200 rounded-2xl p-4">
           <div class="flex items-center gap-2 mb-3">
-            <Building2 :size="18" class="text-purple-600" />
-            <span class="text-sm font-medium text-purple-900">上传到企业知识库</span>
+            <Building2 :size="18" class="text-emerald-600" />
+            <span class="text-sm font-medium text-emerald-900">上传到企业知识库</span>
           </div>
           <div class="grid grid-cols-2 gap-3">
             <button
@@ -385,15 +409,15 @@ function getVisibilityColor(visibility: VisibilityType): string {
               class="p-3 rounded-xl border-2 transition-all text-left"
               :class="[
                 selectedDocVisibility === 'private'
-                  ? 'border-blue-500 bg-blue-50'
+                  ? 'border-emerald-500 bg-emerald-50'
                   : 'border-gray-200 bg-white hover:border-gray-300'
               ]"
             >
               <div class="flex items-center gap-2">
-                <Lock :size="16" :class="selectedDocVisibility === 'private' ? 'text-blue-600' : 'text-gray-500'" />
-                <span class="text-sm font-medium" :class="selectedDocVisibility === 'private' ? 'text-blue-700' : 'text-gray-700'">私人上传</span>
+                <Lock :size="16" :class="selectedDocVisibility === 'private' ? 'text-emerald-600' : 'text-gray-500'" />
+                <span class="text-sm font-medium" :class="selectedDocVisibility === 'private' ? 'text-emerald-700' : 'text-gray-700'">私人上传</span>
               </div>
-              <p class="text-xs mt-1" :class="selectedDocVisibility === 'private' ? 'text-blue-600' : 'text-gray-500'">仅自己可见</p>
+              <p class="text-xs mt-1" :class="selectedDocVisibility === 'private' ? 'text-emerald-600' : 'text-gray-500'">仅自己可见</p>
             </button>
           </div>
         </div>
@@ -432,15 +456,13 @@ function getVisibilityColor(visibility: VisibilityType): string {
               
               <div v-if="uploadResult.success" class="space-y-2 text-sm text-gray-600">
                 <p>{{ uploadResult.msg }}</p>
-                <div class="flex items-center gap-2 text-xs bg-blue-50 px-3 py-2 rounded-lg">
-                  <Clock :size="14" class="text-blue-600" />
-                  <span class="text-blue-700">系统正在后台进行 AI 向量化处理，请稍后在文档列表查看</span>
+                <div class="flex items-center gap-2 text-xs bg-emerald-50 px-3 py-2 rounded-lg">
+                  <Clock :size="14" class="text-emerald-600" />
+                  <span class="text-emerald-700">系统正在后台进行 AI 向量化处理，请稍后在文档列表查看</span>
                 </div>
               </div>
               
-              <p v-else class="text-sm text-red-600">
-                {{ uploadResult.error }}
-              </p>
+              <pre v-else class="text-sm text-red-600 whitespace-pre-wrap bg-red-50 p-3 rounded-lg border border-red-200 font-sans leading-relaxed">{{ uploadResult.error }}</pre>
             </div>
           </div>
         </div>
@@ -448,13 +470,13 @@ function getVisibilityColor(visibility: VisibilityType): string {
         <!-- Info Card -->
         <div class="bg-white rounded-2xl p-6 shadow-md border border-gray-200">
           <h3 class="font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            <Sparkles :size="20" class="text-purple-500" />
+            <Sparkles :size="20" class="text-emerald-500" />
             处理流程
           </h3>
           <div class="space-y-3">
             <div class="flex items-start gap-3">
-              <div class="w-6 h-6 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
-                <span class="text-xs font-bold text-blue-600">1</span>
+              <div class="w-6 h-6 bg-emerald-100 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
+                <span class="text-xs font-bold text-emerald-600">1</span>
               </div>
               <div>
                 <p class="font-medium text-gray-900 text-sm">文本提取</p>
@@ -463,8 +485,8 @@ function getVisibilityColor(visibility: VisibilityType): string {
             </div>
             
             <div class="flex items-start gap-3">
-              <div class="w-6 h-6 bg-purple-100 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
-                <span class="text-xs font-bold text-purple-600">2</span>
+              <div class="w-6 h-6 bg-emerald-100 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
+                <span class="text-xs font-bold text-emerald-600">2</span>
               </div>
               <div>
                 <p class="font-medium text-gray-900 text-sm">智能切分</p>

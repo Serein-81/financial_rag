@@ -4,16 +4,21 @@
 Agent 抽象基类
 
 定义所有 Agent 的通用接口和基础功能
+支持两种提示词模式：
+1. 静态模式：直接使用 system_prompt
+2. 动态模板模式：使用 PromptEngine 渲染模板
 """
 
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, AsyncGenerator, Optional
+from pathlib import Path
 import asyncio
 import time
 import json
 from ..tools.tool_manager import ToolManager
 from ..llm.base_adapter import BaseLLMAdapter
 from app.services.agent_tracer import agent_tracer
+from app.services.prompt_service import PromptEngine
 
 
 class BaseAgent(ABC):
@@ -21,6 +26,10 @@ class BaseAgent(ABC):
     Agent 抽象基类
     
     所有具体的 Agent 实现都应该继承这个类
+    
+    支持两种提示词模式：
+    - 静态模式：传入 system_prompt
+    - 动态模板模式：传入 template_name，通过 render_prompt() 渲染
     """
     
     def __init__(
@@ -28,6 +37,7 @@ class BaseAgent(ABC):
         llm_adapter: BaseLLMAdapter,
         tool_manager: ToolManager,
         system_prompt: str = "",
+        template_name: str = None,
         max_iterations: int = 10,
         timeout: float = 300.0
     ):
@@ -37,15 +47,24 @@ class BaseAgent(ABC):
         Args:
             llm_adapter: 大模型适配器
             tool_manager: 工具管理器
-            system_prompt: 系统提示词
+            system_prompt: 系统提示词（静态模式）
+            template_name: 模板名称（动态模式，二选一）
             max_iterations: 最大迭代次数（防止死循环）
             timeout: 超时时间（秒）
         """
         self.llm = llm_adapter
+        self.llm_adapter = llm_adapter
         self.tool_manager = tool_manager
-        self.system_prompt = system_prompt
         self.max_iterations = max_iterations
         self.timeout = timeout
+        
+        # 提示词配置
+        self.system_prompt = system_prompt
+        self.template_name = template_name
+        self.use_template = template_name is not None
+        
+        # PromptEngine 实例
+        self.prompt_engine = PromptEngine()
         
         # 运行时状态
         self.current_iteration = 0
@@ -55,18 +74,37 @@ class BaseAgent(ABC):
         # 追踪器
         self.tracer = agent_tracer
         self.current_trace_id = None
-        self.enable_tracing = True  # 可以通过环境变量控制
+        self.enable_tracing = True
         
         # Prompt 优化
         self.current_template_id = None
         self.enable_prompt_optimization = True
         
-        print(f"✅ {self.__class__.__name__} 初始化完成")
+        print(f"[OK] {self.__class__.__name__} 初始化完成")
+        print(f"   - 提示词模式: {'模板 [' + template_name + ']' if self.use_template else '静态'}")
         print(f"   - 可用工具: {len(self.tool_manager.tools)} 个")
         print(f"   - 最大迭代: {self.max_iterations} 次")
         print(f"   - 超时设置: {self.timeout} 秒")
         print(f"   - 追踪功能: {'启用' if self.enable_tracing else '禁用'}")
         print(f"   - Prompt优化: {'启用' if self.enable_prompt_optimization else '禁用'}")
+    
+    def _render_system_prompt(self, context: Dict[str, Any] = None) -> str:
+        """
+        渲染系统提示词（支持动态模板）
+        
+        Args:
+            context: 渲染上下文，包含需要替换的变量
+            
+        Returns:
+            渲染后的系统提示词
+        """
+        if self.use_template:
+            return self.prompt_engine.render(
+                template_name=self.template_name,
+                context=context or {},
+                load_skills=True
+            )
+        return self.system_prompt
     
     @abstractmethod
     async def run(self, user_input: str, history: List[Dict] = None, **kwargs) -> str:
@@ -277,7 +315,7 @@ class BaseAgent(ABC):
             return self.system_prompt, None
             
         except Exception as e:
-            print(f"⚠️ Prompt 优化失败，使用默认 Prompt: {e}")
+            print(f"[WARNING] Prompt 优化失败，使用默认 Prompt: {e}")
             return self.system_prompt, None
     
     async def record_prompt_execution(
@@ -332,7 +370,7 @@ class BaseAgent(ABC):
             )
             
         except Exception as e:
-            print(f"⚠️ 记录 Prompt 执行失败: {e}")
+            print(f"[WARNING] 记录 Prompt 执行失败: {e}")
     
     def _reset_state(self):
         """
@@ -383,7 +421,7 @@ class BaseAgent(ABC):
             )
         except Exception as e:
             # 追踪失败不应影响 Agent 执行
-            print(f"⚠️ 追踪步骤失败: {e}")
+            print(f"[WARNING] 追踪步骤失败: {e}")
     
     def get_execution_summary(self) -> Dict[str, Any]:
         """

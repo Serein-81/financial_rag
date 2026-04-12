@@ -34,7 +34,10 @@ class StructuredWordParser(FileParserStrategy):
         Returns:
             str: 结构化的Markdown格式文本
         """
+        import sys
+        print(f"[WordParser] 接收文件大小: {len(file_bytes)} bytes", file=sys.stderr)
         if not self.validate_file(file_bytes):
+            print(f"[WordParser] 文件验证失败: file_bytes={len(file_bytes)}", file=sys.stderr)
             raise ValueError("Word文件为空或无效")
         
         # Word解析是CPU密集型操作，放到线程池执行
@@ -64,6 +67,10 @@ class StructuredWordParser(FileParserStrategy):
             
             return markdown_content
             
+        except (ValueError, KeyError) as e:
+            raise Exception(f"结构化Word解析数据错误: {str(e)}")
+        except (OSError, IOError) as e:
+            raise Exception(f"结构化Word解析IO错误: {str(e)}")
         except Exception as e:
             raise Exception(f"结构化Word解析失败: {str(e)}")
     
@@ -256,7 +263,14 @@ class StructuredWordParser(FileParserStrategy):
             
             return "\n".join(markdown_lines)
             
-        except Exception:
+        except (ValueError, KeyError) as e:
+            print(f"表格提取数据错误: {str(e)}")
+            return ""
+        except (OSError, IOError) as e:
+            print(f"表格提取IO错误: {str(e)}")
+            return ""
+        except Exception as e:
+            print(f"表格提取失败: {str(e)}")
             return ""
     
     def _build_markdown(self, structured_blocks: List[Dict[str, Any]]) -> str:

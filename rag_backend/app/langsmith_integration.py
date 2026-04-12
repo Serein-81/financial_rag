@@ -9,9 +9,11 @@ LangSmith 集成模块
 """
 
 import os
+import time
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from functools import wraps
+from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
 
@@ -195,6 +197,184 @@ class LangSmithTracer:
             
         except Exception as e:
             logger.error(f"[LangSmith] 追踪失败: {e}")
+    
+    @contextmanager
+    def trace_agent_run(
+        self,
+        agent_name: str,
+        agent_type: str,
+        user_query: str,
+        session_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ):
+        """
+        追踪 Agent 完整执行过程（上下文管理器）
+        
+        用法:
+        with tracer.trace_agent_run("FinanceSpecialist", "specialist", query) as run_id:
+            # Agent 执行逻辑
+            pass
+        
+        Args:
+            agent_name: Agent 名称
+            agent_type: Agent 类型（receptionist/intent/specialist/reflect）
+            user_query: 用户查询
+            session_id: 会话 ID
+            metadata: 额外元数据
+            
+        Yields:
+            run_id: LangSmith Run ID
+        """
+        if not self.client:
+            yield None
+            return
+        
+        run_id = None
+        start_time = time.time()
+        tags = ["agent", agent_type, agent_name]
+        
+        try:
+            # 创建 Agent Run
+            run_id = self.client.create_run(
+                name=f"agent_{agent_name}",
+                run_type="chain",
+                project_name=self.project_name,
+                inputs={
+                    "query": user_query,
+                    "agent_type": agent_type,
+                    "agent_name": agent_name
+                },
+                tags=tags,
+                extra={
+                    "session_id": session_id,
+                    **(metadata or {})
+                }
+            )
+            
+            logger.debug(f"[LangSmith] 开始追踪 Agent: {agent_name} -> {run_id}")
+            yield run_id
+            
+        except Exception as e:
+            logger.error(f"[LangSmith] 创建 Agent Run 失败: {e}")
+            yield None
+            return
+        
+        finally:
+            duration = (time.time() - start_time) * 1000
+            logger.debug(f"[LangSmith] Agent {agent_name} 执行完成，耗时: {duration:.2f}ms")
+    
+    def add_agent_step(
+        self,
+        parent_run_id: str,
+        step_type: str,
+        content: str,
+        tool_name: Optional[str] = None,
+        tool_input: Optional[Dict] = None,
+        tool_output: Optional[str] = None,
+        duration_ms: Optional[float] = None
+    ):
+        """
+        为 Agent Run 添加执行步骤
+        
+        Args:
+            parent_run_id: 父级 Run ID
+            step_type: 步骤类型（thought/action/observation/final_answer）
+            content: 步骤内容
+            tool_name: 工具名称（可选）
+            tool_input: 工具输入（可选）
+            tool_output: 工具输出（可选）
+            duration_ms: 步骤耗时（毫秒）
+        """
+        if not self.client:
+            return
+        
+        try:
+            run_type_map = {
+                "thought": "chain",
+                "action": "tool",
+                "observation": "chain",
+                "final_answer": "chain"
+            }
+            
+            run = self.client.create_run(
+                name=f"{step_type}_{tool_name or 'process'}",
+                run_type=run_type_map.get(step_type, "chain"),
+                project_name=self.project_name,
+                parent_run_id=parent_run_id,
+                inputs={
+                    "step_type": step_type,
+                    "content": content[:500],  # 截断
+                    "tool_name": tool_name,
+                    "tool_input": str(tool_input)[:500] if tool_input else None
+                },
+                outputs={
+                    "tool_output": str(tool_output)[:500] if tool_output else None
+                },
+                tags=[step_type, tool_name or "process"]
+            )
+            
+            if duration_ms:
+                self.client.create_feedback(
+                    run_id=run.id,
+                    key="step_duration_ms",
+                    score=duration_ms,
+                    metadata={"duration_ms": duration_ms}
+                )
+            
+            logger.debug(f"[LangSmith] 添加 Agent 步骤: {step_type} -> {run.id}")
+            
+        except Exception as e:
+            logger.error(f"[LangSmith] 添加 Agent 步骤失败: {e}")
+    
+    def end_agent_run(
+        self,
+        run_id: str,
+        final_answer: str,
+        success: bool = True,
+        error_message: Optional[str] = None,
+        total_steps: Optional[int] = None,
+        total_duration_ms: Optional[float] = None
+    ):
+        """
+        结束 Agent Run
+        
+        Args:
+            run_id: LangSmith Run ID
+            final_answer: 最终答案
+            success: 是否成功
+            error_message: 错误信息
+            total_steps: 总步骤数
+            total_duration_ms: 总耗时（毫秒）
+        """
+        if not self.client:
+            return
+        
+        try:
+            # LangSmith Run 创建后自动结束，不需要手动更新
+            # 但可以添加反馈指标
+            if total_steps is not None:
+                self.client.create_feedback(
+                    run_id=run_id,
+                    key="total_steps",
+                    score=total_steps,
+                    comment=f"Agent 执行了 {total_steps} 步"
+                )
+            
+            if total_duration_ms is not None:
+                self.client.create_feedback(
+                    run_id=run_id,
+                    key="total_duration_ms",
+                    score=total_duration_ms,
+                    metadata={"duration_ms": total_duration_ms}
+                )
+            
+            if not success and error_message:
+                logger.warning(f"[LangSmith] Agent Run {run_id} 失败: {error_message}")
+            
+            logger.debug(f"[LangSmith] Agent Run {run_id} 完成，状态: {'success' if success else 'failed'}")
+            
+        except Exception as e:
+            logger.error(f"[LangSmith] 结束 Agent Run 失败: {e}")
     
     def flush(self):
         """

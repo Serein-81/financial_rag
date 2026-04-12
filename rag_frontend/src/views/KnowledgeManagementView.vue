@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useKnowledgeStore } from '@/stores/knowledge'
 import { useAuthStore } from '@/stores/auth'
 import { knowledgeApi } from '@/api/knowledge'
+import { useWordDocument } from '@/composables/useWordDocument'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Database,
@@ -30,6 +31,8 @@ import {
 } from 'lucide-vue-next'
 import type { Document } from '@/types'
 
+const { convertToHtmlWithStyles, isConverting, conversionError } = useWordDocument()
+
 const router = useRouter()
 const knowledgeStore = useKnowledgeStore()
 const authStore = useAuthStore()
@@ -51,6 +54,8 @@ const pendingUploadFiles = ref<File[]>([])
 const showPreviewModal = ref(false)
 const previewContent = ref<string | null>(null)
 const previewPdfUrl = ref<string | null>(null)
+const previewHtmlUrl = ref<string | null>(null)
+const docxHtmlUrl = ref<string | null>(null)
 const isLoadingPreview = ref(false)
 const previewError = ref<string | null>(null)
 
@@ -170,6 +175,7 @@ async function handleDeleteKB(kb_id: string, kb_name: string) {
 }
 
 async function handleDeleteDoc(doc_id: string, doc_name: string) {
+  console.log('handleDeleteDoc called:', { doc_id, doc_name })
   try {
     await ElMessageBox.confirm(
       `确定要删除文档"${doc_name}"吗？`,
@@ -181,7 +187,11 @@ async function handleDeleteDoc(doc_id: string, doc_name: string) {
       }
     )
 
-    await knowledgeStore.deleteDocument(doc_id)
+    if (!doc_id) {
+      ElMessage.error('文档ID无效')
+      return
+    }
+    await knowledgeStore.deleteDocument(selectedKB.value?.id || '', doc_id)
     ElMessage.success('文档已删除')
     if (selectedKB.value) {
       await knowledgeStore.fetchDocuments(selectedKB.value.id)
@@ -257,7 +267,9 @@ async function doUploadFiles(files: File[]) {
     await knowledgeStore.fetchDocuments(selectedKB.value!.id)
     startPollingIfNeeded()
   } catch (error: any) {
-    ElMessage.error(error.message || '文件上传失败')
+    // 错误已在全局拦截器中显示，不需要重复显示
+    // 只记录日志用于调试
+    console.error('Upload error:', error)
   } finally {
     isUploading.value = false
     uploadProgress.value = 0
@@ -305,7 +317,7 @@ function getStatusColor(status: string): string {
     case 'failed':
       return 'text-red-600'
     case 'processing':
-      return 'text-blue-600'
+      return 'text-emerald-600'
     case 'pending':
       return 'text-amber-600'
     default:
@@ -320,7 +332,7 @@ function getStatusBgColor(status: string): string {
     case 'failed':
       return 'bg-red-50 border-red-200 text-red-700'
     case 'processing':
-      return 'bg-blue-50 border-blue-200 text-blue-700'
+      return 'bg-emerald-50 border-emerald-200 text-emerald-700'
     case 'pending':
       return 'bg-amber-50 border-amber-200 text-amber-700'
     default:
@@ -363,6 +375,14 @@ function closePreviewModal() {
     window.URL.revokeObjectURL(previewPdfUrl.value)
     previewPdfUrl.value = null
   }
+  if (previewHtmlUrl.value) {
+    window.URL.revokeObjectURL(previewHtmlUrl.value)
+    previewHtmlUrl.value = null
+  }
+  if (docxHtmlUrl.value) {
+    window.URL.revokeObjectURL(docxHtmlUrl.value)
+    docxHtmlUrl.value = null
+  }
   previewContent.value = null
   showPreviewModal.value = false
 }
@@ -400,6 +420,8 @@ async function handlePreview(doc: any) {
   
   previewContent.value = null
   previewPdfUrl.value = null
+  previewHtmlUrl.value = null
+  docxHtmlUrl.value = null
   previewError.value = null
   isLoadingPreview.value = true
   showPreviewModal.value = true
@@ -410,31 +432,38 @@ async function handlePreview(doc: any) {
     const fileType = (doc.file_type || '').toLowerCase()
     const filename = doc.filename || ''
     
-    console.log('File type:', fileType, 'Filename:', filename)
-    
-    const isTextFile = fileType.includes('text') || 
-                       fileType.includes('markdown') ||
-                       filename.endsWith('.txt') || 
-                       filename.endsWith('.md') ||
-                       filename.endsWith('.json') ||
-                       filename.endsWith('.log') ||
-                       filename.endsWith('.csv') ||
-                       filename.endsWith('.xml') ||
-                       filename.endsWith('.html')
+    console.log('🔍 File type:', fileType, '| Filename:', filename)
+    console.log('🔍 Checking isPdfFile:', fileType.includes('pdf') || filename.endsWith('.pdf'))
+    console.log('🔍 Checking isHtmlFile:', filename.endsWith('.html') || filename.endsWith('.htm') || fileType.includes('html'))
+    console.log('🔍 Checking isWordFile:', fileType.includes('word') || filename.endsWith('.docx') || filename.endsWith('.doc'))
     
     const isPdfFile = fileType.includes('pdf') || filename.endsWith('.pdf')
+    const isHtmlFile = filename.endsWith('.html') || filename.endsWith('.htm') || fileType.includes('html')
+    const isWordFile = fileType.includes('word') || 
+                       fileType.includes('msword') || 
+                       fileType.includes('openxmlformats') ||
+                       filename.endsWith('.docx') || 
+                       filename.endsWith('.doc')
     
-    if (isTextFile) {
-      const text = await blob.text()
-      previewContent.value = text
-      console.log('Preview content loaded, length:', text.length)
-    } else if (isPdfFile) {
+    if (isPdfFile) {
       const url = window.URL.createObjectURL(blob)
       previewPdfUrl.value = url
       console.log('PDF preview URL created')
+    } else if (isWordFile) {
+      console.log('Converting Word document to HTML...')
+      const htmlContent = await convertToHtmlWithStyles(blob)
+      const blob2 = new Blob([htmlContent], { type: 'text/html' })
+      const url = window.URL.createObjectURL(blob2)
+      docxHtmlUrl.value = url
+      console.log('Word document converted and preview URL created')
+    } else if (isHtmlFile) {
+      const url = window.URL.createObjectURL(blob)
+      previewHtmlUrl.value = url
+      console.log('HTML preview URL created')
     } else {
-      previewContent.value = 'PREVIEW_UNAVAILABLE'
-      console.log('Preview not available for this file type')
+      const text = await blob.text()
+      previewContent.value = text
+      console.log('Text preview content loaded, length:', text.length)
     }
   } catch (error: any) {
     console.error('Preview error:', error)
@@ -460,9 +489,9 @@ function formatDate(dateString: string): string {
     <!-- 左侧：知识库列表 -->
     <div class="w-96 bg-white border-r border-slate-200 flex flex-col shadow-xl">
       <!-- 左侧头部 -->
-      <div class="p-6 border-b border-slate-200 bg-gradient-to-br from-blue-50 to-indigo-50">
+      <div class="p-6 border-b border-slate-200 bg-gradient-to-br from-emerald-50 to-teal-50">
         <div class="flex items-center gap-3 mb-5">
-          <div class="w-11 h-11 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/30">
+          <div class="w-11 h-11 bg-gradient-to-br from-emerald-600 to-teal-600 rounded-xl flex items-center justify-center shadow-lg shadow-emerald-500/30">
             <Database :size="22" class="text-white" />
           </div>
           <div>
@@ -473,7 +502,7 @@ function formatDate(dateString: string): string {
         
         <button
           @click="showCreateKBDialog = true"
-          class="w-full py-3 px-4 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-xl hover:from-blue-600 hover:to-indigo-700 transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2 font-medium"
+          class="w-full py-3 px-4 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-xl hover:from-emerald-700 hover:to-teal-700 transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2 font-medium"
         >
           <Plus :size="18" />
           <span>新建知识库</span>
@@ -483,7 +512,7 @@ function formatDate(dateString: string): string {
       <!-- 知识库列表 -->
       <div class="flex-1 overflow-y-auto p-4 space-y-2">
         <div v-if="knowledgeStore.isLoading && knowledgeStore.knowledgeBases.length === 0" class="flex items-center justify-center py-12">
-          <Loader2 :size="32" class="text-blue-500 animate-spin" />
+          <Loader2 :size="32" class="text-emerald-500 animate-spin" />
         </div>
 
         <div v-else-if="knowledgeStore.knowledgeBases.length === 0" class="text-center py-12 px-4">
@@ -498,8 +527,8 @@ function formatDate(dateString: string): string {
           @click="knowledgeStore.selectKnowledgeBase(kb.id)"
           class="p-4 rounded-xl border-2 transition-all duration-200 cursor-pointer group hover:shadow-md"
           :class="selectedKB?.id === kb.id 
-            ? 'bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-400 shadow-md shadow-blue-500/10' 
-            : 'bg-white border-slate-200 hover:border-blue-300'"
+            ? 'bg-gradient-to-r from-emerald-50 to-teal-50 border-emerald-400 shadow-md shadow-emerald-500/10' 
+            : 'bg-white border-slate-200 hover:border-emerald-300'"
         >
           <div class="flex items-start justify-between gap-2">
             <div class="flex-1 min-w-0">
@@ -532,7 +561,7 @@ function formatDate(dateString: string): string {
       <div v-if="selectedKB" class="bg-white border-b border-slate-200 px-8 py-5 shadow-sm">
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-4">
-            <div class="w-12 h-12 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/20">
+            <div class="w-12 h-12 bg-gradient-to-br from-emerald-600 to-teal-600 rounded-xl flex items-center justify-center shadow-lg shadow-emerald-500/20">
               <FileText :size="24" class="text-white" />
             </div>
             <div>
@@ -542,9 +571,9 @@ function formatDate(dateString: string): string {
           </div>
 
           <div class="flex items-center gap-3">
-            <div v-if="isPolling" class="flex items-center gap-2 px-4 py-2 bg-blue-50 rounded-xl border border-blue-200">
-              <Loader2 :size="14" class="text-blue-600 animate-spin" />
-              <span class="text-xs text-blue-700 font-medium">自动刷新中...</span>
+            <div v-if="isPolling" class="flex items-center gap-2 px-4 py-2 bg-emerald-50 rounded-xl border border-emerald-200">
+              <Loader2 :size="14" class="text-emerald-600 animate-spin" />
+              <span class="text-xs text-emerald-700 font-medium">自动刷新中...</span>
             </div>
 
             <button
@@ -559,7 +588,7 @@ function formatDate(dateString: string): string {
             <button
               @click="triggerFileUpload"
               :disabled="!selectedKB || isUploading"
-              class="px-6 py-2.5 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-xl hover:from-blue-600 hover:to-indigo-700 transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 font-medium"
+              class="px-6 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-xl hover:from-emerald-700 hover:to-teal-700 transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 font-medium"
             >
               <Upload :size="18" />
               <span>上传文档</span>
@@ -585,9 +614,9 @@ function formatDate(dateString: string): string {
             <span class="text-xs text-emerald-700">已完成</span>
             <p class="text-lg font-bold text-emerald-700">{{ completedDocs }}</p>
           </div>
-          <div v-if="processingDocs > 0" class="px-4 py-2 bg-blue-50 rounded-lg border border-blue-200">
-            <span class="text-xs text-blue-700">处理中</span>
-            <p class="text-lg font-bold text-blue-700">{{ processingDocs }}</p>
+          <div v-if="processingDocs > 0" class="px-4 py-2 bg-emerald-50 rounded-lg border border-emerald-200">
+            <span class="text-xs text-emerald-700">处理中</span>
+            <p class="text-lg font-bold text-emerald-700">{{ processingDocs }}</p>
           </div>
           <div v-if="failedDocs > 0" class="px-4 py-2 bg-red-50 rounded-lg border border-red-200">
             <span class="text-xs text-red-700">失败</span>
@@ -620,10 +649,10 @@ function formatDate(dateString: string): string {
           <div
             class="text-center space-y-6 max-w-lg p-12 rounded-3xl border-2 border-dashed transition-all"
             :class="isDragging 
-              ? 'border-blue-500 bg-blue-50' 
+              ? 'border-emerald-500 bg-emerald-50' 
               : 'border-slate-300 bg-white shadow-lg'"
           >
-            <div class="w-24 h-24 bg-gradient-to-br from-blue-400 to-indigo-500 rounded-3xl flex items-center justify-center mx-auto shadow-xl">
+            <div class="w-24 h-24 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-3xl flex items-center justify-center mx-auto shadow-xl">
               <Cloud :size="48" class="text-white" />
             </div>
             <div>
@@ -633,7 +662,7 @@ function formatDate(dateString: string): string {
             </div>
             <button
               @click="triggerFileUpload"
-              class="px-8 py-4 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-xl hover:from-blue-600 hover:to-indigo-700 transition-all shadow-lg hover:shadow-xl font-medium text-lg"
+              class="px-8 py-4 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-xl hover:from-emerald-700 hover:to-teal-700 transition-all shadow-lg hover:shadow-xl font-medium text-lg"
             >
               选择文件
             </button>
@@ -645,12 +674,12 @@ function formatDate(dateString: string): string {
           <div
             v-for="doc in documents"
             :key="doc.id"
-            class="bg-white rounded-2xl shadow-md hover:shadow-xl transition-all duration-300 overflow-hidden border border-slate-200 hover:border-blue-300"
+            class="bg-white rounded-2xl shadow-md hover:shadow-xl transition-all duration-300 overflow-hidden border border-slate-200 hover:border-emerald-300"
           >
             <!-- 卡片头部 -->
-            <div class="p-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-slate-100">
+            <div class="p-6 bg-gradient-to-r from-emerald-50 to-teal-50 border-b border-slate-100">
               <div class="flex items-start gap-3">
-                <div class="w-12 h-12 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center flex-shrink-0 shadow-md">
+                <div class="w-12 h-12 bg-gradient-to-br from-emerald-600 to-teal-600 rounded-xl flex items-center justify-center flex-shrink-0 shadow-md">
                   <FileText :size="24" class="text-white" />
                 </div>
                 <div class="flex-1 min-w-0">
@@ -694,6 +723,11 @@ function formatDate(dateString: string): string {
                 <p class="text-sm text-slate-700">{{ formatDate(doc.created_at) }}</p>
               </div>
 
+              <div>
+                <p class="text-xs text-slate-500 mb-1">切块数量</p>
+                <p class="text-sm font-semibold text-emerald-600">{{ doc.chunk_count || 0 }}</p>
+              </div>
+
               <!-- 错误信息 -->
               <div v-if="doc.error_msg" class="bg-red-50 border border-red-200 rounded-xl p-3">
                 <div class="flex items-start gap-2">
@@ -707,7 +741,7 @@ function formatDate(dateString: string): string {
             <div class="px-6 py-4 bg-slate-50 border-t border-slate-100 flex gap-2">
               <button
                 @click="viewDocumentDetail(doc)"
-                class="flex-1 py-2.5 px-3 bg-white border border-slate-300 text-slate-700 hover:border-blue-400 hover:bg-blue-50 hover:text-blue-600 rounded-xl transition-all flex items-center justify-center gap-2 text-sm font-medium shadow-sm"
+                class="flex-1 py-2.5 px-3 bg-white border border-slate-300 text-slate-700 hover:border-emerald-400 hover:bg-emerald-50 hover:text-emerald-600 rounded-xl transition-all flex items-center justify-center gap-2 text-sm font-medium shadow-sm"
               >
                 <Eye :size="16" />
                 查看详情
@@ -743,7 +777,7 @@ function formatDate(dateString: string): string {
               v-model="newKBName"
               type="text"
               placeholder="请输入知识库名称"
-              class="w-full px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+              class="w-full px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none transition-all"
               @keyup.enter="handleCreateKB"
             />
           </div>
@@ -756,7 +790,7 @@ function formatDate(dateString: string): string {
               v-model="newKBDescription"
               rows="3"
               placeholder="请输入知识库描述"
-              class="w-full px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all resize-none"
+              class="w-full px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent outline-none transition-all resize-none"
             ></textarea>
           </div>
 
@@ -772,8 +806,8 @@ function formatDate(dateString: string): string {
                 @click="newKBVisibility = 'private'"
                 class="p-4 rounded-xl border-2 transition-all flex flex-col items-center gap-2"
                 :class="newKBVisibility === 'private' 
-                  ? 'border-blue-500 bg-blue-50 text-blue-700' 
-                  : 'border-slate-200 bg-white text-slate-600 hover:border-blue-300'"
+                  ? 'border-emerald-500 bg-emerald-50 text-emerald-700' 
+                  : 'border-slate-200 bg-white text-slate-600 hover:border-emerald-300'"
               >
                 <Lock :size="20" />
                 <span class="font-medium">私人知识库</span>
@@ -783,8 +817,8 @@ function formatDate(dateString: string): string {
                 @click="newKBVisibility = 'enterprise'"
                 class="p-4 rounded-xl border-2 transition-all flex flex-col items-center gap-2"
                 :class="newKBVisibility === 'enterprise' 
-                  ? 'border-purple-500 bg-purple-50 text-purple-700' 
-                  : 'border-slate-200 bg-white text-slate-600 hover:border-purple-300'"
+                  ? 'border-emerald-500 bg-emerald-50 text-emerald-700' 
+                  : 'border-slate-200 bg-white text-slate-600 hover:border-emerald-300'"
               >
                 <Building2 :size="20" />
                 <span class="font-medium">企业知识库</span>
@@ -793,12 +827,12 @@ function formatDate(dateString: string): string {
             </div>
 
             <!-- 普通用户提示 -->
-            <div v-else class="p-4 bg-blue-50 rounded-xl border border-blue-200">
-              <div class="flex items-center gap-2 text-blue-800">
+            <div v-else class="p-4 bg-emerald-50 rounded-xl border border-emerald-200">
+              <div class="flex items-center gap-2 text-emerald-800">
                 <Lock :size="16" />
                 <span class="text-sm font-medium">私人知识库</span>
               </div>
-              <p class="text-xs text-blue-600 mt-1">普通用户只能创建私人知识库</p>
+              <p class="text-xs text-emerald-600 mt-1">普通用户只能创建私人知识库</p>
             </div>
           </div>
         </div>
@@ -814,7 +848,7 @@ function formatDate(dateString: string): string {
           <button
             @click="handleCreateKB"
             :disabled="isCreatingKB || !newKBName.trim()"
-            class="flex-1 py-3 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-xl hover:from-blue-600 hover:to-indigo-700 transition-all shadow-md font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            class="flex-1 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-xl hover:from-emerald-700 hover:to-teal-700 transition-all shadow-md font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
             <Loader2 v-if="isCreatingKB" :size="18" class="animate-spin" />
             <span>{{ isCreatingKB ? '创建中...' : '创建' }}</span>
@@ -832,7 +866,7 @@ function formatDate(dateString: string): string {
       <div class="bg-white rounded-2xl p-8 max-w-md w-full shadow-2xl">
         <div class="flex items-center justify-between mb-6">
           <div class="flex items-center gap-3">
-            <div class="w-12 h-12 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-xl flex items-center justify-center">
+            <div class="w-12 h-12 bg-gradient-to-br from-emerald-600 to-teal-600 rounded-xl flex items-center justify-center">
               <Building2 :size="24" class="text-white" />
             </div>
             <div>
@@ -867,13 +901,13 @@ function formatDate(dateString: string): string {
             @click="selectedDocVisibility = 'private'"
             class="p-5 rounded-xl border-2 transition-all flex flex-col items-center gap-3"
             :class="selectedDocVisibility === 'private' 
-              ? 'border-blue-500 bg-blue-50' 
-              : 'border-slate-200 bg-white hover:border-blue-300'"
+              ? 'border-emerald-500 bg-emerald-50' 
+              : 'border-slate-200 bg-white hover:border-emerald-300'"
           >
-            <Lock :size="28" :class="selectedDocVisibility === 'private' ? 'text-blue-600' : 'text-slate-400'" />
+            <Lock :size="28" :class="selectedDocVisibility === 'private' ? 'text-emerald-600' : 'text-slate-400'" />
             <div class="text-center">
-              <span class="font-semibold" :class="selectedDocVisibility === 'private' ? 'text-blue-700' : 'text-slate-600'">私人上传</span>
-              <p class="text-xs mt-1" :class="selectedDocVisibility === 'private' ? 'text-blue-600' : 'text-slate-400'">仅自己可见</p>
+              <span class="font-semibold" :class="selectedDocVisibility === 'private' ? 'text-emerald-700' : 'text-slate-600'">私人上传</span>
+              <p class="text-xs mt-1" :class="selectedDocVisibility === 'private' ? 'text-emerald-600' : 'text-slate-400'">仅自己可见</p>
             </div>
           </button>
         </div>
@@ -888,7 +922,7 @@ function formatDate(dateString: string): string {
           <button
             @click="doUploadFiles(pendingUploadFiles)"
             :disabled="isUploading"
-            class="flex-1 py-3 bg-gradient-to-r from-purple-500 to-indigo-600 text-white rounded-xl hover:from-purple-600 hover:to-indigo-700 transition-all shadow-md font-medium disabled:opacity-50 flex items-center justify-center gap-2"
+            class="flex-1 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-xl hover:from-emerald-700 hover:to-teal-700 transition-all shadow-md font-medium disabled:opacity-50 flex items-center justify-center gap-2"
           >
             <Loader2 v-if="isUploading" :size="18" class="animate-spin" />
             <span>{{ isUploading ? '上传中...' : '确认上传' }}</span>
@@ -900,13 +934,13 @@ function formatDate(dateString: string): string {
     <!-- 文档预览模态框 -->
     <div
       v-if="showPreviewModal"
-      class="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[60]"
+      class="fixed inset-0 bg-black/50 flex items-center justify-center p-6 z-[60]"
       @click.self="closePreviewModal"
     >
-      <div class="bg-white rounded-2xl max-w-5xl w-full max-h-[90vh] shadow-2xl flex flex-col">
-        <div class="flex items-center justify-between p-6 border-b border-slate-200">
+      <div class="bg-white rounded-2xl w-full h-full max-w-[95vw] max-h-[95vh] shadow-2xl flex flex-col">
+        <div class="flex items-center justify-between px-6 py-4 border-b border-slate-200">
           <div class="flex items-center gap-3">
-            <div class="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center">
+            <div class="w-10 h-10 bg-gradient-to-br from-emerald-600 to-teal-600 rounded-xl flex items-center justify-center">
               <Eye :size="20" class="text-white" />
             </div>
             <div>
@@ -918,7 +952,7 @@ function formatDate(dateString: string): string {
             <button
               v-if="previewContent && previewContent !== 'PREVIEW_UNAVAILABLE'"
               @click="handleDownload(selectedDoc)"
-              class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-all flex items-center gap-2 text-sm font-medium"
+              class="px-4 py-2 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 transition-all flex items-center gap-2 text-sm font-medium"
             >
               <Download :size="16" />
               下载
@@ -929,11 +963,12 @@ function formatDate(dateString: string): string {
           </div>
         </div>
 
-        <div class="flex-1 overflow-hidden p-6">
+        <div class="flex-1 overflow-hidden">
           <div v-if="isLoadingPreview" class="h-full flex items-center justify-center">
             <div class="text-center">
-              <Loader2 :size="48" class="text-blue-500 animate-spin mx-auto mb-4" />
-              <p class="text-slate-600">正在加载预览...</p>
+              <Loader2 :size="48" class="text-emerald-500 animate-spin mx-auto mb-4" />
+              <p v-if="isConverting" class="text-slate-600">正在转换 Word 文档...</p>
+              <p v-else class="text-slate-600">正在加载预览...</p>
             </div>
           </div>
 
@@ -951,7 +986,7 @@ function formatDate(dateString: string): string {
               <p class="text-sm text-slate-400">请下载后查看</p>
               <button
                 @click="handleDownload(selectedDoc)"
-                class="mt-4 px-6 py-3 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-xl hover:from-blue-600 hover:to-indigo-700 transition-all font-medium flex items-center gap-2 mx-auto"
+                class="mt-4 px-6 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-xl hover:from-emerald-700 hover:to-teal-700 transition-all font-medium flex items-center gap-2 mx-auto"
               >
                 <Download :size="18" />
                 下载文件
@@ -962,13 +997,33 @@ function formatDate(dateString: string): string {
           <iframe
             v-else-if="previewPdfUrl"
             :src="previewPdfUrl"
-            class="w-full h-full rounded-xl border-0"
+            class="w-full h-full border-0"
             title="PDF Preview"
+            scrolling="yes"
+            sandbox="allow-same-origin allow-scripts"
+          />
+
+          <iframe
+            v-else-if="docxHtmlUrl"
+            :src="docxHtmlUrl"
+            class="w-full h-full border-0"
+            title="Word Preview"
+            scrolling="yes"
+            sandbox="allow-same-origin allow-scripts"
+          />
+
+          <iframe
+            v-else-if="previewHtmlUrl"
+            :src="previewHtmlUrl"
+            class="w-full h-full border-0"
+            title="HTML Preview"
+            scrolling="yes"
+            sandbox="allow-same-origin allow-scripts"
           />
 
           <pre
             v-else-if="previewContent"
-            class="h-full bg-slate-50 rounded-xl p-4 overflow-auto font-mono text-sm text-slate-700 whitespace-pre-wrap break-all"
+            class="h-full bg-slate-50 p-4 overflow-auto font-mono text-sm text-slate-700 whitespace-pre-wrap break-all"
           >{{ previewContent }}</pre>
         </div>
       </div>
@@ -990,9 +1045,9 @@ function formatDate(dateString: string): string {
         
         <div class="space-y-6">
           <!-- 基本信息 -->
-          <div class="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-6">
+          <div class="bg-gradient-to-r from-emerald-50 to-teal-50 rounded-xl p-6">
             <div class="flex items-start gap-4">
-              <div class="w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center flex-shrink-0 shadow-lg">
+              <div class="w-16 h-16 bg-gradient-to-br from-emerald-600 to-teal-600 rounded-xl flex items-center justify-center flex-shrink-0 shadow-lg">
                 <FileText :size="32" class="text-white" />
               </div>
               <div class="flex-1">
@@ -1043,6 +1098,11 @@ function formatDate(dateString: string): string {
               <p class="text-sm font-semibold text-slate-900">{{ formatDate(selectedDoc.created_at) }}</p>
             </div>
             
+            <div class="bg-emerald-50 rounded-xl p-4 border border-emerald-200">
+              <p class="text-xs text-emerald-600 mb-1">切块数量</p>
+              <p class="text-lg font-bold text-emerald-700">{{ selectedDoc.chunk_count || 0 }}</p>
+            </div>
+            
             <div class="bg-slate-50 rounded-xl p-4">
               <p class="text-xs text-slate-500 mb-1">文件路径</p>
               <p class="text-sm font-mono text-slate-900 truncate" :title="selectedDoc.file_path">
@@ -1054,7 +1114,7 @@ function formatDate(dateString: string): string {
           <!-- 元信息 -->
           <div v-if="selectedDoc.meta_info && Object.keys(selectedDoc.meta_info).length > 0" class="bg-slate-50 rounded-xl p-4">
             <p class="text-sm font-semibold text-slate-900 mb-3 flex items-center gap-2">
-              <Info :size="16" class="text-blue-500" />
+              <Info :size="16" class="text-emerald-500" />
               元信息
             </p>
             <pre class="text-xs text-slate-700 bg-white p-3 rounded-lg overflow-x-auto">{{ JSON.stringify(selectedDoc.meta_info, null, 2) }}</pre>
@@ -1082,12 +1142,12 @@ function formatDate(dateString: string): string {
             </div>
           </div>
 
-          <div v-else-if="selectedDoc.status === 'processing'" class="bg-blue-50 border border-blue-200 rounded-xl p-4">
-            <div class="flex items-start gap-3">
-              <Loader2 :size="20" class="text-blue-500 flex-shrink-0 mt-0.5 animate-spin" />
-              <div>
-                <p class="text-sm font-semibold text-blue-900 mb-1">正在处理</p>
-                <p class="text-sm text-blue-700">系统正在进行文本提取、切分和向量化，请稍候...</p>
+          <div v-else-if="selectedDoc.status === 'processing'" class="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
+              <div class="flex items-start gap-3">
+                <Loader2 :size="20" class="text-emerald-500 flex-shrink-0 mt-0.5 animate-spin" />
+                <div>
+                  <p class="text-sm font-semibold text-emerald-900 mb-1">正在处理</p>
+                  <p class="text-sm text-emerald-700">系统正在进行文本提取、切分和向量化，请稍候...</p>
               </div>
             </div>
           </div>
@@ -1106,7 +1166,7 @@ function formatDate(dateString: string): string {
           <div class="flex gap-3 pt-4 border-t border-slate-200 mt-4">
             <button
               @click="handlePreview(selectedDoc)"
-              class="flex-1 py-3 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-xl hover:from-blue-600 hover:to-indigo-700 transition-all shadow-md hover:shadow-lg font-medium flex items-center justify-center gap-2"
+              class="flex-1 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-xl hover:from-emerald-700 hover:to-teal-700 transition-all shadow-md hover:shadow-lg font-medium flex items-center justify-center gap-2"
             >
               <Eye :size="18" />
               <span>预览</span>
@@ -1145,12 +1205,12 @@ function formatDate(dateString: string): string {
       class="fixed bottom-8 right-8 bg-white rounded-2xl shadow-2xl border border-slate-200 p-6 w-80 z-50"
     >
       <div class="flex items-center gap-3 mb-3">
-        <Loader2 :size="20" class="text-blue-600 animate-spin" />
+        <Loader2 :size="20" class="text-emerald-600 animate-spin" />
         <span class="font-semibold text-slate-900">上传中...</span>
       </div>
       <div class="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
         <div
-          class="bg-gradient-to-r from-blue-500 to-indigo-600 h-full transition-all duration-300"
+          class="bg-gradient-to-r from-emerald-600 to-teal-600 h-full transition-all duration-300"
           :style="{ width: `${uploadProgress}%` }"
         ></div>
       </div>

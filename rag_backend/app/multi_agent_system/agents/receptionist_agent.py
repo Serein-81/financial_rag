@@ -12,6 +12,7 @@ from app.agent_framework.core.base_agent import BaseAgent
 from app.agent_framework.llm.base_adapter import BaseLLMAdapter
 from app.agent_framework.tools.tool_manager import ToolManager
 from app.services.prompt_service import PromptEngine
+from app.multi_agent_system.agents.base_agent_prompt import load_agent_prompt
 from ..message_bus import MessageBus, MessageType
 
 
@@ -58,6 +59,9 @@ class ReceptionistAgent(BaseAgent):
         self.prompt_engine = PromptEngine()
         self.message_bus = message_bus or MessageBus()
         
+        # 对话上下文（必须在_load_system_prompt之前初始化）
+        self.conversation_context: Dict[str, Any] = {}
+        
         # 加载系统提示词
         if not system_prompt:
             system_prompt = self._load_system_prompt()
@@ -69,9 +73,6 @@ class ReceptionistAgent(BaseAgent):
             max_iterations=max_iterations,
             timeout=timeout
         )
-        
-        # 对话上下文
-        self.conversation_context: Dict[str, Any] = {}
         
         # 简单问题模式
         self.simple_patterns = {
@@ -88,17 +89,22 @@ class ReceptionistAgent(BaseAgent):
         print("   - RAG检索: 启用")
     
     def _load_system_prompt(self) -> str:
-        """从文件加载系统提示词"""
-        prompt_path = Path(__file__).parent.parent.parent / "prompts" / "system" / "receptionist_agent.md"
-        
-        if prompt_path.exists():
-            try:
-                with open(prompt_path, "r", encoding="utf-8") as f:
-                    return f.read()
-            except Exception as e:
-                print(f"⚠️ [接待智能体] 加载提示词失败: {e}")
-        
-        return self._build_default_prompt()
+        """从外部文件加载系统提示词"""
+        try:
+            return load_agent_prompt(
+                agent_name="receptionist",
+                filename="receptionist_agent.md",
+                context=self._get_prompt_context()
+            )
+        except Exception as e:
+            print(f"⚠️ [接待智能体] 加载提示词失败，使用默认提示词: {e}")
+            return self._build_default_prompt()
+    
+    def _get_prompt_context(self) -> Dict[str, Any]:
+        """获取提示词渲染上下文"""
+        return {
+            "available_specialists": list(self.conversation_context.keys()) if self.conversation_context else ["finance", "legal", "tax"],
+        }
     
     def _build_default_prompt(self) -> str:
         """构建默认提示词"""
@@ -264,6 +270,12 @@ class ReceptionistAgent(BaseAgent):
             try:
                 weather_info = await self.call_tool("get_weather", city="北京")
                 return f"当前北京天气：{weather_info}"
+            except (ValueError, KeyError):
+                return "抱歉，暂时无法查询天气信息。"
+            except (OSError, IOError):
+                return "抱歉，暂时无法查询天气信息。"
+            except TimeoutError:
+                return "抱歉，暂时无法查询天气信息（请求超时）。"
             except Exception:
                 return "抱歉，暂时无法查询天气信息。"
         

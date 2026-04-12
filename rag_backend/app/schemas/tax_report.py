@@ -9,13 +9,27 @@ from enum import Enum
 
 
 class TaxTypeEnum(str, Enum):
-    """税务类型枚举"""
+    """税务类型枚举（大小写不敏感）"""
     VAT = "vat"                      # 增值税
     INCOME = "income"                # 企业所得税
     PERSONAL = "personal"            # 个人所得税
     CONSUMPTION = "consumption"      # 消费税
     BEHAVIOR = "behavior"           # 行为税
     COMPREHENSIVE = "comprehensive"  # 综合税务
+    
+    def __new__(cls, value):
+        # 大小写不敏感：自动转换为小写
+        obj = str.__new__(cls)
+        obj._value_ = value.lower() if isinstance(value, str) else value
+        return obj
+    
+    @classmethod
+    def _missing_(cls, value):
+        # 当解析失败时，尝试大小写不敏感匹配
+        for member in cls:
+            if member.value.lower() == str(value).lower():
+                return member
+        return None
 
 
 class TaxReportStatusEnum(str, Enum):
@@ -204,6 +218,83 @@ class TaxReportStatusResponse(BaseModel):
                 "progress_percent": 75,
                 "needs_human_review": False,
                 "estimated_completion": "2024-03-25T10:05:00Z"
+            }
+        }
+
+
+class ManualTaxReportInput(BaseModel):
+    """手动录入税务报告输入"""
+    tax_type: TaxTypeEnum = Field(..., description="税务类型")
+    fiscal_year: int = Field(..., ge=2000, le=2100, description="财务年度")
+    fiscal_period: Optional[str] = Field(None, description="财务期间（如：2024-Q1, 2024-03）")
+    
+    company_name: Optional[str] = Field(None, description="公司名称")
+    tax_id: Optional[str] = Field(None, description="纳税人识别号")
+    
+    revenue: float = Field(0, ge=0, description="营业收入")
+    taxable_sales: float = Field(0, ge=0, description="应税销售额")
+    tax_free_sales: float = Field(0, ge=0, description="免税销售额")
+    
+    input_tax: float = Field(0, ge=0, description="进项税额")
+    output_tax: float = Field(0, ge=0, description="销项税额")
+    vat_rate: float = Field(0.13, ge=0, le=1, description="增值税率")
+    
+    total_expenses: float = Field(0, ge=0, description="总支出")
+    deductible_expenses: float = Field(0, ge=0, description="可抵扣支出")
+    
+    taxable_income: float = Field(0, ge=0, description="应纳税所得额")
+    corporate_tax_rate: float = Field(0.25, ge=0, le=1, description="企业所得税率")
+    
+    total_payroll: float = Field(0, ge=0, description="工资薪金总额")
+    
+    total_invoices: int = Field(0, ge=0, description="发票总数")
+    input_invoice_count: int = Field(0, ge=0, description="进项发票数")
+    output_invoice_count: int = Field(0, ge=0, description="销项发票数")
+    
+    financial_data_id: Optional[str] = Field(None, description="关联财务数据ID")
+    
+    notes: Optional[str] = Field(None, description="备注")
+    run_analysis: bool = Field(True, description="是否立即运行AI分析")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "tax_type": "vat",
+                "fiscal_year": 2024,
+                "fiscal_period": "2024-03",
+                "company_name": "示例公司",
+                "revenue": 1000000,
+                "taxable_sales": 850000,
+                "tax_free_sales": 150000,
+                "input_tax": 85000,
+                "output_tax": 110500,
+                "vat_rate": 0.13,
+                "total_invoices": 50,
+                "financial_data_id": "550e8400-e29b-41d4-a716-446655440000"
+            }
+        }
+
+
+class ManualTaxReportCreate(BaseModel):
+    """手动创建税务报告请求"""
+    input_data: ManualTaxReportInput = Field(..., description="录入数据")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "input_data": {
+                    "tax_type": "vat",
+                    "fiscal_year": 2024,
+                    "fiscal_period": "2024-03",
+                    "company_name": "示例公司",
+                    "revenue": 1000000,
+                    "taxable_sales": 850000,
+                    "tax_free_sales": 150000,
+                    "input_tax": 85000,
+                    "output_tax": 110500,
+                    "vat_rate": 0.13,
+                    "run_analysis": True
+                }
             }
         }
 

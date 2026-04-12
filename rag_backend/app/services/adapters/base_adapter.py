@@ -98,7 +98,7 @@ class BaseEmbeddingAdapter(ABC):
                     batch_embeddings.append(embedding)
                 except Exception as e:
                     self.logger.error(f"编码失败: {text[:50]}... - {e}")
-                    batch_embeddings.append([0.0] * 1536)
+                    batch_embeddings.append([0.0] * 1024)
             
             all_embeddings.extend(batch_embeddings)
             

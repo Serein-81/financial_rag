@@ -72,6 +72,12 @@ class MCPClientManager:
             async with httpx.AsyncClient(timeout=10) as client:
                 response = await client.get(f"{self.server_url}/health")
                 return response.status_code == 200
+        except (ValueError, KeyError) as e:
+            logger.error(f"健康检查数据失败: {e}")
+            return False
+        except (OSError, IOError) as e:
+            logger.error(f"健康检查IO失败: {e}")
+            return False
         except Exception as e:
             logger.error(f"健康检查失败: {e}")
             return False
@@ -119,6 +125,10 @@ class MCPClientManager:
 
         except httpx.TimeoutException as e:
             raise MCPTimeoutError(f"获取工具列表超时: {e}")
+        except (ValueError, KeyError) as e:
+            raise MCPError(f"获取工具列表数据失败: {e}")
+        except (OSError, IOError) as e:
+            raise MCPError(f"获取工具列表IO失败: {e}")
         except Exception as e:
             raise MCPError(f"获取工具列表失败: {e}")
 
@@ -164,6 +174,10 @@ class MCPClientManager:
             raise MCPTimeoutError(f"工具调用超时: {e}")
         except httpx.HTTPStatusError as e:
             raise MCPError(f"HTTP 错误: {e.response.status_code} - {e.response.text}")
+        except (ValueError, KeyError) as e:
+            raise MCPError(f"工具调用数据失败: {e}")
+        except (OSError, IOError) as e:
+            raise MCPError(f"工具调用IO失败: {e}")
         except Exception as e:
             raise MCPError(f"工具调用失败: {e}")
 

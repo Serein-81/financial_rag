@@ -73,6 +73,10 @@ async def search_current_conversation(
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"记忆搜索失败: {str(e)}")
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"记忆搜索数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"记忆搜索IO错误: {str(e)}")
 
 
 @router.get("/statistics/{session_id}")
@@ -107,6 +111,10 @@ async def get_memory_statistics(
             "tenant_id": tenant_context['tenant_id']
         }
         
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"获取统计信息数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"获取统计信息IO错误: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取统计信息失败: {str(e)}")
 
@@ -143,5 +151,9 @@ async def export_session_summary(
             "tenant_id": tenant_context['tenant_id']
         }
         
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"导出摘要数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"导出摘要IO错误: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"导出摘要失败: {str(e)}")

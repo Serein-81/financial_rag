@@ -106,7 +106,7 @@ class HybridRetriever:
                     metadata={
                         "memory_id": str(memory.id),
                         "user_id": str(memory.user_id),
-                        "session_id": memory.session_id,
+                        "session_id": str(memory.source_session_id) if memory.source_session_id else None,
                         "created_at": memory.created_at.isoformat() if memory.created_at else None
                     }
                 ))

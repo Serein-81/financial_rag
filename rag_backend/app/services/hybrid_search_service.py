@@ -125,15 +125,22 @@ class HybridSearchService:
 
             if self.enable_synonym:
                 synonym_queries = synonym_service.expand_query(query)
-                logger.info(f"🔄 同义词扩展: {len(synonym_queries)} 个查询")
+                logger.info(f"🔄 同义词扩展: {len(synonym_queries)} 个查询 | 查询: {synonym_queries}")
 
                 for syn_query in synonym_queries[:5]:
+                    logger.info(f"🔍 处理同义词查询: '{syn_query}' | 类型: {type(syn_query)}")
                     syn_vector = await embedding_service.get_embedding(syn_query)
-                    if syn_vector:
-                        syn_results = await self._vector_search(
-                            syn_query, kb_id, top_k, score_threshold, tenant_id, user_id
-                        )
-                        synonym_results.extend(syn_results)
+                    logger.info(f"🔍 同义词向量类型: {type(syn_vector)} | 长度: {len(syn_vector) if isinstance(syn_vector, list) and syn_vector else 0}")
+                    if syn_vector and isinstance(syn_vector, list) and len(syn_vector) > 0:
+                        if isinstance(syn_vector[0], (int, float)):
+                            syn_results = await self._vector_search(
+                                syn_vector, kb_id, top_k, score_threshold, tenant_id, user_id
+                            )
+                            synonym_results.extend(syn_results)
+                        else:
+                            logger.warning(f"⚠️ 向量格式错误，首元素类型: {type(syn_vector[0])}")
+                    else:
+                        logger.warning(f"⚠️ 向量为空或格式错误")
 
             if self.enable_fulltext:
                 fulltext_results = await self._fulltext_search(
@@ -187,7 +194,6 @@ class HybridSearchService:
                 where_clauses = [
                     "(1 - (CAST(c.embedding AS vector) <=> CAST(:vector AS vector))) >= :threshold"
                 ]
-                # 🔐 租户隔离：必须添加 tenant_id 过滤（tenant_id 是字符串类型，不需要 CAST）
                 where_clauses.append("d.tenant_id = :tenant_id")
                 params = {
                     "vector": "[" + ",".join(map(str, query_vector)) + "]",
@@ -196,17 +202,14 @@ class HybridSearchService:
                     "tenant_id": str(tenant_id)
                 }
 
-                # 🔐 两层可见性过滤
                 if user_id:
                     where_clauses.append("""
                         (
-                            -- 知识库可见性：企业KB全租户可见，私人KB创建者可见
-                            (kb.visibility = 'enterprise' OR (kb.visibility = 'private' AND kb.user_id = CAST(:user_id AS UUID)))
+                            (UPPER(kb.visibility) = 'ENTERPRISE' OR (UPPER(kb.visibility) = 'PRIVATE' AND kb.user_id = CAST(:user_id AS UUID)))
                         )
                         AND
                         (
-                            -- 文档可见性：公开文档全租户可见，私人文档上传者可见
-                            (d.visibility = 'public' OR (d.visibility = 'private' AND d.user_id = CAST(:user_id AS UUID)))
+                            (UPPER(d.visibility) = 'PUBLIC' OR (UPPER(d.visibility) = 'PRIVATE' AND d.user_id = CAST(:user_id AS UUID)))
                         )
                     """)
                     params["user_id"] = str(user_id)
@@ -216,6 +219,17 @@ class HybridSearchService:
                     params["kb_id"] = str(kb_id)
 
                 where_sql = " AND ".join(where_clauses)
+
+                logger.info(f"🔎 向量搜索参数: kb_id={kb_id}, tenant_id={tenant_id}, user_id={user_id}, threshold={score_threshold}, top_k={top_k}")
+                
+                chunk_count_result = await db.execute(text("SELECT COUNT(*) FROM document_chunks c JOIN documents d ON c.document_id = d.id WHERE d.tenant_id = :tenant_id"), {"tenant_id": str(tenant_id)})
+                total_chunks = chunk_count_result.scalar()
+                logger.info(f"🔎 数据库中该租户共有 {total_chunks} 个 chunks")
+
+                if kb_id:
+                    kb_chunk_result = await db.execute(text("SELECT COUNT(*) FROM document_chunks c JOIN documents d ON c.document_id = d.id WHERE d.tenant_id = :tenant_id AND d.kb_id = CAST(:kb_id AS UUID)"), {"tenant_id": str(tenant_id), "kb_id": str(kb_id)})
+                    kb_chunks = kb_chunk_result.scalar()
+                    logger.info(f"🔎 该知识库中共有 {kb_chunks} 个 chunks")
 
                 sql = text(f"""
                     SELECT
@@ -293,12 +307,12 @@ class HybridSearchService:
                     where_clauses.append("""
                         (
                             -- 知识库可见性：企业KB全租户可见，私人KB创建者可见
-                            (kb.visibility = 'enterprise' OR (kb.visibility = 'private' AND kb.user_id = CAST(:user_id AS UUID)))
+                            (UPPER(kb.visibility) = 'ENTERPRISE' OR (UPPER(kb.visibility) = 'PRIVATE' AND kb.user_id = CAST(:user_id AS UUID)))
                         )
                         AND
                         (
                             -- 文档可见性：公开文档全租户可见，私人文档上传者可见
-                            (d.visibility = 'public' OR (d.visibility = 'private' AND d.user_id = CAST(:user_id AS UUID)))
+                            (UPPER(d.visibility) = 'PUBLIC' OR (UPPER(d.visibility) = 'PRIVATE' AND d.user_id = CAST(:user_id AS UUID)))
                         )
                     """)
                     params["user_id"] = str(user_id)

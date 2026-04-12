@@ -8,7 +8,6 @@ class TextParser(FileParserStrategy):
     def get_supported_mime_types(self) -> list[str]:
         return [
             "text/plain",
-            "text/markdown",
             "text/csv"
         ]
     

@@ -10,11 +10,12 @@ logger = logging.getLogger(__name__)
 
 
 class RelationExtractor:
-    """使用 LLM 提取实体关系（融合 GraphRAG 优势：并发处理 + 智能合并 + LLM摘要 + 关系分类）"""
+    """使用 LLM 提取实体关系（融合 GraphRAG 优势：并发处理 + 批量提取 + 智能合并 + LLM摘要 + 关系分类）"""
 
     def __init__(self):
-        self.max_concurrency = 3
-        self.max_retries = 3
+        self.max_concurrency = getattr(settings, 'EXTRACTION_CONCURRENCY', 5)
+        self.max_retries = getattr(settings, 'EXTRACTION_MAX_RETRIES', 1)
+        self.model = getattr(settings, 'KG_EXTRACTION_MODEL', 'deepseek/deepseek-chat')
         self.enable_description = True
         self.relation_types = [
             "工作于", "位于", "属于", "创建", "开发", "使用",
@@ -106,12 +107,15 @@ class RelationExtractor:
 返回：[{{"source":"张三","target":"阿里巴巴","type":"工作于","confidence":0.95}},{{"source":"阿里巴巴","target":"北京","type":"位于","confidence":0.9}}]
 """
 
-        logger.info("调用 LLM 提取关系...")
+        logger.info(f"调用 LLM 提取关系，使用模型: {self.model}...")
         response = await llm_service.get_answer(
             query=prompt,
             context_chunks=[],
-            history=[]
+            history=[],
+            model=self.model
         )
+
+        logger.info(f"LLM 响应收到，长度: {len(response)} 字符")
 
         response = response.strip()
         if response.startswith("```json"):
@@ -122,7 +126,11 @@ class RelationExtractor:
             response = response[:-3]
         response = response.strip()
 
+        logger.info(f"准备解析 JSON，长度: {len(response)}")
+
         relations = json.loads(response)
+
+        logger.info(f"JSON 解析完成，关系数量: {len(relations)}")
 
         if not isinstance(relations, list):
             logger.warning(f"关系提取响应不是数组: {type(relations)}")

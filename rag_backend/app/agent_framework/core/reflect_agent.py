@@ -14,6 +14,10 @@ Reflect Agent - 反思-改进模式
 - 对质量要求高的任务
 - 需要自我修正的任务
 - 复杂推理任务
+
+提示词模式：
+- 使用模板引擎动态渲染反思提示词
+- 支持 {original_task}, {current_answer}, {reflection_round} 等变量
 """
 
 from typing import Dict, List, Any, Optional
@@ -39,7 +43,13 @@ class ReflectAgent(BaseAgent):
     缺点：
     - Token 消耗较大
     - 响应时间较长
+    
+    提示词支持：
+    - 使用 reflection.txt 模板
+    - 动态替换 {original_task}, {current_answer}, {reflection_round} 等变量
     """
+    
+    DEFAULT_TEMPLATE_NAME = "reflection"
     
     def __init__(
         self,
@@ -47,6 +57,7 @@ class ReflectAgent(BaseAgent):
         tool_manager: ToolManager,
         max_iterations: int = 5,
         max_reflections: int = 2,
+        template_name: str = None,
         **kwargs
     ):
         """
@@ -57,12 +68,20 @@ class ReflectAgent(BaseAgent):
             tool_manager: 工具管理器
             max_iterations: 最大执行迭代数
             max_reflections: 最大反思次数
+            template_name: 反思模板名称（可选，默认使用 reflection）
         """
-        super().__init__(llm_adapter, tool_manager, max_iterations, **kwargs)
+        super().__init__(
+            llm_adapter,
+            tool_manager,
+            template_name=template_name or self.DEFAULT_TEMPLATE_NAME,
+            max_iterations=max_iterations,
+            **kwargs
+        )
         self.max_reflections = max_reflections
         
         logger.info("✅ Reflect Agent 初始化完成")
         logger.info(f"   - 模式: Reflect-Refine")
+        logger.info(f"   - 模板: {self.template_name}")
         logger.info(f"   - 最大迭代: {max_iterations}")
         logger.info(f"   - 最大反思: {max_reflections}")
     
@@ -115,7 +134,7 @@ class ReflectAgent(BaseAgent):
         reflection_round: int
     ) -> str:
         """
-        构建反思阶段的提示词
+        使用模板构建反思阶段的提示词
         
         Args:
             task: 用户任务
@@ -125,31 +144,16 @@ class ReflectAgent(BaseAgent):
         Returns:
             反思提示词
         """
-        prompt = f"""请对以下答案进行反思和评估。
-
-## 原始任务
-{task}
-
-## 当前答案（第 {reflection_round} 轮）
-{initial_answer}
-
-## 反思要点
-1. 答案是否准确回答了问题？
-2. 是否有遗漏的信息？
-3. 逻辑是否清晰？
-4. 表达是否准确？
-5. 是否需要补充或修正？
-
-请按照以下格式输出：
-
-**评估**: 对当前答案的评价
-**问题**: 发现的问题（如果有）
-**改进建议**: 如何改进
-**需要改进**: Yes/No
-
-输出："""
+        context = {
+            "original_task": task,
+            "current_answer": initial_answer,
+            "reflection_round": reflection_round,
+            "max_reflections": self.max_reflections,
+            "previous_reflections": [],  # TODO: 后续可以传入历史反思
+            "tool_outputs": {}
+        }
         
-        return prompt
+        return self._render_system_prompt(context)
     
     def _build_refinement_prompt(
         self,

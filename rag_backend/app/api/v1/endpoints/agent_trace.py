@@ -38,6 +38,10 @@ async def get_session_traces(
             "total_traces": len(traces),
             "traces": traces
         }
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"查询追踪记录失败: {str(e)}")
 
@@ -66,6 +70,10 @@ async def get_trace_steps(
         return trace_data
     except HTTPException:
         raise
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"查询追踪步骤失败: {str(e)}")
 
@@ -132,6 +140,10 @@ async def get_trace_visualization(
         }
     except HTTPException:
         raise
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"生成可视化数据失败: {str(e)}")
 

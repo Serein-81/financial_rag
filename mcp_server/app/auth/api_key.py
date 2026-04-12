@@ -2,6 +2,7 @@
 API Key 验证模块
 """
 
+import os
 import logging
 from typing import Optional
 
@@ -28,6 +29,11 @@ async def verify_api_key(authorization: Optional[str] = Security(api_key_header)
     Raises:
         HTTPException: 401 if API key is invalid or missing
     """
+    # 开发模式跳过认证
+    if os.getenv("MCP_DEV_MODE", "false").lower() == "true":
+        logger.debug("开发模式，跳过 API Key 验证")
+        return True
+
     if not authorization:
         logger.warning("API Key 验证失败: 缺少 Authorization header")
         raise HTTPException(

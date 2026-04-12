@@ -20,6 +20,21 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def safe_error_str(e: Exception) -> str:
+    """Safely convert exception to string, handling all encoding scenarios"""
+    try:
+        error_str = str(e)
+        try:
+            return error_str.encode('utf-8', errors='replace').decode('utf-8', errors='replace')
+        except (UnicodeDecodeError, UnicodeEncodeError):
+            return error_str.encode('ascii', errors='replace').decode('ascii', errors='replace')
+    except Exception:
+        try:
+            return repr(e)
+        except Exception:
+            return "Error converting exception to string"
+
+
 async def get_db() -> AsyncSession:
     """
     获取数据库会话
@@ -37,7 +52,10 @@ async def get_db() -> AsyncSession:
                 except HTTPException:
                     raise
                 except Exception as e:
-                    logger.warning(f"设置租户上下文失败: {e}")
+                    try:
+                        logger.warning(f"Failed to set tenant context: {safe_error_str(e)}")
+                    except Exception:
+                        logger.warning("Failed to set tenant context: <failed to format error message>")
                     await session.rollback()
                     await session.begin()
             
@@ -46,7 +64,10 @@ async def get_db() -> AsyncSession:
             await session.rollback()
             raise
         except Exception as e:
-            logger.error(f"数据库会话错误: {e}")
+            try:
+                logger.error(f"Database session error: {safe_error_str(e)}")
+            except Exception:
+                logger.error("Database session error: <failed to format error message>")
             await session.rollback()
             raise
         finally:
@@ -123,7 +144,10 @@ async def get_current_user_from_token(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"获取当前用户失败: {e}")
+        try:
+            logger.error(f"Failed to get current user: {safe_error_str(e)}")
+        except Exception:
+            logger.error("Failed to get current user: <failed to format error message>")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication failed",
@@ -245,7 +269,10 @@ async def get_db_with_tenant_context(
             
             yield session
         except Exception as e:
-            logger.error(f"数据库会话错误: {e}")
+            try:
+                logger.error(f"Database session error: {safe_error_str(e)}")
+            except Exception:
+                logger.error("Database session error: <failed to format error message>")
             await session.rollback()
             raise
         finally:

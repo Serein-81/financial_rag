@@ -88,6 +88,10 @@ async def create_audit_task(
             error_message=None
         )
         
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"创建审查任务失败: {str(e)}")
 
@@ -126,6 +130,10 @@ async def get_audit_task(
         
     except HTTPException:
         raise
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取任务信息失败: {str(e)}")
 
@@ -189,6 +197,10 @@ async def get_audit_results(
         
     except HTTPException:
         raise
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取审查结果失败: {str(e)}")
 
@@ -239,6 +251,10 @@ async def get_agent_collaborations(
         
     except HTTPException:
         raise
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取协作记录失败: {str(e)}")
 
@@ -265,6 +281,10 @@ async def decompose_task(
         
         return TaskDecompositionResponse(**decomposition_result)
         
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"任务分解失败: {str(e)}")
 
@@ -322,6 +342,10 @@ async def list_audit_tasks(
             for task in tasks
         ]
         
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取任务列表失败: {str(e)}")
 
@@ -366,6 +390,10 @@ async def execute_audit_task(
         
         print(f"✅ [API] 后台审查任务完成: {task_id}")
         
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         print(f"❌ [API] 后台审查任务失败: {task_id}, 错误: {e}")
         
@@ -377,5 +405,9 @@ async def execute_audit_task(
                     {"task_id": task_id}
                 )
                 await db.commit()
+        except (ValueError, KeyError) as e:
+            raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+        except (OSError, IOError) as e:
+            raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
         except Exception as update_error:
             print(f"❌ [API] 更新任务状态失败: {update_error}")

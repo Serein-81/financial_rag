@@ -101,6 +101,12 @@ class MCPToolAdapter:
 
             except asyncio.TimeoutError:
                 return f"工具 {tool_name} 执行超时 ({timeout}s)"
+            except (ValueError, KeyError) as e:
+                logger.error(f"工具 {tool_name} 执行数据失败: {e}")
+                return f"工具 {tool_name} 执行失败: {str(e)}"
+            except (OSError, IOError) as e:
+                logger.error(f"工具 {tool_name} 执行IO失败: {e}")
+                return f"工具 {tool_name} 执行失败: {str(e)}"
             except Exception as e:
                 logger.error(f"工具 {tool_name} 执行失败: {e}")
                 return f"工具 {tool_name} 执行失败: {str(e)}"

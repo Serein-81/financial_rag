@@ -41,6 +41,7 @@ class PlanAgent(BaseAgent):
         llm_adapter: BaseLLMAdapter,
         tool_manager: ToolManager,
         max_iterations: int = 10,
+        max_steps: int = 10,
         **kwargs
     ):
         """
@@ -50,16 +51,24 @@ class PlanAgent(BaseAgent):
             llm_adapter: LLM 适配器
             tool_manager: 工具管理器
             max_iterations: 最大执行步骤数
+            max_steps: 计划最大步骤数
         """
+        # 如果没有指定 template_name，默认使用 plan_agent 模板
+        if 'template_name' not in kwargs:
+            kwargs['template_name'] = 'plan_agent'
+        
         super().__init__(llm_adapter, tool_manager, max_iterations, **kwargs)
+        
+        self.max_steps = max_steps
         
         logger.info("✅ Plan Agent 初始化完成")
         logger.info(f"   - 模式: Plan-Execute")
         logger.info(f"   - 最大步骤: {max_iterations}")
+        logger.info(f"   - 计划最大步数: {max_steps}")
     
     def _build_planning_prompt(self, task: str, tools: List[Dict]) -> str:
         """
-        构建规划阶段的提示词
+        构建规划阶段的提示词（使用模板系统）
         
         Args:
             task: 用户任务
@@ -73,41 +82,14 @@ class PlanAgent(BaseAgent):
             for tool in tools
         ])
         
-        prompt = f"""你是一个智能规划助手。请为以下任务制定详细的执行计划。
-
-## 任务
-{task}
-
-## 可用工具
-{tools_desc}
-
-## 规划要求
-1. 分析任务目标和需求
-2. 列出完成任务所需的步骤
-3. 为每个步骤指定使用的工具
-4. 确保步骤之间的逻辑顺序
-
-## 输出格式（JSON）
-请严格按照以下 JSON 格式输出计划：
-
-```json
-{{
-    "analysis": "任务分析",
-    "steps": [
-        {{
-            "step": 1,
-            "action": "步骤描述",
-            "tool": "工具名称",
-            "input": "工具输入",
-            "expected_output": "预期输出"
-        }}
-    ]
-}}
-```
-
-现在请开始规划："""
+        context = {
+            "phase": "planning",
+            "task": task,
+            "tools_description": tools_desc,
+            "max_steps": self.max_steps
+        }
         
-        return prompt
+        return self._render_system_prompt(context)
     
     def _build_execution_prompt(
         self,
@@ -117,7 +99,7 @@ class PlanAgent(BaseAgent):
         history: List[Dict]
     ) -> str:
         """
-        构建执行阶段的提示词
+        构建执行阶段的提示词（使用模板系统）
         
         Args:
             task: 用户任务
@@ -128,49 +110,21 @@ class PlanAgent(BaseAgent):
         Returns:
             执行提示词
         """
-        step_info = plan["steps"][current_step - 1]
+        step_info = plan["steps"][current_step - 1] if current_step <= len(plan["steps"]) else None
         
-        # 构建历史记录
-        history_text = ""
-        if history:
-            history_text = "\n## 已完成步骤\n"
-            for h in history:
-                history_text += f"步骤 {h['step']}: {h['action']}\n"
-                history_text += f"结果: {h['result']}\n\n"
+        context = {
+            "phase": "execution",
+            "task": task,
+            "plan_json": json.dumps(plan, ensure_ascii=False, indent=2),
+            "history": history,
+            "current_step": current_step,
+            "current_step_info": step_info,
+            "current_step_info_action": step_info.get("action") if step_info else None,
+            "current_step_info_tool": step_info.get("tool") if step_info else None,
+            "current_step_info_input": step_info.get("input") if step_info else None
+        }
         
-        prompt = f"""你正在执行一个多步骤任务。
-
-## 原始任务
-{task}
-
-## 执行计划
-{json.dumps(plan, ensure_ascii=False, indent=2)}
-
-{history_text}
-
-## 当前步骤（第 {current_step} 步）
-- 动作: {step_info['action']}
-- 工具: {step_info['tool']}
-- 输入: {step_info['input']}
-
-请执行当前步骤，并输出工具调用的 JSON 格式：
-
-```json
-{{
-    "tool": "工具名称",
-    "input": "工具输入参数"
-}}
-```
-
-如果当前步骤不需要调用工具，输出：
-```json
-{{
-    "tool": "none",
-    "result": "步骤结果"
-}}
-```"""
-        
-        return prompt
+        return self._render_system_prompt(context)
     
     def _build_completion_prompt(
         self,
@@ -179,7 +133,7 @@ class PlanAgent(BaseAgent):
         history: List[Dict]
     ) -> str:
         """
-        构建完成阶段的提示词
+        构建完成阶段的提示词（使用模板系统）
         
         Args:
             task: 用户任务
@@ -189,31 +143,14 @@ class PlanAgent(BaseAgent):
         Returns:
             完成提示词
         """
-        history_text = "\n".join([
-            f"步骤 {h['step']}: {h['action']}\n结果: {h['result']}"
-            for h in history
-        ])
+        context = {
+            "phase": "completion",
+            "task": task,
+            "plan_json": json.dumps(plan, ensure_ascii=False, indent=2),
+            "history": history
+        }
         
-        prompt = f"""任务执行完成，请汇总结果。
-
-## 原始任务
-{task}
-
-## 执行计划
-{json.dumps(plan, ensure_ascii=False, indent=2)}
-
-## 执行历史
-{history_text}
-
-请基于以上信息，给出最终答案。要求：
-1. 直接回答用户的问题
-2. 整合所有步骤的结果
-3. 语言简洁清晰
-4. 如果有数据，用结构化方式呈现
-
-最终答案："""
-        
-        return prompt
+        return self._render_system_prompt(context)
     
     async def run(self, task: str, context: Optional[Dict] = None) -> str:
         """
@@ -245,6 +182,12 @@ class PlanAgent(BaseAgent):
             logger.info("✅ [Plan Agent] 任务完成")
             return final_answer
             
+        except (ValueError, KeyError) as e:
+            logger.error(f"❌ [Plan Agent] 执行数据错误: {e}")
+            return f"抱歉，执行任务时遇到数据错误: {str(e)}"
+        except (OSError, IOError) as e:
+            logger.error(f"❌ [Plan Agent] 执行IO错误: {e}")
+            return f"抱歉，执行任务时遇到IO错误: {str(e)}"
         except Exception as e:
             logger.error(f"❌ [Plan Agent] 执行失败: {e}")
             return f"抱歉，执行任务时遇到错误: {str(e)}"
@@ -275,6 +218,10 @@ class PlanAgent(BaseAgent):
                 return plan
             else:
                 raise ValueError("未找到有效的 JSON 格式")
+        except (ValueError, KeyError) as e:
+            logger.error(f"解析计划数据错误: {e}")
+        except (OSError, IOError) as e:
+            logger.error(f"解析计划IO错误: {e}")
         except Exception as e:
             logger.error(f"解析计划失败: {e}")
             # 返回默认计划
@@ -338,6 +285,22 @@ class PlanAgent(BaseAgent):
                 
                 logger.info(f"   ✓ 步骤 {i} 完成")
                 
+            except (ValueError, KeyError) as e:
+                logger.error(f"   ✗ 步骤 {i} 数据错误: {e}")
+                history.append({
+                    "step": i,
+                    "action": step.get("action"),
+                    "status": "error",
+                    "error": f"数据错误: {str(e)}"
+                })
+            except (OSError, IOError) as e:
+                logger.error(f"   ✗ 步骤 {i} IO错误: {e}")
+                history.append({
+                    "step": i,
+                    "action": step.get("action"),
+                    "status": "error",
+                    "error": f"IO错误: {str(e)}"
+                })
             except Exception as e:
                 logger.error(f"   ✗ 步骤 {i} 失败: {e}")
                 history.append({

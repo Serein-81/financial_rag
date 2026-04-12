@@ -30,6 +30,12 @@ def _get_langsmith_tracer():
         try:
             from app.langsmith_integration import get_tracer
             _langsmith_tracer = get_tracer()
+        except (ValueError, KeyError) as e:
+            logger.warning(f"[MiniMax] 无法加载 LangSmith 追踪器(数据错误): {e}")
+            _langsmith_tracer = None
+        except (OSError, IOError) as e:
+            logger.warning(f"[MiniMax] 无法加载 LangSmith 追踪器(IO错误): {e}")
+            _langsmith_tracer = None
         except Exception as e:
             logger.warning(f"[MiniMax] 无法加载 LangSmith 追踪器: {e}")
             _langsmith_tracer = None
@@ -109,6 +115,28 @@ class MiniMaxAdapter(BaseLLMAdapter):
         messages = [{"role": "user", "content": prompt}]
         return await self._chat(messages, temperature, max_tokens, **kwargs)
 
+    async def agenerate(
+        self,
+        prompts: List[str],
+        temperature: float = 0.1,
+        max_tokens: Optional[int] = None,
+        **kwargs
+    ) -> LLMResponse:
+        """
+        生成回答（接受列表格式，与其他适配器兼容）
+
+        Args:
+            prompts: 提示词列表
+            temperature: 温度参数
+            max_tokens: 最大 token 数
+            **kwargs: 其他参数
+
+        Returns:
+            LLMResponse 对象
+        """
+        prompt = prompts[0] if prompts else ""
+        return await self.generate(prompt, temperature, max_tokens, **kwargs)
+
     async def stream_generate(
         self,
         prompt: str,
@@ -133,6 +161,30 @@ class MiniMaxAdapter(BaseLLMAdapter):
         messages = [{"role": "user", "content": prompt}]
         async for chunk in self._stream_chat(messages, temperature, max_tokens, **kwargs):
             yield chunk
+
+    async def chat(
+        self,
+        messages: list,
+        temperature: float = 0.1,
+        max_tokens: Optional[int] = None,
+        **kwargs
+    ) -> LLMResponse:
+        """
+        对话接口（兼容多轮对话格式，与 ZhipuAdapter 接口一致）
+
+        Args:
+            messages: 消息列表，格式 [{"role": "user", "content": "..."}]
+            temperature: 温度参数
+            max_tokens: 最大 token 数
+            **kwargs: 其他参数
+
+        Returns:
+            LLMResponse 对象
+        """
+        print(f"💬 [MiniMax] 对话调用: {self.model_name}")
+        print(f"    消息数量: {len(messages)}")
+        print(f"    温度: {temperature}")
+        return await self._chat(messages, temperature, max_tokens, **kwargs)
 
     async def _chat(
         self,
@@ -226,6 +278,12 @@ class MiniMaxAdapter(BaseLLMAdapter):
         except httpx.HTTPStatusError as e:
             logger.error(f"[MiniMax] HTTP 错误: {e.response.status_code} - {e.response.text}")
             raise Exception(f"MiniMax API 错误: {e.response.status_code}")
+        except (ValueError, KeyError) as e:
+            logger.error(f"[MiniMax] 请求数据错误: {str(e)}")
+            raise
+        except (OSError, IOError) as e:
+            logger.error(f"[MiniMax] 请求IO错误: {str(e)}")
+            raise
         except Exception as e:
             logger.error(f"[MiniMax] 请求异常: {str(e)}")
             raise
@@ -312,12 +370,21 @@ class MiniMaxAdapter(BaseLLMAdapter):
                                 "type": "delta",
                                 "content": content
                             }
+                            logger.debug(f"[MiniMax] YIELD delta: '{content[:50]}...' ({len(content)} chars), total: {len(full_content)}")
 
                     if "usage" in data:
                         yield {
                             "type": "usage",
                             "data": data["usage"]
                         }
+
+                # 🔧 调试日志：记录 LLM 完整响应
+                logger.info(f"[MiniMax] 流式响应完成，总长度: {len(full_content)} 字符")
+                if len(full_content) < 2000:
+                    logger.info(f"[MiniMax] 完整响应内容:\n{full_content}")
+                else:
+                    logger.info(f"[MiniMax] 完整响应内容(前1000字符):\n{full_content[:1000]}")
+                    logger.info(f"[MiniMax] 完整响应内容(后1000字符):\n{full_content[-1000:]}")
 
                 yield {
                     "type": "done",
@@ -329,6 +396,18 @@ class MiniMaxAdapter(BaseLLMAdapter):
             yield {
                 "type": "error",
                 "content": f"{ERROR_PREFIX}: MiniMax API 错误: {e.response.status_code}"
+            }
+        except (ValueError, KeyError) as e:
+            logger.error(f"[MiniMax] 流式请求数据错误: {str(e)}")
+            yield {
+                "type": "error",
+                "content": f"{ERROR_PREFIX}: {str(e)}"
+            }
+        except (OSError, IOError) as e:
+            logger.error(f"[MiniMax] 流式请求IO错误: {str(e)}")
+            yield {
+                "type": "error",
+                "content": f"{ERROR_PREFIX}: {str(e)}"
             }
         except Exception as e:
             logger.error(f"[MiniMax] 流式请求异常: {str(e)}")

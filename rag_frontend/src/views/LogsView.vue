@@ -91,7 +91,7 @@ async function exportLogs() {
 function getLevelColor(level: string): string {
   const colors: Record<string, string> = {
     'DEBUG': 'bg-gray-100 text-gray-700',
-    'INFO': 'bg-blue-100 text-blue-700',
+    'INFO': 'bg-emerald-100 text-emerald-700',
     'WARNING': 'bg-yellow-100 text-yellow-700',
     'ERROR': 'bg-red-100 text-red-700'
   }
@@ -114,7 +114,7 @@ function getTotalPages(): number {
       <div class="flex items-center justify-between">
         <div>
           <h1 class="text-2xl font-bold text-gray-900 flex items-center gap-2">
-            <ScrollText :size="28" class="text-blue-600" />
+            <ScrollText :size="28" class="text-emerald-600" />
             日志查看
           </h1>
           <p class="text-sm text-gray-500 mt-1">共 {{ total }} 条日志</p>
@@ -123,7 +123,7 @@ function getTotalPages(): number {
           <button
             @click="loadLogs"
             :disabled="isLoading"
-            class="px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
+            class="px-4 py-2 bg-emerald-600 text-white font-medium rounded-lg hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-2"
           >
             <Loader2 v-if="isLoading" :size="18" class="animate-spin" />
             <RefreshCw v-else :size="18" />
@@ -132,7 +132,7 @@ function getTotalPages(): number {
           <button
             @click="exportLogs"
             :disabled="isLoading || logs.length === 0"
-            class="px-4 py-2 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 disabled:opacity-50 flex items-center gap-2"
+            class="px-4 py-2 bg-emerald-600 text-white font-medium rounded-lg hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-2"
           >
             <Download :size="18" />
             导出
@@ -146,7 +146,7 @@ function getTotalPages(): number {
           <Filter :size="18" class="text-gray-500" />
           <select
             v-model="filters.level"
-            class="px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-200 focus:border-blue-500 outline-none"
+            class="px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-emerald-200 focus:border-emerald-500 outline-none"
           >
             <option value="">所有级别</option>
             <option v-for="level in levels" :key="level" :value="level">{{ level }}</option>
@@ -170,7 +170,7 @@ function getTotalPages(): number {
               v-model="filters.keyword"
               type="text"
               placeholder="搜索关键词..."
-              class="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-200 focus:border-blue-500 outline-none"
+              class="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-emerald-200 focus:border-emerald-500 outline-none"
               @keydown.enter="loadLogs"
             />
           </div>
@@ -178,7 +178,7 @@ function getTotalPages(): number {
 
         <button
           @click="loadLogs"
-          class="px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700"
+          class="px-4 py-2 bg-emerald-600 text-white font-medium rounded-lg hover:bg-emerald-700"
         >
           搜索
         </button>
@@ -202,13 +202,13 @@ function getTotalPages(): number {
 
       <!-- Loading -->
       <div v-if="isLoading && logs.length === 0" class="flex items-center justify-center h-64">
-        <Loader2 :size="32" class="animate-spin text-blue-600" />
+        <Loader2 :size="32" class="animate-spin text-emerald-600" />
       </div>
 
       <!-- Empty State -->
       <div v-else-if="logs.length === 0" class="flex flex-col items-center justify-center h-64">
-        <div class="bg-blue-50 rounded-full p-6 mb-4">
-          <ScrollText :size="48" class="text-blue-400" />
+        <div class="bg-emerald-50 rounded-full p-6 mb-4">
+          <ScrollText :size="48" class="text-emerald-400" />
         </div>
         <h3 class="text-lg font-medium text-gray-700 mb-2">暂无日志记录</h3>
         <p class="text-sm text-gray-500 text-center max-w-md">
@@ -221,7 +221,7 @@ function getTotalPages(): number {
         </ul>
         <button
           @click="$router.push('/')"
-          class="mt-4 px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 flex items-center gap-2"
+          class="mt-4 px-4 py-2 bg-emerald-600 text-white font-medium rounded-lg hover:bg-emerald-700 flex items-center gap-2"
         >
           <MessageSquare :size="18" />
           去发起对话

@@ -1,6 +1,19 @@
 """Neo4j 图数据库管理器"""
-from typing import List, Dict, Optional
-from neo4j import GraphDatabase, Driver, Query
+import json
+from typing import List, Dict, Optional, Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from neo4j import GraphDatabase, Driver, Query
+
+try:
+    from neo4j import GraphDatabase, Driver, Query
+    NEO4J_AVAILABLE = True
+except ImportError:
+    NEO4J_AVAILABLE = False
+    GraphDatabase = None
+    Driver = None
+    Query = None
+
 from app.core.config import settings
 
 
@@ -18,6 +31,10 @@ class Neo4jManager:
 
     def _connect(self):
         """建立连接"""
+        if not NEO4J_AVAILABLE:
+            print(f"[WARNING] Neo4j 模块未安装，跳过连接")
+            self.driver = None
+            return
         try:
             self.driver = GraphDatabase.driver(
                 self.uri,
@@ -25,9 +42,9 @@ class Neo4jManager:
             )
             # 测试连接
             self.driver.verify_connectivity()
-            print(f"✅ Neo4j 连接成功: {self.uri}")
+            print(f"[OK] Neo4j 连接成功: {self.uri}")
         except Exception as e:
-            print(f"❌ Neo4j 连接失败: {e}")
+            print(f"[ERROR] Neo4j 连接失败: {e}")
             self.driver = None
 
     def close(self):
@@ -62,12 +79,15 @@ class Neo4jManager:
         if not self.driver:
             return None
 
-        # 💥 核心修复：把 tenant_id 编入唯一键，彻底隔离不同租户的同名实体
+        tenant_id = str(tenant_id) if tenant_id else None
+
         if not unique_key:
             unique_key = f"{tenant_id}_{name}_{entity_type}"
 
+        properties_json = json.dumps(properties) if properties else None
+
         with self.driver.session(database=settings.NEO4J_DATABASE) as session:
-            if properties:
+            if properties_json:
                 result = session.run("""
                     MERGE (e:Entity {unique_key: $unique_key})
                     SET e.name = $name,
@@ -76,7 +96,7 @@ class Neo4jManager:
                         e.properties = $properties,
                         e.updated_at = datetime()
                     RETURN e.unique_key as id
-                """, unique_key=unique_key, name=name, type=entity_type, tenant_id=tenant_id, properties=properties)
+                """, unique_key=unique_key, name=name, type=entity_type, tenant_id=tenant_id, properties=properties_json)
             else:
                 result = session.run("""
                     MERGE (e:Entity {unique_key: $unique_key})
@@ -96,12 +116,17 @@ class Neo4jManager:
         if not self.driver:
             return None
 
+        tenant_id = str(tenant_id) if tenant_id else None
+
         with self.driver.session(database=settings.NEO4J_DATABASE) as session:
             weight = properties.get("weight", 1.0) if properties else 1.0
 
             result = session.run("""
-                MATCH (s:Entity {name: $source, tenant_id: $tenant_id})
-                MATCH (t:Entity {name: $target, tenant_id: $tenant_id})
+                MATCH (s:Entity)
+                MATCH (t:Entity)
+                WHERE (s.name = $source) AND (t.name = $target)
+                  AND (s.tenant_id IS NULL OR s.tenant_id = $tenant_id)
+                  AND (t.tenant_id IS NULL OR t.tenant_id = $tenant_id)
                 MERGE (s)-[r:RELATED {type: $rel_type}]->(t)
                 SET r.weight = $weight,
                     r.updated_at = datetime()
@@ -114,16 +139,18 @@ class Neo4jManager:
 
     def link_memory_to_entities(self, memory_id: str,
                                entity_names: List[str], tenant_id: str) -> int:
-        """关联记忆和实体（增加租户校验）"""
+        """关联记忆和实体（支持 tenant_id 为 null 的数据）"""
         if not self.driver:
             return 0
 
+        tenant_id = str(tenant_id) if tenant_id else None
         count = 0
         with self.driver.session(database=settings.NEO4J_DATABASE) as session:
             for entity_name in entity_names:
                 result = session.run("""
                     MATCH (m:Memory {id: $memory_id, tenant_id: $tenant_id})
-                    MATCH (e:Entity {name: $entity_name, tenant_id: $tenant_id})
+                    MATCH (e:Entity)
+                    WHERE (e.name = $entity_name) AND (e.tenant_id IS NULL OR e.tenant_id = $tenant_id)
                     MERGE (m)-[r:CONTAINS]->(e)
                     RETURN r
                 """, memory_id=memory_id, entity_name=entity_name, tenant_id=tenant_id)
@@ -133,32 +160,44 @@ class Neo4jManager:
 
     def find_related_entities(self, entity_name: str, tenant_id: str,
                             max_depth: int = 2, limit: int = 20) -> List[Dict]:
-        """查找相关实体（修复LiteralString警告并隔离租户）"""
+        """查找相关实体（支持 tenant_id 为 null 的数据）"""
         if not self.driver:
             return []
 
+        tenant_id = str(tenant_id) if tenant_id else None
+
         with self.driver.session(database=settings.NEO4J_DATABASE) as session:
-            # 🔧 修复警告：使用 Query 对象包裹动态拼接的字符串
             query = Query("""
-                MATCH path = (e:Entity {name: $name, tenant_id: $tenant_id})-[*1..%d]-(related:Entity {tenant_id: $tenant_id})
+                MATCH path = (e:Entity)-[*0..%d]-(related:Entity)
+                WHERE (e.name = $name) AND (e.tenant_id IS NULL OR e.tenant_id = $tenant_id)
+                  AND (related.tenant_id IS NULL OR related.tenant_id = $tenant_id)
                 RETURN DISTINCT related.name as name, 
                        related.type as type,
+                       related.properties as properties,
                        length(path) as distance
                 ORDER BY distance
                 LIMIT $limit
             """ % max_depth)
 
             result = session.run(query, name=entity_name, tenant_id=tenant_id, limit=limit)
-            return [dict(record) for record in result]
+            entities = []
+            for record in result:
+                entity = dict(record)
+                entity["properties"] = entity.get("properties") or {}
+                entities.append(entity)
+            return entities
 
     def find_memories_by_entity(self, entity_name: str, tenant_id: str) -> List[str]:
         """通过实体查找记忆"""
         if not self.driver:
             return []
 
+        tenant_id = str(tenant_id) if tenant_id else None
+
         with self.driver.session(database=settings.NEO4J_DATABASE) as session:
             result = session.run("""
-                MATCH (m:Memory {tenant_id: $tenant_id})-[:CONTAINS]->(e:Entity {name: $name, tenant_id: $tenant_id})
+                MATCH (m:Memory {tenant_id: $tenant_id})-[:CONTAINS]->(e:Entity)
+                WHERE (e.name = $name) AND (e.tenant_id IS NULL OR e.tenant_id = $tenant_id)
                 RETURN m.id as memory_id
                 ORDER BY m.created_at DESC
                 LIMIT 10
@@ -184,14 +223,17 @@ class Neo4jManager:
 
     def get_subgraph(self, entity_name: str, tenant_id: str, max_depth: int = 2,
                      limit: int = 50) -> Dict[str, List[Dict]]:
-        """获取以指定实体为中心的子图（修复LiteralString警告并隔离租户）"""
+        """获取以指定实体为中心的子图（支持 tenant_id 为 null 的数据）"""
         if not self.driver:
             return {"nodes": [], "edges": []}
 
+        tenant_id = str(tenant_id) if tenant_id else None
+
         with self.driver.session(database=settings.NEO4J_DATABASE) as session:
-            # 🔧 修复警告：使用 Query 对象包裹动态拼接的字符串
             query = Query("""
-                MATCH path = (center:Entity {name: $name, tenant_id: $tenant_id})-[*0..%d]-(related:Entity {tenant_id: $tenant_id})
+                MATCH path = (center:Entity)-[*0..%d]-(related:Entity)
+                WHERE (center.name = $name) AND (center.tenant_id IS NULL OR center.tenant_id = $tenant_id)
+                  AND (related.tenant_id IS NULL OR related.tenant_id = $tenant_id)
                 WITH nodes(path) as nodes, relationships(path) as rels
                 UNWIND nodes as node
                 WITH collect(DISTINCT {
@@ -215,22 +257,28 @@ class Neo4jManager:
             record = result.single()
 
             if record:
-                return {
-                    "nodes": record["nodes"] or [],
-                    "edges": record["edges"] or []
-                }
+                nodes = record["nodes"] or []
+                edges = record["edges"] or []
+                for node in nodes:
+                    if node.get("properties") is None:
+                        node["properties"] = {}
+                return {"nodes": nodes, "edges": edges}
             return {"nodes": [], "edges": []}
 
     def get_graph_sample(self, tenant_id: str, limit: int = 50) -> Dict[str, List[Dict]]:
-        """获取当前租户图的采样数据"""
+        """获取当前租户图的采样数据（支持 tenant_id 为 null 的数据）"""
         if not self.driver:
             return {"nodes": [], "edges": []}
 
+        tenant_id = str(tenant_id) if tenant_id else None
+
         with self.driver.session(database=settings.NEO4J_DATABASE) as session:
             result = session.run("""
-                MATCH (n:Entity {tenant_id: $tenant_id})
+                MATCH (n:Entity)
+                WHERE (n.tenant_id IS NULL OR n.tenant_id = $tenant_id)
                 WITH n LIMIT $limit
-                OPTIONAL MATCH (n)-[r:RELATED]->(m:Entity {tenant_id: $tenant_id})
+                OPTIONAL MATCH (n)-[r:RELATED]->(m:Entity)
+                WHERE (m.tenant_id IS NULL OR m.tenant_id = $tenant_id)
                 WITH collect(DISTINCT {
                     id: id(n),
                     name: n.name,
@@ -254,6 +302,94 @@ class Neo4jManager:
                     "edges": record["edges"] or []
                 }
             return {"nodes": [], "edges": []}
+
+    def get_all_entities(self, tenant_id: str, limit: int = 200, 
+                        offset: int = 0, entity_type: str = None) -> Dict[str, Any]:
+        """获取当前租户的所有实体列表（支持 tenant_id 为 null 的数据）"""
+        if not self.driver:
+            return {"entities": [], "total": 0}
+
+        tenant_id = str(tenant_id) if tenant_id else None
+
+        with self.driver.session(database=settings.NEO4J_DATABASE) as session:
+            if entity_type:
+                count_result = session.run("""
+                    MATCH (e:Entity)
+                    WHERE (e.tenant_id IS NULL OR e.tenant_id = $tenant_id) AND e.type = $type
+                    RETURN count(e) as total
+                """, tenant_id=tenant_id, type=entity_type)
+                
+                result = session.run("""
+                    MATCH (e:Entity)
+                    WHERE (e.tenant_id IS NULL OR e.tenant_id = $tenant_id) AND e.type = $type
+                    RETURN id(e) as id,
+                           e.name as name,
+                           e.type as type,
+                           e.properties as properties,
+                           e.created_at as created_at,
+                           e.updated_at as updated_at
+                    ORDER BY e.updated_at DESC
+                    SKIP $offset
+                    LIMIT $limit
+                """, tenant_id=tenant_id, type=entity_type, offset=offset, limit=limit)
+            else:
+                count_result = session.run("""
+                    MATCH (e:Entity)
+                    WHERE (e.tenant_id IS NULL OR e.tenant_id = $tenant_id)
+                    RETURN count(e) as total
+                """, tenant_id=tenant_id)
+                
+                result = session.run("""
+                    MATCH (e:Entity)
+                    WHERE (e.tenant_id IS NULL OR e.tenant_id = $tenant_id)
+                    RETURN id(e) as id,
+                           e.name as name,
+                           e.type as type,
+                           e.properties as properties,
+                           e.created_at as created_at,
+                           e.updated_at as updated_at
+                    ORDER BY e.updated_at DESC
+                    SKIP $offset
+                    LIMIT $limit
+                """, tenant_id=tenant_id, offset=offset, limit=limit)
+
+            count_record = count_result.single()
+            total = count_record["total"] if count_record else 0
+            
+            entities = []
+            for record in result:
+                entities.append({
+                    "id": str(record["id"]),
+                    "name": record["name"],
+                    "type": record["type"],
+                    "properties": dict(record["properties"]) if record["properties"] else {},
+                    "created_at": record["created_at"].isoformat() if record["created_at"] else None,
+                    "updated_at": record["updated_at"].isoformat() if record["updated_at"] else None
+                })
+            
+            return {
+                "entities": entities,
+                "total": total,
+                "limit": limit,
+                "offset": offset
+            }
+
+    def get_entity_types(self, tenant_id: str) -> List[str]:
+        """获取当前租户的所有实体类型（支持 tenant_id 为 null 的数据）"""
+        if not self.driver:
+            return []
+
+        tenant_id = str(tenant_id) if tenant_id else None
+
+        with self.driver.session(database=settings.NEO4J_DATABASE) as session:
+            result = session.run("""
+                MATCH (e:Entity)
+                WHERE (e.tenant_id IS NULL OR e.tenant_id = $tenant_id)
+                RETURN collect(distinct e.type) as types
+            """, tenant_id=tenant_id)
+            
+            record = result.single()
+            return record["types"] if record and record["types"] else []
 
 
 # 全局实例

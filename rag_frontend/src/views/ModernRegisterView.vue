@@ -73,11 +73,11 @@ async function handleRegister() {
 </script>
 
 <template>
-  <div class="min-h-screen bg-gradient-to-br from-purple-50 via-pink-50 to-orange-50 flex items-center justify-center p-4 py-8">
+  <div class="min-h-screen bg-gradient-to-br from-slate-100 via-emerald-50/30 to-teal-50/30 flex items-center justify-center p-4 py-8">
     <div class="w-full max-w-md">
       <!-- Logo & Title -->
       <div class="text-center mb-6">
-        <div class="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-purple-500 to-pink-600 rounded-2xl mb-4 shadow-lg">
+        <div class="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-emerald-600 to-teal-600 rounded-2xl mb-4 shadow-lg">
           <Sparkles :size="32" class="text-white" />
         </div>
         <h1 class="text-3xl font-bold text-gray-900 mb-2">
@@ -99,16 +99,16 @@ async function handleRegister() {
               type="button"
               class="p-4 rounded-xl border-2 transition-all"
               :class="userType === 'normal' 
-                ? 'border-purple-500 bg-purple-50' 
+                ? 'border-emerald-500 bg-emerald-50' 
                 : 'border-gray-200 hover:border-gray-300'"
             >
               <div class="flex flex-col items-center gap-2">
                 <div class="w-12 h-12 rounded-full flex items-center justify-center"
-                  :class="userType === 'normal' ? 'bg-purple-100' : 'bg-gray-100'"
+                  :class="userType === 'normal' ? 'bg-emerald-100' : 'bg-gray-100'"
                 >
-                  <UserCircle2 :size="24" :class="userType === 'normal' ? 'text-purple-600' : 'text-gray-500'" />
+                  <UserCircle2 :size="24" :class="userType === 'normal' ? 'text-emerald-600' : 'text-gray-500'" />
                 </div>
-                <span class="font-medium text-sm" :class="userType === 'normal' ? 'text-purple-700' : 'text-gray-700'">
+                <span class="font-medium text-sm" :class="userType === 'normal' ? 'text-emerald-700' : 'text-gray-700'">
                   普通用户
                 </span>
                 <span class="text-xs text-gray-500">个人或企业员工</span>
@@ -120,16 +120,16 @@ async function handleRegister() {
               type="button"
               class="p-4 rounded-xl border-2 transition-all"
               :class="userType === 'admin' 
-                ? 'border-purple-500 bg-purple-50' 
+                ? 'border-emerald-500 bg-emerald-50' 
                 : 'border-gray-200 hover:border-gray-300'"
             >
               <div class="flex flex-col items-center gap-2">
                 <div class="w-12 h-12 rounded-full flex items-center justify-center"
-                  :class="userType === 'admin' ? 'bg-purple-100' : 'bg-gray-100'"
+                  :class="userType === 'admin' ? 'bg-emerald-100' : 'bg-gray-100'"
                 >
-                  <Building2 :size="24" :class="userType === 'admin' ? 'text-purple-600' : 'text-gray-500'" />
+                  <Building2 :size="24" :class="userType === 'admin' ? 'text-emerald-600' : 'text-gray-500'" />
                 </div>
-                <span class="font-medium text-sm" :class="userType === 'admin' ? 'text-purple-700' : 'text-gray-700'">
+                <span class="font-medium text-sm" :class="userType === 'admin' ? 'text-emerald-700' : 'text-gray-700'">
                   企业管理员
                 </span>
                 <span class="text-xs text-gray-500">创建企业账号</span>
@@ -154,7 +154,7 @@ async function handleRegister() {
             v-model="fullName"
             type="text"
             placeholder="张三"
-            class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:bg-white focus:border-purple-500 focus:ring-2 focus:ring-purple-200 transition-all outline-none"
+            class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 transition-all outline-none"
           />
         </div>
 
@@ -168,7 +168,7 @@ async function handleRegister() {
             v-model="email"
             type="email"
             placeholder="your@email.com"
-            class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:bg-white focus:border-purple-500 focus:ring-2 focus:ring-purple-200 transition-all outline-none"
+            class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 transition-all outline-none"
           />
         </div>
 
@@ -182,7 +182,7 @@ async function handleRegister() {
             v-model="password"
             type="password"
             placeholder="至少 6 位"
-            class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:bg-white focus:border-purple-500 focus:ring-2 focus:ring-purple-200 transition-all outline-none"
+            class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 transition-all outline-none"
           />
         </div>
 
@@ -196,7 +196,7 @@ async function handleRegister() {
             v-model="confirmPassword"
             type="password"
             placeholder="再次输入密码"
-            class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:bg-white focus:border-purple-500 focus:ring-2 focus:ring-purple-200 transition-all outline-none"
+            class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 transition-all outline-none"
             @keydown.enter="handleRegister"
           />
         </div>
@@ -212,7 +212,7 @@ async function handleRegister() {
             v-model="inviteCode"
             type="text"
             placeholder="如有企业邀请码请输入"
-            class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:bg-white focus:border-purple-500 focus:ring-2 focus:ring-purple-200 transition-all outline-none"
+            class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 transition-all outline-none"
             @keydown.enter="handleRegister"
           />
           <p class="text-xs text-gray-500 flex items-center gap-1">
@@ -232,7 +232,7 @@ async function handleRegister() {
             v-model="companyName"
             type="text"
             placeholder="某某科技有限公司"
-            class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:bg-white focus:border-purple-500 focus:ring-2 focus:ring-purple-200 transition-all outline-none"
+            class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 transition-all outline-none"
             @keydown.enter="handleRegister"
           />
         </div>
@@ -241,7 +241,7 @@ async function handleRegister() {
         <button
           @click="handleRegister"
           :disabled="isLoading"
-          class="w-full py-3.5 bg-gradient-to-r from-purple-500 to-pink-600 text-white font-medium rounded-xl hover:from-purple-600 hover:to-pink-700 focus:ring-4 focus:ring-purple-200 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl flex items-center justify-center gap-2"
+          class="w-full py-3.5 bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-medium rounded-xl hover:from-emerald-700 hover:to-teal-700 focus:ring-4 focus:ring-emerald-200 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl flex items-center justify-center gap-2"
         >
           <span>{{ isLoading ? '注册中...' : '注册' }}</span>
           <ArrowRight :size="18" v-if="!isLoading" />
@@ -253,7 +253,7 @@ async function handleRegister() {
             已有账号？
             <router-link
               to="/login"
-              class="text-purple-600 hover:text-purple-700 font-medium transition-colors"
+              class="text-emerald-600 hover:text-emerald-700 font-medium transition-colors"
             >
               立即登录
             </router-link>

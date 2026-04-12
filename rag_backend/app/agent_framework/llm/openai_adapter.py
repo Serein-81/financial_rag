@@ -144,6 +144,12 @@ class OpenAIAdapter(BaseLLMAdapter):
         except httpx.HTTPStatusError as e:
             logger.error(f"[OpenAI] HTTP 错误: {e.response.status_code} - {e.response.text}")
             raise Exception(f"OpenAI API 错误: {e.response.status_code}")
+        except (ValueError, KeyError) as e:
+            logger.error(f"[OpenAI] 请求数据错误: {str(e)}")
+            raise
+        except (OSError, IOError) as e:
+            logger.error(f"[OpenAI] 请求IO错误: {str(e)}")
+            raise
         except Exception as e:
             logger.error(f"[OpenAI] 请求异常: {str(e)}")
             raise
@@ -217,6 +223,12 @@ class OpenAIAdapter(BaseLLMAdapter):
         except httpx.HTTPStatusError as e:
             logger.error(f"[OpenAI] 流式 HTTP 错误: {e.response.status_code}")
             yield {"type": "error", "content": f"{ERROR_PREFIX}: OpenAI API 错误: {e.response.status_code}"}
+        except (ValueError, KeyError) as e:
+            logger.error(f"[OpenAI] 流式请求数据错误: {str(e)}")
+            yield {"type": "error", "content": f"{ERROR_PREFIX}: {str(e)}"}
+        except (OSError, IOError) as e:
+            logger.error(f"[OpenAI] 流式请求IO错误: {str(e)}")
+            yield {"type": "error", "content": f"{ERROR_PREFIX}: {str(e)}"}
         except Exception as e:
             logger.error(f"[OpenAI] 流式请求异常: {str(e)}")
             yield {"type": "error", "content": f"{ERROR_PREFIX}: {str(e)}"}

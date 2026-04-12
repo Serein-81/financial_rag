@@ -12,7 +12,8 @@ from app.schemas.knowledge_graph import (
     GraphBuildRequest, GraphBuildResponse,
     EntityQueryRequest, EntityQueryResponse, RelatedEntity, EntityResponse,
     HybridSearchRequest, HybridSearchResponse,
-    GraphStatsResponse, GraphVisualizationResponse, GraphNode, GraphEdge
+    GraphStatsResponse, GraphVisualizationResponse, GraphNode, GraphEdge,
+    EntityListResponse, EntityTypesResponse
 )
 from app.services.graph_builder import GraphBuilder
 from app.services.hybrid_retriever import HybridRetriever
@@ -72,10 +73,15 @@ async def build_graph(
             text=request.text,
             user_id=request.user_id or current_user.id,
             session_id=request.session_id,
+            tenant_id=str(current_user.tenant_id),
             extract_entities=request.extract_entities,
             extract_relations=request.extract_relations
         )
         return result
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         logger.error(f"构建图谱失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"构建图谱失败: {str(e)}")
@@ -109,6 +115,10 @@ async def hybrid_search(
             graph_results_count=stats.get("graph", 0),
             total_count=stats.get("total", 0)
         )
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         logger.error(f"混合检索失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"混合检索失败: {str(e)}")
@@ -164,6 +174,10 @@ async def query_entity(
         )
     except HTTPException:
         raise
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         logger.error(f"查询实体失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"查询实体失败: {str(e)}")
@@ -180,6 +194,10 @@ async def get_graph_stats(
     try:
         stats = graph_builder.get_stats()
         return GraphStatsResponse(**stats)
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         logger.error(f"获取图统计失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"获取图统计失败: {str(e)}")
@@ -197,16 +215,19 @@ async def visualize_graph(
     获取图可视化数据
     """
     try:
+        tenant_id = str(current_user.tenant_id)
+        
         # 如果指定了实体，查询其周围的子图
         if entity_name:
             subgraph = neo4j_manager.get_subgraph(
                 entity_name=entity_name,
+                tenant_id=tenant_id,
                 max_depth=max_depth,
                 limit=limit
             )
         else:
             # 否则返回整个图的采样
-            subgraph = neo4j_manager.get_graph_sample(limit=limit)
+            subgraph = neo4j_manager.get_graph_sample(limit=limit, tenant_id=tenant_id)
         
         # 转换为可视化格式
         nodes = [
@@ -235,6 +256,63 @@ async def visualize_graph(
             edges=edges,
             center_node=entity_name
         )
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         logger.error(f"获取可视化数据失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"获取可视化数据失败: {str(e)}")
+
+
+@router.get("/entities", response_model=EntityListResponse)
+async def list_entities(
+    limit: int = Query(200, ge=1, le=500, description="返回数量限制"),
+    offset: int = Query(0, ge=0, description="偏移量"),
+    entity_type: Optional[str] = Query(None, description="按类型筛选"),
+    current_user: User = Depends(get_current_user),
+    neo4j_manager: Neo4jManager = Depends(get_neo4j_manager)
+):
+    """
+    获取当前租户的所有实体列表
+    """
+    try:
+        tenant_id = str(current_user.tenant_id)
+        
+        result = neo4j_manager.get_all_entities(
+            tenant_id=tenant_id,
+            limit=limit,
+            offset=offset,
+            entity_type=entity_type
+        )
+        
+        return EntityListResponse(**result)
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
+    except Exception as e:
+        logger.error(f"获取实体列表失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"获取实体列表失败: {str(e)}")
+
+
+@router.get("/entity-types", response_model=EntityTypesResponse)
+async def list_entity_types(
+    current_user: User = Depends(get_current_user),
+    neo4j_manager: Neo4jManager = Depends(get_neo4j_manager)
+):
+    """
+    获取当前租户的所有实体类型
+    """
+    try:
+        tenant_id = str(current_user.tenant_id)
+        types = neo4j_manager.get_entity_types(tenant_id=tenant_id)
+        
+        return EntityTypesResponse(types=types)
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
+    except Exception as e:
+        logger.error(f"获取实体类型失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"获取实体类型失败: {str(e)}")

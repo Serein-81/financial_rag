@@ -32,11 +32,11 @@ async function handleLogin() {
 </script>
 
 <template>
-  <div class="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 flex items-center justify-center p-4">
+  <div class="min-h-screen bg-gradient-to-br from-slate-100 via-emerald-50/30 to-teal-50/30 flex items-center justify-center p-4">
     <div class="w-full max-w-md">
       <!-- Logo & Title -->
       <div class="text-center mb-8">
-        <div class="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl mb-4 shadow-lg">
+        <div class="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-emerald-600 to-teal-600 rounded-2xl mb-4 shadow-lg">
           <Sparkles :size="32" class="text-white" />
         </div>
         <h1 class="text-3xl font-bold text-gray-900 mb-2">
@@ -63,7 +63,7 @@ async function handleLogin() {
             v-model="email"
             type="email"
             placeholder="your@email.com"
-            class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all outline-none"
+            class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 transition-all outline-none"
             @keydown.enter="handleLogin"
           />
         </div>
@@ -78,7 +78,7 @@ async function handleLogin() {
             v-model="password"
             type="password"
             placeholder="••••••••"
-            class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all outline-none"
+            class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 transition-all outline-none"
             @keydown.enter="handleLogin"
           />
         </div>
@@ -87,7 +87,7 @@ async function handleLogin() {
         <button
           @click="handleLogin"
           :disabled="isLoading"
-          class="w-full py-3.5 bg-gradient-to-r from-blue-500 to-purple-600 text-white font-medium rounded-xl hover:from-blue-600 hover:to-purple-700 focus:ring-4 focus:ring-blue-200 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl flex items-center justify-center gap-2"
+          class="w-full py-3.5 bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-medium rounded-xl hover:from-emerald-700 hover:to-teal-700 focus:ring-4 focus:ring-emerald-200 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl flex items-center justify-center gap-2"
         >
           <span>{{ isLoading ? '登录中...' : '登录' }}</span>
           <ArrowRight :size="18" v-if="!isLoading" />
@@ -99,7 +99,7 @@ async function handleLogin() {
             还没有账号？
             <router-link
               to="/register"
-              class="text-blue-600 hover:text-blue-700 font-medium transition-colors"
+              class="text-emerald-600 hover:text-emerald-700 font-medium transition-colors"
             >
               立即注册
             </router-link>

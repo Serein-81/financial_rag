@@ -1,0 +1,29 @@
+【ReAct 输出格式说明】
+
+在 ReAct 模式中，输出必须遵循严格的格式：
+
+【调用工具】
+```
+Thought: [你的思考过程，解释为什么要调用这个工具]
+Action: [工具名称，必须与工具列表中的名称完全一致]
+Action Input: [JSON 格式的参数对象]
+```
+
+【获取结果】
+```
+Observation: [工具执行的结果]
+```
+
+【结束推理】
+```
+Thought: [最终思考，解释你的结论]
+Action: Final Answer
+Action Input: {"answer": "[直接面向用户的回答，不含任何内部标记]"}
+```
+
+【注意事项】
+1. Thought 必须是中文，清晰地表达推理过程
+2. Action 名称必须准确匹配工具名称
+3. Action Input 必须是合法的 JSON 格式
+4. Final Answer 的 answer 字段只包含面向用户的内容
+5. 不要在 answer 中包含任何 Thought、Action、Observation 等标记

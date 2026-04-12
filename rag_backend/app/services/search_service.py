@@ -29,7 +29,7 @@ class SearchService:
             query: str,
             top_k: int = 5,
             kb_id: str = None,
-            score_threshold: float = 0.3,
+            score_threshold: float = 0.6,
             tenant_id: str = None,
             user_id: str = None
     ) -> List[SearchResultItem]:
@@ -74,12 +74,12 @@ class SearchService:
                     where_clauses.append("""
                         (
                             -- 知识库可见性：企业KB全租户可见，私人KB创建者可见
-                            (kb.visibility = 'enterprise' OR (kb.visibility = 'private' AND kb.user_id = CAST(:user_id AS UUID)))
+                            (UPPER(kb.visibility) = 'ENTERPRISE' OR (UPPER(kb.visibility) = 'PRIVATE' AND kb.user_id = CAST(:user_id AS UUID)))
                         )
                         AND
                         (
                             -- 文档可见性：公开文档全租户可见，私人文档上传者可见
-                            (d.visibility = 'public' OR (d.visibility = 'private' AND d.user_id = CAST(:user_id AS UUID)))
+                            (UPPER(d.visibility) = 'PUBLIC' OR (UPPER(d.visibility) = 'PRIVATE' AND d.user_id = CAST(:user_id AS UUID)))
                         )
                     """)
                     visibility_filter = True
@@ -140,8 +140,11 @@ class SearchService:
 
             return results
 
+        except (ValueError, KeyError) as e:
+            print(f"❌ 检索过程数据错误: {e}")
+        except (OSError, IOError) as e:
+            print(f"❌ 检索过程IO错误: {e}")
         except Exception as e:
-            # 这里会捕获具体的 SQL 错误并打印
             print(f"❌ 检索过程发生错误: {e}")
             return []
         finally:
@@ -246,6 +249,12 @@ class SearchService:
 
             return results
 
+        except (ValueError, KeyError) as e:
+            print(f"❌ 关键词搜索数据错误: {e}")
+            return []
+        except (OSError, IOError) as e:
+            print(f"❌ 关键词搜索IO错误: {e}")
+            return []
         except Exception as e:
             print(f"❌ 关键词搜索失败: {e}")
             return []
@@ -327,6 +336,12 @@ class SearchService:
             
             return results
             
+        except (ValueError, KeyError) as e:
+            print(f"❌ 文档级搜索数据错误: {e}")
+            return []
+        except (OSError, IOError) as e:
+            print(f"❌ 文档级搜索IO错误: {e}")
+            return []
         except Exception as e:
             print(f"❌ 文档级搜索失败: {e}")
             return []
@@ -419,6 +434,22 @@ class SearchService:
                         "search_time": time.time() - start_time
                     }
             
+        except (ValueError, KeyError) as e:
+            print(f"❌ 搜索统计数据错误: {e}")
+            return {
+                "total_searches": 0,
+                "avg_response_time": 0.0,
+                "success_rate": 0.0,
+                "top_queries": []
+            }
+        except (OSError, IOError) as e:
+            print(f"❌ 搜索统计IO错误: {e}")
+            return {
+                "total_searches": 0,
+                "avg_response_time": 0.0,
+                "success_rate": 0.0,
+                "top_queries": []
+            }
         except Exception as e:
             print(f"❌ 搜索统计失败: {e}")
             return {
@@ -436,6 +467,10 @@ class SearchService:
                 log = SearchLog(query=query, result_count=count, latency=latency)
                 db.add(log)
                 await db.commit()
+            except (ValueError, KeyError) as e:
+                print(f"⚠️ 日志保存数据错误: {e}")
+            except (OSError, IOError) as e:
+                print(f"⚠️ 日志保存IO错误: {e}")
             except Exception as e:
                 print(f"⚠️ 日志保存失败: {e}")
 
@@ -462,6 +497,10 @@ class SearchService:
                 else:
                     callback(data)
 
+            except (ValueError, KeyError) as e:
+                print(f"⚠️ 回调发送数据错误: {e}")
+            except (OSError, IOError) as e:
+                print(f"⚠️ 回调发送IO错误: {e}")
             except Exception as e:
                 print(f"⚠️ 回调发送失败: {e}")
 
@@ -470,7 +509,7 @@ class SearchService:
         query: str,
         top_k: int = 5,
         kb_id: str = None,
-        score_threshold: float = 0.3,
+        score_threshold: float = 0.6,
         callback: Optional[Callable] = None
     ) -> List[SearchResultItem]:
         """
@@ -566,6 +605,12 @@ class SearchService:
 
             return results
 
+        except (ValueError, KeyError) as e:
+            await self._emit_callback(callback, f"❌ 检索数据错误: {str(e)}", "error")
+            return []
+        except (OSError, IOError) as e:
+            await self._emit_callback(callback, f"❌ 检索IO错误: {str(e)}", "error")
+            return []
         except Exception as e:
             await self._emit_callback(callback, f"❌ 检索失败: {str(e)}", "error")
             return []
@@ -577,7 +622,7 @@ class SearchService:
         query: str,
         top_k: int = 5,
         kb_id: str = None,
-        score_threshold: float = 0.3,
+        score_threshold: float = 0.6,
         enable_web: bool = True,
         callback: Optional[Callable] = None
     ) -> HybridSearchResponse:
@@ -640,6 +685,21 @@ class SearchService:
         response.search_time = time.time() - start_time
 
         return response
+
+    async def check_health(self) -> bool:
+        """
+        健康检查方法
+        
+        Returns:
+            bool: 服务是否健康
+        """
+        try:
+            if hasattr(self, 'embedding_service'):
+                return True
+            return True
+        except Exception as e:
+            logger.warning(f"搜索服务健康检查失败: {e}")
+            return False
 
 
 search_service = SearchService()

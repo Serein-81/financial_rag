@@ -12,7 +12,8 @@ from .tax_specialist import TaxSpecialist
 from .legal_specialist import LegalSpecialist
 from .reflection_specialist import ReflectionSpecialist
 from .report_generator import ReportGenerator, ReportFormat, ReportType, GeneratedReport, ReportMetadata
-from .triage_specialist import TriageSpecialist
+from .policy_agent import PolicyAgent
+from .notification_agent import NotificationAgent
 
 __all__ = [
     "BaseSpecialistAgent",
@@ -31,5 +32,6 @@ __all__ = [
     "ReportType",
     "GeneratedReport",
     "ReportMetadata",
-    "TriageSpecialist"
+    "PolicyAgent",
+    "NotificationAgent"
 ]

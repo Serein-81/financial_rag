@@ -5,7 +5,7 @@
 
 import json
 import logging
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, AsyncGenerator
 from datetime import datetime
 from enum import Enum
 from dataclasses import dataclass
@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from app.agent_framework.llm.base_adapter import BaseLLMAdapter
 from app.agent_framework.tools.tool_manager import ToolManager
 from app.agent_framework.core.base_agent import BaseAgent
+from app.multi_agent_system.agents.base_agent_prompt import load_agent_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -107,24 +108,9 @@ class ReportGenerator(BaseAgent):
             llm_adapter: 大模型适配器
             tool_manager: 工具管理器
         """
-        system_prompt = """你是一位专业的报告撰写专家，具有以下能力：
-        1. 整合和分析来自不同专家领域的信息
-        2. 生成清晰、专业的结构化报告
-        3. 提供有价值的洞察和建议
-        4. 用简洁易懂的语言表达复杂概念
-        5. 合理组织报告结构和内容层次
-        
-        在生成报告时，请：
-        - 使用清晰的小标题组织内容
-        - 突出关键发现和建议
-        - 提供具体的行动项
-        - 保持语言简洁专业
-        - 确保逻辑连贯、层次分明
-        """
+        system_prompt = self._load_system_prompt()
         
         super().__init__(
-            agent_id="report_generator",
-            agent_name="Report Generator",
             llm_adapter=llm_adapter,
             tool_manager=tool_manager,
             system_prompt=system_prompt,
@@ -140,6 +126,42 @@ class ReportGenerator(BaseAgent):
             "risks": 6,
             "next_steps": 5
         }
+    
+    def _load_system_prompt(self) -> str:
+        """从外部文件加载系统提示词"""
+        try:
+            return load_agent_prompt(
+                agent_name="report",
+                filename="report_generator.md",
+                context=self._get_prompt_context()
+            )
+        except Exception as e:
+            print(f"⚠️ [报告生成器智能体] 加载提示词失败，使用默认提示词: {e}")
+            return self._build_default_prompt()
+    
+    def _get_prompt_context(self) -> Dict[str, Any]:
+        """获取提示词渲染上下文"""
+        return {
+            "report_types": [r.value for r in ReportType],
+            "report_formats": [f.value for f in ReportFormat],
+        }
+    
+    def _build_default_prompt(self) -> str:
+        """构建默认提示词"""
+        return """你是一位专业的报告撰写专家，具有以下能力：
+1. 整合和分析来自不同专家领域的信息
+2. 生成清晰、专业的结构化报告
+3. 提供有价值的洞察和建议
+4. 用简洁易懂的语言表达复杂概念
+5. 合理组织报告结构和内容层次
+
+在生成报告时，请：
+- 使用清晰的小标题组织内容
+- 突出关键发现和建议
+- 提供具体的行动项
+- 保持语言简洁专业
+- 确保逻辑连贯、层次分明
+"""
     
     def _load_report_templates(self) -> Dict[str, Any]:
         """加载报告模板"""
@@ -245,6 +267,12 @@ class ReportGenerator(BaseAgent):
                 next_steps=next_steps
             )
             
+        except (ValueError, KeyError) as e:
+            logger.error(f"报告生成数据失败: {e}")
+            return self._generate_error_report(user_query, str(e))
+        except (OSError, IOError) as e:
+            logger.error(f"报告生成IO失败: {e}")
+            return self._generate_error_report(user_query, str(e))
         except Exception as e:
             logger.error(f"报告生成失败: {e}")
             return self._generate_error_report(user_query, str(e))
@@ -841,6 +869,20 @@ class ReportGenerator(BaseAgent):
                 "metadata": report.metadata.model_dump()
             }
             
+        except (ValueError, KeyError) as e:
+            logger.error(f"报告生成咨询数据失败: {e}")
+            return {
+                "success": False,
+                "error": f"数据错误: {str(e)}",
+                "report": None
+            }
+        except (OSError, IOError) as e:
+            logger.error(f"报告生成咨询IO失败: {e}")
+            return {
+                "success": False,
+                "error": f"IO错误: {str(e)}",
+                "report": None
+            }
         except Exception as e:
             logger.error(f"报告生成咨询失败: {e}")
             return {
@@ -848,3 +890,46 @@ class ReportGenerator(BaseAgent):
                 "error": str(e),
                 "report": None
             }
+    
+    async def stream_run(
+        self,
+        user_input: str,
+        history: Optional[List[Dict]] = None,
+        **kwargs
+    ) -> AsyncGenerator[str, None]:
+        """
+        流式执行报告生成
+        
+        Args:
+            user_input: 用户输入
+            history: 对话历史
+            **kwargs: 其他参数
+            
+        Yields:
+            逐步生成的内容
+        """
+        specialist_results = kwargs.get("specialist_results", [])
+        context = kwargs.get("context", {})
+        report_type = kwargs.get("report_type", ReportType.COMPREHENSIVE)
+        
+        yield f"# 正在生成报告...\n\n"
+        
+        analysis_results = []
+        for sr in specialist_results:
+            if isinstance(sr, dict):
+                analysis_results.append(AnalysisResult(
+                    specialist_name=sr.get("specialist_type", "unknown"),
+                    analysis_content=sr.get("analysis", {}),
+                    confidence=sr.get("confidence", 0.8)
+                ))
+            else:
+                analysis_results.append(sr)
+        
+        report = await self.run(
+            specialist_results=analysis_results,
+            user_query=user_input,
+            context=context,
+            report_type=report_type
+        )
+        
+        yield self._to_markdown(report)

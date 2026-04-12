@@ -236,6 +236,10 @@ async def langgraph_query(
         
         return response
         
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         logger.error(f"[LangGraph API] 错误: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -301,6 +305,10 @@ async def langgraph_stream(
                     yield f"data: {final_event}\n\n"
                     break
                     
+        except (ValueError, KeyError) as e:
+            raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+        except (OSError, IOError) as e:
+            raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
         except Exception as e:
             logger.error(f"[LangGraph Stream] 错误: {e}")
             error_event = {"type": "error", "error": str(e)}
@@ -348,6 +356,10 @@ async def get_workflow_status(
             checkpoint_available=False
         )
         
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         logger.error(f"[LangGraph Status] 错误: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -385,6 +397,10 @@ async def resume_workflow(
             "needs_human_review": result.get("needs_human_review", False)
         }
         
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         logger.error(f"[LangGraph Resume] 错误: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -409,6 +425,10 @@ async def delete_workflow(
         
         return {"status": "deleted", "thread_id": thread_id}
         
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         logger.error(f"[LangGraph Delete] 错误: {e}")
         raise HTTPException(status_code=500, detail=str(e))

@@ -109,6 +109,10 @@ class EnhancedSearchService:
                 try:
                     queries = await query_optimizer.rewrite_query(query, num_variants=2)
                     logger.info(f"🔄 查询改写: {len(queries)} 个变体")
+                except (ValueError, KeyError) as e:
+                    logger.warning(f"⚠️ 查询改写数据错误，使用原始查询: {e}")
+                except (OSError, IOError) as e:
+                    logger.warning(f"⚠️ 查询改写IO错误，使用原始查询: {e}")
                 except Exception as e:
                     logger.warning(f"⚠️ 查询改写失败，使用原始查询: {e}")
             
@@ -118,6 +122,10 @@ class EnhancedSearchService:
                     hypo_doc = await query_optimizer.generate_hypothetical_document(query)
                     queries.append(hypo_doc)
                     logger.info(f"📄 HyDE: 添加假设文档")
+                except (ValueError, KeyError) as e:
+                    logger.warning(f"⚠️ HyDE数据错误: {e}")
+                except (OSError, IOError) as e:
+                    logger.warning(f"⚠️ HyDE IO错误: {e}")
                 except Exception as e:
                     logger.warning(f"⚠️ HyDE 失败: {e}")
             
@@ -177,6 +185,12 @@ class EnhancedSearchService:
                             logger.info(f"🎯 MMR 重排: 保留 {len(unique_results)} 个结果")
                         else:
                             unique_results = unique_results[:top_k]
+                except (ValueError, KeyError) as e:
+                    logger.warning(f"⚠️ MMR 重排数据错误: {e}")
+                    unique_results = unique_results[:top_k]
+                except (OSError, IOError) as e:
+                    logger.warning(f"⚠️ MMR 重排IO错误: {e}")
+                    unique_results = unique_results[:top_k]
                 except Exception as e:
                     logger.warning(f"⚠️ MMR 重排失败: {e}")
                     unique_results = unique_results[:top_k]
@@ -197,6 +211,12 @@ class EnhancedSearchService:
             
             return final_results
             
+        except (ValueError, KeyError) as e:
+            logger.error(f"❌ 增强搜索数据错误: {e}", exc_info=True)
+            return []
+        except (OSError, IOError) as e:
+            logger.error(f"❌ 增强搜索IO错误: {e}", exc_info=True)
+            return []
         except Exception as e:
             logger.error(f"❌ 增强搜索失败: {e}", exc_info=True)
             return []
@@ -248,12 +268,12 @@ class EnhancedSearchService:
                     where_clauses.append("""
                         (
                             -- 知识库可见性：企业KB全租户可见，私人KB创建者可见
-                            (kb.visibility = 'enterprise' OR (kb.visibility = 'private' AND kb.user_id = CAST(:user_id AS UUID)))
+                            (UPPER(kb.visibility) = 'ENTERPRISE' OR (UPPER(kb.visibility) = 'PRIVATE' AND kb.user_id = CAST(:user_id AS UUID)))
                         )
                         AND
                         (
                             -- 文档可见性：公开文档全租户可见，私人文档上传者可见
-                            (d.visibility = 'public' OR (d.visibility = 'private' AND d.user_id = CAST(:user_id AS UUID)))
+                            (UPPER(d.visibility) = 'PUBLIC' OR (UPPER(d.visibility) = 'PRIVATE' AND d.user_id = CAST(:user_id AS UUID)))
                         )
                     """)
                     params["user_id"] = str(user_id)
@@ -297,6 +317,12 @@ class EnhancedSearchService:
             
             return results
             
+        except (ValueError, KeyError) as e:
+            logger.error(f"❌ 向量检索数据错误: {e}")
+            return []
+        except (OSError, IOError) as e:
+            logger.error(f"❌ 向量检索IO错误: {e}")
+            return []
         except Exception as e:
             logger.error(f"❌ 向量检索失败: {e}")
             return []
@@ -334,6 +360,10 @@ class EnhancedSearchService:
                 )
                 db.add(log)
                 await db.commit()
+            except (ValueError, KeyError) as e:
+                logger.warning(f"⚠️ 日志保存数据错误: {e}")
+            except (OSError, IOError) as e:
+                logger.warning(f"⚠️ 日志保存IO错误: {e}")
             except Exception as e:
                 logger.warning(f"⚠️ 日志保存失败: {e}")
     
@@ -402,6 +432,10 @@ class EnhancedSearchService:
                 else:
                     callback(data)
 
+            except (ValueError, KeyError) as e:
+                logger.warning(f"⚠️ 回调发送数据错误: {e}")
+            except (OSError, IOError) as e:
+                logger.warning(f"⚠️ 回调发送IO错误: {e}")
             except Exception as e:
                 logger.warning(f"⚠️ 回调发送失败: {e}")
 
@@ -466,6 +500,10 @@ class EnhancedSearchService:
                 try:
                     queries = await query_optimizer.rewrite_query(query, num_variants=2)
                     logger.info(f"🔄 查询改写: {len(queries)} 个变体")
+                except (ValueError, KeyError) as e:
+                    logger.warning(f"⚠️ 查询改写数据错误，使用原始查询: {e}")
+                except (OSError, IOError) as e:
+                    logger.warning(f"⚠️ 查询改写IO错误，使用原始查询: {e}")
                 except Exception as e:
                     logger.warning(f"⚠️ 查询改写失败，使用原始查询: {e}")
 
@@ -476,6 +514,10 @@ class EnhancedSearchService:
                     hypo_doc = await query_optimizer.generate_hypothetical_document(query)
                     queries.append(hypo_doc)
                     logger.info(f"📄 HyDE: 添加假设文档")
+                except (ValueError, KeyError) as e:
+                    logger.warning(f"⚠️ HyDE数据错误: {e}")
+                except (OSError, IOError) as e:
+                    logger.warning(f"⚠️ HyDE IO错误: {e}")
                 except Exception as e:
                     logger.warning(f"⚠️ HyDE 失败: {e}")
 
@@ -544,6 +586,12 @@ class EnhancedSearchService:
                             logger.info(f"🎯 MMR 重排: 保留 {len(unique_results)} 个结果")
                         else:
                             unique_results = unique_results[:top_k]
+                except (ValueError, KeyError) as e:
+                    logger.warning(f"⚠️ MMR 重排数据错误: {e}")
+                    unique_results = unique_results[:top_k]
+                except (OSError, IOError) as e:
+                    logger.warning(f"⚠️ MMR 重排IO错误: {e}")
+                    unique_results = unique_results[:top_k]
                 except Exception as e:
                     logger.warning(f"⚠️ MMR 重排失败: {e}")
                     unique_results = unique_results[:top_k]
@@ -597,6 +645,12 @@ class EnhancedSearchService:
 
             return response
             
+        except (ValueError, KeyError) as e:
+            logger.error(f"❌ 增强搜索数据错误: {e}", exc_info=True)
+            await self._emit_callback(callback, f"❌ 检索数据错误: {str(e)}", "error")
+        except (OSError, IOError) as e:
+            logger.error(f"❌ 增强搜索IO错误: {e}", exc_info=True)
+            await self._emit_callback(callback, f"❌ 检索IO错误: {str(e)}", "error")
         except Exception as e:
             logger.error(f"❌ 增强搜索失败: {e}", exc_info=True)
             await self._emit_callback(callback, f"❌ 检索失败: {str(e)}", "error")

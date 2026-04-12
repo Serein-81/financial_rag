@@ -79,6 +79,10 @@ async def get_chat_log_sessions(
         for s in result.get("sessions", []):
             try:
                 sessions_list.append(ChatLogSessionItem(**s))
+            except (ValueError, KeyError) as e:
+                raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+            except (OSError, IOError) as e:
+                raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
             except Exception as e:
                 logger.warning(f"Failed to parse session item: {e}, data: {s}")
 
@@ -90,6 +94,10 @@ async def get_chat_log_sessions(
         )
     except HTTPException:
         raise
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         logger.error(f"Error getting sessions: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"获取会话列表失败: {str(e)}")
@@ -123,6 +131,10 @@ async def get_chat_log_messages(
         return {"session_id": session_id, "messages": messages}
     except HTTPException:
         raise
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         logger.error(f"Error getting session messages: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"获取会话消息失败: {str(e)}")
@@ -155,6 +167,10 @@ async def get_chat_log_session_statistics(
         return ChatLogSessionStatistics(**statistics)
     except HTTPException:
         raise
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         logger.error(f"Error getting session statistics: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"获取会话统计失败: {str(e)}")
@@ -319,6 +335,10 @@ async def export_chat_sessions(
                         int(session.get("total_tokens", 0) or 0),
                     ]
                     writer.writerow(row)
+                except (ValueError, KeyError) as e:
+                    raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+                except (OSError, IOError) as e:
+                    raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
                 except Exception as e:
                     logger.warning(f"Failed to add session {session.get('id', 'unknown')} to CSV: {e}")
                     continue
@@ -377,6 +397,10 @@ async def export_chat_sessions(
                     ws.append(row)
                     for col in range(1, len(headers) + 1):
                         ws.cell(row=ws.max_row, column=col).border = thin_border
+                except (ValueError, KeyError) as e:
+                    raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+                except (OSError, IOError) as e:
+                    raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
                 except Exception as e:
                     logger.warning(f"Failed to add session {session.get('id', 'unknown')} to Excel: {e}")
                     continue
@@ -410,6 +434,10 @@ async def export_chat_sessions(
             )
     except HTTPException:
         raise
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         logger.error(f"Error exporting sessions: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"导出会话失败: {str(e)}")
@@ -518,6 +546,10 @@ async def export_user_action_logs(
                         clean_for_export(log.get("extra_data", "")),
                     ]
                     writer.writerow(row)
+                except (ValueError, KeyError) as e:
+                    raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+                except (OSError, IOError) as e:
+                    raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
                 except Exception as e:
                     logger.warning(f"Failed to add log {log.get('id', 'unknown')} to CSV: {e}")
                     continue
@@ -577,6 +609,10 @@ async def export_user_action_logs(
                     ws.append(row)
                     for col in range(1, len(headers) + 1):
                         ws.cell(row=ws.max_row, column=col).border = thin_border
+                except (ValueError, KeyError) as e:
+                    raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+                except (OSError, IOError) as e:
+                    raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
                 except Exception as e:
                     logger.warning(f"Failed to add log {log.get('id', 'unknown')} to Excel: {e}")
                     continue
@@ -610,6 +646,10 @@ async def export_user_action_logs(
             )
     except HTTPException:
         raise
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         logger.error(f"Error exporting action logs: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"导出操作日志失败: {str(e)}")
@@ -640,6 +680,10 @@ async def get_admin_tenants(
         }
     except HTTPException:
         raise
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         logger.error(f"Error getting admin tenants: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"获取企业列表失败: {str(e)}")
@@ -673,6 +717,10 @@ async def get_data_integrity_report(
             user_id=user_id
         )
         return report
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         logger.error(f"Error getting data integrity report: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"获取数据完整性报告失败: {str(e)}")
@@ -713,6 +761,10 @@ async def get_messages_missing_embedding(
             "count": len(messages),
             "limit": limit
         }
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         logger.error(f"Error getting messages missing embedding: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"获取缺失embedding消息失败: {str(e)}")

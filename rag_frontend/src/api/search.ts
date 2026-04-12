@@ -133,7 +133,7 @@ export const searchApi = {
   }): Promise<SearchResponse> {
     return request<SearchResponse>('/search/query', {
       method: 'POST',
-      body: JSON.stringify(data),
+      data: JSON.stringify(data),
     })
   },
 
@@ -141,7 +141,7 @@ export const searchApi = {
   async keywordSearch(data: KeywordSearchRequest): Promise<KeywordSearchResponse> {
     return request<KeywordSearchResponse>('/search/keywords', {
       method: 'POST',
-      body: JSON.stringify(data),
+      data: JSON.stringify(data),
     })
   },
 
@@ -168,10 +168,10 @@ export const searchApi = {
   async hybridSearch(data: HybridSearchRequest): Promise<HybridSearchResponse> {
     return request<HybridSearchResponse>('/search/hybrid', {
       method: 'POST',
-      body: JSON.stringify({
+      data: JSON.stringify({
         query: data.query,
-        top_k: data.top_k || 5,
-        kb_id: data.kb_id,
+        top_k: data.top_k ?? 5,
+        kb_id: data.kb_id ?? null,
         enable_web: data.enable_web ?? false,
         score_threshold: data.score_threshold ?? 0.3
       }),
@@ -182,10 +182,10 @@ export const searchApi = {
   async hybridSearchWithSynonym(data: HybridSynonymSearchRequest): Promise<SearchResponse> {
     return request<SearchResponse>('/search/hybrid/synonym', {
       method: 'POST',
-      body: JSON.stringify({
+      data: JSON.stringify({
         query: data.query,
-        top_k: data.top_k || 10,
-        kb_id: data.kb_id,
+        top_k: data.top_k ?? 10,
+        kb_id: data.kb_id ?? null,
         enable_synonym: data.enable_synonym ?? true,
         enable_fulltext: data.enable_fulltext ?? true,
         vector_weight: data.vector_weight ?? 0.5,

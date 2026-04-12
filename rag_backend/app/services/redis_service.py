@@ -6,7 +6,13 @@ Redis服务
 用于存储验证码、防刷机制等临时数据
 """
 
-import redis
+try:
+    import redis
+    REDIS_AVAILABLE = True
+except ImportError:
+    redis = None
+    REDIS_AVAILABLE = False
+
 from typing import Optional
 from app.core.config import settings
 import logging
@@ -19,6 +25,10 @@ class RedisService:
     
     def __init__(self):
         """初始化Redis连接"""
+        if not REDIS_AVAILABLE:
+            logger.warning("⚠️ Redis 模块未安装，RedisService 将不可用")
+            self.client = None
+            return
         try:
             self.client = redis.Redis(
                 host=settings.REDIS_HOST,
@@ -142,3 +152,8 @@ class RedisService:
 
 # 创建全局实例
 redis_service = RedisService()
+
+
+def get_redis_service() -> RedisService:
+    """获取Redis服务实例（单例模式）"""
+    return redis_service

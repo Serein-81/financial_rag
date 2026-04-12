@@ -45,6 +45,68 @@ class TaxReportService:
         ]
         print("📄 [税务报告服务] 初始化完成")
     
+    async def check_duplicate_report(
+        self,
+        tenant_id: str,
+        original_filename: str,
+        file_hash: str = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        检测是否存在重复的报告
+        
+        Args:
+            tenant_id: 租户ID
+            original_filename: 原始文件名
+            file_hash: 文件哈希（可选）
+            
+        Returns:
+            如果存在重复返回报告信息，否则返回 None
+        """
+        async with AsyncSessionLocal() as db:
+            try:
+                # 标准化文件名：去除首尾空格，不区分大小写
+                normalized_filename = original_filename.strip()
+                
+                print(f"🔍 [重复检测] 租户ID: {tenant_id}")
+                print(f"🔍 [重复检测] 原始文件名: '{original_filename}'")
+                print(f"🔍 [重复检测] 标准化文件名: '{normalized_filename}'")
+                
+                # 检查相同文件名是否存在（不区分大小写）
+                query = text("""
+                    SELECT id, original_filename, status, created_at, 
+                           confidence_score, risk_level
+                    FROM tax_reports 
+                    WHERE tenant_id = :tenant_id 
+                    AND TRIM(original_filename) = TRIM(:filename)
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """)
+                result = await db.execute(query, {
+                    "tenant_id": tenant_id,
+                    "filename": normalized_filename
+                })
+                existing = result.fetchone()
+                
+                if existing:
+                    print(f"✅ [重复检测] 发现重复文件: {existing.original_filename}")
+                    return {
+                        "is_duplicate": True,
+                        "report_id": str(existing.id),
+                        "original_filename": existing.original_filename,
+                        "status": existing.status,
+                        "created_at": existing.created_at.isoformat() if existing.created_at else None,
+                        "confidence_score": float(existing.confidence_score) if existing.confidence_score else None,
+                        "risk_level": existing.risk_level,
+                        "message": f"已存在同名报告：{existing.original_filename}"
+                    }
+                
+                print(f"✅ [重复检测] 未发现重复文件")
+                return None
+                
+            except Exception as e:
+                print(f"⚠️ [税务报告服务] 检测重复报告失败: {str(e)}")
+                return None
+    
     async def create_tax_report(
         self,
         user_id: str,
@@ -54,6 +116,7 @@ class TaxReportService:
         tax_period_year: int = None,
         tax_period_month: int = None,
         description: str = None,
+        file_validation_result: dict = None,
     ) -> dict:
         """
         创建税务报告记录
@@ -66,6 +129,7 @@ class TaxReportService:
             tax_period_year: 税务年度
             tax_period_month: 税务月份
             description: 报告描述
+            file_validation_result: 文件验证结果（来自TaxFileValidator）
             
         Returns:
             创建的报告信息
@@ -101,23 +165,55 @@ class TaxReportService:
                     elif "csv" in file.content_type.lower():
                         file_type = "csv"
                 
-                # 生成MinIO路径
-                minio_path = f"tax-reports/{tenant_id}/{report_id}/{filename}"
+                # 生成MinIO路径（包含tenant_id/user_id/分类，与知识库模式一致）
+                minio_path = f"{tenant_id}/{user_id}/tax-report/{report_id}/{filename}"
                 
-                # 上传到MinIO（如果服务可用）
+                # 上传到MinIO（如果服务可用）- 使用异步版本避免阻塞
                 try:
-                    minio_service.upload_document(
+                    await minio_service.upload_document_async(
                         file_bytes=file_content,
                         object_name=minio_path,
-                        content_type=file.content_type,
-                        tenant_id=tenant_id
+                        content_type=file.content_type
                     )
+                except (OSError, IOError) as e:
+                    print(f"⚠️ [税务报告服务] MinIO上传IO错误: {str(e)}")
+                except ConnectionError as e:
+                    print(f"⚠️ [税务报告服务] MinIO连接失败: {str(e)}")
                 except Exception as e:
                     print(f"⚠️ [税务报告服务] MinIO上传失败: {str(e)}")
                 
                 # 保存到数据库
                 from app.models.tax_report import TaxReport
                 from sqlalchemy.dialects.postgresql import UUID
+                
+                # 从验证结果中提取置信度和关键指标
+                confidence_score = None
+                key_metrics = None
+                tax_validation_result = None
+                
+                if file_validation_result:
+                    confidence_score = file_validation_result.get("confidence")
+                    extracted_info = file_validation_result.get("extracted_info", {})
+                    
+                    # 构建关键指标
+                    key_metrics = {
+                        "currency_amounts": extracted_info.get("currency_amounts", []),
+                        "invoice_numbers": extracted_info.get("invoice_numbers", []),
+                        "tax_ids": extracted_info.get("tax_ids", []),
+                        "tax_rates": extracted_info.get("tax_rates", []),
+                        "dates": extracted_info.get("dates", []),
+                        "descriptions": extracted_info.get("descriptions", []),
+                        "tax_type_hints": extracted_info.get("tax_type_hints", []),
+                        "found_keywords": file_validation_result.get("found_keywords", []),
+                    }
+                    
+                    # 构建验证结果（不含is_valid和suggestions）
+                    tax_validation_result = {
+                        "confidence": confidence_score,
+                        "found_keywords": file_validation_result.get("found_keywords", []),
+                        "missing_indicators": file_validation_result.get("missing_indicators", []),
+                        "extracted_info": extracted_info,
+                    }
                 
                 report = TaxReport(
                     id=uuid.UUID(report_id),
@@ -135,6 +231,9 @@ class TaxReportService:
                     processing_message="文件已上传，等待处理",
                     needs_human_review="false",
                     pii_anonymized="false",
+                    confidence_score=confidence_score,
+                    key_metrics=key_metrics,
+                    tax_validation_result=tax_validation_result,
                 )
                 
                 db.add(report)
@@ -159,10 +258,144 @@ class TaxReportService:
                     "message": "文件上传成功，等待处理",
                 }
                 
+            except (ValueError, KeyError) as e:
+                print(f"❌ [税务报告服务] 创建报告数据错误: {str(e)}")
+                await db.rollback()
+                raise ValueError(f"创建税务报告数据错误: {str(e)}")
+            except (OSError, IOError) as e:
+                print(f"❌ [税务报告服务] 创建报告IO错误: {str(e)}")
+                await db.rollback()
+                raise IOError(f"创建税务报告IO错误: {str(e)}")
             except Exception as e:
                 print(f"❌ [税务报告服务] 创建报告失败: {str(e)}")
                 await db.rollback()
                 raise ValueError(f"创建税务报告失败: {str(e)}")
+    
+    async def create_manual_tax_report(
+        self,
+        user_id: str,
+        tenant_id: str,
+        input_data: dict,
+    ) -> dict:
+        """
+        手动录入税务报告
+        
+        Args:
+            user_id: 用户ID
+            tenant_id: 租户ID
+            input_data: 手动录入的数据
+            
+        Returns:
+            创建的报告信息
+        """
+        async with AsyncSessionLocal() as db:
+            try:
+                import uuid
+                from datetime import datetime
+                
+                if not isinstance(tenant_id, str):
+                    tenant_id = str(tenant_id)
+                if not isinstance(user_id, str):
+                    user_id = str(user_id)
+                
+                report_id = str(uuid.uuid4())
+                
+                # 根据税种类型生成文件名
+                tax_type = input_data.get("tax_type", "manual")
+                fiscal_year = input_data.get("fiscal_year", datetime.now().year)
+                fiscal_period = input_data.get("fiscal_period", "")
+                filename = f"手动录入_{tax_type}_{fiscal_year}_{fiscal_period}.json"
+                
+                # 构建关键指标
+                key_metrics = {
+                    "revenue": input_data.get("revenue", 0),
+                    "taxable_sales": input_data.get("taxable_sales", 0),
+                    "tax_free_sales": input_data.get("tax_free_sales", 0),
+                    "input_tax": input_data.get("input_tax", 0),
+                    "output_tax": input_data.get("output_tax", 0),
+                    "vat_rate": input_data.get("vat_rate", 0.13),
+                    "total_expenses": input_data.get("total_expenses", 0),
+                    "deductible_expenses": input_data.get("deductible_expenses", 0),
+                    "taxable_income": input_data.get("taxable_income", 0),
+                    "corporate_tax_rate": input_data.get("corporate_tax_rate", 0.25),
+                    "total_payroll": input_data.get("total_payroll", 0),
+                    "total_invoices": input_data.get("total_invoices", 0),
+                    "input_invoice_count": input_data.get("input_invoice_count", 0),
+                    "output_invoice_count": input_data.get("output_invoice_count", 0),
+                }
+                
+                # 计算税额
+                tax_amount = 0
+                if tax_type == "vat":
+                    tax_amount = (input_data.get("output_tax", 0) - input_data.get("input_tax", 0))
+                elif tax_type == "income":
+                    tax_amount = input_data.get("taxable_income", 0) * input_data.get("corporate_tax_rate", 0.25)
+                
+                report = TaxReport(
+                    id=uuid.UUID(report_id),
+                    user_id=uuid.UUID(user_id),
+                    tenant_id=tenant_id,
+                    filename=filename,
+                    original_filename=filename,
+                    file_type="manual",
+                    file_size=0,
+                    minio_path=None,
+                    tax_type=tax_type,
+                    tax_period_year=input_data.get("fiscal_year"),
+                    tax_period_month=int(fiscal_period.split("-")[-1]) if fiscal_period and "-" in fiscal_period else None,
+                    status="pending",
+                    processing_message="手动录入完成，等待AI分析",
+                    needs_human_review="false",
+                    pii_anonymized="true",
+                    confidence_score=1.0,
+                    key_metrics=key_metrics,
+                )
+                
+                db.add(report)
+                await db.commit()
+                await db.refresh(report)
+                
+                print(f"✅ [税务报告服务] 手动创建报告成功: {report_id}")
+                
+                result = {
+                    "id": str(report.id),
+                    "tenant_id": str(report.tenant_id),
+                    "user_id": str(report.user_id),
+                    "filename": report.filename,
+                    "original_filename": report.original_filename,
+                    "tax_type": report.tax_type,
+                    "status": report.status,
+                    "created_at": report.created_at,
+                    "key_metrics": key_metrics,
+                    "needs_analysis": input_data.get("run_analysis", True),
+                }
+                
+                # 如果需要运行分析，触发后台处理
+                if input_data.get("run_analysis", True):
+                    try:
+                        await self.process_tax_report(report_id, tenant_id)
+                        result["analysis_triggered"] = True
+                    except Exception as e:
+                        print(f"⚠️ [税务报告服务] 手动报告分析触发失败: {str(e)}")
+                        result["analysis_triggered"] = False
+                        result["analysis_error"] = str(e)
+                else:
+                    result["analysis_triggered"] = False
+                
+                return result
+                
+            except (ValueError, KeyError) as e:
+                print(f"❌ [税务报告服务] 手动创建数据错误: {str(e)}")
+                await db.rollback()
+                raise ValueError(f"手动创建税务报告数据错误: {str(e)}")
+            except (OSError, IOError) as e:
+                print(f"❌ [税务报告服务] 手动创建IO错误: {str(e)}")
+                await db.rollback()
+                raise IOError(f"手动创建税务报告IO错误: {str(e)}")
+            except Exception as e:
+                print(f"❌ [税务报告服务] 手动创建失败: {str(e)}")
+                await db.rollback()
+                raise ValueError(f"手动创建税务报告失败: {str(e)}")
     
     async def process_tax_report_background(
         self,
@@ -180,6 +413,10 @@ class TaxReportService:
         """
         try:
             await self.process_tax_report(report_id, tenant_id)
+        except (ValueError, KeyError) as e:
+            print(f"❌ [税务报告服务] 后台处理数据错误: {report_id}, {str(e)}")
+        except (OSError, IOError) as e:
+            print(f"❌ [税务报告服务] 后台处理IO错误: {report_id}, {str(e)}")
         except Exception as e:
             print(f"❌ [税务报告服务] 后台处理失败: {report_id}, {str(e)}")
     
@@ -277,6 +514,9 @@ class TaxReportService:
                         "risk_level": report.risk_level,
                         "needs_human_review": report.needs_human_review == "true",
                         "review_request_id": str(report.review_request_id) if report.review_request_id else None,
+                        "key_metrics": report.key_metrics,
+                        "tax_validation_result": report.tax_validation_result,
+                        "processing_result": report.processing_result,
                         "created_at": report.created_at,
                         "updated_at": report.updated_at,
                         "completed_at": report.completed_at,
@@ -285,6 +525,12 @@ class TaxReportService:
                 
                 return report_list, total
                 
+            except (ValueError, KeyError) as e:
+                print(f"❌ [税务报告服务] 查询列表数据错误: {str(e)}")
+                return [], 0
+            except (OSError, IOError) as e:
+                print(f"❌ [税务报告服务] 查询列表IO错误: {str(e)}")
+                return [], 0
             except Exception as e:
                 print(f"❌ [税务报告服务] 查询列表失败: {str(e)}")
                 return [], 0
@@ -315,6 +561,86 @@ class TaxReportService:
                     return None
                 
                 file_size_mb = round(report.file_size / (1024 * 1024), 2) if report.file_size else 0
+                
+                # 解析 processing_result JSON，提取 issues
+                issues = []
+                rag_references = []
+                tax_validation_result = None
+                
+                # 将 risk_level 映射为 severity（TaxIssueSchema 要求 severity 字段）
+                def map_severity(risk_level):
+                    if risk_level == 'info':
+                        return 'low'
+                    return risk_level if risk_level in ['low', 'medium', 'high', 'critical'] else 'low'
+                
+                if report.processing_result:
+                    try:
+                        import json
+                        proc_result = json.loads(report.processing_result) if isinstance(report.processing_result, str) else report.processing_result
+                        
+                        # 提取税务发现
+                        tax_findings = proc_result.get('tax_findings', [])
+                        for finding in tax_findings:
+                            recs = finding.get('recommendations', [])
+                            recommendations_str = '; '.join(recs) if recs else None
+                            issues.append({
+                                "id": finding.get('id', ''),
+                                "severity": map_severity(finding.get('risk_level', 'info')),
+                                "category": finding.get('category', '税务'),
+                                "description": finding.get('description', ''),
+                                "evidence": finding.get('evidence', []),
+                                "legal_basis": finding.get('legal_basis'),
+                                "recommendation": recommendations_str,
+                                "confidence": finding.get('confidence', 0.0),
+                            })
+                        
+                        # 提取财务发现
+                        finance_findings = proc_result.get('finance_findings', [])
+                        for finding in finance_findings:
+                            recs = finding.get('recommendations', [])
+                            recommendations_str = '; '.join(recs) if recs else None
+                            issues.append({
+                                "id": finding.get('id', ''),
+                                "severity": map_severity(finding.get('risk_level', 'info')),
+                                "category": finding.get('category', '财务'),
+                                "description": finding.get('description', ''),
+                                "evidence": finding.get('evidence', []),
+                                "legal_basis": finding.get('legal_basis'),
+                                "recommendation": recommendations_str,
+                                "confidence": finding.get('confidence', 0.0),
+                            })
+                        
+                        # 提取法务发现
+                        legal_findings = proc_result.get('legal_findings', [])
+                        for finding in legal_findings:
+                            recs = finding.get('recommendations', [])
+                            recommendations_str = '; '.join(recs) if recs else None
+                            issues.append({
+                                "id": finding.get('id', ''),
+                                "severity": map_severity(finding.get('risk_level', 'info')),
+                                "category": finding.get('category', '法务'),
+                                "description": finding.get('description', ''),
+                                "evidence": finding.get('evidence', []),
+                                "legal_basis": finding.get('legal_basis'),
+                                "recommendation": recommendations_str,
+                                "confidence": finding.get('confidence', 0.0),
+                            })
+                        
+                        # 提取 RAG 上下文
+                        rag_contexts = proc_result.get('rag_contexts', [])
+                        for ctx in rag_contexts:
+                            rag_references.append({
+                                "content": ctx.get('content', '')[:200],
+                                "source": ctx.get('source', ''),
+                                "relevance": ctx.get('relevance', 0.0)
+                            })
+                        
+                        # 提取税务验证结果
+                        tax_validation_result = proc_result.get('tax_validation')
+                        
+                    except (json.JSONDecodeError, Exception) as e:
+                        print(f"⚠️ [税务报告服务] 解析 processing_result 失败: {str(e)}")
+                
                 return {
                     "id": str(report.id),
                     "tenant_id": report.tenant_id,
@@ -334,17 +660,23 @@ class TaxReportService:
                     "risk_level": report.risk_level,
                     "needs_human_review": report.needs_human_review == "true",
                     "review_request_id": str(report.review_request_id) if report.review_request_id else None,
-                    "processing_result": report.processing_result,
-                    "tax_validation": report.tax_validation_result,
-                    "issues": [],
-                    "key_metrics": None,
-                    "rag_references": [],
+                    "processing_result": None,
+                    "tax_validation_result": tax_validation_result,
+                    "key_metrics": report.key_metrics,
+                    "issues": issues,
+                    "rag_references": rag_references,
                     "indicators": [],
                     "created_at": report.created_at,
                     "updated_at": report.updated_at,
                     "completed_at": report.completed_at,
                 }
                 
+            except (ValueError, KeyError) as e:
+                print(f"❌ [税务报告服务] 查询详情数据错误: {str(e)}")
+                return None
+            except (OSError, IOError) as e:
+                print(f"❌ [税务报告服务] 查询详情IO错误: {str(e)}")
+                return None
             except Exception as e:
                 print(f"❌ [税务报告服务] 查询详情失败: {str(e)}")
                 return None
@@ -409,6 +741,12 @@ class TaxReportService:
                     "needs_review": needs_review,
                 }
                 
+            except (ValueError, KeyError) as e:
+                print(f"❌ [税务报告服务] 统计数据错误: {str(e)}")
+                return {"total": 0, "by_status": {}, "by_tax_type": {}, "needs_review": 0}
+            except (OSError, IOError) as e:
+                print(f"❌ [税务报告服务] 统计IO错误: {str(e)}")
+                return {"total": 0, "by_status": {}, "by_tax_type": {}, "needs_review": 0}
             except Exception as e:
                 print(f"❌ [税务报告服务] 统计失败: {str(e)}")
                 return {"total": 0, "by_status": {}, "by_tax_type": {}, "needs_review": 0}
@@ -460,6 +798,12 @@ class TaxReportService:
                     "progress_percent": progress_percent,
                 }
                 
+            except (ValueError, KeyError) as e:
+                print(f"❌ [税务报告服务] 查询状态数据错误: {str(e)}")
+                return None
+            except (OSError, IOError) as e:
+                print(f"❌ [税务报告服务] 查询状态IO错误: {str(e)}")
+                return None
             except Exception as e:
                 print(f"❌ [税务报告服务] 查询状态失败: {str(e)}")
                 return None
@@ -487,6 +831,12 @@ class TaxReportService:
                 await db.commit()
                 return result.rowcount > 0
                 
+            except (ValueError, KeyError) as e:
+                print(f"❌ [税务报告服务] 删除数据错误: {str(e)}")
+                return False
+            except (OSError, IOError) as e:
+                print(f"❌ [税务报告服务] 删除IO错误: {str(e)}")
+                return False
             except Exception as e:
                 print(f"❌ [税务报告服务] 删除失败: {str(e)}")
                 return False
@@ -519,7 +869,7 @@ class TaxReportService:
                 
                 # 2. 下载文件
                 await self._update_status(db, report_id, "processing", "正在下载文件...")
-                file_content = minio_service.download_document(report.minio_path, tenant_id)
+                file_content = await minio_service.download_document_async(report.minio_path)
                 
                 # 3. 解析文件
                 await self._update_status(db, report_id, "processing", "正在解析文件...")
@@ -551,6 +901,14 @@ class TaxReportService:
                 
                 print(f"✅ [税务报告服务] 报告处理完成: {report_id}")
                 
+            except (ValueError, KeyError) as e:
+                error_msg = str(e)[:497] + "..." if len(str(e)) > 500 else str(e)
+                print(f"❌ [税务报告服务] 处理数据错误: {report_id}, 错误: {str(e)}")
+                await self._update_status(db, report_id, "failed", f"处理失败: {error_msg}")
+            except (OSError, IOError) as e:
+                error_msg = str(e)[:497] + "..." if len(str(e)) > 500 else str(e)
+                print(f"❌ [税务报告服务] 处理IO错误: {report_id}, 错误: {str(e)}")
+                await self._update_status(db, report_id, "failed", f"处理失败: {error_msg}")
             except Exception as e:
                 error_msg = str(e)[:497] + "..." if len(str(e)) > 500 else str(e)
                 print(f"❌ [税务报告服务] 处理失败: {report_id}, 错误: {str(e)}")
@@ -590,6 +948,15 @@ class TaxReportService:
             
             return text
             
+        except (UnicodeDecodeError, UnicodeEncodeError) as e:
+            print(f"⚠️ [税务报告服务] 文件解码错误: {str(e)}")
+            return content.decode('utf-8', errors='ignore')
+        except (OSError, IOError) as e:
+            print(f"⚠️ [税务报告服务] 文件IO错误: {str(e)}")
+            return content.decode('utf-8', errors='ignore')
+        except (ValueError, KeyError) as e:
+            print(f"⚠️ [税务报告服务] 文件解析数据错误: {str(e)}")
+            return content.decode('utf-8', errors='ignore')
         except Exception as e:
             print(f"⚠️ [税务报告服务] 文件解析失败: {str(e)}")
             return content.decode('utf-8', errors='ignore')
@@ -661,6 +1028,22 @@ class TaxReportService:
             
             return processing_result
             
+        except (ValueError, KeyError) as e:
+            print(f"❌ [税务报告服务] Agent处理数据错误: {str(e)}")
+            return {
+                "status": "error",
+                "error_message": str(e),
+                "needs_human_review": True,
+                "review_trigger_reason": "agent_processing_data_error"
+            }
+        except (OSError, IOError) as e:
+            print(f"❌ [税务报告服务] Agent处理IO错误: {str(e)}")
+            return {
+                "status": "error",
+                "error_message": str(e),
+                "needs_human_review": True,
+                "review_trigger_reason": "agent_processing_io_error"
+            }
         except Exception as e:
             print(f"❌ [税务报告服务] Agent处理失败: {str(e)}")
             return {
@@ -776,9 +1159,19 @@ class TaxReportService:
                     f"tax_report:status:{report_id}",
                     json.dumps(status_data)
                 )
+            except (OSError, IOError):
+                print(f"⚠️ [税务报告服务] Redis连接失败，跳过状态发布")
+            except (ValueError, KeyError) as e:
+                print(f"⚠️ [税务报告服务] Redis数据错误，跳过状态发布: {e}")
+            except RuntimeError as e:
+                print(f"⚠️ [税务报告服务] Redis运行时错误，跳过状态发布: {str(e)}")
             except Exception:
-                pass  # Redis不可用不影响主流程
+                print(f"⚠️ [税务报告服务] Redis发布失败，跳过状态发布")
             
+        except (ValueError, KeyError) as e:
+            print(f"⚠️ [税务报告服务] 更新状态数据错误: {str(e)}")
+        except (OSError, IOError) as e:
+            print(f"⚠️ [税务报告服务] 更新状态IO错误: {str(e)}")
         except Exception as e:
             print(f"⚠️ [税务报告服务] 更新状态失败: {str(e)}")
     
@@ -831,6 +1224,10 @@ class TaxReportService:
             await db.commit()
             print(f"✅ [税务报告服务] 更新结果成功: {report_id}")
             
+        except (ValueError, KeyError) as e:
+            print(f"⚠️ [税务报告服务] 更新结果数据错误: {str(e)}")
+        except (OSError, IOError) as e:
+            print(f"⚠️ [税务报告服务] 更新结果IO错误: {str(e)}")
         except Exception as e:
             print(f"⚠️ [税务报告服务] 更新结果失败: {str(e)}")
     
@@ -885,6 +1282,10 @@ class TaxReportService:
             
             print(f"✅ [税务报告服务] 创建审核请求: {review_id}")
             
+        except (ValueError, KeyError) as e:
+            print(f"⚠️ [税务报告服务] 创建审核请求数据错误: {str(e)}")
+        except (OSError, IOError) as e:
+            print(f"⚠️ [税务报告服务] 创建审核请求IO错误: {str(e)}")
         except Exception as e:
             print(f"⚠️ [税务报告服务] 创建审核请求失败: {str(e)}")
     

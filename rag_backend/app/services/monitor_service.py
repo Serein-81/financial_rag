@@ -137,7 +137,7 @@ class MonitorService:
         self.events: List[MonitorEvent] = []
         self.active_traces: Dict[str, MonitorEvent] = {}
         
-        print("📊 [MonitorService] 初始化完成")
+        print("[CHART] [MonitorService] 初始化完成")
     
     @asynccontextmanager
     async def trace_agent(
@@ -177,7 +177,7 @@ class MonitorService:
         self.active_traces[event.trace_id] = event
         
         if self.enable_console_log:
-            print(f"🚀 [Monitor] Agent 开始 | Trace: {event.trace_id[:8]} | 用户: {user_id} | 问题: {query[:50]}")
+            print(f"[START] [Monitor] Agent 开始 | Trace: {event.trace_id[:8]} | 用户: {user_id} | 问题: {query[:50]}")
         
         try:
             # 创建追踪上下文对象
@@ -188,15 +188,19 @@ class MonitorService:
             event.end(CallStatus.SUCCESS)
             
             if self.enable_console_log:
-                print(f"✅ [Monitor] Agent 完成 | 耗时: {event.duration:.2f}s | 回答长度: {event.metadata.get('answer_length', 0)}")
+                print(f"[OK] [Monitor] Agent 完成 | 耗时: {event.duration:.2f}s | 回答长度: {event.metadata.get('answer_length', 0)}")
         
+        except (ValueError, KeyError) as e:
+            event.set_error(e)
+        except (OSError, IOError) as e:
+            event.set_error(e)
         except Exception as e:
-            # 异常结束
+            event.set_error(e)# 异常结束
             event.set_error(e)
             event.end(CallStatus.FAILED)
             
             if self.enable_console_log:
-                print(f"❌ [Monitor] Agent 失败 | 错误: {event.error}")
+                print(f"[ERROR] [Monitor] Agent 失败 | 错误: {event.error}")
             
             raise
         
@@ -240,7 +244,7 @@ class MonitorService:
         
         if self.enable_console_log:
             params_str = ", ".join([f"{k}={v}" for k, v in kwargs.items()])
-            print(f"🔧 [Monitor] 工具调用 | {tool_name}({params_str})")
+            print(f"[TOOL] [Monitor] 工具调用 | {tool_name}({params_str})")
         
         try:
             # 创建工具追踪上下文
@@ -252,15 +256,19 @@ class MonitorService:
             
             if self.enable_console_log:
                 result_preview = str(event.metadata.get('result', ''))[:100]
-                print(f"✅ [Monitor] 工具完成 | {tool_name} | 耗时: {event.duration:.2f}s | 结果: {result_preview}")
+                print(f"[OK] [Monitor] 工具完成 | {tool_name} | 耗时: {event.duration:.2f}s | 结果: {result_preview}")
         
+        except (ValueError, KeyError) as e:
+            event.set_error(e)
+        except (OSError, IOError) as e:
+            event.set_error(e)
         except Exception as e:
-            # 异常结束
+            event.set_error(e)# 异常结束
             event.set_error(e)
             event.end(CallStatus.FAILED)
             
             if self.enable_console_log:
-                print(f"❌ [Monitor] 工具失败 | {tool_name} | 错误: {event.error}")
+                print(f"[ERROR] [Monitor] 工具失败 | {tool_name} | 错误: {event.error}")
             
             raise
         
@@ -302,7 +310,7 @@ class MonitorService:
         })
         
         if self.enable_console_log:
-            print(f"🤖 [Monitor] LLM 调用 | 模型: {model_name}")
+            print(f"[BOT] [Monitor] LLM 调用 | 模型: {model_name}")
         
         try:
             llm_context = LLMTraceContext(self, event)
@@ -312,14 +320,20 @@ class MonitorService:
             
             if self.enable_console_log:
                 tokens = event.metadata.get('total_tokens', 0)
-                print(f"✅ [Monitor] LLM 完成 | 耗时: {event.duration:.2f}s | Tokens: {tokens}")
+                print(f"[OK] [Monitor] LLM 完成 | 耗时: {event.duration:.2f}s | Tokens: {tokens}")
         
+        except (ValueError, KeyError) as e:
+            event.set_error(e)
+            event.end(CallStatus.FAILED)
+        except (OSError, IOError) as e:
+            event.set_error(e)
+            event.end(CallStatus.FAILED)
         except Exception as e:
             event.set_error(e)
             event.end(CallStatus.FAILED)
             
             if self.enable_console_log:
-                print(f"❌ [Monitor] LLM 失败 | 错误: {event.error}")
+                print(f"[ERROR] [Monitor] LLM 失败 | 错误: {event.error}")
             
             raise
         
@@ -355,6 +369,12 @@ class MonitorService:
                     event.end(CallStatus.SUCCESS, result=str(result)[:200])
                     return result
                 
+                except (ValueError, KeyError) as e:
+                    event.set_error(e)
+                    event.end(CallStatus.FAILED)
+                except (OSError, IOError) as e:
+                    event.set_error(e)
+                    event.end(CallStatus.FAILED)
                 except Exception as e:
                     event.set_error(e)
                     event.end(CallStatus.FAILED)
@@ -477,7 +497,7 @@ class MonitorService:
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         
-        print(f"📁 [Monitor] 已导出到: {filepath}")
+        print(f"[FILE] [Monitor] 已导出到: {filepath}")
 
 
 class AgentTraceContext:
@@ -487,10 +507,29 @@ class AgentTraceContext:
         self.monitor = monitor
         self.event = event
     
-    def set_result(self, answer: str):
-        """设置 Agent 回答"""
-        self.event.metadata["answer"] = answer[:500]  # 只保存前500字符
-        self.event.metadata["answer_length"] = len(answer)
+    def set_result(self, answer):
+        """设置 Agent 回答
+        
+        Args:
+            answer: Agent 的回答，可以是字符串、LLMResponse 对象或其他类型
+        """
+        if answer is None:
+            answer_str = "[无回答]"
+            answer_length = 0
+        elif hasattr(answer, 'content'):
+            # LLMResponse 对象，提取 content 属性
+            answer_str = str(answer.content)[:500]
+            answer_length = len(answer.content) if answer.content else 0
+        elif isinstance(answer, str):
+            answer_str = answer[:500]
+            answer_length = len(answer)
+        else:
+            # 其他类型，转换为字符串
+            answer_str = str(answer)[:500]
+            answer_length = len(answer_str)
+        
+        self.event.metadata["answer"] = answer_str
+        self.event.metadata["answer_length"] = answer_length
     
     def set_sources(self, sources: List[Dict]):
         """设置参考来源"""

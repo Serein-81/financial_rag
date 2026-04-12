@@ -44,14 +44,14 @@ export const promptApi = {
   async createTemplate(data: CreatePromptRequest): Promise<PromptTemplate> {
     return request<PromptTemplate>('/prompt/templates', {
       method: 'POST',
-      body: JSON.stringify(data),
+      data: JSON.stringify(data),
     })
   },
 
   async updateTemplate(id: string, data: Partial<CreatePromptRequest>): Promise<PromptTemplate> {
     return request<PromptTemplate>(`/prompt/templates/${id}`, {
       method: 'PUT',
-      body: JSON.stringify(data),
+      data: JSON.stringify(data),
     })
   },
 
@@ -64,7 +64,7 @@ export const promptApi = {
   async optimizePrompt(data: OptimizePromptRequest): Promise<OptimizePromptResponse> {
     return request<OptimizePromptResponse>('/prompt/optimize', {
       method: 'POST',
-      body: JSON.stringify(data),
+      data: JSON.stringify(data),
     })
   },
 }

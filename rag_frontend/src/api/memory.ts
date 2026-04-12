@@ -67,7 +67,7 @@ export const memoryApi = {
   async searchMemories(data: MemorySearchRequest): Promise<MemorySearchResponse> {
     return request<MemorySearchResponse>('/memory/search', {
       method: 'POST',
-      body: JSON.stringify(data),
+      data: JSON.stringify(data),
     })
   },
 

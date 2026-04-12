@@ -108,16 +108,19 @@ class EpisodicMemory(BaseMemory):
             return False
 
         try:
+            session_uuid = uuid.UUID(str(self.session_id))
+            user_uuid = uuid.UUID(str(self.user_id))
+
             async with AsyncSessionLocal() as db:
                 result = await db.execute(
-                    select(ChatSession).where(ChatSession.id == self.session_id)
+                    select(ChatSession).where(ChatSession.id == session_uuid)
                 )
                 session = result.scalar_one_or_none()
 
                 if not session:
                     new_session = ChatSession(
-                        id=self.session_id,
-                        user_id=self.user_id,
+                        id=session_uuid,
+                        user_id=user_uuid,
                         title=f"Task Session {self.session_id[:8]}..."
                     )
                     db.add(new_session)
@@ -125,6 +128,12 @@ class EpisodicMemory(BaseMemory):
                     print(f"✅ [情景记忆] 创建会话: {self.session_id[:8]}...")
                 return True
 
+        except (ValueError, KeyError) as e:
+            print(f"❌ [情景记忆] 会话创建数据错误: {e}")
+            return False
+        except (OSError, IOError) as e:
+            print(f"❌ [情景记忆] 会话创建IO错误: {e}")
+            return False
         except Exception as e:
             print(f"❌ [情景记忆] 会话创建失败: {e}")
             return False
@@ -159,6 +168,12 @@ class EpisodicMemory(BaseMemory):
             try:
                 item.embedding = await embedding_service.get_embedding(item.content.strip())
                 print(f"🔮 [情景记忆] 生成向量嵌入")
+            except (ValueError, KeyError) as e:
+                print(f"⚠️ [情景记忆] 向量生成数据错误: {e}")
+                item.embedding = None
+            except (OSError, IOError) as e:
+                print(f"⚠️ [情景记忆] 向量生成IO错误: {e}")
+                item.embedding = None
             except Exception as e:
                 print(f"⚠️ [情景记忆] 向量生成失败: {e}")
                 item.embedding = None
@@ -171,13 +186,15 @@ class EpisodicMemory(BaseMemory):
 
         if session_exists:
             try:
+                session_uuid = uuid.UUID(str(self.session_id))
+
                 async with AsyncSessionLocal() as db:
                     # 添加会话ID到元数据
                     if "session_id" not in item.metadata:
                         item.metadata["session_id"] = self.session_id
 
                     db_message = ChatMessage(
-                        session_id=self.session_id,
+                        session_id=session_uuid,
                         role=item.role,
                         content=item.content.strip(),
                         sources=item.metadata.get("sources", []),
@@ -195,6 +212,10 @@ class EpisodicMemory(BaseMemory):
 
                 print(f"💾 [情景记忆] 保存记忆到数据库 | ID: {item.id} | 重要性: {item.importance:.2f}")
 
+            except (ValueError, KeyError) as e:
+                print(f"❌ [情景记忆] 数据库保存数据错误: {e}")
+            except (OSError, IOError) as e:
+                print(f"❌ [情景记忆] 数据库保存IO错误: {e}")
             except Exception as e:
                 print(f"❌ [情景记忆] 数据库保存失败: {e}")
                 # 如果数据库保存失败，继续添加到内存（内存模式）
@@ -289,6 +310,12 @@ class EpisodicMemory(BaseMemory):
                 return 0.0
 
             return dot_product / (norm_a * norm_b)
+        except (ValueError, KeyError):
+            return 0.0
+        except (OSError, IOError):
+            return 0.0
+        except TypeError:
+            return 0.0
         except Exception:
             return 0.0
 
@@ -371,6 +398,10 @@ class EpisodicMemory(BaseMemory):
 
                 print(f"📊 [情景记忆] 更新访问统计: {len(memory_ids)} 条")
 
+        except (ValueError, KeyError) as e:
+            print(f"⚠️ [情景记忆] 访问统计更新数据错误: {e}")
+        except (OSError, IOError) as e:
+            print(f"⚠️ [情景记忆] 访问统计更新IO错误: {e}")
         except Exception as e:
             print(f"⚠️ [情景记忆] 访问统计更新失败: {e}")
 

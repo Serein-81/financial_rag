@@ -32,7 +32,7 @@ class ChatMessage(Base):
 
     sources = Column(JSON, nullable=True)
 
-    embedding = Column(Vector(2048), nullable=True)
+    embedding = Column(Vector(1024), nullable=True)
     importance = Column(Float, default=0.5)
     access_count = Column(Integer, default=0)
     last_accessed = Column(DateTime(timezone=True), default=func.now())

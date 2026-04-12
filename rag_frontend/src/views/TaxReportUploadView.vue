@@ -19,6 +19,10 @@
             <el-icon><Clock /></el-icon>
             <span>{{ todayStats.pending }}</span>
           </div>
+          <el-button type="primary" @click="showManualDialog = true">
+            <el-icon><Edit /></el-icon>
+            手动录入
+          </el-button>
         </div>
       </div>
     </div>
@@ -480,6 +484,11 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <ManualTaxReportDialog
+      v-model:visible="showManualDialog"
+      @success="handleManualSuccess"
+    />
   </div>
 </template>
 
@@ -499,9 +508,11 @@ import {
   Clock,
   DataAnalysis,
   TrendCharts,
-  MagicStick
+  MagicStick,
+  Edit
 } from '@element-plus/icons-vue'
 import { taxReportApiClient } from '@/api/tax-report'
+import ManualTaxReportDialog from '@/components/ManualTaxReportDialog.vue'
 import type {
   TaxReport,
   TaxReportUploadResponse,
@@ -512,6 +523,7 @@ import type {
 } from '@/types/tax'
 
 const showBatchUpload = ref(false)
+const showManualDialog = ref(false)
 const uploading = ref(false)
 const loading = ref(false)
 const fileList = ref<any[]>([])
@@ -622,6 +634,16 @@ const handleUpload = async () => {
     return
   }
 
+  console.log('🔍 [TaxUpload] 开始上传流程')
+  console.log('🔍 [TaxUpload] 文件:', selectedFile.value.name, selectedFile.value.size)
+  console.log('🔍 [TaxUpload] tax_type:', form.tax_type)
+  console.log('🔍 [TaxUpload] API_BASE:', import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8000')
+
+  if (!form.tax_type) {
+    ElMessage.warning('请选择税务类型')
+    return
+  }
+
   try {
     uploading.value = true
     initProcessingSteps()
@@ -629,6 +651,12 @@ const handleUpload = async () => {
     processingDetails.value = ''
 
     const [year, month] = (taxPeriod.value || '').split('-')
+
+    console.log('🔍 [TaxUpload] 调用 API，参数:', {
+      tax_type: form.tax_type,
+      tax_period_year: year ? parseInt(year) : undefined,
+      tax_period_month: month ? parseInt(month) : undefined,
+    })
 
     const result = await taxReportApiClient.upload(selectedFile.value, {
       tax_type: form.tax_type as TaxTypeEnum,
@@ -640,6 +668,8 @@ const handleUpload = async () => {
       }
     })
 
+    console.log('🔍 [TaxUpload] 上传成功，结果:', result)
+
     updateStepStatus(0, 'completed', '文件上传完成', 100)
     uploadProgress.value = result
     ElMessage.success('文件上传成功，正在处理中...')
@@ -648,8 +678,9 @@ const handleUpload = async () => {
     startProcessing(result.id)
 
   } catch (error: any) {
-    updateStepStatus(0, 'error', error.response?.data?.detail || '上传失败')
-    ElMessage.error(error.response?.data?.detail || '上传失败')
+    console.error('🔍 [TaxUpload] 上传失败，错误:', error)
+    updateStepStatus(0, 'error', error.response?.data?.detail || error.message || '上传失败')
+    ElMessage.error(error.response?.data?.detail || error.message || '上传失败')
   } finally {
     uploading.value = false
   }
@@ -797,7 +828,7 @@ const viewDetails = async (report: TaxReport) => {
 
 const handleDelete = async (report: TaxReport) => {
   try {
-    await ElMessageBox.confirm('确定要删除这个报告吗?', '提示', {
+    await ElMessageBox.confirm('确定要删除这个报告吗？', '提示', {
       confirmButtonText: '确定',
       cancelButtonText: '取消',
       type: 'warning'
@@ -812,6 +843,20 @@ const handleDelete = async (report: TaxReport) => {
       ElMessage.error(error.response?.data?.detail || '删除失败')
     }
   }
+}
+
+const handleManualSuccess = (data: any) => {
+  ElMessage.success({
+    message: '税务报告录入成功',
+    duration: 2000,
+  })
+  if (data.run_analysis) {
+    ElMessage.info({
+      message: 'AI分析任务已启动，请稍后在列表中查看结果',
+      duration: 3000,
+    })
+  }
+  loadReports()
 }
 
 const goToReview = () => {

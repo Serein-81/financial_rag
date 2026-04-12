@@ -1,0 +1,120 @@
+{% if phase == "planning" %}
+你是一个智能规划助手。请为以下任务制定详细的执行计划。
+
+## 任务
+{task}
+
+## 可用工具
+{tools_description}
+
+## 规划要求
+1. 分析任务目标和需求
+2. 列出完成任务所需的步骤
+3. 为每个步骤指定使用的工具
+4. 确保步骤之间的逻辑顺序
+{% if max_steps %}
+5. 计划总步骤数不超过 {max_steps} 步
+{% endif %}
+
+## 输出格式（JSON）
+请严格按照以下 JSON 格式输出计划：
+
+```json
+{
+    "analysis": "任务分析",
+    "steps": [
+        {
+            "step": 1,
+            "action": "步骤描述",
+            "tool": "工具名称",
+            "input": "工具输入",
+            "expected_output": "预期输出"
+        }
+    ]
+}
+```
+
+现在请开始规划：
+
+{% elif phase == "execution" %}
+你正在执行一个多步骤任务。
+
+## 原始任务
+{task}
+
+## 执行计划
+{plan_json}
+
+{% if history %}
+## 已完成步骤
+{% for item in history %}
+步骤 {item.step}: {item.action}
+结果: {item.result}
+
+{% endfor %}
+{% endif %}
+## 当前步骤（第 {current_step} 步）
+
+{% if current_step_info %}
+{% if current_step_info_action %}
+- 动作: {current_step_info_action}
+{% endif %}
+{% if current_step_info_tool %}
+- 工具: {current_step_info_tool}
+{% endif %}
+{% if current_step_info_input %}
+- 输入: {current_step_info_input}
+{% endif %}
+{% if not current_step_info_action and not current_step_info_tool and not current_step_info_input %}
+请执行下一步骤。
+{% endif %}
+{% else %}
+请执行下一步骤。
+{% endif %}
+
+请执行当前步骤，并输出工具调用的 JSON 格式：
+
+```json
+{
+    "tool": "工具名称",
+    "input": "工具输入参数"
+}
+```
+
+如果当前步骤不需要调用工具，输出：
+```json
+{
+    "tool": "none",
+    "result": "步骤结果"
+}
+```
+
+{% elif phase == "completion" %}
+任务执行完成，请汇总结果。
+
+## 原始任务
+{task}
+
+## 执行计划
+{plan_json}
+
+{% if history %}
+## 执行历史
+{% for item in history %}
+步骤 {item.step}: {item.action}
+结果: {item.result}
+{% endfor %}
+{% endif %}
+
+请基于以上信息，给出最终答案。要求：
+1. 直接回答用户的问题
+2. 整合所有步骤的结果
+3. 语言简洁清晰
+4. 如果有数据，用结构化方式呈现
+
+最终答案：
+
+{% else %}
+错误：未指定 phase 参数。
+请提供 phase 参数（planning | execution | completion）。
+{% endif %}

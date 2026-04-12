@@ -32,7 +32,7 @@ async def list_enterprise_users(
     admin_user: User = Depends(require_admin_user)
 ):
     """
-    获取企业用户列表
+    获取企业用户列表（管理员专用）
     - 只显示同一租户下的用户
     - 支持搜索和过滤
     """
@@ -50,6 +50,39 @@ async def list_enterprise_users(
     
     if is_active is not None:
         query = query.where(User.is_active == is_active)
+    
+    query = query.order_by(desc(User.created_at)).offset(skip).limit(limit)
+    
+    result = await db.execute(query)
+    users = result.scalars().all()
+    
+    return users
+
+
+@router.get("/users/list", response_model=List[UserProfile])
+async def list_tenant_users(
+    skip: int = Query(0, ge=0, description="跳过数量"),
+    limit: int = Query(100, ge=1, le=200, description="限制数量"),
+    search: Optional[str] = Query(None, description="搜索关键词（邮箱、昵称、姓名）"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(deps.get_current_user)
+):
+    """
+    获取租户用户列表（所有已认证用户可用）
+    - 用于群聊邀请等功能
+    - 只显示同一租户下的用户
+    """
+    query = select(User).where(User.tenant_id == current_user.tenant_id)
+    
+    if search:
+        search_pattern = f"%{search}%"
+        query = query.where(
+            or_(
+                User.email.ilike(search_pattern),
+                User.nickname.ilike(search_pattern),
+                User.full_name.ilike(search_pattern)
+            )
+        )
     
     query = query.order_by(desc(User.created_at)).offset(skip).limit(limit)
     

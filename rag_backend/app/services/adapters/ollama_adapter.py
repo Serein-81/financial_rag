@@ -50,10 +50,13 @@ class OllamaEmbeddingAdapter(BaseEmbeddingAdapter):
         self.client = Client(host=base_url)
         self.keep_alive = kwargs.get("ollama_keep_alive", -1)
         
-        print(f"✅ Ollama Embedding 适配器初始化完成")
-        print(f"   - 模型: {self.model_name}")
-        print(f"   - Base URL: {self.base_url}")
-        print(f"   - Keep Alive: {self.keep_alive}s")
+        # 只在首次初始化时打印详细信息
+        if not getattr(OllamaEmbeddingAdapter, '_initialized', False):
+            OllamaEmbeddingAdapter._initialized = True
+            print(f"✅ Ollama Embedding 适配器初始化完成")
+            print(f"   - 模型: {self.model_name}")
+            print(f"   - Base URL: {self.base_url}")
+            print(f"   - Keep Alive: {self.keep_alive}s")
     
     async def _encode_single(self, text: str, task_type: str) -> List[float]:
         """

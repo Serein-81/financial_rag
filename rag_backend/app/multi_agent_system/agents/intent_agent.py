@@ -14,6 +14,7 @@ from app.agent_framework.core.base_agent import BaseAgent
 from app.agent_framework.llm.base_adapter import BaseLLMAdapter
 from app.agent_framework.tools.tool_manager import ToolManager
 from app.services.prompt_service import PromptEngine
+from app.multi_agent_system.agents.base_agent_prompt import load_agent_prompt
 
 
 class IntentCategory(str, Enum):
@@ -36,6 +37,7 @@ class IntentCategory(str, Enum):
     IP_PROTECTION = "ip_protection"
     REPORT_GENERATION = "report_generation"
     DATA_EXTRACTION = "data_extraction"
+    RISK_ANALYSIS = "risk_analysis"
     COMPLEX_TASK = "complex_task"
     MULTI_SPECIALIST = "multi_specialist"
     UNKNOWN = "unknown"
@@ -79,6 +81,7 @@ class IntentAnalysisResult(BaseModel):
     confidence: float = Field(..., ge=0.0, le=1.0, description="整体置信度")
     needs_human_review: bool = Field(False, description="是否需要人工审核")
     reasoning: str = Field("", description="推理过程")
+    needs_report_generation: bool = Field(False, description="是否需要生成报告")
 
 
 class IntentAgent(BaseAgent):
@@ -104,7 +107,9 @@ class IntentAgent(BaseAgent):
         tool_manager: ToolManager,
         confidence_threshold: float = 0.7,
         max_iterations: int = 3,
-        timeout: float = 30.0
+        timeout: float = 30.0,
+        specialist_descriptions: str = "",
+        intent_mapping: Dict[str, str] = None
     ):
         """
         初始化意图识别智能体
@@ -115,9 +120,14 @@ class IntentAgent(BaseAgent):
             confidence_threshold: 置信度阈值
             max_iterations: 最大迭代次数
             timeout: 超时时间
+            specialist_descriptions: 专家能力描述（从配置文件生成）
+            intent_mapping: 意图到专家的映射
         """
         self.confidence_threshold = confidence_threshold
         self.prompt_engine = PromptEngine()
+        self._specialist_descriptions = specialist_descriptions
+        self._intent_mapping = intent_mapping or {}
+        self._classification_prompt_cache: Optional[str] = None
         
         system_prompt = self._load_system_prompt()
         
@@ -138,17 +148,37 @@ class IntentAgent(BaseAgent):
         print(f"   - 复杂度规则: {len(self.complexity_rules)} 个")
     
     def _load_system_prompt(self) -> str:
-        """从文件加载系统提示词"""
-        prompt_path = Path(__file__).parent.parent.parent / "prompts" / "system" / "intent_agent.md"
+        """从外部文件加载系统提示词"""
+        try:
+            return load_agent_prompt(
+                agent_name="intent",
+                filename="intent_agent.md",
+                context=self._get_prompt_context()
+            )
+        except Exception as e:
+            print(f"⚠️ [意图识别智能体] 加载提示词失败，使用默认提示词: {e}")
+            return self._build_default_prompt()
+    
+    def _get_prompt_context(self) -> Dict[str, Any]:
+        """获取提示词渲染上下文"""
+        mapping_text = self._format_intent_mapping()
+        return {
+            "intent_categories": [c.value for c in IntentCategory],
+            "complexity_levels": [c.value for c in ComplexityLevel],
+            "routing_strategies": [c.value for c in RoutingStrategy],
+            "specialist_descriptions": self._specialist_descriptions or "暂无专家配置",
+            "intents_specialist_mapping": mapping_text,
+        }
+    
+    def _format_intent_mapping(self) -> str:
+        """将意图映射格式化为可读文本"""
+        if not self._intent_mapping:
+            return "暂无映射配置"
         
-        if prompt_path.exists():
-            try:
-                with open(prompt_path, "r", encoding="utf-8") as f:
-                    return f.read()
-            except Exception as e:
-                print(f"⚠️ [意图识别智能体] 加载提示词失败: {e}")
-        
-        return self._build_default_prompt()
+        lines = []
+        for intent, specialist in sorted(self._intent_mapping.items()):
+            lines.append(f"- **{intent}** → {specialist}")
+        return "\n".join(lines)
     
     def _build_default_prompt(self) -> str:
         """构建默认提示词"""
@@ -163,7 +193,7 @@ class IntentAgent(BaseAgent):
 识别以下意图类别：
 - **日常类**: greeting(问候), chit_chat(闲聊)
 - **知识类**: knowledge_query(知识查询), document_search(文档搜索)
-- **财务类**: financial_analysis(财务分析), accounting_query(会计核算), investment_advisory(投资咨询), cost_control(成本控制)
+- **财务类**: financial_analysis(财务分析), accounting_query(会计核算), investment_advisory(投资咨询), cost_control(成本控制), risk_analysis(风险分析)
 - **税务类**: tax_calculation(税务计算), tax_planning(税务筹划), tax_compliance(税务合规), tax_declaration(税务申报)
 - **法务类**: contract_review(合同审查), legal_consultation(法律咨询), compliance_check(合规检查), ip_protection(知识产权)
 - **报告类**: report_generation(报告生成), data_extraction(数据提取)
@@ -347,6 +377,8 @@ class IntentAgent(BaseAgent):
                 intent_result["intent"]
             )
             
+            needs_report = intent_result.get("needs_report_generation", False)
+            
             result = IntentAnalysisResult(
                 intent=intent_result["intent"],
                 sub_intent=intent_result.get("sub_intent"),
@@ -357,7 +389,8 @@ class IntentAgent(BaseAgent):
                 suggested_params=intent_result.get("params", {}),
                 confidence=intent_result["confidence"],
                 needs_human_review=needs_review,
-                reasoning=intent_result.get("reasoning", "")
+                reasoning=intent_result.get("reasoning", ""),
+                needs_report_generation=needs_report
             )
             
             print(f"✅ [意图识别智能体] 完成分析")
@@ -365,9 +398,35 @@ class IntentAgent(BaseAgent):
             print(f"   复杂度: {result.complexity.value}")
             print(f"   路由: {result.routing_strategy.value}")
             print(f"   置信度: {result.confidence:.2f}")
+            if needs_report:
+                print(f"   📄 需要生成报告: 是")
             
             return result
             
+        except (ValueError, KeyError) as e:
+            print(f"❌ [意图识别智能体] 分析数据失败: {e}")
+            return IntentAnalysisResult(
+                intent=IntentCategory.UNKNOWN,
+                complexity=ComplexityLevel.MEDIUM,
+                requires_specialists=["general"],
+                routing_strategy=RoutingStrategy.DIRECT_ANSWER,
+                confidence=0.0,
+                needs_human_review=True,
+                reasoning=f"数据错误: {str(e)}",
+                needs_report_generation=False
+            )
+        except (OSError, IOError) as e:
+            print(f"❌ [意图识别智能体] 分析IO失败: {e}")
+            return IntentAnalysisResult(
+                intent=IntentCategory.UNKNOWN,
+                complexity=ComplexityLevel.MEDIUM,
+                requires_specialists=["general"],
+                routing_strategy=RoutingStrategy.DIRECT_ANSWER,
+                confidence=0.0,
+                needs_human_review=True,
+                reasoning=f"IO错误: {str(e)}",
+                needs_report_generation=False
+            )
         except Exception as e:
             print(f"❌ [意图识别智能体] 分析失败: {e}")
             return IntentAnalysisResult(
@@ -377,7 +436,8 @@ class IntentAgent(BaseAgent):
                 routing_strategy=RoutingStrategy.DIRECT_ANSWER,
                 confidence=0.0,
                 needs_human_review=True,
-                reasoning=f"分析异常: {str(e)}"
+                reasoning=f"分析异常: {str(e)}",
+                needs_report_generation=False
             )
     
     async def stream_run(self, user_input: str, history: List[Dict] = None, **kwargs):
@@ -410,6 +470,47 @@ class IntentAgent(BaseAgent):
         
         return entities
     
+    def _get_classification_prompt(self) -> str:
+        """获取意图分类提示词（带缓存）"""
+        if self._classification_prompt_cache is not None:
+            return self._classification_prompt_cache
+        
+        classification_prompt_path = Path(__file__).parent.parent.parent / "prompts" / "system" / "intent_classification_prompt.md"
+        
+        if classification_prompt_path.exists():
+            try:
+                with open(classification_prompt_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    self._classification_prompt_cache = content
+                    return content
+            except Exception:
+                pass
+        
+        default_prompt = """分析以下用户输入的意图：
+
+用户输入：{user_input}
+
+已识别的实体：{entities}
+
+请返回JSON格式的意图分析：
+{{
+  "intent": "意图类别",
+  "sub_intent": "子意图（可选）",
+  "params": {{"建议参数"}},
+  "confidence": 0.0-1.0,
+  "reasoning": "推理过程"
+}}
+
+注意：
+1. 如果是问候语，返回 intent: "greeting"
+2. 如果是闲聊，返回 intent: "chit_chat"
+3. 如果需要多个专家，返回 intent: "multi_specialist"
+4. 置信度要基于实体匹配和上下文判断
+5. 如果用户要求生成报告（如"生成报告"、"给我一份报告"），设置 needs_report_generation: true"""
+        
+        self._classification_prompt_cache = default_prompt
+        return default_prompt
+    
     async def _classify_intent_llm(
         self,
         text: str,
@@ -432,42 +533,67 @@ class IntentAgent(BaseAgent):
             for e in entities[:5]
         ])
         
-        prompt = f"""分析以下用户输入的意图：
-
-用户输入：{text}
-
-已识别的实体：{entity_str or "无"}
-
-请返回JSON格式的意图分析：
-{{
-  "intent": "意图类别",
-  "sub_intent": "子意图（可选）",
-  "params": {{"建议参数"}},
-  "confidence": 0.0-1.0,
-  "reasoning": "推理过程"
-}}
-
-注意：
-1. 如果是问候语，返回 intent: "greeting"
-2. 如果是闲聊，返回 intent: "chit_chat"
-3. 如果需要多个专家，返回 intent: "multi_specialist"
-4. 置信度要基于实体匹配和上下文判断"""
+        prompt_template = self._get_classification_prompt()
+        
+        report_keywords = [
+            "生成报告", "生成一份报告", "输出一份报告",
+            "给我一份报告", "给我报告", "需要报告",
+            "生成分析报告", "生成财务报告", "生成税务报告",
+            "生成分析文档", "生成分析材料", "请生成报告"
+        ]
+        text_lower = text.lower()
+        needs_report = any(kw in text_lower for kw in report_keywords)
+        
+        prompt = prompt_template.format(
+            user_input=text,
+            entities=entity_str or "无"
+        )
         
         try:
             response = await self.llm.agenerate([prompt])
             
-            if isinstance(response, str):
-                result = json.loads(response)
+            content = ""
+            if hasattr(response, 'content'):
+                content = response.content
+            elif isinstance(response, str):
+                content = response
             elif isinstance(response, dict):
-                result = response
-            else:
-                result = {"intent": IntentCategory.UNKNOWN.value, "confidence": 0.0}
+                content = json.dumps(response)
+            
+            if not content:
+                print(f"⚠️ [意图识别智能体] LLM返回空内容，使用规则匹配")
+                return self._classify_intent_rule_based(text, entities)
+            
+            content = content.strip()
+            if content.startswith("```json"):
+                content = content[7:]
+            if content.startswith("```"):
+                content = content[3:]
+            if content.endswith("```"):
+                content = content[:-3]
+            content = content.strip()
+            
+            try:
+                result = json.loads(content)
+            except json.JSONDecodeError:
+                json_match = re.search(r'\{[^}]+\}', content, re.DOTALL)
+                if json_match:
+                    try:
+                        result = json.loads(json_match.group(0))
+                    except json.JSONDecodeError:
+                        print(f"⚠️ [意图识别智能体] JSON解析失败，使用规则匹配")
+                        return self._classify_intent_rule_based(text, entities)
+                else:
+                    print(f"⚠️ [意图识别智能体] 未找到JSON内容，使用规则匹配")
+                    return self._classify_intent_rule_based(text, entities)
             
             intent_str = result.get("intent", "unknown")
             try:
                 result["intent"] = IntentCategory(intent_str)
             except ValueError:
                 result["intent"] = IntentCategory.UNKNOWN
+                print(f"⚠️ [意图识别智能体] 未知意图类别: {intent_str}，使用规则匹配")
+                return self._classify_intent_rule_based(text, entities)
             
             if result.get("sub_intent"):
                 try:
@@ -475,8 +601,40 @@ class IntentAgent(BaseAgent):
                 except ValueError:
                     result["sub_intent"] = None
             
+            confidence = result.get("confidence", 0.0)
+            detected_intent = result.get("intent", IntentCategory.UNKNOWN)
+            
+            generic_intents = {
+                IntentCategory.UNKNOWN, 
+                IntentCategory.MULTI_SPECIALIST, 
+                IntentCategory.COMPLEX_TASK,
+                IntentCategory.KNOWLEDGE_QUERY
+            }
+            
+            rule_result = self._classify_intent_rule_based(text, entities)
+            rule_confidence = rule_result.get("confidence", 0.0)
+            
+            should_use_rule = False
+            if detected_intent in generic_intents and rule_confidence >= 0.8:
+                should_use_rule = True
+                print(f"⚠️ [意图识别智能体] LLM返回通用意图 {detected_intent.value}，规则匹配更精确，使用规则结果")
+            elif confidence < self.confidence_threshold and rule_confidence > confidence:
+                should_use_rule = True
+                print(f"⚠️ [意图识别智能体] 置信度 {confidence:.2f} 低于阈值 {self.confidence_threshold}，使用规则匹配补充")
+            
+            if should_use_rule:
+                result = rule_result
+            
+            result["needs_report_generation"] = needs_report
+            
             return result
             
+        except (ValueError, KeyError) as e:
+            print(f"⚠️ [意图识别智能体] LLM分类数据失败，使用规则匹配: {e}")
+            return self._classify_intent_rule_based(text, entities)
+        except (OSError, IOError) as e:
+            print(f"⚠️ [意图识别智能体] LLM分类IO失败，使用规则匹配: {e}")
+            return self._classify_intent_rule_based(text, entities)
         except Exception as e:
             print(f"⚠️ [意图识别智能体] LLM分类失败，使用规则匹配: {e}")
             return self._classify_intent_rule_based(text, entities)
@@ -498,12 +656,49 @@ class IntentAgent(BaseAgent):
         """
         text_lower = text.lower()
         
+        report_generation_keywords = [
+            "生成报告", "生成一份报告", "输出一份报告",
+            "给我一份报告", "给我报告", "需要报告",
+            "生成分析报告", "生成财务报告", "生成税务报告",
+            "生成分析文档", "生成分析材料", "请生成报告"
+        ]
+        
+        needs_report = any(kw in text_lower for kw in report_generation_keywords)
+        
         if any(kw in text_lower for kw in ["你好", "您好", "hi", "hello", "嗨"]):
             return {
                 "intent": IntentCategory.GREETING,
                 "confidence": 0.95,
-                "reasoning": "检测到问候语"
+                "reasoning": "检测到问候语",
+                "needs_report_generation": False
             }
+        
+        multi_keyword_patterns = [
+            (["企业", "税务", "风险"], IntentCategory.TAX_COMPLIANCE, "检测到企业税务风险"),
+            (["税务", "风险"], IntentCategory.TAX_COMPLIANCE, "检测到税务风险"),
+            (["税务", "筹划"], IntentCategory.TAX_PLANNING, "检测到税务筹划"),
+            (["税务", "合规"], IntentCategory.TAX_COMPLIANCE, "检测到税务合规"),
+            (["企业", "税务"], IntentCategory.TAX_CALCULATION, "检测到企业税务"),
+            (["发票", "管理"], IntentCategory.TAX_DECLARATION, "检测到发票管理"),
+            (["发票", "风险"], IntentCategory.TAX_COMPLIANCE, "检测到发票风险"),
+            (["所得税", "风险"], IntentCategory.TAX_COMPLIANCE, "检测到所得税风险"),
+            (["增值税", "风险"], IntentCategory.TAX_COMPLIANCE, "检测到增值税风险"),
+            (["增值税", "合规"], IntentCategory.TAX_COMPLIANCE, "检测到增值税合规"),
+            (["发票", "合规"], IntentCategory.TAX_COMPLIANCE, "检测到发票合规"),
+            (["企业", "财务", "风险"], IntentCategory.COMPLEX_TASK, "检测到企业财务风险，需多专家协作"),
+            (["财务系统", "风险"], IntentCategory.COMPLEX_TASK, "检测到财务系统风险，需多专家协作"),
+            (["企业", "系统", "风险"], IntentCategory.COMPLEX_TASK, "检测到企业系统风险"),
+            (["项目", "财务", "风险"], IntentCategory.COMPLEX_TASK, "检测到项目财务风险"),
+        ]
+        
+        for keywords, intent, reasoning in multi_keyword_patterns:
+            if all(kw in text_lower for kw in keywords):
+                return {
+                    "intent": intent,
+                    "confidence": 0.9,
+                    "reasoning": reasoning,
+                    "needs_report_generation": needs_report
+                }
         
         keyword_intent_map = {
             "税务": IntentCategory.TAX_CALCULATION,
@@ -517,6 +712,7 @@ class IntentAgent(BaseAgent):
             "报告": IntentCategory.REPORT_GENERATION,
             "查询": IntentCategory.KNOWLEDGE_QUERY,
             "知识库": IntentCategory.KNOWLEDGE_QUERY,
+            "企业": IntentCategory.COMPLEX_TASK,
         }
         
         for keyword, intent in keyword_intent_map.items():
@@ -524,13 +720,15 @@ class IntentAgent(BaseAgent):
                 return {
                     "intent": intent,
                     "confidence": 0.8,
-                    "reasoning": f"检测到关键词: {keyword}"
+                    "reasoning": f"检测到关键词: {keyword}",
+                    "needs_report_generation": needs_report
                 }
         
         return {
             "intent": IntentCategory.KNOWLEDGE_QUERY,
             "confidence": 0.5,
-            "reasoning": "未能明确分类，归类为知识查询"
+            "reasoning": "未能明确分类，归类为知识查询",
+            "needs_report_generation": needs_report
         }
     
     async def _assess_complexity(
@@ -610,6 +808,9 @@ class IntentAgent(BaseAgent):
         if intent == IntentCategory.REPORT_GENERATION:
             return RoutingStrategy.REPORT_QUEUE
         
+        if intent == IntentCategory.COMPLEX_TASK:
+            return RoutingStrategy.MULTI_SPECIALIST_PARALLEL
+        
         if complexity in [ComplexityLevel.LOW, ComplexityLevel.MEDIUM]:
             return RoutingStrategy.SINGLE_SPECIALIST
         
@@ -638,13 +839,14 @@ class IntentAgent(BaseAgent):
             IntentCategory.ACCOUNTING_QUERY: ["finance"],
             IntentCategory.INVESTMENT_ADVISORY: ["finance"],
             IntentCategory.COST_CONTROL: ["finance"],
+            IntentCategory.RISK_ANALYSIS: ["finance"],
             IntentCategory.TAX_CALCULATION: ["tax"],
             IntentCategory.TAX_PLANNING: ["tax"],
             IntentCategory.TAX_COMPLIANCE: ["tax"],
             IntentCategory.TAX_DECLARATION: ["tax"],
             IntentCategory.CONTRACT_REVIEW: ["legal"],
             IntentCategory.LEGAL_CONSULTATION: ["legal"],
-            IntentCategory.COMPLIANCE_CHECK: ["legal"],
+            IntentCategory.COMPLIANCE_CHECK: ["finance", "tax", "legal"],
             IntentCategory.IP_PROTECTION: ["legal"],
         }
         

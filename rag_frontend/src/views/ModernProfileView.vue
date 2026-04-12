@@ -577,7 +577,7 @@ watch(newPassword, checkPasswordStrength)
           
           <div class="flex items-center gap-10">
             <div class="relative group">
-              <div class="w-36 h-36 rounded-3xl overflow-hidden bg-gradient-to-br from-teal-400 via-cyan-500 to-blue-500 flex items-center justify-center shadow-xl transition-transform group-hover:scale-105">
+              <div class="w-36 h-36 rounded-3xl overflow-hidden bg-gradient-to-br from-emerald-500 via-teal-500 to-teal-600 flex items-center justify-center shadow-xl transition-transform group-hover:scale-105">
                 <img 
                   v-if="avatarPreview" 
                   :src="avatarPreview" 
@@ -631,7 +631,7 @@ watch(newPassword, checkPasswordStrength)
         <!-- Basic Info Card -->
         <div class="bg-white rounded-3xl p-8 shadow-md border border-gray-100 hover:shadow-lg transition-shadow">
           <h2 class="text-xl font-bold text-gray-900 mb-6 flex items-center gap-3">
-            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-400 to-indigo-500 flex items-center justify-center">
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center">
               <User :size="20" class="text-white" />
             </div>
             基本信息
@@ -750,7 +750,7 @@ watch(newPassword, checkPasswordStrength)
         <!-- Password Card -->
         <div class="bg-white rounded-3xl p-8 shadow-md border border-gray-100 hover:shadow-lg transition-shadow">
           <h2 class="text-xl font-bold text-gray-900 mb-6 flex items-center gap-3">
-            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-red-400 to-pink-500 flex items-center justify-center">
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-400 to-red-500 flex items-center justify-center">
               <Lock :size="20" class="text-white" />
             </div>
             修改密码
@@ -903,15 +903,15 @@ watch(newPassword, checkPasswordStrength)
         <!-- Current Enterprise Card -->
         <div class="bg-white rounded-3xl p-8 shadow-md border border-gray-100 hover:shadow-lg transition-shadow">
           <h2 class="text-xl font-bold text-gray-900 mb-6 flex items-center gap-3">
-            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-400 to-purple-500 flex items-center justify-center">
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center">
               <Building2 :size="20" class="text-white" />
             </div>
             当前企业
           </h2>
           
-          <div v-if="currentEnterprise" class="p-6 bg-gradient-to-br from-indigo-50 to-purple-50 rounded-2xl border border-indigo-100">
+          <div v-if="currentEnterprise" class="p-6 bg-gradient-to-br from-emerald-50 to-teal-50 rounded-2xl border border-emerald-100">
             <div class="flex items-center gap-4">
-              <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-indigo-400 to-purple-500 flex items-center justify-center shadow-lg">
+              <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center shadow-lg">
                 <Building2 :size="32" class="text-white" />
               </div>
               <div class="flex-1">

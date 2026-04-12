@@ -1,0 +1,147 @@
+# Encoding fix script for Vue files
+$files = Get-ChildItem -Path "d:\Python\Codebase\My_rag\rag_frontend\src\views" -Filter "*.vue" -Recurse
+$fixCount = 0
+
+foreach ($file in $files) {
+    $content = Get-Content $file.FullName -Raw -Encoding UTF8
+    $original = $content
+
+    # Common replacements based on the error patterns
+    $replacements = @{
+        '视�?' = '视图'
+        '类' = '类'
+        '器' = '器'
+        '态' = '态'
+        '数' = '数'
+        '询' = '询'
+        '功' = '功'
+        '成' = '成'
+        '败' = '败'
+        '中' = '中'
+        '已' = '已'
+        '加载' = '加载'
+        '获取' = '获取'
+        '失败' = '失败'
+        '完成' = '完成'
+        '查' = '查'
+        '标签' = '标签'
+        '无' = '无'
+        '个' = '个'
+        '位置' = '位置'
+        '功能' = '功能'
+        '分类' = '分类'
+        '工作' = '工作'
+        '状态' = '状态'
+        '管理' = '管理'
+        '任务' = '任务'
+        '统计' = '统计'
+        '暂无' = '暂无'
+        '错误' = '错误'
+        '成功' = '成功'
+        '提示' = '提示'
+        '信息' = '信息'
+        '描述' = '描述'
+        '详情' = '详情'
+        '参数' = '参数'
+        '类型' = '类型'
+        '数据' = '数据'
+        '智能体' = '智能体'
+        '系统' = '系统'
+        '中心' = '中心'
+        '异常' = '异常'
+        '内容' = '内容'
+        '结果' = '结果'
+        '失败' = '失败'
+        '等待' = '等待'
+        '回复' = '回复'
+        '处理' = '处理'
+        '检测' = '检测'
+        '审核' = '审核'
+        '问题' = '问题'
+        '意图' = '意图'
+        '关键' = '关键'
+        '分析' = '分析'
+        '未知' = '未知'
+        '比例' = '比例'
+        '选择' = '选择'
+        '记录' = '记录'
+        '追踪' = '追踪'
+        '追踪' = '追踪'
+        '报告' = '报告'
+        '提交' = '提交'
+        '税务' = '税务'
+        '财务' = '财务'
+        '合同' = '合同'
+        '收入' = '收入'
+        '已加载' = '已加载'
+        '过期' = '过期'
+        '指标' = '指标'
+        '索引' = '索引'
+        '指示' = '指示'
+        '运行' = '运行'
+        '选择' = '选择'
+        '紧' = '紧'
+        '急' = '急'
+    }
+
+    # Direct replacements for the specific broken patterns from error messages
+    $content = $content -replace '按位�?\s*</button>', '按位置</button>'
+    $content = $content -replace '按功�?\s*</button>', '按功能</button>'
+    $content = $content -replace '<!--\s*按位置分类视�?-->', '<!-- 按位置分类视图-->'
+    $content = $content -replace '<!--\s*按功能分类视�?-->', '<!-- 按功能分类视图-->'
+    $content = $content -replace '<!--\s*未分类工�?-->', '<!-- 未分类工具-->'
+    $content = $content -replace '<!--\s*按位置分类视图-->', '<!-- 按位置分类视图-->'
+    $content = $content -replace '<!--\s*按功能分类视图-->', '<!-- 按功能分类视图-->'
+    $content = $content -replace '<!--\s*未分类工具-->', '<!-- 未分类工具-->'
+    $content = $content -replace '\{\{\s*tools\.filter\([^)]+\)\.length\s*\}\}\s*�?\s*</span>', '{{ tools.filter(t => t.location === location).length }} 个</span>'
+    $content = $content -replace '\{\{\s*tools\.filter\([^)]+\)\.length\s*\}\}\s*</span>\s*<div', '{{ tools.filter(t => t.location === location).length }} 个</span></div'
+    $content = $content -replace '个</span>\s*<div class="p-3 space-y-2">', '个</span></div><div class="p-3 space-y-2">'
+    $content = $content -replace '个</span>\s*</div>\s*<div class="p-3 space-y-2">', '个</span></div><div class="p-3 space-y-2">'
+    $content = $content -replace '系统状�?\s*</span>', '系统状态</span>'
+    $content = $content -replace '活跃智能�?\s*</span>', '活跃智能体</span>'
+    $content = $content -replace '会话状�?\s*</span>', '会话状态</span>'
+    $content = $content -replace '待处理任�?\s*</span>', '待处理任务</span>'
+    $content = $content -replace '智能体指�?\s*</h2>', '智能体指标</h2>'
+    $content = $content -replace '成功�?\s*</p>', '成功率</p>'
+    $content = $content -replace '活跃状�?\s*</p>', '活跃状态</p>'
+    $content = $content -replace '暂无智能体指�?\s*</div>', '暂无智能体指标</div>'
+    $content = $content -replace '运行�?\s*\}\}', '运行中}}'
+    $content = $content -replace '选择一个追踪记录查看详�?\s*</p>', '选择一个追踪记录查看详情</p>'
+    $content = $content -replace '状�?\s*</th>', '状态</th>'
+    $content = $content -replace '无查�?\s*\}\}\.\.\.', '无查询}}...'
+    $content = $content -replace '未分�?\s*</span>', '未分类</span>'
+    $content = $content -replace '智能体中�?\s*</h1>', '智能体中心</h1>'
+    $content = $content -replace '智能体系�?\s*</p>', '智能体系统</p>'
+    $content = $content -replace '处理�?,\s*color:\s*', '处理中", color: '
+    $content = $content -replace '已完�?,\s*color:\s*', '已完成", color: '
+    $content = $content -replace '百分比异�?:', '百分比异常'':'
+    $content = $content -replace '加载智能体详情失�?,', '加载智能体详情失败'','
+    $content = $content -replace '获取可视化数据失�?\)\)', '获取可视化数据失败)'')'
+    $content = $content -replace '加载可视化数据失�?', '加载可视化数据失败'
+    $content = $content -replace '获取任务状态失�?', '获取任务状态失败'
+    $content = $content -replace '发起一些对�?', '发起一些对话'
+    $content = $content -replace '销售合�?,', '销售合同'','
+    $content = $content -replace '已加载财务数�?)', '已加载财务数据'')'
+    $content = $content -replace "selectedPeriod = ref\\('�?\\)", "selectedPeriod = ref(''期初余额')"
+    $content = $content -replace '已过�?\s*return', '已过期'' return'
+    $content = $content -replace '关键�?\s*\},', '关键词'' },'
+    $content = $content -replace '分析问题类型和意�?,', '分析问题类型和意图'','
+    $content = $content -replace '提示词注�?,', '提示词注入'','
+    $content = $content -replace '异常检�?,', '异常检测'','
+    $content = $content -replace '高新技�?\\)\\)', '高新企业'))'
+    $content = $content -replace "name:\\s*'总收�?,", "name: '总收入',"
+    $content = $content -replace "label:\\s*'紧�?,", "label: '紧急',"
+    $content = $content -replace "\\)\\s*bg:", ") bg:"
+    $content = $content -replace "'\\s*<',", "'<' <span>,"
+    $content = $content -replace '处理中",', '处理中'','
+    $content = $content -replace '已完成",', '已完成'','
+    $content = $content -replace "', '", "', '"
+
+    if ($content -ne $original) {
+        $content | Out-File -FilePath $file.FullName -Encoding UTF8
+        Write-Host "Fixed: $($file.Name)" -ForegroundColor Green
+        $fixCount++
+    }
+}
+
+Write-Host "`nTotal files fixed: $fixCount" -ForegroundColor Cyan

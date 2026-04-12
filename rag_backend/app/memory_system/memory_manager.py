@@ -11,6 +11,7 @@ from .working_memory import WorkingMemory
 from .episodic_memory import EpisodicMemory
 from .semantic_memory import SemanticMemory
 from app.services.embedding_service import embedding_service
+from app.core.config import settings
 
 
 class MemoryManager:
@@ -52,6 +53,10 @@ class MemoryManager:
         self.episodic_memory = EpisodicMemory(session_id, user_id, capacity=100)
         self.semantic_memory = SemanticMemory(user_id, capacity=1000)
 
+        # 🆕 缓存层初始化（可选）
+        self._cache = None
+        self._cache_enabled = settings.ENABLE_MEMORY_CACHE
+
         # 🆕 话题频率统计（方案二）
         self.topic_frequency: Dict[str, int] = {}
         self.topic_first_seen: Dict[str, datetime] = {}
@@ -76,7 +81,7 @@ class MemoryManager:
         # 🆕 低价值闲聊词表（这类内容不持久化到情景记忆）- 增强版
         self.chit_chat_patterns = {
             # 基础问候
-            "你好", "您好", "hi", "hello", "hey", "嗨", "哈喽",
+            "你好", "您好", "hi", "hello", "hey", "嗨", "哈喽", "你还",
             "再见", "拜拜", "bye", "goodbye", "晚安", "早安", "早上好", "下午好", "晚上好",
             # 感谢词
             "谢谢", "谢谢你", "谢谢您", "感谢", "thanks", "thank you", "thx", "3q",
@@ -92,7 +97,9 @@ class MemoryManager:
             # 语气词
             "呀", "嘛", "呢", "吧", "啦", "噢", "哇", "呀", "呵", "哈",
             # 回应词
-            "好哒", "好嘞", "好滴", "收到", "遵命", "好说", "没问题", "明白"
+            "好哒", "好嘞", "好滴", "收到", "遵命", "好说", "没问题", "明白",
+            # 简短问候变体
+            "咋样", "好呀", "最近好吗", "还好吗", "最近咋样", "咋了"
         }
 
         # 🆕 闲聊白名单（即使短也不被过滤）
@@ -131,16 +138,17 @@ class MemoryManager:
     
     async def add_message(self, role: str, content: str, 
                          importance: float = 0.5,
-                         metadata: Optional[Dict[str, Any]] = None) -> MemoryItem:
+                         metadata: Optional[Dict[str, Any]] = None) -> Optional[MemoryItem]:
         """
         添加消息到记忆系统（增强版）
         
         流程：
-        1. 创建记忆项
-        2. 🆕 智能评估重要性（关键词识别 + 频率统计）
-        3. 添加到工作记忆（当前对话）
-        4. 添加到情景记忆（持久化）
-        5. 如果是重要知识，添加到语义记忆
+        1. 🆕 去重检查（防止重复消息）
+        2. 创建记忆项
+        3. 🆕 智能评估重要性（关键词识别 + 频率统计）
+        4. 添加到工作记忆（当前对话）
+        5. 添加到情景记忆（持久化）
+        6. 如果是重要知识，添加到语义记忆
         
         Args:
             role: 角色（user/assistant/system）
@@ -153,8 +161,14 @@ class MemoryManager:
             metadata: 元数据
             
         Returns:
-            创建的记忆项
+            创建的记忆项，如果重复则返回 None
         """
+        # 🆕 去重检查：防止短时间内重复添加相同消息
+        dedup_result = await self._check_duplicate(role, content)
+        if dedup_result["is_duplicate"]:
+            print(f"🔄 [记忆管理器] 跳过重复消息 | 原因: {dedup_result['reason']} | 内容: {content[:30]}...")
+            return None
+        
         # 🆕 智能评估重要性（方案一 + 方案二）
         importance = await self._evaluate_importance(content, role, importance)
         
@@ -194,6 +208,10 @@ class MemoryManager:
             item.embedding = await embedding_service.get_embedding(content)
             await self.semantic_memory.add(item)
             print(f"⭐ [记忆管理器] 高重要性知识已添加到语义记忆 (importance={importance:.2f})")
+
+        # 🆕 缓存失效
+        if self._cache_enabled:
+            await self._invalidate_cache()
 
         return item
     
@@ -263,6 +281,57 @@ class MemoryManager:
             print(f"📈 [重要性评估] {base_importance:.2f} → {importance:.2f} | 原因: {', '.join(boost_reasons)}")
         
         return min(1.0, importance)  # 确保不超过 1.0
+
+    async def _check_duplicate(self, role: str, content: str, 
+                               time_threshold_seconds: int = 60) -> Dict[str, Any]:
+        """
+        🆕 检查是否为重复消息
+        
+        检查策略：
+        1. 精确匹配：检查工作记忆中是否已存在相同 role + content 的消息
+        2. 时间窗口：如果在 time_threshold_seconds 秒内存在相同消息，视为重复
+        
+        Args:
+            role: 角色（user/assistant/system）
+            content: 内容
+            time_threshold_seconds: 时间阈值（秒），默认 60 秒内相同消息视为重复
+            
+        Returns:
+            {
+                "is_duplicate": bool,  # 是否为重复
+                "reason": str          # 原因
+            }
+        """
+        stripped_content = content.strip()
+        if not stripped_content:
+            return {"is_duplicate": False, "reason": ""}
+        
+        # 获取当前时间
+        now = datetime.now()
+        
+        # 遍历工作记忆中的消息
+        for memory in self.working_memory.memories:
+            if memory.role != role:
+                continue
+            
+            if memory.content.strip() != stripped_content:
+                continue
+            
+            # 内容相同，检查时间间隔
+            time_diff = (now - memory.last_access).total_seconds()
+            
+            if time_diff < time_threshold_seconds:
+                return {
+                    "is_duplicate": True,
+                    "reason": f"相同消息({role})于{time_diff:.0f}秒前已存在"
+                }
+            else:
+                return {
+                    "is_duplicate": True,
+                    "reason": f"相同消息({role})已存在但超过{time_threshold_seconds}秒阈值"
+                }
+        
+        return {"is_duplicate": False, "reason": ""}
 
     def _is_chit_chat(self, content: str) -> bool:
         """
@@ -468,6 +537,10 @@ class MemoryManager:
                 max_tokens=max_tokens
             )
             
+        except (ValueError, KeyError) as e:
+            print(f"⚠️ [记忆管理器] 上下文构建数据失败，使用备用方案: {e}")
+        except (OSError, IOError) as e:
+            print(f"⚠️ [记忆管理器] 上下文构建IO失败，使用备用方案: {e}")
         except Exception as e:
             print(f"⚠️ [记忆管理器] 上下文构建失败，使用备用方案: {e}")
             
@@ -711,3 +784,166 @@ class MemoryManager:
         返回标准的对话格式
         """
         return self.working_memory.get_context_window()
+
+    async def extract_user_memories(self, messages: List[Dict[str, str]]) -> bool:
+        """
+        从对话历史中提取用户记忆（事实、偏好、纠正）
+        
+        流程：
+        1. 调用 UserMemoryExtractor 进行 LLM 提取
+        2. 将提取结果保存到语义记忆
+        
+        Args:
+            messages: 消息列表 [{"role": "user"|"assistant", "content": "..."}]
+            
+        Returns:
+            是否提取成功
+        """
+        from .user_memory_extractor import UserMemoryExtractor
+        
+        print(f"🔍 [用户记忆提取] 开始提取 | 消息数: {len(messages)}")
+        
+        try:
+            # 创建提取器
+            extractor = UserMemoryExtractor()
+            
+            # 执行提取
+            result = await extractor.extract(messages)
+            
+            if result.is_empty():
+                print(f"ℹ️ [用户记忆提取] 未提取到任何记忆")
+                return True
+            
+            # 保存提取结果到语义记忆
+            saved_count = 0
+            
+            # 保存事实
+            for fact in result.facts:
+                success = await self.semantic_memory.add_user_memory(
+                    content=fact.content,
+                    memory_category=fact.category,
+                    confidence=fact.confidence,
+                    source=fact.source,
+                    extraction_type="fact"
+                )
+                if success:
+                    saved_count += 1
+            
+            # 保存偏好
+            for pref in result.preferences:
+                success = await self.semantic_memory.add_user_memory(
+                    content=pref.content,
+                    memory_category=pref.category,
+                    confidence=pref.confidence,
+                    source=pref.source,
+                    extraction_type="preference"
+                )
+                if success:
+                    saved_count += 1
+            
+            # 保存纠正
+            for corr in result.corrections:
+                success = await self.semantic_memory.add_user_memory(
+                    content=f"原文: {corr.original} → 纠正: {corr.corrected}",
+                    memory_category="correction",
+                    confidence=corr.confidence,
+                    source=corr.source,
+                    extraction_type="correction"
+                )
+                if success:
+                    saved_count += 1
+            
+            print(f"✅ [用户记忆提取] 完成 | 提取: {result.total_items} | 保存: {saved_count}")
+            return True
+            
+        except (ValueError, KeyError) as e:
+            print(f"❌ [用户记忆提取] 数据失败: {e}")
+            return False
+        except (OSError, IOError) as e:
+            print(f"❌ [用户记忆提取] IO失败: {e}")
+            return False
+        except Exception as e:
+            print(f"❌ [用户记忆提取] 失败: {e}")
+            return False
+
+    async def get_user_memory_context(self, top_k: int = 10) -> str:
+        """
+        获取用户记忆上下文（用于注入到 System Prompt）
+        
+        Args:
+            top_k: 返回的记忆数量
+            
+        Returns:
+            格式化的用户记忆字符串
+        """
+        # 获取各类用户记忆
+        facts = await self.semantic_memory.get_user_facts(top_k=top_k)
+        preferences = await self.semantic_memory.get_user_preferences(top_k=top_k)
+        corrections = await self.semantic_memory.get_user_corrections(top_k=top_k)
+        
+        if not facts and not preferences and not corrections:
+            return ""
+        
+        context_parts = ["【用户记忆】"]
+        
+        # 事实
+        if facts:
+            context_parts.append("\n📌 已知事实：")
+            for fact in facts:
+                # 移除类别前缀，提取纯内容
+                content = fact.content
+                if "] " in content:
+                    content = content.split("] ", 1)[1]
+                if " (来源:" in content:
+                    content = content.split(" (来源:")[0]
+                context_parts.append(f"  • {content}")
+        
+        # 偏好
+        if preferences:
+            context_parts.append("\n⭐ 用户偏好：")
+            for pref in preferences:
+                content = pref.content
+                if "] " in content:
+                    content = content.split("] ", 1)[1]
+                if " (来源:" in content:
+                    content = content.split(" (来源:")[0]
+                context_parts.append(f"  • {content}")
+        
+        # 纠正
+        if corrections:
+            context_parts.append("\n🔧 已纠正的错误：")
+            for corr in corrections:
+                content = corr.content
+                if "] " in content:
+                    content = content.split("] ", 1)[1]
+                if " (来源:" in content:
+                    content = content.split(" (来源:")[0]
+                context_parts.append(f"  • {content}")
+        
+        context_parts.append("\n💡 请根据以上用户记忆提供个性化回答。")
+        
+        return "\n".join(context_parts)
+
+    async def _get_cache(self):
+        """获取缓存实例"""
+        if not self._cache_enabled:
+            return None
+        
+        if self._cache is None:
+            from .memory_cache import MemoryCache
+            self._cache = MemoryCache()
+        
+        return self._cache
+    
+    async def _invalidate_cache(self, memory_type: str = "all") -> None:
+        """失效缓存（写入后调用）"""
+        cache = await self._get_cache()
+        if cache:
+            await cache.invalidate(self.session_id, memory_type)
+    
+    async def get_cache_status(self) -> Dict[str, bool]:
+        """获取缓存状态"""
+        cache = await self._get_cache()
+        if cache:
+            return await cache.get_cached_count(self.session_id)
+        return {}

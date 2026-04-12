@@ -63,6 +63,7 @@ const uploadResult = ref<any>(null)
 const sourcesCollapsed = ref<Map<number, boolean>>(new Map())
 const copiedMessageIndex = ref<number | null>(null)
 const likedMessages = ref<Set<number>>(new Set())
+const showSessionsPanel = ref(false)
 
 const messages = computed(() => sessionStore.currentMessages)
 const sessions = computed(() => sessionStore.sessions)
@@ -111,10 +112,11 @@ async function sendMessage() {
         sessionStore.setCurrentSession(event.session_id)
         await sessionStore.fetchSessions()
       } else if (event.type === 'chunk' && event.content) {
-        // 检查是否是sources数据
-        if (typeof event.content === 'string' && event.content.startsWith('__SOURCES__:')) {
+        // 检查是否是sources数据（支持两种前缀）
+        if (typeof event.content === 'string' && 
+            (event.content.startsWith('__SOURCES__:') || event.content.startsWith('__SOURCES_EVENT__:'))) {
           try {
-            const sourcesJson = event.content.replace('__SOURCES__:', '')
+            const sourcesJson = event.content.replace(/^__(SOURCES|SOURCES_EVENT)__:/, '')
             currentSources = JSON.parse(sourcesJson)
             // 更新消息的sources，并默认折叠
             if (currentSources.length > 0) {
@@ -129,6 +131,14 @@ async function sendMessage() {
           aiContent += event.content
           sessionStore.updateLastMessage(aiContent, currentSources.length > 0 ? currentSources : undefined)
           scrollToBottom()
+        }
+      } else if (event.type === 'sources' && event.sources) {
+        // 直接处理sources类型的事件
+        currentSources = event.sources
+        if (currentSources.length > 0) {
+          const msgIndex = sessionStore.currentMessages.length - 1
+          sessionStore.updateLastMessage('', currentSources)
+          sourcesCollapsed.value.set(msgIndex, true) // 默认折叠
         }
       } else if (event.type === 'done') {
         console.log('✅ Agent 回答完成')
@@ -272,16 +282,93 @@ function formatFileSize(bytes: number | null): string {
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
 }
+
+function toggleSessionsPanel() {
+  showSessionsPanel.value = !showSessionsPanel.value
+  if (showSessionsPanel.value) {
+    sessionStore.fetchSessions()
+  }
+}
+
+async function loadSessionFromHistory(sessionId: string) {
+  try {
+    await sessionStore.loadSession(sessionId)
+    showSessionsPanel.value = false
+  } catch (error) {
+    console.error('加载会话失败:', error)
+  }
+}
+
+function createNewChat() {
+  sessionStore.createNewSession()
+  sessionStore.fetchSessions()
+}
 </script>
 
 <template>
   <div class="h-full flex bg-gray-50">
+    <!-- Sessions History Panel -->
+    <Transition name="slide">
+      <div v-if="showSessionsPanel" class="w-80 bg-white border-r border-gray-200 flex flex-col">
+        <div class="p-4 border-b border-gray-200">
+          <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center gap-2">
+              <History :size="20" class="text-emerald-600" />
+              <h3 class="font-semibold text-gray-900">会话历史</h3>
+            </div>
+            <button @click="toggleSessionsPanel" class="p-1 hover:bg-gray-100 rounded">
+              <X :size="18" class="text-gray-500" />
+            </button>
+          </div>
+          <button
+            @click="createNewChat"
+            class="w-full px-3 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center justify-center gap-2 text-sm font-medium"
+          >
+            <Plus :size="16" />
+            新建对话
+          </button>
+        </div>
+
+        <div class="flex-1 overflow-y-auto">
+          <div v-if="sessions.length === 0" class="p-4 text-center text-gray-500 text-sm">
+            暂无会话记录
+          </div>
+          <div v-else class="p-2 space-y-1">
+            <div
+              v-for="session in sessions"
+              :key="session.id"
+              class="p-3 rounded-lg cursor-pointer transition-colors hover:bg-gray-50"
+              :class="sessionStore.currentSessionId === session.id ? 'bg-emerald-50 border border-emerald-200' : ''"
+              @click="loadSessionFromHistory(session.id)"
+            >
+              <div class="flex items-start justify-between mb-1">
+                <h4 class="font-medium text-gray-900 truncate flex-1 text-sm">{{ session.title }}</h4>
+              </div>
+              <div class="flex items-center gap-2 text-xs text-gray-500">
+                <Clock :size="12" />
+                {{ formatChatTime(session.updated_at) }}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
     <!-- Chat Area -->
     <div class="flex-1 flex flex-col overflow-hidden">
       <!-- Messages -->
       <div ref="chatContainerRef" class="flex-1 overflow-y-auto p-6 space-y-6">
         <div v-if="messages.length === 0" class="flex flex-col items-center justify-center h-full text-center">
-          <div class="w-20 h-20 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center mb-6 shadow-lg">
+          <div class="absolute top-4 right-4">
+            <button
+              @click="toggleSessionsPanel"
+              class="px-4 py-2 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 flex items-center gap-2 text-sm text-gray-700 shadow-sm"
+            >
+              <History :size="16" />
+              查看历史会话
+            </button>
+          </div>
+          <div class="w-20 h-20 bg-gradient-to-br from-emerald-600 to-teal-600 rounded-2xl flex items-center justify-center mb-6 shadow-lg">
             <Sparkles :size="40" class="text-white" />
           </div>
           <h2 class="text-2xl font-bold text-gray-900 mb-2">欢迎使用 RAG 知识库系统</h2>
@@ -306,18 +393,18 @@ function formatFileSize(bytes: number | null): string {
           <!-- User Message -->
           <div v-if="message.role === 'user'" class="flex gap-4 max-w-4xl ml-auto">
             <div class="flex-1 flex justify-end">
-              <div class="bg-blue-600 text-white px-6 py-4 rounded-2xl rounded-br-md max-w-xl">
+              <div class="bg-emerald-600 text-white px-6 py-4 rounded-2xl rounded-br-md max-w-xl">
                 <p class="whitespace-pre-wrap">{{ message.content }}</p>
               </div>
             </div>
-            <div class="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-medium flex-shrink-0">
+            <div class="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-600 to-teal-600 flex items-center justify-center text-white font-medium flex-shrink-0">
               {{ authStore.userName?.charAt(0) || 'U' }}
             </div>
           </div>
 
           <!-- Assistant Message -->
           <div v-else class="flex gap-4 max-w-4xl">
-            <div class="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-pink-600 flex items-center justify-center text-white font-medium flex-shrink-0">
+            <div class="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-600 to-teal-600 flex items-center justify-center text-white font-medium flex-shrink-0">
               <Sparkles :size="20" />
             </div>
             <div class="flex-1">
@@ -336,7 +423,7 @@ function formatFileSize(bytes: number | null): string {
                   >
                     <div class="flex items-center gap-2">
                       <FileText :size="16" />
-                      <span class="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent font-semibold">
+                      <span class="bg-gradient-to-r from-emerald-600 to-teal-600 bg-clip-text text-transparent font-semibold">
                         参考文档 ({{ message.sources.length }})
                       </span>
                     </div>
@@ -348,14 +435,14 @@ function formatFileSize(bytes: number | null): string {
                     <div
                       v-for="(source, sIndex) in message.sources"
                       :key="sIndex"
-                      class="p-4 bg-gradient-to-br from-gray-50 to-blue-50 rounded-xl border border-gray-200 hover:border-blue-300 transition-all text-sm"
+                      class="p-4 bg-gradient-to-br from-gray-50 to-emerald-50 rounded-xl border border-gray-200 hover:border-emerald-300 transition-all text-sm"
                     >
                       <div class="flex items-start justify-between mb-2">
                         <div class="flex items-center gap-2">
-                          <FileText :size="14" class="text-blue-600" />
+                          <FileText :size="14" class="text-emerald-600" />
                           <span class="font-medium text-gray-900">{{ source.filename }}</span>
                         </div>
-                        <span class="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded-full font-medium">
+                        <span class="px-2 py-1 bg-emerald-100 text-emerald-700 text-xs rounded-full font-medium">
                           {{ (source.score * 100).toFixed(0) }}% 匹配
                         </span>
                       </div>
@@ -395,8 +482,31 @@ function formatFileSize(bytes: number | null): string {
       <!-- Input Area -->
       <div class="bg-white border-t border-gray-200 p-4">
         <div class="max-w-3xl mx-auto">
+          <!-- Toolbar -->
+          <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center gap-2">
+              <button
+                @click="toggleSessionsPanel"
+                class="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg flex items-center gap-2 transition-colors"
+              >
+                <History :size="16" />
+                历史会话
+              </button>
+              <button
+                @click="createNewChat"
+                class="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg flex items-center gap-2 transition-colors"
+              >
+                <Plus :size="16" />
+                新对话
+              </button>
+            </div>
+            <div v-if="sessionStore.currentSessionId" class="text-xs text-gray-500">
+              当前会话: {{ sessionStore.currentSession?.title || '未命名' }}
+            </div>
+          </div>
+
           <div class="flex gap-3">
-            <div class="flex-1 flex items-center gap-3 bg-gray-50 rounded-xl px-4 py-3 border border-gray-200 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-200 transition-all">
+            <div class="flex-1 flex items-center gap-3 bg-slate-50 rounded-xl px-4 py-3 border border-slate-200 focus-within:border-emerald-500 focus-within:ring-2 focus-within:ring-emerald-200 transition-all">
               <Database :size="20" class="text-gray-400" />
 
               <select
@@ -426,7 +536,7 @@ function formatFileSize(bytes: number | null): string {
               v-model="userInput"
               rows="1"
               placeholder="输入你的问题..."
-              class="w-96 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-200 focus:border-blue-500 outline-none resize-none"
+              class="w-96 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-200 focus:border-emerald-500 outline-none resize-none"
               @keydown.enter.exact.prevent="sendMessage"
               :disabled="isLoading"
             />
@@ -434,7 +544,7 @@ function formatFileSize(bytes: number | null): string {
             <button
               @click="sendMessage"
               :disabled="isLoading || !userInput.trim()"
-              class="px-5 py-3 bg-blue-600 text-white font-medium rounded-xl hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              class="px-5 py-3 bg-emerald-600 text-white font-medium rounded-xl hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               <Loader2 v-if="isLoading" :size="18" class="animate-spin" />
               <Send v-else :size="18" />
@@ -454,7 +564,7 @@ function formatFileSize(bytes: number | null): string {
       <div class="p-4 border-b border-gray-200">
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-2">
-            <History :size="18" class="text-blue-600" />
+            <History :size="18" class="text-emerald-600" />
             <h2 class="font-semibold text-gray-900">会话列表</h2>
           </div>
           <button
@@ -478,7 +588,7 @@ function formatFileSize(bytes: number | null): string {
             :class="[
               'p-3 rounded-lg cursor-pointer transition-colors group',
               sessionStore.currentSessionId === session.id
-                ? 'bg-blue-50 border border-blue-200'
+                ? 'bg-emerald-50 border border-emerald-200'
                 : 'hover:bg-gray-50'
             ]"
             @click="loadSession(session.id)"
@@ -521,7 +631,7 @@ function formatFileSize(bytes: number | null): string {
               v-model="newKBName"
               type="text"
               placeholder="输入知识库名称"
-              class="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-200 focus:border-blue-500 outline-none"
+              class="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-emerald-200 focus:border-emerald-500 outline-none"
             />
           </div>
 
@@ -531,7 +641,7 @@ function formatFileSize(bytes: number | null): string {
               v-model="newKBDesc"
               rows="3"
               placeholder="输入知识库描述"
-              class="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-200 focus:border-blue-500 outline-none resize-none"
+              class="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-emerald-200 focus:border-emerald-500 outline-none resize-none"
             />
           </div>
         </div>
@@ -545,7 +655,7 @@ function formatFileSize(bytes: number | null): string {
           </button>
           <button
             @click="createKnowledgeBase"
-            class="px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700"
+            class="px-4 py-2 bg-emerald-600 text-white font-medium rounded-lg hover:bg-emerald-700"
           >
             创建
           </button>
@@ -556,21 +666,31 @@ function formatFileSize(bytes: number | null): string {
 </template>
 
 <style>
+.slide-enter-active,
+.slide-leave-active {
+  transition: transform 0.3s ease;
+}
+
+.slide-enter-from,
+.slide-leave-to {
+  transform: translateX(-100%);
+}
+
 .ai-table {
   @apply w-full border-collapse my-4;
 }
 .ai-table th {
-  @apply bg-gradient-to-r from-blue-50 to-indigo-50 text-left px-4 py-3 font-semibold text-gray-700 border border-gray-200;
+  @apply bg-gradient-to-r from-emerald-50 to-teal-50 text-left px-4 py-3 font-semibold text-gray-700 border border-gray-200;
 }
 .ai-table td {
   @apply px-4 py-3 border border-gray-200 text-gray-600;
 }
 .ai-table tr:hover td {
-  @apply bg-blue-50/50;
+  @apply bg-emerald-50/50;
 }
 
 .ai-blockquote {
-  @apply border-l-4 border-blue-500 pl-4 py-2 my-4 bg-blue-50/80 rounded-r-lg text-gray-700 italic;
+  @apply border-l-4 border-emerald-500 pl-4 py-2 my-4 bg-emerald-50/80 rounded-r-lg text-gray-700 italic;
 }
 
 .ai-list {
@@ -583,7 +703,7 @@ function formatFileSize(bytes: number | null): string {
   @apply ml-4 text-gray-700 leading-relaxed;
 }
 .ai-list-item::marker {
-  @apply text-blue-500 font-medium;
+  @apply text-emerald-500 font-medium;
 }
 
 .ai-heading {
@@ -605,10 +725,10 @@ function formatFileSize(bytes: number | null): string {
   @apply italic text-gray-600;
 }
 .ai-link {
-  @apply text-blue-600 hover:text-blue-800 underline decoration-blue-300 hover:decoration-blue-500 transition-colors;
+  @apply text-emerald-600 hover:text-emerald-800 underline decoration-emerald-300 hover:decoration-emerald-500 transition-colors;
 }
 .ai-inline-code {
-  @apply bg-gray-100 text-pink-600 px-1.5 py-0.5 rounded text-sm font-mono;
+  @apply bg-gray-100 text-teal-600 px-1.5 py-0.5 rounded text-sm font-mono;
 }
 
 pre.hljs {
@@ -626,14 +746,14 @@ pre.hljs .copy-btn {
 pre.hljs code {
   @apply block px-4 py-3 text-sm font-mono text-gray-100 overflow-x-auto;
 }
-.hljs-keyword { @apply text-pink-400; }
+.hljs-keyword { @apply text-teal-400; }
 .hljs-string { @apply text-emerald-400; }
 .hljs-number { @apply text-amber-400; }
 .hljs-comment { @apply text-gray-500 italic; }
 .hljs-function { @apply text-sky-400; }
 .hljs-class { @apply text-amber-300; }
 .hljs-variable { @apply text-orange-400; }
-.hljs-operator { @apply text-purple-400; }
+.hljs-operator { @apply text-teal-400; }
 .hljs-built_in { @apply text-cyan-400; }
 
 .ai-paragraph {

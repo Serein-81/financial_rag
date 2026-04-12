@@ -67,7 +67,7 @@
       <el-card class="stat-card overdue" shadow="hover" @click="filterByStatus('pending', true)">
         <div class="stat-content">
           <div class="stat-icon warning">
-            <el-icon :size="32"><Warning /></el-icon>
+            <el-icon :size="32"><AlertTriangle /></el-icon>
           </div>
           <div class="stat-info">
             <div class="stat-value">{{ statistics.overdue_count }}</div>
@@ -294,7 +294,7 @@
           <template #default="{ row }">
             <div class="title-cell">
               <span class="title-text">{{ row.title || row.trigger_reason }}</span>
-              <el-icon v-if="row.is_overdue" class="overdue-icon" color="#f56c6c"><WarningFilled /></el-icon>
+              <el-icon v-if="row.is_overdue" class="overdue-icon" color="#f56c6c"><AlertTriangleFilled /></el-icon>
             </div>
           </template>
         </el-table-column>
@@ -541,7 +541,7 @@ import {
   Clock,
   Loading,
   Check,
-  Warning,
+  AlertTriangle,
   Timer,
   Bell,
   Connection,

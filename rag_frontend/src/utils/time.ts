@@ -64,29 +64,49 @@ export function formatShortDate(timestamp: number): string {
  * @param dateString ISO 格式的时间字符串或时间戳
  * @returns 格式化后的时间字符串
  */
-export function formatChatTime(dateString: string | number | null | undefined): string {
+export function formatChatTime(dateString: string | number | Date | null | undefined): string {
   if (!dateString) {
-    return '未知时间'
+    return ''
   }
   
-  const date = new Date(dateString)
+  let date: Date
+  if (dateString instanceof Date) {
+    date = dateString
+  } else if (typeof dateString === 'number') {
+    date = new Date(dateString)
+  } else {
+    const str = String(dateString)
+    if (str.includes('T') || str.includes('Z')) {
+      date = new Date(str)
+    } else {
+      const match = str.match(/(\d{4})[-/]?(\d{2})[-/]?(\d{2})[T\s]?(\d{2})?:?(\d{2})?:?(\d{2})?/)
+      if (match) {
+        const [, year, month, day, hour = '0', minute = '0'] = match
+        date = new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute))
+      } else {
+        date = new Date(str)
+      }
+    }
+  }
   
   if (isNaN(date.getTime())) {
-    return '无效时间'
+    return ''
   }
   
+  const chinaTime = new Date(date.getTime() + 8 * 60 * 60 * 1000)
   const now = new Date()
-  const diffMs = now.getTime() - date.getTime()
+  const nowChina = new Date(now.getTime() + 8 * 60 * 60 * 1000)
+  const diffMs = nowChina.getTime() - chinaTime.getTime()
   const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
 
   if (diffDays === 0) {
-    return '今天 ' + date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+    return chinaTime.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
   } else if (diffDays === 1) {
-    return '昨天 ' + date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+    return '昨天 ' + chinaTime.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
   } else if (diffDays < 7) {
     return diffDays + '天前'
   } else {
-    return date.toLocaleDateString('zh-CN')
+    return chinaTime.toLocaleDateString('en-GB', { month: '2-digit', day: '2-digit' })
   }
 }
 

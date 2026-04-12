@@ -6,7 +6,7 @@ from app.schemas import SearchRequest, SearchResponse
 from app.schemas.search import SearchWithCallbackRequest, HybridSearchResponse, CallbackMessage, HybridSynonymSearchRequest
 from app.services import search_service
 from app.services.enhanced_search_service import enhanced_search_service
-from app.services.hybrid_search_service import hybrid_search_service
+from app.services.hybrid_search_service import HybridSearchService
 from app.api import deps
 from app.models.user import User
 
@@ -93,6 +93,12 @@ async def keyword_search(
             "keywords": keywords,
             "exact_match": exact_match
         }
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"关键词搜索数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"关键词搜索IO错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"关键词搜索失败: {str(e)}")
 
@@ -122,6 +128,12 @@ async def document_level_search(
             "total": len(results),
             "query": query
         }
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"文档级搜索数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"文档级搜索IO错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"文档级搜索失败: {str(e)}")
 
@@ -147,6 +159,12 @@ async def search_statistics(
             "success": True,
             "statistics": stats
         }
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"搜索统计数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"搜索统计IO错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"搜索统计失败: {str(e)}")
 
@@ -192,6 +210,12 @@ async def hybrid_search(
 
         return response
 
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"混合搜索数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"混合搜索IO错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"混合搜索失败: {str(e)}")
 
@@ -228,6 +252,20 @@ async def hybrid_search_stream(request: SearchWithCallbackRequest):
             # 发送最终结果
             yield f"event: final\ndata: {response.model_dump_json()}\n\n"
             
+        except (ValueError, KeyError) as e:
+            error_msg = CallbackMessage(
+                status="error",
+                error=f"流式搜索数据错误: {str(e)}"
+            )
+            yield f"event: error\ndata: {error_msg.model_dump_json()}\n\n"
+        except (OSError, IOError) as e:
+            error_msg = CallbackMessage(
+                status="error",
+                error=f"流式搜索IO错误: {str(e)}"
+            )
+            yield f"event: error\ndata: {error_msg.model_dump_json()}\n\n"
+        except (OSError, IOError) as e:
+            raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
         except Exception as e:
             error_msg = CallbackMessage(
                 status="error",
@@ -279,7 +317,7 @@ async def hybrid_search_with_synonym(
     t0 = time.time()
 
     try:
-        service = hybrid_search_service.__class__(
+        service = HybridSearchService(
             vector_weight=request.vector_weight,
             synonym_weight=request.synonym_weight,
             fulltext_weight=request.fulltext_weight,
@@ -304,6 +342,14 @@ async def hybrid_search_with_synonym(
             total_time=total_time
         )
 
+    except (ValueError, KeyError) as e:
+        logger.error(f"❌ 混合搜索（同义词扩展）数据错误: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=f"混合搜索数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        logger.error(f"❌ 混合搜索（同义词扩展）IO错误: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"混合搜索IO错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         logger.error(f"❌ 混合搜索（同义词扩展）失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"混合搜索失败: {str(e)}")

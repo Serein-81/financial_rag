@@ -47,7 +47,7 @@ const filteredGroups = computed(() => {
   )
 })
 
-const currentUserId = computed(() => authStore.userEmail || '')
+const currentUserId = computed(() => authStore.userId || '')
 
 onMounted(async () => {
   await Promise.all([
@@ -56,11 +56,9 @@ onMounted(async () => {
     groupChatStore.fetchNotifications()
   ])
   
-  nextTick(() => {
-    if (groupChatStore.currentGroup) {
-      scrollToBottom()
-    }
-  })
+  if (groupChatStore.currentGroup) {
+    scrollToBottomDelayed()
+  }
 })
 
 onUnmounted(() => {
@@ -68,21 +66,23 @@ onUnmounted(() => {
 })
 
 watch(() => groupChatStore.currentMessages.length, () => {
-  nextTick(() => {
-    scrollToBottom()
-  })
+  scrollToBottomDelayed()
 })
 
 watch(() => groupChatStore.currentGroup?.id, () => {
-  nextTick(() => {
-    scrollToBottom()
-  })
+  scrollToBottomDelayed()
 })
 
 function scrollToBottom() {
   if (messagesContainerRef.value) {
     messagesContainerRef.value.scrollTop = messagesContainerRef.value.scrollHeight
   }
+}
+
+function scrollToBottomDelayed() {
+  setTimeout(() => {
+    scrollToBottom()
+  }, 50)
 }
 
 async function handleCreateGroup() {
@@ -104,9 +104,7 @@ async function handleCreateGroup() {
 
 async function handleSelectGroup(groupId: string) {
   await groupChatStore.selectGroup(groupId)
-  nextTick(() => {
-    scrollToBottom()
-  })
+  scrollToBottomDelayed()
 }
 
 async function handleSendMessage() {
@@ -139,12 +137,12 @@ function getInitials(name: string): string {
 
 function getAvatarColor(name: string): string {
   const colors = [
-    'from-blue-500 to-indigo-600',
-    'from-purple-500 to-pink-600',
+    'from-emerald-500 to-teal-600',
+    'from-teal-500 to-emerald-600',
     'from-green-500 to-emerald-600',
     'from-orange-500 to-red-600',
-    'from-cyan-500 to-blue-600',
-    'from-rose-500 to-purple-600'
+    'from-cyan-500 to-teal-600',
+    'from-lime-500 to-emerald-600'
   ]
   const index = name.charCodeAt(0) % colors.length
   return colors[index]
@@ -159,7 +157,7 @@ function getRoleBadgeClass(role: string): string {
     case 'owner':
       return 'bg-amber-100 text-amber-700'
     case 'admin':
-      return 'bg-blue-100 text-blue-700'
+      return 'bg-emerald-100 text-emerald-700'
     default:
       return 'bg-gray-100 text-gray-600'
   }
@@ -184,7 +182,7 @@ function getRoleLabel(role: string): string {
       <!-- 头部 -->
       <div class="h-16 px-4 flex items-center justify-between border-b border-gray-200">
         <div class="flex items-center gap-3">
-          <div class="w-9 h-9 bg-gradient-to-br from-violet-500 to-purple-600 rounded-xl flex items-center justify-center">
+          <div class="w-9 h-9 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-xl flex items-center justify-center">
             <Users :size="20" class="text-white" />
           </div>
           <div>
@@ -194,7 +192,7 @@ function getRoleLabel(role: string): string {
         </div>
         <button
           @click="showCreateModal = true"
-          class="w-9 h-9 bg-blue-500 hover:bg-blue-600 rounded-xl flex items-center justify-center text-white transition-all hover:scale-105"
+          class="w-9 h-9 bg-emerald-500 hover:bg-emerald-600 rounded-xl flex items-center justify-center text-white transition-all hover:scale-105"
         >
           <Plus :size="20" />
         </button>
@@ -208,7 +206,7 @@ function getRoleLabel(role: string): string {
             v-model="searchQuery"
             type="text"
             placeholder="搜索群组..."
-            class="w-full pl-10 pr-4 py-2.5 bg-gray-100 border-0 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
+            class="w-full pl-10 pr-4 py-2.5 bg-slate-100 border-0 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all"
           />
         </div>
       </div>
@@ -258,7 +256,7 @@ function getRoleLabel(role: string): string {
           :class="[
             'w-full p-3 rounded-xl flex items-center gap-3 transition-all',
             groupChatStore.currentGroup?.id === group.id
-              ? 'bg-blue-50 border-2 border-blue-200'
+              ? 'bg-emerald-50 border-2 border-emerald-200'
               : 'hover:bg-gray-100 border-2 border-transparent'
           ]"
         >
@@ -284,7 +282,7 @@ function getRoleLabel(role: string): string {
           <p class="text-gray-500">暂无群组</p>
           <button
             @click="showCreateModal = true"
-            class="mt-3 text-blue-500 hover:text-blue-600 font-medium"
+            class="mt-3 text-emerald-500 hover:text-emerald-600 font-medium"
           >
             创建第一个群组
           </button>
@@ -297,14 +295,14 @@ function getRoleLabel(role: string): string {
       <!-- 空状态 -->
       <div v-if="!groupChatStore.currentGroup" class="flex-1 flex items-center justify-center">
         <div class="text-center">
-          <div class="w-20 h-20 bg-gradient-to-br from-violet-100 to-purple-100 rounded-3xl flex items-center justify-center mx-auto mb-4">
+          <div class="w-20 h-20 bg-gradient-to-br from-emerald-100 to-teal-100 rounded-3xl flex items-center justify-center mx-auto mb-4">
             <MessageSquare :size="40" class="text-violet-500" />
           </div>
           <h2 class="text-xl font-bold text-gray-900 mb-2">选择一个群组开始聊天</h2>
           <p class="text-gray-500 mb-4">在左侧选择一个群组，或创建新的群组</p>
           <button
             @click="showCreateModal = true"
-            class="px-6 py-2.5 bg-blue-500 hover:bg-blue-600 text-white font-medium rounded-xl transition-colors"
+            class="px-6 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white font-medium rounded-xl transition-colors"
           >
             创建群组
           </button>
@@ -339,14 +337,14 @@ function getRoleLabel(role: string): string {
           <div class="flex items-center gap-2">
             <button
               @click="showInviteModal = true"
-              class="p-2 hover:bg-gray-100 rounded-lg text-gray-600 hover:text-blue-600 transition-colors"
+              class="p-2 hover:bg-gray-100 rounded-lg text-gray-600 hover:text-emerald-600 transition-colors"
               title="邀请成员"
             >
               <UserPlus :size="20" />
             </button>
             <button
               @click="showMembersPanel = !showMembersPanel"
-              :class="['p-2 rounded-lg transition-colors', showMembersPanel ? 'bg-blue-50 text-blue-600' : 'hover:bg-gray-100 text-gray-600']"
+              :class="['p-2 rounded-lg transition-colors', showMembersPanel ? 'bg-emerald-50 text-emerald-600' : 'hover:bg-gray-100 text-gray-600']"
               title="群成员"
             >
               <Users :size="20" />
@@ -371,11 +369,18 @@ function getRoleLabel(role: string): string {
             <!-- 头像 -->
             <div
               :class="[
-                'w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold flex-shrink-0',
-                isOwnMessage(message.sender_id) ? 'bg-gradient-to-br from-blue-500 to-indigo-600' : 'bg-gradient-to-br from-gray-400 to-gray-500'
+                'w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold flex-shrink-0 overflow-hidden',
+                isOwnMessage(message.sender_id) ? 'bg-gradient-to-br from-emerald-500 to-teal-600' : 'bg-gradient-to-br from-gray-400 to-gray-500'
               ]"
             >
-              {{ message.sender_name?.charAt(0).toUpperCase() || '?' }}
+              <img
+                v-if="message.sender_avatar"
+                :src="message.sender_avatar"
+                :alt="message.sender_name"
+                class="w-full h-full object-cover"
+                @error="$event.target.style.display = 'none'"
+              />
+              <span v-else>{{ message.sender_name?.charAt(0).toUpperCase() || '?' }}</span>
             </div>
 
             <!-- 消息内容 -->
@@ -388,7 +393,7 @@ function getRoleLabel(role: string): string {
                 :class="[
                   'px-4 py-3 rounded-2xl max-w-full',
                   isOwnMessage(message.sender_id)
-                    ? 'bg-gradient-to-br from-blue-500 to-indigo-600 text-white rounded-br-md'
+                    ? 'bg-gradient-to-br from-emerald-500 to-teal-600 text-white rounded-br-md'
                     : 'bg-white border border-gray-200 text-gray-800 rounded-bl-md'
                 ]"
               >
@@ -412,7 +417,7 @@ function getRoleLabel(role: string): string {
                 @keydown.enter.exact.prevent="handleSendMessage"
                 placeholder="输入消息..."
                 rows="1"
-                class="w-full px-4 py-3 bg-gray-100 border-0 rounded-xl resize-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
+                class="w-full px-4 py-3 bg-slate-100 border-0 rounded-xl resize-none focus:ring-2 focus:ring-emerald-500 focus:bg-white transition-all"
               ></textarea>
             </div>
             <button
@@ -421,7 +426,7 @@ function getRoleLabel(role: string): string {
               :class="[
                 'p-3 rounded-xl transition-all',
                 newMessage.trim()
-                  ? 'bg-blue-500 hover:bg-blue-600 text-white'
+                  ? 'bg-emerald-500 hover:bg-emerald-600 text-white'
                   : 'bg-gray-200 text-gray-400 cursor-not-allowed'
               ]"
             >
@@ -450,8 +455,15 @@ function getRoleLabel(role: string): string {
           class="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50"
         >
           <div class="relative">
-            <div :class="['w-10 h-10 bg-gradient-to-br rounded-xl flex items-center justify-center text-white font-bold', getAvatarColor(member.user_name || 'U')]">
-              {{ getInitials(member.user_name || 'User') }}
+            <div :class="['w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold overflow-hidden', member.avatar_url ? '' : getAvatarColor(member.user_name || 'U')]">
+              <img
+                v-if="member.avatar_url"
+                :src="member.avatar_url"
+                :alt="member.user_name"
+                class="w-full h-full object-cover"
+                @error="$event.target.style.display = 'none'"
+              />
+              <span v-else>{{ getInitials(member.user_name || 'User') }}</span>
             </div>
             <div
               v-if="groupChatStore.onlineMembers.has(member.user_id)"
@@ -486,7 +498,7 @@ function getRoleLabel(role: string): string {
                 v-model="newGroupName"
                 type="text"
                 placeholder="输入群组名称"
-                class="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                class="w-full px-4 py-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
               />
             </div>
             <div>
@@ -495,7 +507,7 @@ function getRoleLabel(role: string): string {
                 v-model="newGroupDesc"
                 placeholder="输入群组描述"
                 rows="3"
-                class="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                class="w-full px-4 py-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent resize-none"
               ></textarea>
             </div>
           </div>
@@ -512,7 +524,7 @@ function getRoleLabel(role: string): string {
               :class="[
                 'px-6 py-2 rounded-xl font-medium transition-colors',
                 newGroupName.trim()
-                  ? 'bg-blue-500 hover:bg-blue-600 text-white'
+                  ? 'bg-emerald-500 hover:bg-emerald-600 text-white'
                   : 'bg-gray-200 text-gray-400 cursor-not-allowed'
               ]"
             >

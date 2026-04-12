@@ -2,21 +2,31 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list
-RUN apt-get update && apt-get install -y nginx && rm -rf /var/lib/apt/lists/*
+# 配置阿里云镜像源
+RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || \
+    sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list
 
-RUN pip install mcp uvicorn fastapi fastmcp sse-starlette pydantic python-multipart --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple/
+RUN apt-get update && apt-get install -y nginx curl && rm -rf /var/lib/apt/lists/*
 
+# 复制 requirements.txt 并安装依赖
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/
+
+# 复制应用代码
 COPY app/ ./app/
+COPY .env ./
 
+# 配置 nginx 反向代理
 RUN rm -f /etc/nginx/sites-enabled/default && \
     echo "server { \
     listen 8080; \
+    server_name _; \
     location / { \
         proxy_pass http://127.0.0.1:8000; \
-        proxy_set_header Host 127.0.0.1:8000; \
-        proxy_set_header X-Forwarded-Host 127.0.0.1:8000; \
+        proxy_set_header Host \$host; \
         proxy_set_header X-Real-IP \$remote_addr; \
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for; \
+        proxy_set_header X-Forwarded-Proto \$scheme; \
         proxy_http_version 1.1; \
         proxy_set_header Connection ''; \
         proxy_buffering off; \
@@ -27,4 +37,5 @@ RUN rm -f /etc/nginx/sites-enabled/default && \
 
 EXPOSE 8080
 
-CMD sh -c "python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 & sleep 3 && echo '✅ 终极反向代理启动！' && nginx -g 'daemon off;'"
+# 启动命令
+CMD sh -c "python -m uvicorn app.main:app --host 0.0.0.0 --port 8080 & sleep 2 && nginx -g 'daemon off;'"

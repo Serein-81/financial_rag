@@ -90,6 +90,10 @@ async def send_sms_code(request: SendSMSRequest):
         }
     except HTTPException:
         raise
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -117,6 +121,10 @@ async def verify_sms_code(request: VerifySMSRequest):
         }
     except HTTPException:
         raise
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -392,6 +400,10 @@ async def upload_avatar(
             filename=file.filename,
             content_type=file.content_type
         )
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"图片上传失败: {str(e)}")
 

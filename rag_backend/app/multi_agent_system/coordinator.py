@@ -19,6 +19,7 @@ from app.services.agent_service import agent_service
 from app.db.session import AsyncSessionLocal
 from app.models.audit_task import AuditTask
 from app.models.audit_result import AuditResult
+from app.core.config import settings
 
 
 class AgentCoordinator:
@@ -60,53 +61,94 @@ class AgentCoordinator:
             # 创建LLM适配器和工具管理器
             from app.agent_framework.llm.factory import LLMAdapterFactory
             from app.agent_framework.tools.tool_manager import ToolManager
+            from app.agent_framework.tools.agent_tool_registry import initialize_tool_manager, get_specialist_tools_config
             from .agents.finance_specialist import FinanceSpecialist
             from .agents.tax_specialist import TaxSpecialist
             from .agents.legal_specialist import LegalSpecialist
             from .agents.reflection_specialist import ReflectionSpecialist
-            from .agents.triage_specialist import TriageSpecialist
+            import asyncio
             
-            llm_adapter = LLMAdapterFactory.create_adapter("zhipu")
-            tool_manager = ToolManager()
+            specialist_provider = settings.get_llm_provider_for_agent("finance")
+            print(f"🔧 [协调器] 专家智能体使用 LLM: {specialist_provider}")
+            llm_adapter = LLMAdapterFactory.create_adapter(specialist_provider)
             
-            # 初始化门卫智能体（第一个初始化）
-            self.specialists["triage"] = TriageSpecialist(
-                llm_adapter=llm_adapter,
-                tool_manager=tool_manager,
-                confidence_threshold=0.8
-            )
+            # 为每个专家创建独立的工具管理器并注册工具
+            # 财务专家工具配置
+            finance_tool_manager = ToolManager()
+            finance_config = get_specialist_tools_config("finance")
+            asyncio.create_task(initialize_tool_manager(
+                finance_tool_manager,
+                include_mcp=True,
+                include_local=True,
+                tenant_id=self.tenant_id
+            ))
             
-            # 初始化三个专业智能体
+            # 税务专家工具配置
+            tax_tool_manager = ToolManager()
+            asyncio.create_task(initialize_tool_manager(
+                tax_tool_manager,
+                include_mcp=True,
+                include_local=True,
+                tenant_id=self.tenant_id
+            ))
+            
+            # 法务专家工具配置
+            legal_tool_manager = ToolManager()
+            asyncio.create_task(initialize_tool_manager(
+                legal_tool_manager,
+                include_mcp=True,
+                include_local=True,
+                tenant_id=self.tenant_id
+            ))
+            
+            # 通用工具管理器（用于反思）
+            common_tool_manager = ToolManager()
+            asyncio.create_task(initialize_tool_manager(
+                common_tool_manager,
+                include_mcp=True,
+                include_local=True,
+                tenant_id=self.tenant_id
+            ))
+            
+            # 初始化三个专业智能体（各自拥有独立工具管理器）
             self.specialists["finance"] = FinanceSpecialist(
                 llm_adapter=llm_adapter,
-                tool_manager=tool_manager
+                tool_manager=finance_tool_manager
             )
             
             self.specialists["tax"] = TaxSpecialist(
                 llm_adapter=llm_adapter,
-                tool_manager=tool_manager
+                tool_manager=tax_tool_manager
             )
             
             self.specialists["legal"] = LegalSpecialist(
                 llm_adapter=llm_adapter,
-                tool_manager=tool_manager
+                tool_manager=legal_tool_manager
             )
             
             # 初始化反思智能体
             self.specialists["reflection"] = ReflectionSpecialist(
                 llm_adapter=llm_adapter,
-                tool_manager=tool_manager
+                tool_manager=common_tool_manager
             )
             
             print("🤖 [协调器] 专业智能体初始化完成")
-            print("   ✅ 门卫智能体 (Triage)")
-            print("   ✅ 财务智能体 (Finance)")
-            print("   ✅ 税务智能体 (Tax)")
-            print("   ✅ 法务智能体 (Legal)")
+            print("   ✅ 财务智能体 (Finance) - 含网络搜索功能")
+            print("   ✅ 税务智能体 (Tax) - 含网络搜索功能")
+            print("   ✅ 法务智能体 (Legal) - 含网络搜索功能")
             print("   ✅ 反思智能体 (Reflection)")
+            print("   ☁️ MCP 工具已注册: 天气查询、位置查询、网络搜索")
             
+        except (ValueError, KeyError) as e:
+            print(f"⚠️ [协调器] 专业智能体初始化数据错误: {e}")
+            import traceback
+        except (OSError, IOError) as e:
+            print(f"⚠️ [协调器] 专业智能体初始化IO错误: {e}")
+            import traceback
         except Exception as e:
             print(f"⚠️ [协调器] 专业智能体初始化失败: {e}")
+            import traceback
+            traceback.print_exc()
             self.specialists = {}
     
     def _initialize_rag_retriever(self):
@@ -126,17 +168,23 @@ class AgentCoordinator:
             search_service = SearchService()
             
             self.rag_retriever = TenantIsolatedRAGRetriever(
-                qdrant_client=search_service.qdrant_client if hasattr(search_service, 'qdrant_client') else None,
                 embedding_service=embedding_service,
-                enable_audit=True
+                enable_audit=True,
+                search_service=search_service
             )
             
             self.tax_rag_enhancer = TaxSpecificRAGEnhancer(
                 base_retriever=self.rag_retriever
             )
             
-            print("📚 [协调器] RAG检索器初始化完成（租户隔离模式）")
+            print("📚 [协调器] RAG检索器初始化完成（租户隔离模式，使用 pgvector）")
             
+        except (ValueError, KeyError) as e:
+            print(f"⚠️ [协调器] RAG检索器初始化数据错误: {e}")
+            self.rag_retriever = None
+        except (OSError, IOError) as e:
+            print(f"⚠️ [协调器] RAG检索器初始化IO错误: {e}")
+            self.rag_retriever = None
         except Exception as e:
             print(f"⚠️ [协调器] RAG检索器初始化失败: {e}")
             self.rag_retriever = None
@@ -200,6 +248,12 @@ class AgentCoordinator:
             self.current_state["rag_contexts"] = rag_contexts
             print(f"✅ [协调器] RAG增强完成，获取 {len(rag_contexts)} 个检索上下文")
             
+        except (ValueError, KeyError) as e:
+            print(f"⚠️ [协调器] RAG增强数据错误: {e}")
+            self.current_state["rag_contexts"] = []
+        except (OSError, IOError) as e:
+            print(f"⚠️ [协调器] RAG增强IO错误: {e}")
+            self.current_state["rag_contexts"] = []
         except Exception as e:
             print(f"⚠️ [协调器] RAG增强失败: {e}")
             self.current_state["rag_contexts"] = []
@@ -296,6 +350,12 @@ class AgentCoordinator:
             
             return enhanced_findings
             
+        except (ValueError, KeyError) as e:
+            print(f"⚠️ [协调器] 发现RAG增强数据错误: {e}")
+            return [f.to_dict() for f in findings]
+        except (OSError, IOError) as e:
+            print(f"⚠️ [协调器] 发现RAG增强IO错误: {e}")
+            return [f.to_dict() for f in findings]
         except Exception as e:
             print(f"⚠️ [协调器] 发现RAG增强失败: {e}")
             return [f.to_dict() for f in findings]
@@ -404,6 +464,12 @@ class AgentCoordinator:
                 "final_report": final_report
             }
             
+        except (ValueError, KeyError) as e:
+            print(f"❌ [协调器] 审查任务数据错误: {e}")
+            self.current_state["status"] = "failed"
+        except (OSError, IOError) as e:
+            print(f"❌ [协调器] 审查任务IO错误: {e}")
+            self.current_state["status"] = "failed"
         except Exception as e:
             print(f"❌ [协调器] 审查任务失败: {e}")
             self.current_state["status"] = "failed"
@@ -573,6 +639,12 @@ class AgentCoordinator:
             print("✅ [协调器] 门卫审查阶段完成")
             return True
             
+        except (ValueError, KeyError) as e:
+            print(f"❌ [协调器] 门卫审查数据错误: {e}")
+            self.current_state["triage_passed"] = False
+        except (OSError, IOError) as e:
+            print(f"❌ [协调器] 门卫审查IO错误: {e}")
+            self.current_state["triage_passed"] = False
         except Exception as e:
             print(f"❌ [协调器] 门卫审查失败: {e}")
             self.current_state["triage_passed"] = False
@@ -619,6 +691,10 @@ class AgentCoordinator:
             
             print(f"✅ [协调器] PII脱敏完成，共处理 {len(pii_mapping)} 处敏感信息")
             
+        except (ValueError, KeyError) as e:
+            print(f"⚠️ [协调器] PII脱敏数据错误: {e}")
+        except (OSError, IOError) as e:
+            print(f"⚠️ [协调器] PII脱敏IO错误: {e}")
         except Exception as e:
             print(f"⚠️ [协调器] PII脱敏失败: {e}")
     
@@ -714,6 +790,10 @@ class AgentCoordinator:
             print(f"✅ [协调器] {agent_name} Agent 完成，发现 {len(findings)} 个问题")
             return findings
             
+        except (ValueError, KeyError) as e:
+            print(f"❌ [协调器] {agent_name} Agent 执行数据错误: {e}")
+        except (OSError, IOError) as e:
+            print(f"❌ [协调器] {agent_name} Agent 执行IO错误: {e}")
         except Exception as e:
             print(f"❌ [协调器] {agent_name} Agent 执行异常: {e}")
             
@@ -791,6 +871,10 @@ class AgentCoordinator:
                 documents=[]
             )
             print("✅ [协调器] 反思检查阶段完成")
+        except (ValueError, KeyError) as e:
+            print(f"❌ [协调器] 反思检查数据错误: {e}")
+        except (OSError, IOError) as e:
+            print(f"❌ [协调器] 反思检查IO错误: {e}")
         except Exception as e:
             print(f"❌ [协调器] 反思检查失败: {e}")
             # 设置默认值，避免后续流程中断
@@ -936,6 +1020,12 @@ class AgentCoordinator:
             
             print(f"✅ [协调器] 加载历史记忆: {len(historical_audits)} 条历史风险, {len(facts)} 条核心事实")
             
+        except (ValueError, KeyError) as e:
+            print(f"⚠️ [协调器] 加载企业记忆数据错误: {e}")
+            self.current_state["historical_risks"] = []
+        except (OSError, IOError) as e:
+            print(f"⚠️ [协调器] 加载企业记忆IO错误: {e}")
+            self.current_state["historical_risks"] = []
         except Exception as e:
             print(f"⚠️ [协调器] 加载企业记忆失败: {e}")
             self.current_state["historical_risks"] = []
@@ -977,8 +1067,10 @@ class AgentCoordinator:
                 if f.get('confidence', 0) > 0.9
             ]
             
+            from app.memory_system.base_memory import MemoryItem
+            
             for finding in high_confidence_findings[:5]:  # 最多保存5条
-                await semantic.add(
+                memory_item = MemoryItem(
                     content=finding.get('description', ''),
                     importance=0.9,
                     metadata={
@@ -987,9 +1079,14 @@ class AgentCoordinator:
                         'evidence': str(finding.get('evidence', []))
                     }
                 )
+                await semantic.add(memory_item)
             
             print(f"✅ [协调器] 归档完成: 1 条审查记录, {len(high_confidence_findings)} 条核心事实")
             
+        except (ValueError, KeyError) as e:
+            print(f"⚠️ [协调器] 归档数据错误: {e}")
+        except (OSError, IOError) as e:
+            print(f"⚠️ [协调器] 归档IO错误: {e}")
         except Exception as e:
             print(f"⚠️ [协调器] 归档失败: {e}")
     

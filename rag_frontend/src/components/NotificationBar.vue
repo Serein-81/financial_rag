@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
-import { useGroupChatStore } from '@/stores/group-chat'
-import { useAuthStore } from '@/stores/auth'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useUnifiedNotifications, type UnifiedNotification } from '@/composables/useUnifiedNotifications'
+import { isAuthenticated } from '@/utils/request'
 import {
   Bell,
   X,
@@ -12,68 +12,134 @@ import {
   UserPlus,
   UserMinus,
   Info,
+  AlertTriangle,
+  CheckCircle,
+  XCircle,
+  FileText,
+  Clock,
   ChevronRight,
   CheckCircle2,
   Circle,
-  Trash
+  PanelRight
 } from 'lucide-vue-next'
-import { formatChatTime } from '@/utils/time'
 import { useRouter } from 'vue-router'
 
-const router = useRouter()
-const groupChatStore = useGroupChatStore()
-const authStore = useAuthStore()
+const props = defineProps<{
+  modelValue: boolean
+}>()
 
-const showNotifications = ref(false)
+const emit = defineEmits<{
+  (e: 'update:modelValue', value: boolean): void
+}>()
+
+const router = useRouter()
+const {
+  notifications,
+  stats,
+  isLoading,
+  unreadCount,
+  loadNotifications,
+  markAsRead,
+  markAllAsRead,
+  deleteNotification,
+  refresh
+} = useUnifiedNotifications()
+
 const isSelectionMode = ref(false)
 const selectedNotifications = ref<Set<string>>(new Set())
+const activeCategory = ref<'all' | 'chat' | 'policy' | 'system' | 'task'>('all')
 
-const unreadCount = computed(() => groupChatStore.unreadCount)
-const notifications = computed(() => groupChatStore.notifications)
-
-function getNotificationIcon(type: string) {
-  switch (type) {
-    case 'invitation':
-      return UserPlus
-    case 'message':
-      return MessageSquare
-    case 'member_joined':
-      return UserPlus
-    case 'member_left':
-      return UserMinus
-    default:
-      return Info
+onMounted(() => {
+  if (isAuthenticated()) {
+    loadNotifications()
   }
+})
+
+watch(() => props.modelValue, (isOpen) => {
+  if (isOpen && isAuthenticated()) {
+    loadNotifications()
+  }
+})
+
+function close() {
+  emit('update:modelValue', false)
 }
 
-function getNotificationColor(type: string) {
-  switch (type) {
-    case 'invitation':
-      return 'bg-blue-500'
-    case 'message':
-      return 'bg-green-500'
-    case 'member_joined':
-      return 'bg-emerald-500'
-    case 'member_left':
-      return 'bg-gray-500'
-    default:
-      return 'bg-purple-500'
-  }
+function goToNotificationCenter() {
+  close()
+  router.push({ name: 'notifications' })
 }
 
-async function handleNotificationClick(notification: any) {
+const filteredNotifications = computed(() => {
+  if (activeCategory.value === 'all') {
+    return notifications.value
+  }
+  return notifications.value.filter(n => n.category === activeCategory.value)
+})
+
+const categories = [
+  { id: 'all', label: '全部通知', icon: Bell },
+  { id: 'chat', label: '群聊消息', icon: MessageSquare },
+  { id: 'policy', label: '政策更新', icon: FileText },
+  { id: 'task', label: '任务提醒', icon: Clock },
+  { id: 'system', label: '系统通知', icon: Info }
+]
+
+function getNotificationIcon(iconName: string) {
+  const iconMap: Record<string, any> = {
+    Bell,
+    MessageSquare,
+    UserPlus,
+    UserMinus,
+    UserCheck: UserPlus,
+    Info,
+    AlertTriangle,
+    CheckCircle,
+    XCircle,
+    FileText,
+    Clock
+  }
+  return iconMap[iconName] || Bell
+}
+
+function getCategoryBadge(category: string): string {
+  const badges: Record<string, string> = {
+    chat: 'bg-green-100 text-green-700',
+    policy: 'bg-blue-100 text-blue-700',
+    task: 'bg-purple-100 text-purple-700',
+    system: 'bg-gray-100 text-gray-700'
+  }
+  return badges[category] || 'bg-gray-100 text-gray-700'
+}
+
+function getCategoryLabel(category: string): string {
+  const labels: Record<string, string> = {
+    chat: '群聊',
+    policy: '政策',
+    task: '任务',
+    system: '系统'
+  }
+  return labels[category] || '其他'
+}
+
+async function handleNotificationClick(notification: UnifiedNotification) {
   if (isSelectionMode.value) {
     toggleSelection(notification.id)
     return
   }
-  
-  await groupChatStore.markNotificationRead(notification.id)
-  
-  if (notification.group_id) {
+
+  if (!notification.isRead) {
+    await markAsRead(notification.id)
+  }
+
+  if (notification.actionUrl) {
+    router.push(notification.actionUrl)
+    close()
+  } else if (notification.category === 'chat') {
     router.push({ name: 'group-chat' })
-    if (notification.group_id !== groupChatStore.currentGroup?.id) {
-      await groupChatStore.selectGroup(notification.group_id)
-    }
+    close()
+  } else if (notification.category === 'policy') {
+    goToNotificationCenter()
   }
 }
 
@@ -87,44 +153,39 @@ function toggleSelection(notificationId: string) {
 }
 
 function selectAll() {
-  if (selectedNotifications.value.size === notifications.value.length) {
+  if (selectedNotifications.value.size === filteredNotifications.value.length) {
     selectedNotifications.value.clear()
   } else {
-    selectedNotifications.value = new Set(notifications.value.map(n => n.id))
+    selectedNotifications.value = new Set(filteredNotifications.value.map(n => n.id))
   }
   selectedNotifications.value = new Set(selectedNotifications.value)
 }
 
 async function markSelectedAsRead() {
   for (const id of selectedNotifications.value) {
-    await groupChatStore.markNotificationRead(id)
+    await markAsRead(id)
   }
   selectedNotifications.value.clear()
   isSelectionMode.value = false
 }
 
 async function deleteSelected() {
-  const ids = Array.from(selectedNotifications.value)
-  await groupChatStore.deleteNotificationsBatch(ids)
+  for (const id of selectedNotifications.value) {
+    await deleteNotification(id)
+  }
   selectedNotifications.value.clear()
   isSelectionMode.value = false
 }
 
 async function handleMarkAllRead() {
-  await groupChatStore.markAllNotificationsRead()
+  await markAllAsRead(activeCategory.value)
 }
 
 async function handleClearAll() {
   if (confirm('确定要清空所有通知吗？')) {
-    await groupChatStore.clearAllNotifications()
-  }
-}
-
-function toggleNotifications() {
-  showNotifications.value = !showNotifications.value
-  if (!showNotifications.value) {
-    isSelectionMode.value = false
-    selectedNotifications.value.clear()
+    for (const notification of filteredNotifications.value) {
+      await deleteNotification(notification.id)
+    }
   }
 }
 
@@ -137,157 +198,190 @@ function exitSelectionMode() {
   isSelectionMode.value = false
   selectedNotifications.value.clear()
 }
+
+function formatTime(dateStr: string): string {
+  const date = new Date(dateStr)
+  const now = new Date()
+  const diff = now.getTime() - date.getTime()
+
+  const minutes = Math.floor(diff / 60000)
+  const hours = Math.floor(diff / 3600000)
+  const days = Math.floor(diff / 86400000)
+
+  if (minutes < 1) return '刚刚'
+  if (minutes < 60) return `${minutes}分钟前`
+  if (hours < 24) return `${hours}小时前`
+  if (days < 7) return `${days}天前`
+  return date.toLocaleDateString('zh-CN')
+}
 </script>
 
 <template>
-  <div class="relative inline-block">
-    <!-- 通知按钮 -->
-    <button
-      @click="toggleNotifications"
-      class="relative p-2.5 hover:bg-gray-100 rounded-xl transition-colors group bg-white shadow-sm border border-gray-200"
+  <div v-if="modelValue" class="fixed top-20 right-6 z-[100]">
+    <div
+      class="w-[600px] bg-white/95 backdrop-blur-lg rounded-2xl shadow-2xl border border-gray-200/50 overflow-hidden"
+      style="height: 750px; max-height: calc(100vh - 80px);"
+      @click.stop
     >
-      <Bell
-        :size="22"
-        :class="[
-          'transition-colors',
-          unreadCount > 0 ? 'text-blue-600' : 'text-gray-600 group-hover:text-gray-900'
-        ]"
-      />
-      <span
-        v-if="unreadCount > 0"
-        class="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] bg-red-500 text-white text-xs font-bold rounded-full flex items-center justify-center px-1"
-      >
-        {{ unreadCount > 99 ? '99+' : unreadCount }}
-      </span>
-    </button>
-
-    <!-- 通知面板 -->
-    <Transition
-      enter-active-class="transition duration-200 ease-out"
-      enter-from-class="opacity-0 scale-95 -translate-y-2"
-      enter-to-class="opacity-100 scale-100 translate-y-0"
-      leave-active-class="transition duration-150 ease-in"
-      leave-from-class="opacity-100 scale-100 translate-y-0"
-      leave-to-class="opacity-0 scale-95 -translate-y-2"
-    >
-      <div
-        v-if="showNotifications"
-        class="fixed right-4 top-16 w-[440px] max-w-[95vw] bg-white rounded-2xl shadow-2xl border border-gray-200 z-50 overflow-hidden"
-        style="height: calc(100vh - 140px);"
-      >
-        <!-- 头部 -->
-        <div class="px-5 py-4 bg-gradient-to-r from-slate-50 to-white border-b border-gray-200">
-          <div class="flex items-center justify-between">
-            <div class="flex items-center gap-3">
-              <div class="w-9 h-9 bg-blue-100 rounded-xl flex items-center justify-center">
-                <Bell :size="18" class="text-blue-600" />
-              </div>
-              <div>
-                <h3 class="font-bold text-gray-900 text-base">通知中心</h3>
-                <p class="text-xs text-gray-500">{{ notifications.length }} 条通知</p>
-              </div>
+      <div class="px-5 py-4 bg-gradient-to-r from-slate-50 to-white border-b border-gray-200">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <div class="w-9 h-9 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/30">
+              <Bell :size="18" class="text-white" />
             </div>
+            <div>
+              <h3 class="font-bold text-gray-900 text-base">通知中心</h3>
+              <p class="text-xs text-gray-500">
+                <span v-if="unreadCount > 0" class="text-blue-600 font-medium">{{ unreadCount }} 条未读</span>
+                <span v-else>暂无未读通知</span>
+              </p>
+            </div>
+          </div>
+          <div class="flex items-center gap-1">
             <button
-              @click="showNotifications = false"
+              @click.stop="goToNotificationCenter"
+              class="p-2 hover:bg-gray-100 rounded-lg text-gray-500 hover:text-blue-600 transition-colors"
+              title="详情"
+            >
+              <PanelRight :size="18" />
+            </button>
+            <button
+              @click.stop="close"
               class="p-2 hover:bg-gray-100 rounded-lg text-gray-500 transition-colors"
             >
               <X :size="18" />
             </button>
           </div>
-          
-          <!-- 操作栏 -->
-          <div class="flex items-center justify-between mt-3 pt-3 border-t border-gray-100">
-            <div class="flex items-center gap-2">
-              <template v-if="isSelectionMode">
-                <button
-                  @click="selectAll"
-                  class="px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-100 rounded-lg transition-colors flex items-center gap-1.5"
-                >
-                  <CheckCircle2 :size="14" />
-                  {{ selectedNotifications.size === notifications.length ? '取消全选' : '全选' }}
-                </button>
-              </template>
-              <template v-else>
-                <button
-                  v-if="unreadCount > 0"
-                  @click="handleMarkAllRead"
-                  class="px-3 py-1.5 text-xs font-medium text-blue-600 hover:bg-blue-50 rounded-lg transition-colors flex items-center gap-1.5"
-                >
-                  <CheckCheck :size="14" />
-                  全部已读
-                </button>
-                <button
-                  @click="enterSelectionMode"
-                  class="px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-100 rounded-lg transition-colors flex items-center gap-1.5"
-                >
-                  <Check :size="14" />
-                  选择
-                </button>
-              </template>
-            </div>
-            
-            <div class="flex items-center gap-2">
-              <template v-if="isSelectionMode">
-                <button
-                  @click="markSelectedAsRead"
-                  :disabled="selectedNotifications.size === 0"
-                  :class="[
-                    'px-3 py-1.5 text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5',
-                    selectedNotifications.size > 0
-                      ? 'text-blue-600 hover:bg-blue-50'
-                      : 'text-gray-300 cursor-not-allowed'
-                  ]"
-                >
-                  <CheckCheck :size="14" />
-                  已读
-                </button>
-                <button
-                  @click="deleteSelected"
-                  :disabled="selectedNotifications.size === 0"
-                  :class="[
-                    'px-3 py-1.5 text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5',
-                    selectedNotifications.size > 0
-                      ? 'text-red-600 hover:bg-red-50'
-                      : 'text-gray-300 cursor-not-allowed'
-                  ]"
-                >
-                  <Trash2 :size="14" />
-                  删除 ({{ selectedNotifications.size }})
-                </button>
-                <button
-                  @click="exitSelectionMode"
-                  class="px-3 py-1.5 text-xs font-medium text-gray-500 hover:bg-gray-100 rounded-lg transition-colors"
-                >
-                  取消
-                </button>
-              </template>
-              <template v-else>
-                <button
-                  v-if="notifications.length > 0"
-                  @click="handleClearAll"
-                  class="px-3 py-1.5 text-xs font-medium text-red-500 hover:bg-red-50 rounded-lg transition-colors flex items-center gap-1.5"
-                >
-                  <Trash :size="14" />
-                  清空
-                </button>
-              </template>
-            </div>
-          </div>
         </div>
 
-        <!-- 通知列表 -->
-        <div class="overflow-y-auto" style="height: calc(100% - 130px);">
+        <div class="flex gap-1 mt-3 p-1 bg-gray-100/80 rounded-xl">
+          <button
+            v-for="cat in categories"
+            :key="cat.id"
+            @click.stop="activeCategory = cat.id as any"
+            :class="[
+              'flex-1 px-2 py-1.5 text-xs font-medium rounded-lg transition-all flex items-center justify-center gap-1',
+              activeCategory === cat.id
+                ? 'bg-white text-blue-600 shadow-sm'
+                : 'text-gray-600 hover:text-gray-900'
+            ]"
+          >
+            <component :is="cat.icon" :size="14" />
+            <span>{{ cat.label }}</span>
+            <span
+              v-if="cat.id === 'all' && unreadCount > 0"
+              class="w-4 h-4 bg-blue-500 text-white text-[10px] rounded-full flex items-center justify-center"
+            >
+              {{ unreadCount > 9 ? '9+' : unreadCount }}
+            </span>
+          </button>
+        </div>
+
+        <div class="flex items-center justify-between mt-3 pt-3 border-t border-gray-100">
+          <div class="flex items-center gap-2">
+            <template v-if="isSelectionMode">
+              <button
+                @click.stop="selectAll"
+                class="px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-100 rounded-lg transition-colors flex items-center gap-1.5"
+              >
+                <CheckCircle2 :size="14" />
+                {{ selectedNotifications.size === filteredNotifications.length ? '取消全选' : '全选' }}
+              </button>
+            </template>
+            <template v-else>
+              <button
+                v-if="unreadCount > 0"
+                @click.stop="handleMarkAllRead"
+                class="px-3 py-1.5 text-xs font-medium text-blue-600 hover:bg-blue-50 rounded-lg transition-colors flex items-center gap-1.5"
+              >
+                <CheckCheck :size="14" />
+                全部已读
+              </button>
+              <button
+                @click.stop="enterSelectionMode"
+                class="px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-100 rounded-lg transition-colors flex items-center gap-1.5"
+              >
+                <Check :size="14" />
+                选择
+              </button>
+            </template>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <template v-if="isSelectionMode">
+              <button
+                @click.stop="markSelectedAsRead"
+                :disabled="selectedNotifications.size === 0"
+                :class="[
+                  'px-3 py-1.5 text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5',
+                  selectedNotifications.size > 0
+                    ? 'text-blue-600 hover:bg-blue-50'
+                    : 'text-gray-300 cursor-not-allowed'
+                ]"
+              >
+                <CheckCheck :size="14" />
+                已读
+              </button>
+              <button
+                @click.stop="deleteSelected"
+                :disabled="selectedNotifications.size === 0"
+                :class="[
+                  'px-3 py-1.5 text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5',
+                  selectedNotifications.size > 0
+                    ? 'text-red-600 hover:bg-red-50'
+                    : 'text-gray-300 cursor-not-allowed'
+                ]"
+              >
+                <Trash2 :size="14" />
+                删除 ({{ selectedNotifications.size }})
+              </button>
+              <button
+                @click.stop="exitSelectionMode"
+                class="px-3 py-1.5 text-xs font-medium text-gray-500 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                取消
+              </button>
+            </template>
+            <template v-else>
+              <button
+                v-if="filteredNotifications.length > 0"
+                @click.stop="handleClearAll"
+                class="px-3 py-1.5 text-xs font-medium text-red-500 hover:bg-red-50 rounded-lg transition-colors flex items-center gap-1.5"
+              >
+                <Trash2 :size="14" />
+                清空
+              </button>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <div class="overflow-y-auto" style="height: calc(100% - 170px);">
+        <div v-if="isLoading" class="flex items-center justify-center py-20">
+          <div class="w-8 h-8 border-3 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+        </div>
+
+        <div v-else-if="filteredNotifications.length === 0" class="flex flex-col items-center justify-center py-20">
+          <div class="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-4">
+            <Bell :size="28" class="text-gray-400" />
+          </div>
+          <p class="text-gray-500 text-sm">暂无通知</p>
+          <p class="text-gray-400 text-xs mt-1">
+            {{ activeCategory === 'all' ? '去发现更多内容吧' : '没有' + (categories.find(c => c.id === activeCategory)?.label || '') + '类通知' }}
+          </p>
+        </div>
+
+        <div v-else>
           <div
-            v-for="notification in notifications"
+            v-for="notification in filteredNotifications"
             :key="notification.id"
-            @click="handleNotificationClick(notification)"
+            @click.stop="handleNotificationClick(notification)"
             :class="[
               'px-5 py-4 border-b border-gray-100 cursor-pointer transition-all hover:bg-gray-50 flex items-start gap-3',
-              !notification.is_read ? 'bg-blue-50/30' : '',
+              !notification.isRead ? 'bg-blue-50/30' : '',
               selectedNotifications.has(notification.id) ? 'bg-blue-100/50' : ''
             ]"
           >
-            <!-- 选择框 -->
             <div v-if="isSelectionMode" class="flex-shrink-0 mt-1">
               <component
                 :is="selectedNotifications.has(notification.id) ? CheckCircle2 : Circle"
@@ -295,64 +389,52 @@ function exitSelectionMode() {
                 :class="selectedNotifications.has(notification.id) ? 'text-blue-600' : 'text-gray-400'"
               />
             </div>
-            
-            <!-- 图标 -->
-            <div :class="['w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0', getNotificationColor(notification.type)]">
-              <component :is="getNotificationIcon(notification.type)" :size="18" class="text-white" />
+
+            <div :class="['w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0', notification.bgColor]">
+              <component :is="getNotificationIcon(notification.icon)" :size="20" :class="notification.iconColor" />
             </div>
 
-            <!-- 内容 -->
             <div class="flex-1 min-w-0">
               <div class="flex items-start justify-between gap-2">
                 <div class="flex-1 min-w-0">
                   <div class="flex items-center gap-2">
-                    <p class="font-semibold text-gray-900 text-sm truncate">{{ notification.title }}</p>
-                    <span v-if="!notification.is_read" class="w-2 h-2 bg-blue-500 rounded-full flex-shrink-0"></span>
+                    <p :class="['font-semibold text-sm truncate', notification.isRead ? 'text-gray-600' : 'text-gray-900']">
+                      {{ notification.title }}
+                    </p>
+                    <span v-if="!notification.isRead" class="w-2 h-2 bg-blue-500 rounded-full flex-shrink-0"></span>
                   </div>
-                  <p class="text-sm text-gray-600 mt-1 leading-relaxed whitespace-pre-wrap break-words line-clamp-2">{{ notification.content }}</p>
+                  <p class="text-sm text-gray-500 mt-1 leading-relaxed line-clamp-2">{{ notification.message }}</p>
                 </div>
               </div>
               <div class="flex items-center justify-between mt-2">
-                <p class="text-xs text-gray-400">{{ formatChatTime(notification.created_at) }}</p>
+                <div class="flex items-center gap-2">
+                  <span :class="['px-2 py-0.5 text-xs rounded-full font-medium', getCategoryBadge(notification.category)]">
+                    {{ getCategoryLabel(notification.category) }}
+                  </span>
+                  <span class="text-xs text-gray-400">{{ formatTime(notification.createdAt) }}</span>
+                </div>
                 <div
-                  v-if="notification.group_name"
+                  v-if="notification.actionUrl || notification.category === 'chat'"
                   class="flex items-center gap-0.5 text-xs text-blue-600"
                 >
-                  <span class="truncate max-w-[120px]">{{ notification.group_name }}</span>
+                  <span>查看详情</span>
                   <ChevronRight :size="12" />
                 </div>
               </div>
             </div>
           </div>
-
-          <!-- 空状态 -->
-          <div v-if="notifications.length === 0" class="py-16 text-center">
-            <div class="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <Bell :size="36" class="text-gray-400" />
-            </div>
-            <p class="text-gray-600 font-medium text-base mb-1">暂无通知</p>
-            <p class="text-gray-400 text-sm">你将在此处收到群组消息和邀请</p>
-          </div>
-        </div>
-
-        <!-- 底部 -->
-        <div v-if="notifications.length > 0" class="px-5 py-3 bg-gray-50 border-t border-gray-200">
-          <button
-            @click="router.push({ name: 'notifications' })"
-            class="w-full py-2.5 text-sm text-blue-600 hover:text-blue-700 font-medium hover:bg-blue-100 rounded-lg transition-colors flex items-center justify-center gap-1"
-          >
-            查看全部通知
-            <ChevronRight :size="14" />
-          </button>
         </div>
       </div>
-    </Transition>
 
-    <!-- 点击外部关闭 -->
-    <div
-      v-if="showNotifications"
-      class="fixed inset-0 z-40"
-      @click="showNotifications = false"
-    ></div>
+      <div class="px-5 py-3 bg-gray-50/80 border-t border-gray-200">
+        <button
+          @click.stop="goToNotificationCenter"
+          class="w-full py-2 text-sm font-medium text-blue-600 hover:bg-blue-50 rounded-lg transition-colors flex items-center justify-center gap-2"
+        >
+          <span>查看全部通知</span>
+          <ChevronRight :size="16" />
+        </button>
+      </div>
+    </div>
   </div>
 </template>

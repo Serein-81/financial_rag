@@ -39,14 +39,14 @@ const auditTypes = [
     label: '税务审查', 
     icon: ClipboardList,
     description: '税务合规性、税收风险',
-    color: 'from-blue-500 to-cyan-600'
+    color: 'from-emerald-500 to-teal-600'
   },
   { 
     value: 'legal', 
     label: '法务审查', 
     icon: Scale,
     description: '合同风险、法律合规',
-    color: 'from-purple-500 to-pink-600'
+    color: 'from-emerald-500 to-teal-600'
   },
   { 
     value: 'compliance', 
@@ -174,11 +174,11 @@ const selectedAuditTypeInfo = computed(() => {
 </script>
 
 <template>
-  <div class="flex-1 flex flex-col bg-gradient-to-br from-purple-50 via-pink-50 to-indigo-50 h-full">
+  <div class="flex-1 flex flex-col bg-gradient-to-br from-slate-100 via-emerald-50/30 to-teal-50/30 h-full">
     <!-- Top Bar -->
     <div class="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-6 shadow-sm">
       <div class="flex items-center gap-3">
-        <div class="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-600 rounded-xl flex items-center justify-center">
+        <div class="w-10 h-10 bg-gradient-to-br from-emerald-600 to-teal-600 rounded-xl flex items-center justify-center">
           <FileBarChart :size="20" class="text-white" />
         </div>
         <div>
@@ -195,7 +195,7 @@ const selectedAuditTypeInfo = computed(() => {
         <!-- Audit Type Selection -->
         <div class="bg-white rounded-2xl p-6 shadow-lg border border-gray-200">
           <h3 class="font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            <Sparkles :size="20" class="text-purple-500" />
+            <Sparkles :size="20" class="text-emerald-500" />
             选择审查类型
           </h3>
           <div class="grid grid-cols-2 gap-4">
@@ -206,8 +206,8 @@ const selectedAuditTypeInfo = computed(() => {
               class="p-4 rounded-xl border-2 transition-all text-left"
               :class="[
                 selectedAuditType === type.value
-                  ? 'border-purple-500 bg-purple-50 shadow-md'
-                  : 'border-gray-200 bg-white hover:border-purple-300'
+                  ? 'border-emerald-500 bg-emerald-50 shadow-md'
+                  : 'border-gray-200 bg-white hover:border-emerald-300'
               ]"
             >
               <div class="flex items-center gap-3 mb-2">
@@ -229,9 +229,9 @@ const selectedAuditTypeInfo = computed(() => {
           class="border-2 border-dashed rounded-2xl p-12 text-center transition-all duration-300 cursor-pointer"
           :class="[
             isDragging 
-              ? 'border-purple-500 bg-purple-50' 
+              ? 'border-emerald-500 bg-emerald-50' 
               : selectedFiles.length > 0 
-                ? 'border-purple-400 bg-purple-50/50' 
+                ? 'border-emerald-400 bg-emerald-50/50' 
                 : 'border-gray-300 bg-white hover:border-gray-400'
           ]"
           @dragover="handleDragOver"
@@ -249,7 +249,7 @@ const selectedAuditTypeInfo = computed(() => {
           />
 
           <div v-if="selectedFiles.length === 0" class="space-y-4">
-            <div class="w-20 h-20 bg-gradient-to-br from-purple-400 to-pink-500 rounded-3xl flex items-center justify-center mx-auto shadow-xl">
+            <div class="w-20 h-20 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-3xl flex items-center justify-center mx-auto shadow-xl">
               <Upload :size="40" class="text-white" />
             </div>
             <div class="space-y-2">
@@ -274,7 +274,7 @@ const selectedAuditTypeInfo = computed(() => {
                   <span class="text-xs font-bold">×</span>
                 </button>
                 <div class="flex items-center gap-2 mb-2">
-                  <FileText :size="20" class="text-purple-600" />
+                  <FileText :size="20" class="text-emerald-600" />
                   <span class="font-medium text-gray-900 text-sm truncate max-w-[150px]">
                     {{ file.name }}
                   </span>
@@ -297,7 +297,7 @@ const selectedAuditTypeInfo = computed(() => {
           v-if="selectedFiles.length > 0"
           @click="handleStartAudit"
           :disabled="isUploading"
-          class="w-full py-4 bg-gradient-to-r from-purple-500 to-pink-600 text-white rounded-2xl hover:from-purple-600 hover:to-pink-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl flex items-center justify-center gap-3 font-medium text-lg"
+          class="w-full py-4 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-2xl hover:from-emerald-700 hover:to-teal-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl flex items-center justify-center gap-3 font-medium text-lg"
         >
           <Sparkles :size="24" v-if="!isUploading" />
           <FileBarChart :size="24" class="animate-spin" v-else />
@@ -327,9 +327,9 @@ const selectedAuditTypeInfo = computed(() => {
               
               <div v-if="uploadResult.success" class="space-y-2 text-sm text-gray-600">
                 <p>任务 ID: {{ uploadResult.taskId }}</p>
-                <div class="flex items-center gap-2 text-xs bg-blue-50 px-3 py-2 rounded-lg">
-                  <Clock :size="14" class="text-blue-600" />
-                  <span class="text-blue-700">正在跳转到结果页面...</span>
+                <div class="flex items-center gap-2 text-xs bg-emerald-50 px-3 py-2 rounded-lg">
+                  <Clock :size="14" class="text-emerald-600" />
+                  <span class="text-emerald-700">正在跳转到结果页面...</span>
                 </div>
               </div>
               
@@ -343,13 +343,13 @@ const selectedAuditTypeInfo = computed(() => {
         <!-- Process Info Card -->
         <div class="bg-white rounded-2xl p-6 shadow-md border border-gray-200">
           <h3 class="font-semibold text-gray-900 mb-4 flex items-center gap-2">
-            <Sparkles :size="20" class="text-purple-500" />
+            <Sparkles :size="20" class="text-emerald-500" />
             审查流程
           </h3>
           <div class="space-y-3">
             <div class="flex items-start gap-3">
-              <div class="w-6 h-6 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
-                <span class="text-xs font-bold text-blue-600">1</span>
+              <div class="w-6 h-6 bg-emerald-100 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
+                <span class="text-xs font-bold text-emerald-600">1</span>
               </div>
               <div>
                 <p class="font-medium text-gray-900 text-sm">文档解析</p>
@@ -358,8 +358,8 @@ const selectedAuditTypeInfo = computed(() => {
             </div>
             
             <div class="flex items-start gap-3">
-              <div class="w-6 h-6 bg-purple-100 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
-                <span class="text-xs font-bold text-purple-600">2</span>
+              <div class="w-6 h-6 bg-teal-100 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
+                <span class="text-xs font-bold text-teal-600">2</span>
               </div>
               <div>
                 <p class="font-medium text-gray-900 text-sm">并行专业审查</p>
@@ -368,8 +368,8 @@ const selectedAuditTypeInfo = computed(() => {
             </div>
             
             <div class="flex items-start gap-3">
-              <div class="w-6 h-6 bg-pink-100 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
-                <span class="text-xs font-bold text-pink-600">3</span>
+              <div class="w-6 h-6 bg-emerald-100 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
+                <span class="text-xs font-bold text-emerald-600">3</span>
               </div>
               <div>
                 <p class="font-medium text-gray-900 text-sm">冲突检测</p>

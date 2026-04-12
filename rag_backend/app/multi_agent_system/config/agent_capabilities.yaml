@@ -1,0 +1,354 @@
+# 智能体能力配置文件
+# 定义所有专家智能体的能力描述，用于动态路由
+
+agents:
+  # ==================== 财务专家 ====================
+  finance:
+    agent_id: "finance_specialist_001"
+    agent_name: "财务专家"
+    agent_type: "finance"
+    enabled: true
+    priority: 1
+
+    domains:
+      - name: "investment_analysis"
+        display_name: "投资分析"
+        weight: 1.0
+        examples:
+          - "分析某个项目的投资回报率"
+          - "评估并购标的的财务状况"
+
+      - name: "loan_financing"
+        display_name: "贷款融资"
+        weight: 1.0
+        examples:
+          - "计算贷款利息"
+          - "比较不同融资方案"
+
+      - name: "budget_management"
+        display_name: "预算管理"
+        weight: 0.9
+        examples:
+          - "制定年度预算"
+          - "预算执行分析"
+
+      - name: "financial_statement"
+        display_name: "财务报表分析"
+        weight: 1.0
+        examples:
+          - "分析资产负债表"
+          - "解读利润表"
+
+      - name: "cost_control"
+        display_name: "成本控制"
+        weight: 1.0
+        examples:
+          - "降低运营成本"
+          - "成本结构分析"
+
+      - name: "cash_flow"
+        display_name: "现金流管理"
+        weight: 0.9
+        examples:
+          - "优化现金流"
+          - "预测资金需求"
+
+      - name: "risk_analysis"
+        display_name: "财务风险分析"
+        weight: 1.0
+        examples:
+          - "分析财务风险"
+          - "风险预警指标"
+
+      - name: "profitability"
+        display_name: "盈利能力分析"
+        weight: 1.0
+        examples:
+          - "利润率分析"
+          - "盈利能力指标"
+
+    keywords:
+      # 核心关键词
+      high_weight:
+        - "财务"
+        - "投资"
+        - "融资"
+        - "贷款"
+        - "报表"
+        - "利润"
+        - "成本"
+        - "预算"
+        - "现金流"
+        - "盈利"
+        - "亏损"
+
+      medium_weight:
+        - "资产"
+        - "负债"
+        - "权益"
+        - "收益率"
+        - "回报率"
+        - "利息"
+        - "折旧"
+        - "摊销"
+        - "资金"
+        - "银行"
+
+    entities:
+      - "金额"
+      - "百分比"
+      - "时间段"
+      - "公司名称"
+      - "账户"
+      - "财务指标"
+
+    patterns:
+      - ".*财务.*"
+      - ".*投资.*分析"
+      - ".*成本.*控制"
+      - ".*利润.*"
+      - ".*报表.*"
+      - ".*预算.*"
+      - ".*现金流.*"
+      - ".*融资.*"
+      - ".*贷款.*"
+      - ".*资产负债.*"
+
+  # ==================== 税务专家 ====================
+  tax:
+    agent_id: "tax_specialist_001"
+    agent_name: "税务专家"
+    agent_type: "tax"
+    enabled: true
+    priority: 1
+
+    domains:
+      - name: "tax_calculation"
+        display_name: "税务计算"
+        weight: 1.0
+        examples:
+          - "计算增值税"
+          - "计算企业所得税"
+
+      - name: "tax_policy"
+        display_name: "税务政策咨询"
+        weight: 1.0
+        examples:
+          - "最新税收优惠政策"
+          - "税率调整影响"
+
+      - name: "tax_compliance"
+        display_name: "税务合规"
+        weight: 1.0
+        examples:
+          - "税务申报合规性"
+          - "发票管理规范"
+
+      - name: "tax_planning"
+        display_name: "税务筹划"
+        weight: 0.9
+        examples:
+          - "合理避税方案"
+          - "税负优化"
+
+      - name: "invoice_management"
+        display_name: "发票管理"
+        weight: 0.9
+        examples:
+          - "发票认证"
+          - "进项税额抵扣"
+
+      - name: "risk_warning"
+        display_name: "税务风险预警"
+        weight: 1.0
+        examples:
+          - "税务风险点"
+          - "合规风险"
+
+    keywords:
+      high_weight:
+        - "税务"
+        - "税收"
+        - "税"
+        - "纳税"
+        - "申报"
+        - "抵扣"
+        - "发票"
+        - "税率"
+        - "税额"
+        - "免税"
+        - "退税"
+
+      medium_weight:
+        - "增值税"
+        - "所得税"
+        - "消费税"
+        - "印花税"
+        - "房产税"
+        - "个税"
+        - "企业所得税"
+        - "增值税专用发票"
+        - "进项税"
+        - "销项税"
+        - "抵扣联"
+        - "税务稽查"
+        - "纳税筹划"
+
+    entities:
+      - "税种"
+      - "税率"
+      - "税额"
+      - "发票号"
+      - "税号"
+      - "公司名称"
+
+    patterns:
+      - ".*税务.*"
+      - ".*税.*计算.*"
+      - ".*发票.*"
+      - ".*申报.*"
+      - ".*抵扣.*"
+      - ".*税率.*"
+      - ".*增值税.*"
+      - ".*所得税.*"
+      - ".*纳税.*"
+
+  # ==================== 法务专家 ====================
+  legal:
+    agent_id: "legal_specialist_001"
+    agent_name: "法务专家"
+    agent_type: "legal"
+    enabled: true
+    priority: 1
+
+    domains:
+      - name: "contract_review"
+        display_name: "合同审查"
+        weight: 1.0
+        examples:
+          - "审查采购合同"
+          - "审核服务协议"
+
+      - name: "legal_consultation"
+        display_name: "法律咨询"
+        weight: 1.0
+        examples:
+          - "法律风险评估"
+          - "合规性审查"
+
+      - name: "compliance_check"
+        display_name: "合规检查"
+        weight: 1.0
+        examples:
+          - "法规符合性"
+          - "合规审计"
+
+      - name: "ip_protection"
+        display_name: "知识产权保护"
+        weight: 0.9
+        examples:
+          - "专利申请"
+          - "商标保护"
+
+      - name: "dispute_resolution"
+        display_name: "纠纷解决"
+        weight: 0.8
+        examples:
+          - "合同纠纷"
+          - "仲裁程序"
+
+    keywords:
+      high_weight:
+        - "法律"
+        - "法务"
+        - "合同"
+        - "协议"
+        - "条款"
+        - "违约"
+        - "赔偿"
+        - "合规"
+        - "纠纷"
+        - "诉讼"
+
+      medium_weight:
+        - "知识产权"
+        - "专利"
+        - "商标"
+        - "版权"
+        - "授权"
+        - "保密协议"
+        - "竞业限制"
+        - "仲裁"
+        - "起诉"
+        - "应诉"
+
+    entities:
+      - "合同类型"
+      - "当事人"
+      - "金额"
+      - "日期"
+      - "法律条款"
+
+    patterns:
+      - ".*合同.*"
+      - ".*法律.*"
+      - ".*协议.*"
+      - ".*合规.*"
+      - ".*纠纷.*"
+      - ".*违约.*"
+
+  # ==================== 通用助手 ====================
+  general:
+    agent_id: "general_assistant_001"
+    agent_name: "通用助手"
+    agent_type: "general"
+    enabled: true
+    priority: 10  # 最低优先级
+
+    domains:
+      - name: "general_query"
+        display_name: "通用查询"
+        weight: 0.5
+        examples:
+          - "问候"
+          - "闲聊"
+
+    keywords:
+      high_weight:
+        - "你好"
+        - "请问"
+        - "帮助"
+
+      medium_weight:
+        - "怎么"
+        - "如何"
+
+    patterns:
+      - "^(你好|您好|hi|hello).*"
+      - ".*吗.*"
+
+# ==================== 路由配置 ====================
+routing:
+  default_confidence_threshold: 0.5
+  max_specialists_per_request: 3
+  enable_fallback: true
+
+  # 意图到专家的默认映射
+  intent_to_specialist:
+    "financial_analysis": "finance"
+    "accounting_query": "finance"
+    "investment_advisory": "finance"
+    "cost_control": "finance"
+
+    "tax_calculation": "tax"
+    "tax_planning": "tax"
+    "tax_compliance": "tax"
+    "tax_declaration": "tax"
+
+    "contract_review": "legal"
+    "legal_consultation": "legal"
+    "compliance_check": "legal"
+    "ip_protection": "legal"
+
+    "greeting": "general"
+    "chit_chat": "general"

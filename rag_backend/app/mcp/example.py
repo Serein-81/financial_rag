@@ -1,10 +1,15 @@
 import asyncio
+import os
 import logging
-from app.mcp.client_manager import MCPClientManager, MCPToolInfo, MCP_SERVER_URL, MCP_API_KEY, MCP_TIMEOUT
+from app.mcp.client_manager import MCPClientManager, MCPToolInfo
 from app.mcp.langchain_adapter import MCPToolAdapter, LangGraphMCPIntegration
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "http://127.0.0.1:8080")
+MCP_API_KEY = os.getenv("MCP_API_KEY", "")
+MCP_TIMEOUT = int(os.getenv("MCP_TIMEOUT", "120"))
 
 
 async def example_basic_usage():
@@ -88,6 +93,10 @@ async def example_connection_resilience():
             )
             logger.info(f"✅ 成功: {result[:100]}...")
 
+    except (ValueError, KeyError) as e:
+        logger.error(f"❌ 数据失败: {e}")
+    except (OSError, IOError) as e:
+        logger.error(f"❌ IO失败: {e}")
     except Exception as e:
         logger.error(f"❌ 失败: {e}")
     finally:
@@ -128,16 +137,28 @@ async def main():
 
     try:
         await example_basic_usage()
+    except (ValueError, KeyError) as e:
+        logger.error(f"示例1数据失败: {e}")
+    except (OSError, IOError) as e:
+        logger.error(f"示例1IO失败: {e}")
     except Exception as e:
         logger.error(f"示例1失败: {e}")
 
     try:
         await example_langgraph_integration()
+    except (ValueError, KeyError) as e:
+        logger.error(f"示例2数据失败: {e}")
+    except (OSError, IOError) as e:
+        logger.error(f"示例2IO失败: {e}")
     except Exception as e:
         logger.error(f"示例2失败: {e}")
 
     try:
         await example_connection_resilience()
+    except (ValueError, KeyError) as e:
+        logger.error(f"示例3数据失败: {e}")
+    except (OSError, IOError) as e:
+        logger.error(f"示例3IO失败: {e}")
     except Exception as e:
         logger.error(f"示例3失败: {e}")
 

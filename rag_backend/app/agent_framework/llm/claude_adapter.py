@@ -147,6 +147,12 @@ class ClaudeAdapter(BaseLLMAdapter):
         except httpx.HTTPStatusError as e:
             logger.error(f"[Claude] HTTP 错误: {e.response.status_code} - {e.response.text}")
             raise Exception(f"Claude API 错误: {e.response.status_code}")
+        except (ValueError, KeyError) as e:
+            logger.error(f"[Claude] 请求数据错误: {str(e)}")
+            raise
+        except (OSError, IOError) as e:
+            logger.error(f"[Claude] 请求IO错误: {str(e)}")
+            raise
         except Exception as e:
             logger.error(f"[Claude] 请求异常: {str(e)}")
             raise
@@ -223,6 +229,12 @@ class ClaudeAdapter(BaseLLMAdapter):
         except httpx.HTTPStatusError as e:
             logger.error(f"[Claude] 流式 HTTP 错误: {e.response.status_code}")
             yield {"type": "error", "content": f"{ERROR_PREFIX}: Claude API 错误: {e.response.status_code}"}
+        except (ValueError, KeyError) as e:
+            logger.error(f"[Claude] 流式请求数据错误: {str(e)}")
+            yield {"type": "error", "content": f"{ERROR_PREFIX}: {str(e)}"}
+        except (OSError, IOError) as e:
+            logger.error(f"[Claude] 流式请求IO错误: {str(e)}")
+            yield {"type": "error", "content": f"{ERROR_PREFIX}: {str(e)}"}
         except Exception as e:
             logger.error(f"[Claude] 流式请求异常: {str(e)}")
             yield {"type": "error", "content": f"{ERROR_PREFIX}: {str(e)}"}

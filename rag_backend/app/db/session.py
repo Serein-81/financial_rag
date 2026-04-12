@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker, Session
@@ -24,7 +25,20 @@ SessionLocal = sessionmaker(
 # 这是一个连接池对象。它不会马上连接数据库，只有当真正有请求时才会建立连接。
 # echo=True 表示会在控制台打印出每一条生成的 SQL 语句，方便你调试代码。
 # (生产环境通常会把 echo 设为 False)
-engine = create_async_engine(settings.DATABASE_URL, echo=False)
+engine = create_async_engine(
+    settings.DATABASE_URL,
+    echo=False,
+    pool_pre_ping=True,
+    pool_size=10,
+    max_overflow=20,
+    pool_timeout=30,
+    connect_args={
+        "server_settings": {
+            "statement_timeout": "30000",  # 查询超时 30秒
+        },
+        "timeout": 30,  # 连接超时 30秒
+    }
+)
 
 # =========================================================
 # 3. 创建异步 Session 工厂 (SessionLocal)
@@ -50,5 +64,18 @@ async def get_db():
             yield session
         finally:
             # 无论接口代码有没有报错，这里都会执行
-            # 相当于“归还”连接，关闭 session，防止数据库连接数爆满
+            # 相当于"归还"连接，关闭 session，防止数据库连接数爆满
+            await session.close()
+
+
+@asynccontextmanager
+async def get_db_context():
+    """数据库会话上下文管理器
+
+    用于在非 FastAPI 依赖注入的场景下获取数据库会话
+    """
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+        finally:
             await session.close()

@@ -84,6 +84,7 @@ export interface Document {
   meta_info: Record<string, unknown>
   created_at: string
   error_msg: string | null
+  chunk_count: number
 }
 
 export interface UploadResponse {

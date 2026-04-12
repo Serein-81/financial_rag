@@ -136,7 +136,7 @@ class StructuredLogFormatter(logging.Formatter):
 
 class ColoredConsoleFormatter(logging.Formatter):
     """
-    带颜色的控制台格式化器
+    带颜色的控制台格式化器（标准 ANSI 颜色）
     """
     
     COLORS = {
@@ -144,18 +144,22 @@ class ColoredConsoleFormatter(logging.Formatter):
         "INFO": "\033[32m",      # 绿色
         "WARNING": "\033[33m",   # 黄色
         "ERROR": "\033[31m",     # 红色
-        "CRITICAL": "\033[35m",  # 紫色
+        "CRITICAL": "\033[35m",  # 紫红色
         "RESET": "\033[0m",
+        "BOLD": "\033[1m",
+        "DIM": "\033[2m",
     }
     
     def format(self, record: logging.LogRecord) -> str:
         color = self.COLORS.get(record.levelname, self.COLORS["RESET"])
         reset = self.COLORS["RESET"]
+        dim = self.COLORS["DIM"]
         
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        log_level = f"{color}{record.levelname:8}{reset}"
+        timestamp = f"{dim}{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}{reset}"
+        log_level = f"{color}{self.COLORS['BOLD']}{record.levelname:8}{reset}"
+        module = f"{dim}{record.name}{reset}"
         
-        return f"[{timestamp}] [{log_level}] [{record.name}] {record.getMessage()}"
+        return f"[{timestamp}] [{log_level}] [{module}] {record.getMessage()}"
 
 
 def setup_logging(
@@ -191,6 +195,7 @@ def setup_logging(
     
     if enable_console and not stdio_safe:
         console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.encoding = 'utf-8'
         console_handler.setLevel(getattr(logging, log_level.upper()))
         
         if format_type == LogFormat.JSON:
@@ -229,6 +234,7 @@ def setup_logging(
     
     if stdio_safe:
         error_handler = logging.StreamHandler(sys.stderr)
+        error_handler.encoding = 'utf-8'
         error_handler.setLevel(logging.WARNING)
         error_handler.setFormatter(
             logging.Formatter("[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s")

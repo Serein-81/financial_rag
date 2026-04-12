@@ -9,22 +9,18 @@ class KnowledgeVisibility(str):
     ENTERPRISE = "enterprise"
 
 
-# 1. 用于接收创建请求的 Schema (入参)
 class KnowledgeBaseCreate(BaseModel):
     name: str
     description: Optional[str] = None
-    visibility: str = "private"  # private 或 enterprise
+    visibility: str = "private"
 
 
-# 2. (可选) 用于更新请求的 Schema
 class KnowledgeBaseUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
-    visibility: Optional[str] = None  # 允许修改可见性
+    visibility: Optional[str] = None
 
 
-# 3. (可选) 用于返回给前端的 Schema (出参)
-# 如果你想规范返回字段，可以用这个，而不是直接返回 ORM 对象
 class KnowledgeBaseOut(BaseModel):
     id: UUID
     name: str
@@ -34,4 +30,24 @@ class KnowledgeBaseOut(BaseModel):
     created_at: datetime
 
     class Config:
-        from_attributes = True  # 允许从 ORM 对象读取数据
+        from_attributes = True
+
+
+class DocumentOut(BaseModel):
+    id: UUID
+    kb_id: UUID
+    user_id: UUID
+    filename: str
+    file_path: str
+    file_type: Optional[str]
+    file_size: Optional[int]
+    hash: Optional[str]
+    status: str
+    error_msg: Optional[str]
+    visibility: str
+    meta_info: Optional[dict] = {}
+    created_at: datetime
+    chunk_count: int = 0
+
+    class Config:
+        from_attributes = True

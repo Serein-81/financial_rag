@@ -10,21 +10,22 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5500,  // 使用 5500 端口
-    host: '0.0.0.0',  // 允许所有网络访问
-    open: false,  // 不自动打开浏览器
-    strictPort: true,  // 强制使用 5500 端口，不自动切换
+    port: 5500,
+    host: '0.0.0.0',
+    open: false,
+    strictPort: true,
     proxy: {
       '/api': {
         target: 'http://localhost:8000',
         changeOrigin: true,
-        configure: (proxy) => {
-          proxy.on('proxyReq', (proxyReq) => {
-            if (proxyReq.getHeader('origin')) {
-              proxyReq.setHeader('origin', 'http://localhost:8000')
-            }
-          })
-        },
+        secure: false,
+      },
+      '/ws-api': {
+        target: 'http://localhost:8000',
+        ws: true,
+        changeOrigin: true,
+        secure: false,
+        rewrite: (path: string) => path.replace(/^\/ws-api/, '/api'),
       },
     },
   },

@@ -33,20 +33,33 @@ class MCPToolProxy:
     async def get_client(self):
         """获取 MCP 客户端"""
         if self._client_manager is None:
-            from app.mcp.client_manager import MCPClientManager, MCP_SERVER_URL, MCP_API_KEY, MCP_TIMEOUT
+            import os
+            from app.mcp.client_manager import MCPClientManager
             
-            if not MCP_SERVER_URL:
+            mcp_server_url = os.getenv("MCP_SERVER_URL", "")
+            mcp_api_key = os.getenv("MCP_API_KEY", "")
+            mcp_timeout = int(os.getenv("MCP_TIMEOUT", "120"))
+            
+            if not mcp_server_url:
                 logger.warning("MCP_SERVER_URL 未配置，MCP 工具将不可用")
                 return None
             
             self._client_manager = MCPClientManager(
-                server_url=MCP_SERVER_URL,
-                api_key=MCP_API_KEY,
-                timeout=MCP_TIMEOUT
+                server_url=mcp_server_url,
+                api_key=mcp_api_key,
+                timeout=mcp_timeout
             )
             try:
                 await self._client_manager.connect()
-                logger.info(f"✅ MCP 工具代理已连接到 {MCP_SERVER_URL}")
+                logger.info(f"✅ MCP 工具代理已连接到 {mcp_server_url}")
+            except (ValueError, KeyError) as e:
+                logger.error(f"❌ MCP 连接数据失败: {e}")
+                self._client_manager = None
+                return None
+            except (OSError, IOError) as e:
+                logger.error(f"❌ MCP 连接IO失败: {e}")
+                self._client_manager = None
+                return None
             except Exception as e:
                 logger.error(f"❌ MCP 连接失败: {e}")
                 self._client_manager = None
@@ -72,6 +85,12 @@ class MCPToolProxy:
         try:
             result = await client.call_tool(tool_name, **kwargs)
             return result
+        except (ValueError, KeyError) as e:
+            logger.error(f"MCP 工具调用数据失败: {tool_name} - {e}")
+            return f"错误: 调用 {tool_name} 失败 - {str(e)}"
+        except (OSError, IOError) as e:
+            logger.error(f"MCP 工具调用IO失败: {tool_name} - {e}")
+            return f"错误: 调用 {tool_name} 失败 - {str(e)}"
         except Exception as e:
             logger.error(f"MCP 工具调用失败: {tool_name} - {e}")
             return f"错误: 调用 {tool_name} 失败 - {str(e)}"
@@ -139,6 +158,10 @@ async def get_all_mcp_tools_as_langchain_tools() -> list:
                 lc_tool = create_mcp_tool_wrapper(tool_name, config)
                 langchain_tools.append(lc_tool)
                 logger.info(f"✅ 注册 MCP 工具: {tool_name}")
+            except (ValueError, KeyError) as e:
+                logger.error(f"❌ 注册 MCP 工具数据失败: {tool_name} - {e}")
+            except (OSError, IOError) as e:
+                logger.error(f"❌ 注册 MCP 工具IO失败: {tool_name} - {e}")
             except Exception as e:
                 logger.error(f"❌ 注册 MCP 工具失败: {tool_name} - {e}")
     

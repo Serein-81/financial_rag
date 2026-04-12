@@ -63,9 +63,10 @@ export const chatApi = {
     query: string
     session_id?: string | null
   }): AsyncGenerator<{
-    type: 'init' | 'chunk' | 'done'
+    type: 'init' | 'chunk' | 'done' | 'sources'
     session_id?: string
     content?: string
+    sources?: any[]
   }, void, unknown> {
     const token = localStorage.getItem('rag_token')
 
@@ -108,14 +109,6 @@ export const chatApi = {
             yield event
           } catch (error) {
             console.error('Failed to parse SSE line:', line, error)
-          }
-        } else if (line.trim()) {
-          // 处理非标准格式的数据（sources信息）
-          if (line.startsWith('__SOURCES__:')) {
-            yield {
-              type: 'chunk',
-              content: line
-            }
           }
         }
       }

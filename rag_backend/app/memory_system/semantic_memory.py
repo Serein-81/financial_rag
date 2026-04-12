@@ -239,7 +239,7 @@ class SemanticMemory(BaseMemory):
                 if self.graph_builder and settings.ENABLE_ENTITY_EXTRACTION:
                     try:
                         await self._build_knowledge_graph_for_memory(
-                            memory_id=int(item.id),
+                            memory_id=item.id,
                             content=item.content
                         )
                     except Exception as e:
@@ -494,14 +494,14 @@ class SemanticMemory(BaseMemory):
 
     async def _build_knowledge_graph_for_memory(
         self,
-        memory_id: int,
+        memory_id: str,
         content: str
     ) -> None:
         """
         为记忆构建知识图谱
 
         Args:
-            memory_id: 记忆 ID
+            memory_id: 记忆 ID (UUID字符串)
             content: 记忆内容
         """
         if not self.graph_builder:
@@ -678,3 +678,121 @@ class SemanticMemory(BaseMemory):
             ],
             "graph_nodes": len(self.knowledge_graph)
         }
+
+    async def add_user_memory(
+        self,
+        content: str,
+        memory_category: str,
+        confidence: float = 0.8,
+        source: str = "",
+        extraction_type: str = "fact"
+    ) -> bool:
+        """
+        添加用户记忆（事实、偏好、纠正）
+        
+        与普通记忆的区别：
+        - 记忆类型固定为 user_memory
+        - 包含提取类型标签（fact/preference/correction）
+        - 高置信度自动设置高重要性
+        
+        Args:
+            content: 记忆内容
+            memory_category: 类别（identity/company/business/preference/correction）
+            confidence: 置信度（用于计算重要性）
+            source: 来源文本
+            extraction_type: 提取类型（fact/preference/correction）
+            
+        Returns:
+            是否添加成功
+        """
+        try:
+            # 构建用户记忆内容
+            formatted_content = f"[{memory_category.upper()}] {content}"
+            if source:
+                formatted_content += f" (来源: {source[:100]}...)"
+            
+            # 根据置信度设置重要性
+            importance = min(1.0, confidence + 0.1)
+            
+            # 创建记忆项
+            item = MemoryItem(
+                content=formatted_content,
+                role="user",
+                importance=importance,
+                metadata={
+                    "memory_type": "user_memory",
+                    "extraction_type": extraction_type,
+                    "category": memory_category,
+                    "confidence": confidence,
+                    "source": source,
+                    "user_id": self.user_id
+                }
+            )
+            
+            # 添加到语义记忆
+            await self.add(item)
+            
+            print(f"✅ [语义记忆] 添加用户记忆 | 类型: {extraction_type} | 类别: {memory_category}")
+            return True
+            
+        except Exception as e:
+            print(f"❌ [语义记忆] 添加用户记忆失败: {e}")
+            return False
+
+    async def get_user_memories(
+        self,
+        extraction_type: Optional[str] = None,
+        category: Optional[str] = None,
+        top_k: int = 20
+    ) -> List[MemoryItem]:
+        """
+        获取用户记忆
+        
+        Args:
+            extraction_type: 过滤类型（fact/preference/correction）
+            category: 过滤类别（identity/company/business/preference/correction）
+            top_k: 返回数量
+            
+        Returns:
+            符合条件的用户记忆列表
+        """
+        await self.load_from_db()
+        
+        filtered_memories = [
+            m for m in self.memories
+            if m.metadata.get("memory_type") == "user_memory"
+        ]
+        
+        # 按类型过滤
+        if extraction_type:
+            filtered_memories = [
+                m for m in filtered_memories
+                if m.metadata.get("extraction_type") == extraction_type
+            ]
+        
+        # 按类别过滤
+        if category:
+            filtered_memories = [
+                m for m in filtered_memories
+                if m.metadata.get("category") == category
+            ]
+        
+        # 按重要性排序
+        filtered_memories.sort(key=lambda m: m.importance, reverse=True)
+        
+        # 限制数量
+        filtered_memories = filtered_memories[:top_k]
+        
+        return filtered_memories
+
+    async def get_user_facts(self, top_k: int = 10) -> List[MemoryItem]:
+        """获取用户事实记忆"""
+        return await self.get_user_memories(extraction_type="fact", top_k=top_k)
+
+    async def get_user_preferences(self, top_k: int = 10) -> List[MemoryItem]:
+        """获取用户偏好记忆"""
+        return await self.get_user_memories(extraction_type="preference", top_k=top_k)
+
+    async def get_user_corrections(self, top_k: int = 10) -> List[MemoryItem]:
+        """获取用户纠正记忆"""
+        return await self.get_user_memories(extraction_type="correction", top_k=top_k)

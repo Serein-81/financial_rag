@@ -15,7 +15,7 @@ export const auditApi = {
   async createTask(data: CreateAuditTaskRequest): Promise<AuditTask> {
     return request<AuditTask>('/audit/tasks', {
       method: 'POST',
-      body: JSON.stringify(data),
+      data: JSON.stringify(data),
     })
   },
 

@@ -5,14 +5,32 @@
 
 from fastapi import Request, HTTPException, status
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
 from sqlalchemy import text
 from app.db.session import AsyncSessionLocal
 from app.core.security import decode_access_token
+from app.core.exceptions import TokenExpiredException, TokenInvalidException
 from contextvars import ContextVar
 import logging
 import uuid
 
 logger = logging.getLogger(__name__)
+
+
+def safe_error_str(e: Exception) -> str:
+    """Safely convert exception to string, handling all encoding scenarios"""
+    try:
+        error_str = str(e)
+        try:
+            return error_str.encode('utf-8', errors='replace').decode('utf-8', errors='replace')
+        except (UnicodeDecodeError, UnicodeEncodeError):
+            return error_str.encode('ascii', errors='replace').decode('ascii', errors='replace')
+    except Exception:
+        try:
+            return repr(e)
+        except Exception:
+            return "Error converting exception to string"
+
 
 # 使用 ContextVar 来存储租户上下文，解决异步并发问题
 tenant_context: ContextVar[str] = ContextVar('tenant_context', default=None)
@@ -46,9 +64,12 @@ class TenantContextMiddleware(BaseHTTPMiddleware):
         "/openapi.json",
         "/health",
         "/api/health",
+        "/api/v1/health",
+        "/api/v1/health/detailed",
         "/api/v1/chat-logs/test",
         "/api/v1/search/hybrid",
         "/api/v1/search/hybrid/stream",
+        "/api/v1/search/hybrid/synonym",
         "/api/v1/search/query",
         "/api/v1/sessions",
         "/api/v1/sessions/",
@@ -57,12 +78,28 @@ class TenantContextMiddleware(BaseHTTPMiddleware):
         "/api/v1/chat/completions",
         "/api/v1/chat/agent_chat",
         "/api/v1/chat/agent_chat_stream",
+        "/api/v1/a2a",
+        "/api/v1/a2a/",
+        "/api/v1/tenant-settings",
+        "/api/v1/multi-agent/health",
+        "/api/v1/multi-agent/monitor/health",
+        "/api/v1/multi-agent/metrics",
+        "/api/v1/multi-agent/pipelines/active",
+        "/api/v1/financial-data/download-template",
+        "/api/v1/financial-data/download-test-templates",
+        "/api/v1/financial-data",
+        "/api/v1/financial-data/",
+        "/debug/ping",
+        "/debug/test-upload",
+        "/api/debug/ping",
+        "/api/debug/test-upload",
+        "/api/debug/tax-upload-diagnostic",
     ]
-    
+
     async def dispatch(self, request: Request, call_next):
         """处理请求"""
 
-        # 🔥 修复：跳过 OPTIONS 请求（CORS 预检请求）
+        # 跳过 OPTIONS 请求
         if request.method == "OPTIONS":
             return await call_next(request)
 
@@ -70,18 +107,39 @@ class TenantContextMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         # 检查是否是排除路径
-        excluded = any(request.url.path.startswith(path) for path in self.EXCLUDED_PATHS)
-        logger.info(f"🌐 [TenantMiddleware] 请求路径: {request.url.path}, 排除检查: {excluded}, 排除列表: {self.EXCLUDED_PATHS}")
+        request_path = str(request.url.path)
+        excluded = any(request_path.startswith(path) for path in self.EXCLUDED_PATHS)
         if excluded:
             return await call_next(request)
         
-        # 提取 tenant_id 和 user_id
-        tenant_id = await self.extract_tenant_id(request)
-        user_id = await self.extract_user_id(request)
+        payload = await self._extract_jwt_payload(request)
+        
+        # 检查 Token 是否过期或无效
+        if payload and payload.get("__token_expired__"):
+            print(f"❌ [AUTH] Token expired: {request.url.path}")
+            return JSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content={"detail": "Login expired, please login again"}
+            )
+        
+        if payload and payload.get("__token_invalid__"):
+            print(f"❌ [AUTH] Token invalid: {request.url.path}")
+            return JSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content={"detail": "Login session invalid, please login again"}
+            )
+        
+        user_id = payload.get("sub") if payload else None
+        
+        # 从 JWT 中获取 tenant_id
+        tenant_id = None
+        if payload:
+            tenant_id = payload.get("tenant_id")
+            if not tenant_id and user_id:
+                tenant_id = await self.get_user_tenant_id(user_id)
         
         if not tenant_id:
-            # 如果无法提取 tenant_id，拒绝访问
-            logger.warning(f"无法提取 tenant_id: {request.url.path}")
+            print(f"❌ [AUTH] Missing tenant_id: {request.url.path}")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Missing tenant context"
@@ -92,23 +150,45 @@ class TenantContextMiddleware(BaseHTTPMiddleware):
         user_token = user_context.set(user_id) if user_id else None
         
         try:
-            # 将上下文信息附加到请求状态
             request.state.tenant_id = tenant_id
             request.state.user_id = user_id
-            request.state.request_id = str(uuid.uuid4())  # 添加请求ID用于追踪
+            request.state.request_id = str(uuid.uuid4())
             
-            logger.debug(f"设置租户上下文: {tenant_id}, 用户: {user_id}, 请求: {request.state.request_id}")
+            # 只在慢路径打印
+            if "/tax-reports" in request.url.path:
+                print(f"🏠 [{user_id[:8]}] {request.method} {request.url.path}")
             
-            # 继续处理请求
             response = await call_next(request)
             
             return response
             
+        except (ValueError, KeyError) as e:
+            try:
+                logger.error(f"Request data error: {safe_error_str(e)}, tenant: {tenant_id}")
+            except Exception:
+                logger.error(f"Request data error: <failed to format error message>, tenant: {tenant_id}")
+            try:
+                safe_detail = safe_error_str(e)
+            except Exception:
+                safe_detail = "数据解析错误"
+            raise HTTPException(status_code=400, detail=safe_detail)
+        except (OSError, IOError) as e:
+            try:
+                logger.error(f"Request IO error: {safe_error_str(e)}, tenant: {tenant_id}")
+            except Exception:
+                logger.error(f"Request IO error: <failed to format error message>, tenant: {tenant_id}")
+            try:
+                safe_detail = safe_error_str(e)
+            except Exception:
+                safe_detail = "IO错误"
+            raise HTTPException(status_code=500, detail=safe_detail)
         except Exception as e:
-            logger.error(f"处理请求失败: {e}, 租户: {tenant_id}")
+            try:
+                logger.error(f"Request failed: {safe_error_str(e)}, tenant: {tenant_id}")
+            except Exception:
+                logger.error(f"Request failed: <failed to format error message>, tenant: {tenant_id}")
             raise
         finally:
-            # 清理上下文变量
             tenant_context.reset(tenant_token)
             if user_token:
                 user_context.reset(user_token)
@@ -126,54 +206,67 @@ class TenantContextMiddleware(BaseHTTPMiddleware):
         # 1. 尝试从 Header 提取
         tenant_id = request.headers.get("X-Tenant-ID")
         if tenant_id:
-            logger.debug(f"从 Header 提取 tenant_id: {tenant_id}")
+            logger.debug(f"Extract tenant_id from Header: {tenant_id}")
             return tenant_id
         
-        # 2. 尝试从 JWT Token 提取
+        # 2. 尝试从 JWT Token 提取（只解析一次）
+        payload = await self._extract_jwt_payload(request)
+        if payload:
+            user_id = payload.get("sub")
+            
+            # 从 JWT 中直接获取 tenant_id（如果有）
+            tenant_id = payload.get("tenant_id")
+            if tenant_id:
+                logger.debug(f"Extract tenant_id from JWT: {tenant_id}")
+                return tenant_id
+            
+            # 3. 从数据库查询用户的 tenant_id
+            if user_id:
+                tenant_id = await self.get_user_tenant_id(user_id)
+                if tenant_id:
+                    logger.debug(f"Query tenant_id from database: {tenant_id}")
+                    return tenant_id
+                else:
+                    logger.warning(f"Database returned empty tenant_id for user_id: {user_id}")
+        
+        logger.warning(f"No Authorization header found or invalid format")
+        return None
+    
+    async def _extract_jwt_payload(self, request: Request) -> dict:
+        """提取 JWT Payload（只解析一次）"""
         auth_header = request.headers.get("Authorization")
         if auth_header and auth_header.startswith("Bearer "):
             token = auth_header.split(" ")[1]
-            logger.info(f"尝试从 JWT 提取 tenant_id, token 长度: {len(token)}")
             try:
                 payload = decode_access_token(token)
-                logger.info(f"JWT payload: {payload}")
-                if payload:  # 检查 payload 是否为 None
-                    user_id = payload.get("sub")
-                    
-                    # 从 JWT 中直接获取 tenant_id（如果有）
-                    tenant_id = payload.get("tenant_id")
-                    if tenant_id:
-                        logger.debug(f"从 JWT 提取 tenant_id: {tenant_id}")
-                        return tenant_id
-                    
-                    # 3. 从数据库查询用户的 tenant_id
-                    if user_id:
-                        logger.info(f"从数据库查询 user_id: {user_id} 的 tenant_id")
-                        tenant_id = await self.get_user_tenant_id(user_id)
-                        if tenant_id:
-                            logger.debug(f"从数据库查询 tenant_id: {tenant_id}")
-                            return tenant_id
-                        else:
-                            logger.warning(f"数据库查询返回空的 tenant_id for user_id: {user_id}")
-                
+                return payload
+            except TokenExpiredException:
+                return {"__token_expired__": True}
+            except TokenInvalidException as e:
+                logger.warning(f"JWT Token invalid: {e.message}")
+                return {"__token_invalid__": True}
+            except (ValueError, KeyError) as e:
+                try:
+                    logger.error(f"JWT Token data error: {safe_error_str(e)}")
+                except Exception:
+                    logger.error("JWT Token data error: <failed to format error message>")
+            except (OSError, IOError) as e:
+                try:
+                    logger.error(f"JWT Token IO error: {safe_error_str(e)}")
+                except Exception:
+                    logger.error("JWT Token IO error: <failed to format error message>")
             except Exception as e:
-                logger.error(f"解析 JWT Token 失败: {e}")
-        else:
-            logger.warning(f"没有找到 Authorization header 或格式不正确")
-        
+                try:
+                    logger.error(f"JWT Token parsing failed: {safe_error_str(e)}")
+                except Exception:
+                    logger.error("JWT Token parsing failed: <failed to format error message>")
         return None
     
     async def extract_user_id(self, request: Request) -> str:
-        """从请求中提取 user_id"""
-        auth_header = request.headers.get("Authorization")
-        if auth_header and auth_header.startswith("Bearer "):
-            token = auth_header.split(" ")[1]
-            try:
-                payload = decode_access_token(token)
-                if payload:
-                    return payload.get("sub")
-            except Exception as e:
-                logger.error(f"提取用户 ID 失败: {e}")
+        """从请求中提取 user_id（复用 JWT 解析结果）"""
+        payload = await self._extract_jwt_payload(request)
+        if payload:
+            return payload.get("sub")
         return None
 
 
@@ -187,8 +280,23 @@ class TenantContextMiddleware(BaseHTTPMiddleware):
                 )
                 row = result.fetchone()
                 return row[0] if row else None
+            except (ValueError, KeyError) as e:
+                try:
+                    logger.error(f"Query user tenant_id data error: {safe_error_str(e)}")
+                except Exception:
+                    logger.error("Query user tenant_id data error: <failed to format error message>")
+                return None
+            except (OSError, IOError) as e:
+                try:
+                    logger.error(f"Query user tenant_id IO error: {safe_error_str(e)}")
+                except Exception:
+                    logger.error("Query user tenant_id IO error: <failed to format error message>")
+                return None
             except Exception as e:
-                logger.error(f"查询用户 tenant_id 失败: {e}")
+                try:
+                    logger.error(f"Query user tenant_id failed: {safe_error_str(e)}")
+                except Exception:
+                    logger.error("Query user tenant_id failed: <failed to format error message>")
                 return None
 
 
@@ -256,10 +364,23 @@ async def set_tenant_context_for_db(session, tenant_id: str, user_id: str = None
                 text(f"SET LOCAL app.current_user_id = '{safe_user_id}'")
             )
         
-        logger.debug(f"已设置数据库租户上下文: {tenant_id}, 用户: {user_id}")
+        logger.debug(f"Database tenant context set: tenant={tenant_id}, user={user_id}")
         
+    except (ValueError, KeyError) as e:
+        try:
+            logger.warning(f"Set database tenant context data error: {safe_error_str(e)}")
+        except Exception:
+            logger.warning("Set database tenant context data error: <failed to format error message>")
+    except (OSError, IOError) as e:
+        try:
+            logger.warning(f"Set database tenant context IO error: {safe_error_str(e)}")
+        except Exception:
+            logger.warning("Set database tenant context IO error: <failed to format error message>")
     except Exception as e:
-        logger.warning(f"设置数据库租户上下文失败: {e}")
+        try:
+            logger.warning(f"Set database tenant context failed: {safe_error_str(e)}")
+        except Exception:
+            logger.warning("Set database tenant context failed: <failed to format error message>")
         # 不抛出异常，让请求继续处理
 
 # 为了向后兼容，添加别名

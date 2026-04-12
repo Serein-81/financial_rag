@@ -33,6 +33,38 @@ export interface TaxReportUploadRequest {
   description?: string
 }
 
+export interface DuplicateFileResponse {
+  success: false
+  error_type: 'DUPLICATE_FILE'
+  message: string
+  details: {
+    original_filename: string
+    existing_report_id: string
+    existing_status: TaxReportStatusEnum
+    existing_confidence_score: number | null
+    existing_risk_level: RiskLevelEnum | null
+    created_at: string
+    suggestion: string
+  }
+}
+
+export interface TaxIssue {
+  id: string
+  severity: RiskLevelEnum
+  category: string
+  description: string
+  evidence: string[]
+  legal_basis?: string[]
+  recommendation?: string
+  confidence: number
+}
+
+export interface RAGReference {
+  content: string
+  source: string
+  relevance: number
+}
+
 export interface TaxReport {
   id: string
   tenant_id: string
@@ -52,6 +84,9 @@ export interface TaxReport {
   risk_level?: RiskLevelEnum
   needs_human_review: boolean
   review_request_id?: string
+  issues: TaxIssue[]
+  rag_references: RAGReference[]
+  tax_validation_result?: TaxValidationResult
   created_at: string
   updated_at: string
   completed_at?: string
@@ -115,21 +150,28 @@ export interface KeyMetrics {
 }
 
 export interface TaxIssue {
-  issue_type: string
-  severity: 'low' | 'medium' | 'high' | 'critical'
+  id?: string
+  issue_type?: string
+  category?: string
+  severity?: 'low' | 'medium' | 'high' | 'critical' | 'info'
+  risk_level?: 'low' | 'medium' | 'high' | 'critical' | 'info'
   description: string
-  location: string
+  location?: string
   amount?: number
   tax_type?: string
   reference?: string
   suggestion?: string
+  recommendations?: string[]
+  evidence?: string[]
+  confidence?: number
+  source?: 'tax' | 'finance' | 'legal'
 }
 
 export interface TaxValidationResult {
-  is_valid: boolean
+  is_valid?: boolean
   errors: TaxIssue[]
   warnings: TaxIssue[]
-  validation_rules: {
+  validation_rules?: {
     rule_name: string
     status: 'passed' | 'failed' | 'warning'
     details?: string
@@ -137,11 +179,13 @@ export interface TaxValidationResult {
 }
 
 export interface RAGReference {
-  document_id: string
-  document_name: string
-  relevance_score: number
-  content_snippet: string
-  source: string
+  content?: string
+  content_snippet?: string
+  source?: string
+  document_id?: string
+  document_name?: string
+  relevance_score?: number
+  relevance?: number
 }
 
 export interface TaxIndicator {

@@ -185,8 +185,8 @@ function getInitials(name: string): string {
 
 function getAvatarColor(name: string): string {
   const colors = [
-    'from-blue-500 to-indigo-600',
-    'from-purple-500 to-pink-600',
+    'from-emerald-500 to-teal-600',
+    'from-emerald-500 to-teal-600',
     'from-green-500 to-emerald-600',
     'from-orange-500 to-red-600'
   ]
@@ -224,7 +224,7 @@ function getAvatarColor(name: string): string {
       <div class="mb-6">
         <div class="flex items-center justify-between mb-2">
           <div class="flex items-center gap-3">
-            <div class="w-12 h-12 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl flex items-center justify-center">
+            <div class="w-12 h-12 bg-gradient-to-br from-emerald-600 to-teal-600 rounded-2xl flex items-center justify-center">
               <BarChart3 :size="24" class="text-white" />
             </div>
             <div>
@@ -241,7 +241,7 @@ function getAvatarColor(name: string): string {
             <div
               :class="[
                 'px-4 py-2 rounded-xl font-medium flex items-center gap-2',
-                isAdmin ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'
+                isAdmin ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'
               ]"
             >
               <component :is="isAdmin ? Crown : UserCheck" :size="18" />
@@ -266,7 +266,7 @@ function getAvatarColor(name: string): string {
             :class="[
               'px-4 py-2 rounded-lg font-medium transition-all',
               timeRange === range
-                ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/30'
+                ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/30'
                 : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
             ]"
           >
@@ -288,8 +288,8 @@ function getAvatarColor(name: string): string {
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
           <div class="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
             <div class="flex items-center justify-between mb-3">
-              <div class="w-11 h-11 bg-blue-100 rounded-xl flex items-center justify-center">
-                <Users :size="22" class="text-blue-600" />
+              <div class="w-11 h-11 bg-emerald-100 rounded-xl flex items-center justify-center">
+                <Users :size="22" class="text-emerald-600" />
               </div>
             </div>
             <div class="text-3xl font-bold text-gray-900 mb-1">{{ formatNumber(adminStats.total_users) }}</div>
@@ -320,8 +320,8 @@ function getAvatarColor(name: string): string {
 
           <div class="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
             <div class="flex items-center justify-between mb-3">
-              <div class="w-11 h-11 bg-purple-100 rounded-xl flex items-center justify-center">
-                <Activity :size="22" class="text-purple-600" />
+              <div class="w-11 h-11 bg-teal-100 rounded-xl flex items-center justify-center">
+                <Activity :size="22" class="text-teal-600" />
               </div>
             </div>
             <div class="text-3xl font-bold text-gray-900 mb-1">{{ formatNumber(adminStats.total_sessions) }}</div>
@@ -357,8 +357,8 @@ function getAvatarColor(name: string): string {
           <div class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
             <div class="flex items-center justify-between mb-4">
               <div class="flex items-center gap-3">
-                <div class="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center">
-                  <Users :size="20" class="text-blue-600" />
+                <div class="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center">
+                  <Users :size="20" class="text-emerald-600" />
                 </div>
                 <div>
                   <h3 class="font-bold text-gray-900">活跃用户排名</h3>
@@ -433,7 +433,7 @@ function getAvatarColor(name: string): string {
                 </div>
                 <div class="h-2 bg-gray-100 rounded-full overflow-hidden">
                   <div
-                    class="h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all duration-500"
+                    class="h-full bg-gradient-to-r from-emerald-500 to-teal-500 rounded-full transition-all duration-500"
                     :style="{ width: `${Math.min((group.message_count / Math.max(...groupStats.map(g => g.message_count || 1))) * 100, 100)}%` }"
                   ></div>
                 </div>
@@ -499,9 +499,9 @@ function getAvatarColor(name: string): string {
               >
                 <span class="w-16 text-xs text-gray-500">{{ day.date }}</span>
                 <div class="flex-1 flex items-center gap-2">
-                  <div class="flex-1 h-6 bg-blue-50 rounded overflow-hidden">
+                  <div class="flex-1 h-6 bg-emerald-50 rounded overflow-hidden">
                     <div
-                      class="h-full bg-blue-500 rounded transition-all duration-300"
+                      class="h-full bg-emerald-500 rounded transition-all duration-300"
                       :style="{ width: `${Math.min((day.sessions / Math.max(...adminStats.daily_stats.map(d => d.sessions))) * 100, 100)}%` }"
                     ></div>
                   </div>
@@ -520,7 +520,7 @@ function getAvatarColor(name: string): string {
               <div class="flex items-center gap-4 pt-2 border-t border-gray-100">
                 <span class="w-16"></span>
                 <div class="flex-1 flex items-center gap-2">
-                  <div class="w-3 h-3 bg-blue-500 rounded"></div>
+                  <div class="w-3 h-3 bg-emerald-500 rounded"></div>
                   <span class="text-xs text-gray-500">会话数</span>
                 </div>
                 <div class="flex-1 flex items-center gap-2">
@@ -538,8 +538,8 @@ function getAvatarColor(name: string): string {
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
           <div class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
             <div class="flex items-center gap-4 mb-4">
-              <div class="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
-                <MessageSquare :size="24" class="text-blue-600" />
+              <div class="w-12 h-12 bg-emerald-100 rounded-xl flex items-center justify-center">
+                <MessageSquare :size="24" class="text-emerald-600" />
               </div>
               <div>
                 <p class="text-sm text-gray-500">我的会话</p>
@@ -548,7 +548,7 @@ function getAvatarColor(name: string): string {
             </div>
             <div class="pt-4 border-t border-gray-100">
               <p class="text-xs text-gray-500">
-                活跃会话 <span class="font-bold text-blue-600">{{ formatNumber(userStats.active_sessions) }}</span>
+                活跃会话 <span class="font-bold text-emerald-600">{{ formatNumber(userStats.active_sessions) }}</span>
               </p>
             </div>
           </div>
@@ -590,8 +590,8 @@ function getAvatarColor(name: string): string {
         <div v-if="userStats.top_sessions && userStats.top_sessions.length > 0" class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
           <div class="flex items-center justify-between mb-4">
             <div class="flex items-center gap-3">
-              <div class="w-10 h-10 bg-purple-100 rounded-xl flex items-center justify-center">
-                <Activity :size="20" class="text-purple-600" />
+              <div class="w-10 h-10 bg-teal-100 rounded-xl flex items-center justify-center">
+                <Activity :size="20" class="text-teal-600" />
               </div>
               <div>
                 <h3 class="font-bold text-gray-900">最近会话</h3>
@@ -606,7 +606,7 @@ function getAvatarColor(name: string): string {
               :key="session.session_id"
               class="flex items-center gap-4 p-4 rounded-xl hover:bg-gray-50 transition-colors cursor-pointer"
             >
-              <div class="w-12 h-12 bg-gradient-to-br from-purple-500 to-pink-600 rounded-xl flex items-center justify-center text-white font-bold text-lg">
+              <div class="w-12 h-12 bg-gradient-to-br from-emerald-600 to-teal-600 rounded-xl flex items-center justify-center text-white font-bold text-lg">
                 {{ getInitials(session.title) }}
               </div>
               <div class="flex-1 min-w-0">
@@ -627,14 +627,14 @@ function getAvatarColor(name: string): string {
       </template>
 
       <!-- 提示信息 -->
-      <div class="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-xl">
+      <div class="mt-6 p-4 bg-emerald-50 border border-emerald-200 rounded-xl">
         <div class="flex items-start gap-3">
-          <AlertCircle :size="20" class="text-blue-600 flex-shrink-0 mt-0.5" />
+          <AlertCircle :size="20" class="text-emerald-600 flex-shrink-0 mt-0.5" />
           <div>
-            <p class="font-medium text-blue-900">
+            <p class="font-medium text-emerald-900">
               {{ isAdmin ? '管理员提示' : '个人用户提示' }}
             </p>
-            <p class="text-sm text-blue-700 mt-1">
+            <p class="text-sm text-emerald-700 mt-1">
               {{
                 isAdmin
                   ? '此页面显示企业整体的运营数据，包括用户活跃度、消息统计等。数据来源于对话日志服务。'

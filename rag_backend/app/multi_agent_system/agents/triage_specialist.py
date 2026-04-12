@@ -3,11 +3,13 @@
 负责文档类型识别、安全过滤和置信度评估
 """
 
+import json
 import re
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 
 from .base_specialist import BaseSpecialistAgent
+from .base_agent_prompt import load_agent_prompt
 from ..state import Finding, RiskLevel
 from app.agent_framework.llm.base_adapter import BaseLLMAdapter
 from app.agent_framework.tools.tool_manager import ToolManager
@@ -29,7 +31,7 @@ class TriageSpecialist(BaseSpecialistAgent):
         self,
         llm_adapter: BaseLLMAdapter,
         tool_manager: ToolManager,
-        confidence_threshold: float = 0.8,
+        confidence_threshold: float = 0.5,
         max_iterations: int = 5,
         timeout: float = 60.0
     ):
@@ -39,7 +41,7 @@ class TriageSpecialist(BaseSpecialistAgent):
         Args:
             llm_adapter: 大模型适配器
             tool_manager: 工具管理器
-            confidence_threshold: 置信度阈值，低于此值需要人工审核
+            confidence_threshold: 置信度阈值，低于此值需要人工审核（默认0.5，更宽松）
             max_iterations: 最大迭代次数
             timeout: 超时时间
         """
@@ -61,32 +63,37 @@ class TriageSpecialist(BaseSpecialistAgent):
         print(f"   - 置信度阈值: {self.confidence_threshold}")
     
     def _load_system_prompt(self) -> str:
-        """从文件加载系统提示词"""
-        prompt_path = Path(__file__).parent.parent.parent / "prompts" / "system" / "triage_agent.md"
-        
-        if prompt_path.exists():
-            try:
-                with open(prompt_path, "r", encoding="utf-8") as f:
-                    return f.read()
-            except Exception as e:
-                print(f"⚠️ [门卫智能体] 加载提示词失败: {e}")
-        
-        return self._build_default_prompt()
+        """从外部文件加载系统提示词"""
+        try:
+            return load_agent_prompt(
+                agent_name="triage",
+                filename="triage_agent.md",
+                context=self._get_prompt_context()
+            )
+        except Exception as e:
+            print(f"⚠️ [门卫智能体] 加载提示词失败，使用默认提示词: {e}")
+            return self._build_default_prompt()
+    
+    def _get_prompt_context(self) -> Dict[str, Any]:
+        """获取提示词渲染上下文"""
+        return {
+            "confidence_threshold": self.confidence_threshold,
+        }
     
     def _build_default_prompt(self) -> str:
         """构建默认提示词"""
-        return """你是一个严格的安全门卫，专门负责识别和验证税务文档。
+        return """你是一个安全门卫，专门负责识别和验证税务文档。
 
-你的唯一任务就是判断用户提交的文档是否是一份合法的税务/财务报告。
+你的任务是判断用户提交的文档是否是一份合法的税务/财务报告。
 
 ## 识别规则
 
-### 税务文档类型
-- 企业所得税申报表
-- 增值税发票
-- 个人所得税扣缴报告
-- 财务报表
-- 税务登记证
+### 税务文档类型（按优先级）
+1. 增值税发票 - 包含发票、金额、税率等信息
+2. 企业所得税申报表
+3. 个人所得税扣缴报告
+4. 财务报表
+5. 税务登记证
 
 ### 必须拒绝的情况
 1. 非税务文档（风景照、截图、广告等）
@@ -94,10 +101,10 @@ class TriageSpecialist(BaseSpecialistAgent):
 3. 乱码率超过30%
 4. 有效字符少于50
 
-### 人工审核触发条件
-- 置信度 < 0.8
-- 文档质量可疑
-- 类型不确定
+### 人工审核触发条件（宽松模式）
+- 置信度 < 0.3（极低）
+- 乱码率 > 20%
+- 既无税务特征又无关键字段
 
 ## 输出格式
 输出JSON对象：
@@ -190,10 +197,14 @@ class TriageSpecialist(BaseSpecialistAgent):
             "tax_registration"
         ]
         
+        # 只有在以下情况才需要人工审核：
+        # 1. 置信度极低 (< 0.3)
+        # 2. 乱码率过高 (> 0.2)
+        # 3. 既没有税务文档特征，又缺少关键字段
         needs_review = (
-            type_confidence < self.confidence_threshold or
-            quality_metrics["garbled_rate"] > 0.1 or
-            not quality_metrics["has_critical_fields"]
+            type_confidence < 0.3 or
+            quality_metrics["garbled_rate"] > 0.2 or
+            (not is_tax and not quality_metrics["has_critical_fields"])
         )
         
         result = {
@@ -263,8 +274,10 @@ class TriageSpecialist(BaseSpecialistAgent):
         
         critical_patterns = [
             r'\d{15,20}',  # 纳税人识别号
-            r'[税额|金额|收入|所得]',  # 金额相关
+            r'(税额|金额|收入|所得|不含税|含税)',  # 金额相关（修复正则）
             r'\d{4}年',  # 年份
+            r'¥|价格|总额|小写|大写',  # 金额相关（发票常用）
+            r'发票|票据|凭证',  # 发票相关
         ]
         
         has_critical_fields = any(
@@ -284,7 +297,10 @@ class TriageSpecialist(BaseSpecialistAgent):
         """识别文档类型"""
         tax_keywords = {
             "enterprise_income_tax_return": ["企业所得税", "应纳税所得额", "税率", "申报"],
-            "value_added_tax_invoice": ["增值税", "发票代码", "发票号码", "销项税额", "进项税额"],
+            "value_added_tax_invoice": [
+                "增值税", "发票代码", "发票号码", "销项税额", "进项税额",
+                "发票", "开票日期", "价税合计", "购买方", "销售方"
+            ],
             "individual_income_tax_report": ["个人所得税", "扣缴义务人", "税后收入"],
             "financial_statement": ["资产负债表", "利润表", "现金流量表", "所有者权益"],
             "tax_registration": ["税务登记", "纳税人识别号", "法定代表人"]
@@ -297,15 +313,23 @@ class TriageSpecialist(BaseSpecialistAgent):
                 scores[doc_type] = score / len(keywords)
         
         if not scores:
+            # 尝试宽松匹配：只要有数字金额和中文就可能是发票
+            has_amounts = bool(re.search(r'[¥¥]?\d+\.?\d*', text))
+            has_chinese = bool(re.search(r'[\u4e00-\u9fff]{5,}', text))
+            has_digits = bool(re.search(r'\d{4,}', text))
+            
+            if has_amounts and has_chinese and has_digits:
+                return "value_added_tax_invoice", 0.5  # 宽松识别为增值税发票
+            
             return "unknown", 0.3
         
         best_type = max(scores, key=scores.get)
         best_score = scores[best_type]
         
-        if best_score >= 0.6:
+        if best_score >= 0.5:
             return best_type, min(0.95, 0.6 + best_score * 0.3)
-        elif best_score >= 0.3:
-            return best_type, 0.6 + best_score * 0.2
+        elif best_score >= 0.2:
+            return best_type, 0.5 + best_score * 0.3
         else:
             return best_type, 0.4 + best_score * 0.4
     
@@ -427,3 +451,55 @@ class TriageSpecialist(BaseSpecialistAgent):
                 findings.append(finding)
         
         return findings
+    
+    async def run(
+        self,
+        user_input: str,
+        history: List[Dict] = None,
+        **kwargs
+    ) -> str:
+        """
+        执行门卫智能体主循环
+        
+        实现基类的抽象方法
+        
+        Args:
+            user_input: 用户输入（通常是文档内容或处理请求）
+            history: 对话历史
+            
+        Returns:
+            处理结果
+        """
+        document_text = kwargs.get("document_text", user_input)
+        metadata = kwargs.get("metadata", {})
+        
+        result = await self.triage(document_text, metadata)
+        
+        return json.dumps(result, ensure_ascii=False, indent=2)
+    
+    async def stream_run(
+        self,
+        user_input: str,
+        history: List[Dict] = None,
+        **kwargs
+    ):
+        """
+        流式执行门卫智能体
+        
+        实现基类的抽象方法
+        
+        Args:
+            user_input: 用户输入
+            history: 对话历史
+            
+        Yields:
+            处理结果片段
+        """
+        document_text = kwargs.get("document_text", user_input)
+        metadata = kwargs.get("metadata", {})
+        
+        result = await self.triage(document_text, metadata)
+        result_str = json.dumps(result, ensure_ascii=False, indent=2)
+        
+        for char in result_str:
+            yield char

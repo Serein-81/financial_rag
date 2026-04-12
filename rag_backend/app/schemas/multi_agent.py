@@ -218,3 +218,209 @@ class ErrorResponse(BaseModel):
     details: Optional[Dict[str, Any]] = None
     timestamp: datetime = Field(default_factory=datetime.now)
     request_id: Optional[str] = None
+
+
+# ==========================================
+# 监控 API 响应模型（前端监控页面使用）
+# ==========================================
+
+class MonitorComponentStatus(BaseModel):
+    """监控组件状态"""
+    rbac_service: bool = True
+    task_scheduler: bool = True
+    session_blackboard: bool = True
+    hitl_manager: bool = True
+    intent_classifier: bool = True
+
+
+class MonitorSystemHealth(BaseModel):
+    """前端监控系统健康状态"""
+    status: Literal["healthy", "degraded", "down"] = "healthy"
+    components: MonitorComponentStatus = Field(default_factory=MonitorComponentStatus)
+    uptime: int = 0
+    active_sessions: int = 0
+    pending_approvals: int = 0
+
+
+class AgentMetric(BaseModel):
+    """Agent 指标"""
+    agent_id: str
+    agent_name: str
+    total_requests: int = 0
+    success_rate: float = 0.0
+    avg_latency: float = 0.0
+    last_execution: Optional[str] = None
+
+
+class StreamingTask(BaseModel):
+    """流式任务"""
+    task_id: str
+    agent_id: str
+    agent_name: str
+    status: Literal["pending", "running", "completed", "failed", "streaming"] = "pending"
+    progress: float = 0.0
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    result: Optional[Any] = None
+    error: Optional[str] = None
+    estimated_time: Optional[float] = None
+
+
+class IntentClassificationResult(BaseModel):
+    """意图分类结果"""
+    stage: Literal["keyword", "embedding", "slm"] = "keyword"
+    intent: str = ""
+    confidence: float = 0.0
+    is_expense_related: bool = False
+    should_process: bool = True
+    matched_keywords: Optional[List[str]] = None
+    embedding_score: Optional[float] = None
+    reasoning: Optional[str] = None
+
+
+class TaskPipeline(BaseModel):
+    """任务管道"""
+    pipeline_id: str
+    session_id: str
+    user_id: str
+    query: str
+    tasks: List[StreamingTask] = Field(default_factory=list)
+    state: Literal["idle", "processing", "waiting", "completed"] = "idle"
+    intent_classification: Optional[IntentClassificationResult] = None
+    created_at: str
+    updated_at: str
+
+
+# ==========================================
+# RBAC 模型
+# ==========================================
+
+class PermissionLevel(str, Enum):
+    """权限级别"""
+    PUBLIC = "public"
+    SENSITIVE = "sensitive"
+    DANGEROUS = "dangerous"
+    CRITICAL = "critical"
+
+
+class UserRole(BaseModel):
+    """用户角色"""
+    role_id: str
+    role_name: str
+    permissions: List[PermissionLevel] = Field(default_factory=list)
+
+
+class RBACPolicy(BaseModel):
+    """RBAC策略"""
+    policy_id: str
+    role: str
+    allowed_operations: List[str] = Field(default_factory=list)
+    denied_operations: List[str] = Field(default_factory=list)
+    created_at: datetime
+
+
+# ==========================================
+# HITL (Human-In-The-Loop) 模型
+# ==========================================
+
+class ApprovalStatus(str, Enum):
+    """审批状态"""
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    TIMEOUT = "timeout"
+
+
+class HITLApproval(BaseModel):
+    """HITL审批"""
+    approval_id: str
+    task_id: str
+    user_id: str
+    operation: str
+    details: Dict[str, Any] = Field(default_factory=dict)
+    risk_level: PermissionLevel = PermissionLevel.SENSITIVE
+    status: ApprovalStatus = ApprovalStatus.PENDING
+    created_at: datetime
+    expires_at: datetime
+    reviewed_at: Optional[datetime] = None
+    reviewer_notes: Optional[str] = None
+
+
+class HITLApprovalCreate(BaseModel):
+    """创建HITL审批请求"""
+    task_id: str
+    operation: str
+    details: Dict[str, Any] = Field(default_factory=dict)
+    risk_level: PermissionLevel = PermissionLevel.SENSITIVE
+
+
+class HITLApprovalReview(BaseModel):
+    """HITL审批审核"""
+    action: Literal["approve", "reject"]
+    notes: Optional[str] = None
+
+
+# ==========================================
+# 安全审计模型
+# ==========================================
+
+class SecurityEventType(str, Enum):
+    """安全事件类型"""
+    PERMISSION_DENIED = "permission_denied"
+    APPROVAL_REQUEST = "approval_request"
+    APPROVAL_COMPLETED = "approval_completed"
+    PROMPT_INJECTION = "prompt_injection"
+    ROLE_CHANGE = "role_change"
+    LOGIN_SUCCESS = "login_success"
+    LOGIN_FAILED = "login_failed"
+    LOGOUT = "logout"
+    HIGH_RISK_OPERATION = "high_risk_operation"
+
+
+class SecurityEventSeverity(str, Enum):
+    """安全事件严重级别"""
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
+class SecurityEvent(BaseModel):
+    """安全事件"""
+    event_id: str
+    event_type: SecurityEventType
+    user_id: str
+    tenant_id: Optional[str] = None
+    target_resource: Optional[str] = None
+    details: Dict[str, Any] = Field(default_factory=dict)
+    severity: SecurityEventSeverity
+    ip_address: Optional[str] = None
+    user_agent: Optional[str] = None
+    created_at: datetime
+
+
+class SecurityStats(BaseModel):
+    """安全统计"""
+    total_events: int
+    by_severity: Dict[str, int]
+    by_type: Dict[str, int]
+    recent_trends: List[Dict[str, Any]]
+
+
+class PendingQuestion(BaseModel):
+    """待处理问题"""
+    question_id: str
+    question: str
+    context: Dict[str, Any] = Field(default_factory=dict)
+
+
+class SessionContext(BaseModel):
+    """会话上下文"""
+    session_id: str
+    user_id: str
+    state: Literal["active", "waiting", "completed"] = "active"
+    pending_questions: List[PendingQuestion] = Field(default_factory=list)
+    historical_results: Dict[str, Any] = Field(default_factory=dict)
+    current_task_id: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime

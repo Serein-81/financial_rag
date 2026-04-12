@@ -42,16 +42,21 @@ export const enterpriseApi = {
     return request<EnterpriseResponse>('/enterprise/info')
   },
 
-  // 获取企业用户列表
+  // 获取企业用户列表（管理员专用）
   async getUsers(): Promise<EnterpriseUser[]> {
     return request<EnterpriseUser[]>('/enterprise/users')
+  },
+
+  // 获取租户用户列表（所有用户可用，用于群聊邀请）
+  async getTenantUsers(): Promise<EnterpriseUser[]> {
+    return request<EnterpriseUser[]>('/enterprise/users/list')
   },
 
   // 更新用户状态
   async updateUserStatus(userId: string, is_active: boolean): Promise<void> {
     return request<void>(`/enterprise/users/${userId}/status`, {
       method: 'PUT',
-      body: JSON.stringify({ is_active }),
+      data: JSON.stringify({ is_active }),
     })
   },
 
@@ -66,7 +71,7 @@ export const enterpriseApi = {
   async createInviteCode(data?: CreateInviteCodeRequest): Promise<InviteCode> {
     return request<InviteCode>('/invite-codes', {
       method: 'POST',
-      body: JSON.stringify(data || {}),
+      data: JSON.stringify(data || {}),
     })
   },
 

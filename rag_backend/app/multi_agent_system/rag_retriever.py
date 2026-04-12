@@ -321,23 +321,31 @@ class TenantIsolatedRAGRetriever:
         self,
         qdrant_client=None,
         embedding_service=None,
-        enable_audit: bool = True
+        enable_audit: bool = True,
+        search_service=None
     ):
         """
         初始化RAG检索器
         
         Args:
-            qdrant_client: Qdrant向量数据库客户端
+            qdrant_client: Qdrant向量数据库客户端（已弃用）
             embedding_service: 向量嵌入服务
             enable_audit: 是否启用检索审计日志
+            search_service: pgvector搜索服务（推荐使用）
         """
         self.qdrant_client = qdrant_client
         self.embedding_service = embedding_service
         self.enable_audit = enable_audit
+        self.search_service = search_service
         self.use_rate_limiter = True
         self.use_cache = True
         
-        logger.info("🔒 [RAG检索器] 租户隔离模式已启用")
+        if self.search_service:
+            logger.info("🔒 [RAG检索器] 租户隔离模式已启用 (使用 pgvector)")
+        elif self.qdrant_client:
+            logger.warning("⚠️ [RAG检索器] 使用已弃用的 Qdrant 客户端")
+        else:
+            logger.warning("⚠️ [RAG检索器] 未配置向量搜索服务")
     
     async def retrieve(
         self,
@@ -559,8 +567,43 @@ class TenantIsolatedRAGRetriever:
         filters: Dict[str, Any],
         top_k: int
     ) -> List[Dict[str, Any]]:
-        """执行向量搜索"""
-        if self.qdrant_client:
+        """执行向量搜索（优先使用 pgvector）"""
+        if self.search_service:
+            try:
+                tenant_id = None
+                if filters and "must" in filters:
+                    for condition in filters["must"]:
+                        if condition.get("key") == "tenant_id":
+                            tenant_id = condition.get("match", {}).get("value")
+                            break
+                
+                if not tenant_id:
+                    logger.warning("⚠️ [RAG检索器] 无法从过滤器提取租户ID")
+                    return []
+                
+                results = await self.search_service.search(
+                    query="",
+                    top_k=top_k,
+                    score_threshold=0.5,
+                    tenant_id=tenant_id
+                )
+                
+                return [
+                    {
+                        "id": r.chunk_id,
+                        "score": r.score,
+                        "payload": {
+                            "content": r.content,
+                            "source": r.source_file,
+                            "doc_type": "general"
+                        }
+                    }
+                    for r in results
+                ]
+            except Exception as e:
+                logger.error(f"❌ [RAG检索器] pgvector搜索失败: {e}")
+                return []
+        elif self.qdrant_client:
             try:
                 results = self.qdrant_client.search(
                     collection_name="tax_knowledge",
@@ -580,7 +623,7 @@ class TenantIsolatedRAGRetriever:
                 logger.error(f"❌ [RAG检索器] Qdrant搜索失败: {e}")
                 return []
         else:
-            logger.warning("⚠️ [RAG检索器] 未配置Qdrant客户端")
+            logger.warning("⚠️ [RAG检索器] 未配置向量搜索服务")
             return []
     
     def _filter_and_rank_results(

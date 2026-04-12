@@ -8,7 +8,7 @@ import logging
 from typing import Dict, Any, Optional, List, Callable
 from langgraph.graph import StateGraph, END, START
 from langgraph.checkpoint.memory import MemorySaver
-from langgraph.graph import GraphRecursionError
+from langgraph.errors import GraphRecursionError
 
 from .state import AgentState, IntentCategory, SpecialistType, create_initial_state
 from .nodes import AgentNodeFactory, create_retry_node, create_human_review_node

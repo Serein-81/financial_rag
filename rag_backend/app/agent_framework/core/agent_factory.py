@@ -12,6 +12,8 @@ from typing import Optional
 from app.core.config import settings
 from ..llm.factory import create_llm_adapter
 from ..llm.base_adapter import BaseLLMAdapter
+from ..llm.agent_llm_config import AgentLLMConfig, AgentType, TenantLLMConfig
+from ..llm.agent_adapter_factory import AgentLLMAdapterFactory
 from ..tools.tool_manager import ToolManager
 from .base_agent import BaseAgent
 from .react_agent import ReActAgent
@@ -148,6 +150,52 @@ class AgentFactory:
             "reflect": "Reflect 模式 - 执行后反思改进，适合高质量要求的任务"
         }
         return descriptions.get(mode, "未知模式")
+    
+    @staticmethod
+    def create_agent_with_config(
+        mode: Optional[str] = None,
+        llm_config: Optional[AgentLLMConfig] = None,
+        tool_manager: Optional[ToolManager] = None,
+        **kwargs
+    ) -> BaseAgent:
+        """
+        根据智能体配置创建 Agent（支持每个智能体使用不同的LLM）
+        
+        Args:
+            mode: Agent 模式（react, plan, reflect）
+            llm_config: 智能体LLM配置，如果为 None 则使用全局默认
+            tool_manager: 工具管理器
+            **kwargs: 其他参数
+        
+        Returns:
+            对应模式的 Agent 实例
+        """
+        from app.core.config import settings
+        
+        mode = mode or getattr(settings, 'AGENT_MODE', 'react')
+        mode = mode.lower().strip()
+        
+        logger.info(f"🏭 [Agent工厂] 创建 Agent (智能体配置): {mode}")
+        
+        if llm_config:
+            llm_adapter = AgentLLMAdapterFactory.create_adapter(llm_config)
+            logger.info(f"   - 使用自定义 LLM: {llm_config.provider}/{llm_config.model or 'default'}")
+        else:
+            llm_adapter = create_llm_adapter()
+            logger.info(f"   - 使用默认 LLM: {settings.LLM_PROVIDER}")
+        
+        if tool_manager is None:
+            tool_manager = ToolManager()
+            logger.info(f"   - 工具数: {len(tool_manager.get_all_tools())}")
+        
+        if mode == "react":
+            return ReActAgent(llm_adapter=llm_adapter, tool_manager=tool_manager, **kwargs)
+        elif mode == "plan":
+            return PlanAgent(llm_adapter=llm_adapter, tool_manager=tool_manager, **kwargs)
+        elif mode == "reflect":
+            return ReflectAgent(llm_adapter=llm_adapter, tool_manager=tool_manager, **kwargs)
+        else:
+            raise ValueError(f"不支持的 Agent 模式: {mode}")
 
 
 # 便捷函数

@@ -271,6 +271,22 @@ class LogService:
             count_result = await session.execute(count_query)
             total = count_result.scalar()
             
+            # 🔧 优化：收集所有需要的 tenant_id，一次性查询，避免 N+1 问题
+            tenant_ids_needed = set()
+            for log in logs:
+                if log.user and log.user.tenant_id:
+                    tenant_ids_needed.add(log.user.tenant_id)
+            
+            # 一次性查询所有需要的租户信息
+            tenants_dict = {}
+            if tenant_ids_needed:
+                from app.models.tenant import Tenant
+                tenants_query = select(Tenant).where(Tenant.id.in_(tenant_ids_needed))
+                tenants_result = await session.execute(tenants_query)
+                tenants = tenants_result.scalars().all()
+                for tenant in tenants:
+                    tenants_dict[str(tenant.id)] = tenant
+            
             # 转换为字典格式
             log_list = []
             for log in logs:
@@ -278,14 +294,10 @@ class LogService:
                 if log.user:
                     log_dict["user_email"] = log.user.email
                     log_dict["user_name"] = log.user.full_name
-                    # 添加租户信息
+                    # 添加租户信息 - 使用字典查找，避免 N+1 查询
                     if log.user.tenant_id:
                         log_dict["tenant_id"] = log.user.tenant_id
-                        # 查询租户信息
-                        from app.models.tenant import Tenant
-                        tenant_query = select(Tenant).where(Tenant.id == log.user.tenant_id)
-                        tenant_result = await session.execute(tenant_query)
-                        tenant = tenant_result.scalar_one_or_none()
+                        tenant = tenants_dict.get(log.user.tenant_id)
                         if tenant:
                             log_dict["tenant_name"] = tenant.company_name
                             log_dict["tenant_invite_code"] = tenant.invite_code

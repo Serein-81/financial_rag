@@ -158,12 +158,12 @@ async function handleSearch() {
         console.error('Synonym search failed:', error)
         searchError.value = '同义词搜索失败，已切换到基础搜索'
 
-        const response = await request<{ results: SearchResult[], total_time: number }>('/api/v1/search/query', {
+        const response = await request<{ results: SearchResult[], total_time: number }>('/search/query', {
           method: 'POST',
-          body: JSON.stringify({
+          data: JSON.stringify({
             query: searchQuery.value,
             top_k: 10,
-            kb_id: selectedKB.value?.id || null
+            kb_id: selectedKB.value?.id ?? null
           })
         })
 
@@ -176,7 +176,7 @@ async function handleSearch() {
         const response = await searchApi.hybridSearch({
           query: searchQuery.value,
           top_k: 10,
-          kb_id: selectedKB.value?.id || null,
+          kb_id: selectedKB.value?.id ?? null,
           enable_web: true
         })
 
@@ -193,12 +193,12 @@ async function handleSearch() {
         console.error('Hybrid search failed, falling back to local search:', error)
         searchError.value = '联网搜索失败，已切换到本地知识库搜索'
 
-        const response = await request<{ results: SearchResult[], total_time: number }>('/api/v1/search/query', {
+        const response = await request<{ results: SearchResult[], total_time: number }>('/search/query', {
           method: 'POST',
-          body: JSON.stringify({
+          data: JSON.stringify({
             query: searchQuery.value,
             top_k: 10,
-            kb_id: selectedKB.value?.id || null
+            kb_id: selectedKB.value?.id ?? null
           })
         })
 
@@ -207,12 +207,12 @@ async function handleSearch() {
     }
     // 场景4: 基础搜索
     else {
-      const response = await request<{ results: SearchResult[], total_time: number }>('/api/v1/search/query', {
+      const response = await request<{ results: SearchResult[], total_time: number }>('/search/query', {
         method: 'POST',
-        body: JSON.stringify({
+        data: JSON.stringify({
           query: searchQuery.value,
           top_k: 10,
-          kb_id: selectedKB.value?.id || null
+          kb_id: selectedKB.value?.id ?? null
         })
       })
 
@@ -244,17 +244,17 @@ function getResultIcon(type: 'local' | 'web') {
 
 function getResultColor(type: 'local' | 'web') {
   return type === 'local'
-    ? 'from-blue-400 to-blue-500'
-    : 'from-indigo-400 to-purple-500'
+    ? 'from-emerald-500 to-teal-600'
+    : 'from-teal-500 to-emerald-600'
 }
 </script>
 
 <template>
-  <div class="flex-1 flex flex-col bg-gradient-to-br from-cyan-50 via-blue-50 to-indigo-50 h-full">
+  <div class="flex-1 flex flex-col bg-gradient-to-br from-slate-100 via-emerald-50/30 to-teal-50/30 h-full">
     <!-- Top Bar -->
     <div class="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-6 shadow-sm">
       <div class="flex items-center gap-3">
-        <div class="w-10 h-10 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-xl flex items-center justify-center">
+        <div class="w-10 h-10 bg-gradient-to-br from-emerald-600 to-teal-600 rounded-xl flex items-center justify-center">
           <Search :size="20" class="text-white" />
         </div>
         <div>
@@ -288,13 +288,13 @@ function getResultColor(type: 'local' | 'web') {
               v-model="searchQuery"
               type="text"
               placeholder="输入你想搜索的内容..."
-              class="flex-1 px-5 py-4 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:bg-white focus:border-cyan-500 focus:ring-2 focus:ring-cyan-200 transition-all outline-none text-lg"
+              class="flex-1 px-5 py-4 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 transition-all outline-none text-lg"
               @keydown.enter="handleSearch"
             />
             <button
               @click="handleSearch"
               :disabled="isSearching || !searchQuery.trim()"
-              class="px-8 py-4 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-xl hover:from-cyan-600 hover:to-blue-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl flex items-center gap-3 font-medium"
+              class="px-8 py-4 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-xl hover:from-emerald-700 hover:to-teal-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl flex items-center gap-3 font-medium"
             >
               <Search :size="20" v-if="!isSearching" />
               <Loader2 :size="20" class="animate-spin" v-else />
@@ -311,17 +311,17 @@ function getResultColor(type: 'local' | 'web') {
                 @click="enableWebSearch = !enableWebSearch"
                 class="flex-1 flex items-center gap-3 px-4 py-3 rounded-xl border-2 cursor-pointer transition-all"
                 :class="enableWebSearch
-                  ? 'bg-gradient-to-r from-indigo-50 to-purple-50 border-indigo-300 shadow-sm'
+                  ? 'bg-gradient-to-r from-emerald-50 to-teal-50 border-emerald-300 shadow-sm'
                   : 'bg-gray-50 border-gray-200 hover:border-gray-300'"
               >
-                <div :class="enableWebSearch ? 'bg-indigo-500' : 'bg-gray-400'" class="w-10 h-10 rounded-lg flex items-center justify-center shadow-sm transition-colors">
+                <div :class="enableWebSearch ? 'bg-emerald-500' : 'bg-gray-400'" class="w-10 h-10 rounded-lg flex items-center justify-center shadow-sm transition-colors">
                   <Globe :size="20" class="text-white" />
                 </div>
                 <div class="flex-1">
-                  <div class="font-medium" :class="enableWebSearch ? 'text-indigo-900' : 'text-gray-700'">联网搜索</div>
-                  <div class="text-xs" :class="enableWebSearch ? 'text-indigo-600' : 'text-gray-500'">实时获取互联网信息</div>
+                  <div class="font-medium" :class="enableWebSearch ? 'text-emerald-900' : 'text-gray-700'">联网搜索</div>
+                  <div class="text-xs" :class="enableWebSearch ? 'text-emerald-600' : 'text-gray-500'">实时获取互联网信息</div>
                 </div>
-                <div :class="enableWebSearch ? 'bg-indigo-500' : 'bg-gray-300'" class="w-12 h-6 rounded-full p-1 transition-colors">
+                <div :class="enableWebSearch ? 'bg-emerald-500' : 'bg-gray-300'" class="w-12 h-6 rounded-full p-1 transition-colors">
                   <div
                     class="w-4 h-4 bg-white rounded-full shadow-sm transition-transform"
                     :class="enableWebSearch ? 'translate-x-6' : 'translate-x-0'"
@@ -377,10 +377,10 @@ function getResultColor(type: 'local' | 'web') {
               <div class="space-y-2">
                 <div class="flex items-center justify-between text-sm">
                   <div class="flex items-center gap-2">
-                    <Cpu :size="14" class="text-blue-600" />
+                    <Cpu :size="14" class="text-emerald-600" />
                     <span class="text-gray-600">向量搜索权重</span>
                   </div>
-                  <span class="font-medium text-blue-600">{{ (vectorWeight * 100).toFixed(0) }}%</span>
+                  <span class="font-medium text-emerald-600">{{ (vectorWeight * 100).toFixed(0) }}%</span>
                 </div>
                 <input
                   type="range"
@@ -388,7 +388,7 @@ function getResultColor(type: 'local' | 'web') {
                   min="0"
                   max="1"
                   step="0.1"
-                  class="w-full h-2 bg-blue-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                  class="w-full h-2 bg-emerald-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
                 />
                 <div class="flex justify-between text-xs text-gray-400">
                   <span>注重语义理解</span>
@@ -423,10 +423,10 @@ function getResultColor(type: 'local' | 'web') {
               <div class="space-y-2">
                 <div class="flex items-center justify-between text-sm">
                   <div class="flex items-center gap-2">
-                    <Type :size="14" class="text-purple-600" />
+                    <Type :size="14" class="text-emerald-600" />
                     <span class="text-gray-600">全文搜索权重</span>
                   </div>
-                  <span class="font-medium text-purple-600">{{ (fulltextWeight * 100).toFixed(0) }}%</span>
+                  <span class="font-medium text-emerald-600">{{ (fulltextWeight * 100).toFixed(0) }}%</span>
                 </div>
                 <input
                   type="range"
@@ -434,7 +434,7 @@ function getResultColor(type: 'local' | 'web') {
                   min="0"
                   max="1"
                   step="0.1"
-                  class="w-full h-2 bg-purple-200 rounded-lg appearance-none cursor-pointer accent-purple-600"
+                  class="w-full h-2 bg-emerald-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
                 />
                 <div class="flex justify-between text-xs text-gray-400">
                   <span>注重模糊匹配</span>
@@ -462,29 +462,29 @@ function getResultColor(type: 'local' | 'web') {
           <!-- Search Stats -->
           <div v-if="filteredHasResults" class="mt-4 flex items-center gap-4 flex-wrap">
             <div class="flex items-center gap-2 text-sm text-gray-600">
-              <span class="px-2 py-1 bg-gradient-to-r from-cyan-100 to-blue-100 text-cyan-700 rounded-lg font-medium">
+              <span class="px-2 py-1 bg-gradient-to-r from-emerald-100 to-teal-100 text-emerald-700 rounded-lg font-medium">
                 {{ currentSearchModeLabel }}
               </span>
             </div>
             <template v-if="enableWebSearch">
               <div class="flex items-center gap-2 text-sm">
-                <Monitor :size="14" class="text-blue-600" />
+                <Monitor :size="14" class="text-emerald-600" />
                 <span class="text-gray-700">本地知识库</span>
-                <span class="font-semibold text-blue-600">{{ filteredLocalResults.length }}</span>
+                <span class="font-semibold text-emerald-600">{{ filteredLocalResults.length }}</span>
                 <span class="text-gray-400">个结果</span>
               </div>
               <div class="flex items-center gap-2 text-sm">
-                <Globe :size="14" class="text-indigo-600" />
+                <Globe :size="14" class="text-emerald-600" />
                 <span class="text-gray-700">联网搜索</span>
-                <span class="font-semibold text-indigo-600">{{ filteredWebResults.length }}</span>
+                <span class="font-semibold text-emerald-600">{{ filteredWebResults.length }}</span>
                 <span class="text-gray-400">个结果</span>
               </div>
             </template>
             <template v-else>
               <div class="flex items-center gap-2 text-sm">
-                <Monitor :size="14" class="text-blue-600" />
-                <span class="text-gray-700">找到</span>
-                <span class="font-semibold text-blue-600">{{ filteredLocalResults.length }}</span>
+                <Monitor :size="14" class="text-emerald-600" />
+                <span class="text-gray-700">本地知识库</span>
+                <span class="font-semibold text-emerald-600">{{ filteredLocalResults.length }}</span>
                 <span class="text-gray-400">个结果</span>
               </div>
             </template>
@@ -500,11 +500,11 @@ function getResultColor(type: 'local' | 'web') {
 
         <!-- Single Column Results (Local Only) -->
         <div v-if="(!enableWebSearch || (enableWebSearch && !filteredWebResults.length && filteredLocalResults.length > 0)) && filteredLocalResults.length > 0" class="space-y-4">
-          <div class="flex items-center justify-between mb-4 p-4 bg-gradient-to-r from-blue-50 to-cyan-50 rounded-xl border border-blue-200">
+          <div class="flex items-center justify-between mb-4 p-4 bg-gradient-to-r from-emerald-50 to-teal-50 rounded-xl border border-emerald-200">
             <div class="flex items-center gap-2">
-              <Monitor :size="20" class="text-blue-600" />
+              <Monitor :size="20" class="text-emerald-600" />
               <h3 class="text-lg font-semibold text-gray-900">本地知识库结果</h3>
-              <span class="px-2 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-medium">
+              <span class="px-2 py-1 bg-emerald-100 text-emerald-700 rounded-full text-xs font-medium">
                 {{ filteredLocalResults.length }} 个结果
               </span>
             </div>
@@ -518,10 +518,10 @@ function getResultColor(type: 'local' | 'web') {
             v-for="(result, index) in filteredLocalResults"
             :key="index"
             @click="openDetail(result, 'local')"
-            class="bg-white rounded-2xl shadow-md hover:shadow-lg transition-all p-6 border border-gray-200 cursor-pointer hover:border-blue-300 hover:bg-blue-50/30"
+            class="bg-white rounded-2xl shadow-md hover:shadow-lg transition-all p-6 border border-gray-200 cursor-pointer hover:border-emerald-300 hover:bg-emerald-50/30"
           >
             <div class="flex items-start gap-4">
-              <div class="w-12 h-12 bg-gradient-to-br from-blue-400 to-blue-500 rounded-xl flex items-center justify-center flex-shrink-0 shadow-md">
+              <div class="w-12 h-12 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-xl flex items-center justify-center flex-shrink-0 shadow-md">
                 <FileText :size="24" class="text-white" />
               </div>
 
@@ -534,9 +534,9 @@ function getResultColor(type: 'local' | 'web') {
                     </span>
                   </div>
                   <div class="flex items-center gap-2">
-                    <div class="flex items-center gap-2 px-3 py-1 bg-cyan-50 rounded-lg">
-                      <Sparkles :size="14" class="text-cyan-600" />
-                      <span class="text-sm font-medium text-cyan-700">
+                    <div class="flex items-center gap-2 px-3 py-1 bg-emerald-50 rounded-lg">
+                      <Sparkles :size="14" class="text-emerald-600" />
+                      <span class="text-sm font-medium text-emerald-700">
                         {{ (result.score * 100).toFixed(1) }}%
                       </span>
                     </div>
@@ -554,11 +554,11 @@ function getResultColor(type: 'local' | 'web') {
         <div v-if="enableWebSearch && filteredHasResults" class="grid grid-cols-2 gap-6">
           <!-- Local Results Column -->
           <div class="space-y-4">
-            <div class="flex items-center justify-between mb-4 p-4 bg-gradient-to-r from-blue-50 to-cyan-50 rounded-xl border border-blue-200">
+            <div class="flex items-center justify-between mb-4 p-4 bg-gradient-to-r from-emerald-50 to-teal-50 rounded-xl border border-emerald-200">
               <div class="flex items-center gap-2">
-                <Monitor :size="20" class="text-blue-600" />
+                <Monitor :size="20" class="text-emerald-600" />
                 <h3 class="text-lg font-semibold text-gray-900">本地知识库</h3>
-                <span class="px-2 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-medium">
+                <span class="px-2 py-1 bg-emerald-100 text-emerald-700 rounded-full text-xs font-medium">
                   {{ filteredLocalResults.length }}
                 </span>
               </div>
@@ -573,10 +573,10 @@ function getResultColor(type: 'local' | 'web') {
                 v-for="(result, index) in filteredLocalResults"
                 :key="'local-' + index"
                 @click="openDetail(result, 'local')"
-                class="bg-white rounded-2xl shadow-md hover:shadow-lg transition-all p-6 border border-gray-200 cursor-pointer hover:border-blue-300 hover:bg-blue-50/30"
+                class="bg-white rounded-2xl shadow-md hover:shadow-lg transition-all p-6 border border-gray-200 cursor-pointer hover:border-emerald-300 hover:bg-emerald-50/30"
               >
                 <div class="flex items-start gap-3">
-                  <div class="w-10 h-10 bg-gradient-to-br from-blue-400 to-blue-500 rounded-lg flex items-center justify-center flex-shrink-0">
+                  <div class="w-10 h-10 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-lg flex items-center justify-center flex-shrink-0">
                     <FileText :size="20" class="text-white" />
                   </div>
 
@@ -589,9 +589,9 @@ function getResultColor(type: 'local' | 'web') {
                         </span>
                       </div>
                       <div class="flex items-center gap-1.5">
-                        <div class="flex items-center gap-1 px-2 py-0.5 bg-cyan-50 rounded-md">
-                          <Sparkles :size="12" class="text-cyan-600" />
-                          <span class="text-xs font-medium text-cyan-700">
+                        <div class="flex items-center gap-1 px-2 py-0.5 bg-emerald-50 rounded-md">
+                          <Sparkles :size="12" class="text-emerald-600" />
+                          <span class="text-xs font-medium text-emerald-700">
                             {{ (result.score * 100).toFixed(1) }}%
                           </span>
                         </div>
@@ -614,10 +614,10 @@ function getResultColor(type: 'local' | 'web') {
 
           <!-- Web Results Column -->
           <div class="space-y-4">
-            <div class="flex items-center gap-2 mb-4 p-4 bg-gradient-to-r from-indigo-50 to-purple-50 rounded-xl border border-indigo-200">
-              <Globe :size="20" class="text-indigo-600" />
+            <div class="flex items-center gap-2 mb-4 p-4 bg-gradient-to-r from-emerald-50 to-teal-50 rounded-xl border border-emerald-200">
+              <Globe :size="20" class="text-emerald-600" />
               <h3 class="text-lg font-semibold text-gray-900">联网搜索</h3>
-              <span class="ml-auto px-3 py-1 bg-indigo-100 text-indigo-700 rounded-full text-sm font-medium">
+              <span class="ml-auto px-3 py-1 bg-emerald-100 text-emerald-700 rounded-full text-sm font-medium">
                 {{ filteredWebResults.length }} 个结果
               </span>
             </div>
@@ -627,10 +627,10 @@ function getResultColor(type: 'local' | 'web') {
                 v-for="(result, index) in filteredWebResults"
                 :key="'web-' + index"
                 @click="openDetail(result, 'web')"
-                class="bg-white rounded-2xl shadow-md hover:shadow-lg transition-all p-6 border border-gray-200 cursor-pointer hover:border-indigo-300 hover:bg-indigo-50/30"
+                class="bg-white rounded-2xl shadow-md hover:shadow-lg transition-all p-6 border border-gray-200 cursor-pointer hover:border-emerald-300 hover:bg-emerald-50/30"
               >
                 <div class="flex items-start gap-3">
-                  <div class="w-10 h-10 bg-gradient-to-br from-indigo-400 to-purple-500 rounded-lg flex items-center justify-center flex-shrink-0">
+                  <div class="w-10 h-10 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-lg flex items-center justify-center flex-shrink-0">
                     <Globe :size="20" class="text-white" />
                   </div>
 
@@ -640,9 +640,9 @@ function getResultColor(type: 'local' | 'web') {
                         {{ result.title || result.source_file }}
                       </h4>
                       <div class="flex items-center gap-1.5">
-                        <div class="flex items-center gap-1 px-2 py-0.5 bg-indigo-50 rounded-md">
-                          <Sparkles :size="12" class="text-indigo-600" />
-                          <span class="text-xs font-medium text-indigo-700">
+                        <div class="flex items-center gap-1 px-2 py-0.5 bg-emerald-50 rounded-md">
+                          <Sparkles :size="12" class="text-emerald-600" />
+                          <span class="text-xs font-medium text-emerald-700">
                             {{ (result.score * 100).toFixed(1) }}%
                           </span>
                         </div>
@@ -652,7 +652,7 @@ function getResultColor(type: 'local' | 'web') {
 
                     <p class="text-gray-600 text-sm leading-relaxed line-clamp-3 break-words">{{ result.content }}</p>
 
-                    <div v-if="result.source_file && result.source_file.startsWith('http')" class="mt-2 flex items-center gap-1 text-xs text-indigo-600">
+                    <div v-if="result.source_file && result.source_file.startsWith('http')" class="mt-2 flex items-center gap-1 text-xs text-emerald-600">
                       <ExternalLink :size="12" />
                       <span class="truncate max-w-xs">{{ result.source_file }}</span>
                     </div>
@@ -680,7 +680,7 @@ function getResultColor(type: 'local' | 'web') {
 
         <!-- Initial State -->
         <div v-else-if="!isSearching" class="text-center py-16">
-          <div class="w-20 h-20 bg-gradient-to-br from-cyan-400 to-blue-500 rounded-3xl flex items-center justify-center mx-auto mb-4 shadow-xl">
+          <div class="w-20 h-20 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-3xl flex items-center justify-center mx-auto mb-4 shadow-xl">
             <Search :size="40" class="text-white" />
           </div>
           <h3 class="text-2xl font-bold text-gray-900 mb-2">开始搜索</h3>
@@ -724,14 +724,14 @@ function getResultColor(type: 'local' | 'web') {
           <div class="flex-1 overflow-y-auto p-6">
             <!-- Score Badge -->
             <div class="flex items-center gap-2 mb-4">
-              <div class="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-cyan-50 to-indigo-50 rounded-lg border border-cyan-200">
-                <Sparkles :size="16" class="text-cyan-600" />
-                <span class="text-sm font-semibold text-cyan-700">
+              <div class="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-emerald-50 to-teal-50 rounded-lg border border-emerald-200">
+                <Sparkles :size="16" class="text-emerald-600" />
+                  <span class="text-sm font-semibold text-emerald-700">
                   相似度: {{ (selectedResult.score * 100).toFixed(1) }}%
                 </span>
               </div>
-              <div v-if="selectedResultType === 'web' && 'source' in selectedResult" class="px-3 py-1.5 bg-indigo-50 rounded-lg border border-indigo-200">
-                <span class="text-xs font-medium text-indigo-700">来源: {{ (selectedResult as any).source }}</span>
+              <div v-if="selectedResultType === 'web' && 'source' in selectedResult" class="px-3 py-1.5 bg-emerald-50 rounded-lg border border-emerald-200">
+                <span class="text-xs font-medium text-emerald-700">来源: {{ (selectedResult as any).source }}</span>
               </div>
             </div>
 
@@ -750,7 +750,7 @@ function getResultColor(type: 'local' | 'web') {
                 <a
                   :href="selectedResult.source_file"
                   target="_blank"
-                  class="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-lg hover:from-indigo-600 hover:to-purple-700 transition-all shadow-md"
+                  class="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-lg hover:from-emerald-700 hover:to-teal-700 transition-all shadow-md"
                 >
                   <ExternalLink :size="16" />
                   <span>访问原文链接</span>
@@ -758,26 +758,26 @@ function getResultColor(type: 'local' | 'web') {
               </div>
 
               <!-- Metadata -->
-              <div v-if="selectedResultType === 'local'" class="mt-6 p-4 bg-blue-50 rounded-xl border border-blue-200">
-                <h4 class="text-sm font-semibold text-blue-800 mb-3 flex items-center gap-2">
+              <div v-if="selectedResultType === 'local'" class="mt-6 p-4 bg-emerald-50 rounded-xl border border-emerald-200">
+                <h4 class="text-sm font-semibold text-emerald-800 mb-3 flex items-center gap-2">
                   <Database :size="14" />
                   元信息
                 </h4>
                 <div class="grid grid-cols-2 gap-3 text-sm">
                   <div>
-                    <span class="text-blue-600 font-medium">文档 ID:</span>
+                    <span class="text-emerald-600 font-medium">文档 ID:</span>
                     <p class="text-gray-700 font-mono text-xs mt-1 break-all">{{ (selectedResult as SearchResult).document_id }}</p>
                   </div>
                   <div>
-                    <span class="text-blue-600 font-medium">片段 ID:</span>
+                    <span class="text-emerald-600 font-medium">片段 ID:</span>
                     <p class="text-gray-700 font-mono text-xs mt-1 break-all">{{ selectedResult.chunk_id }}</p>
                   </div>
                   <div v-if="(selectedResult as SearchResult).page_number">
-                    <span class="text-blue-600 font-medium">页码:</span>
+                    <span class="text-emerald-600 font-medium">页码:</span>
                     <p class="text-gray-700 mt-1">{{ (selectedResult as SearchResult).page_number }}</p>
                   </div>
                   <div>
-                    <span class="text-blue-600 font-medium">来源文件:</span>
+                    <span class="text-emerald-600 font-medium">来源文件:</span>
                     <p class="text-gray-700 mt-1">{{ selectedResult.source_file }}</p>
                   </div>
                 </div>
@@ -795,7 +795,7 @@ function getResultColor(type: 'local' | 'web') {
             </button>
             <button
               @click="closeDetail"
-              class="px-6 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-lg hover:from-cyan-600 hover:to-blue-700 transition-all shadow-md"
+              class="px-6 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-lg hover:from-emerald-700 hover:to-teal-700 transition-all shadow-md"
             >
               确定
             </button>

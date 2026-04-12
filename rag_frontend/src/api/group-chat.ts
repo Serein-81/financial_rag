@@ -28,6 +28,8 @@ export interface GroupMember {
     enabled: boolean
     mentions_only: boolean
   }
+  is_online?: boolean
+  last_seen?: string
 }
 
 export interface GroupInvitation {
@@ -44,6 +46,17 @@ export interface GroupInvitation {
   expires_at?: string
 }
 
+export interface SentInvitation {
+  id: string
+  group_id: string
+  group_name: string
+  invitee_id: string
+  invitee_name: string
+  message?: string
+  status: 'pending' | 'accepted' | 'declined' | 'expired'
+  created_at: string
+}
+
 export interface GroupMessage {
   id: string
   group_id: string
@@ -56,6 +69,7 @@ export interface GroupMessage {
   metadata?: Record<string, any>
   created_at: string
   is_deleted?: boolean
+  status?: 'sending' | 'sent' | 'queued' | 'failed'
 }
 
 export interface Notification {
@@ -65,6 +79,10 @@ export interface Notification {
   content: string
   group_id?: string
   group_name?: string
+  inviter_id?: string
+  inviter_name?: string
+  invitation_id?: string
+  message?: string
   is_read: boolean
   created_at: string
   data?: Record<string, any>
@@ -77,7 +95,7 @@ export interface CreateGroupRequest {
 }
 
 export interface InviteMembersRequest {
-  invitee_ids: string[]
+  user_ids: string[]
   message?: string
 }
 
@@ -88,105 +106,152 @@ export interface SendMessageRequest {
 
 export const groupChatApi = {
   async getGroups(): Promise<ChatGroup[]> {
-    return request.get('/groups/')
+    return request<ChatGroup[]>('/groups/')
   },
 
   async createGroup(data: CreateGroupRequest): Promise<ChatGroup> {
-    return request.post('/groups/', data)
+    return request<ChatGroup>('/groups/', {
+      method: 'POST',
+      data: data,
+    })
   },
 
   async getGroup(groupId: string): Promise<ChatGroup> {
-    return request.get(`/groups/${groupId}`)
+    return request<ChatGroup>(`/groups/${groupId}`)
   },
 
   async updateGroup(groupId: string, data: Partial<CreateGroupRequest>): Promise<ChatGroup> {
-    return request.put(`/groups/${groupId}`, data)
+    return request<ChatGroup>(`/groups/${groupId}`, {
+      method: 'PUT',
+      data: data,
+    })
   },
 
   async deleteGroup(groupId: string): Promise<void> {
-    return request.delete(`/groups/${groupId}`)
+    return request<void>(`/groups/${groupId}`, {
+      method: 'DELETE',
+    })
   },
 
   async getGroupMembers(groupId: string): Promise<GroupMember[]> {
-    return request.get(`/groups/${groupId}/members`)
+    return request<GroupMember[]>(`/groups/${groupId}/members`)
   },
 
   async inviteMembers(groupId: string, data: InviteMembersRequest): Promise<GroupInvitation[]> {
-    return request.post(`/groups/${groupId}/invite`, data)
+    return request<GroupInvitation[]>(`/groups/${groupId}/invite`, {
+      method: 'POST',
+      data: data,
+    })
   },
 
   async leaveGroup(groupId: string): Promise<void> {
-    return request.post(`/groups/${groupId}/leave`)
+    return request<void>(`/groups/${groupId}/leave`, {
+      method: 'POST',
+    })
   },
 
   async removeMember(groupId: string, userId: string): Promise<void> {
-    return request.delete(`/groups/${groupId}/members/${userId}`)
+    return request<void>(`/groups/${groupId}/members/${userId}`, {
+      method: 'DELETE',
+    })
   },
 
   async updateMemberRole(groupId: string, userId: string, role: 'admin' | 'member'): Promise<GroupMember> {
-    return request.put(`/groups/${groupId}/members/${userId}`, { role })
+    return request<GroupMember>(`/groups/${groupId}/members/${userId}`, {
+      method: 'PUT',
+      data: { role },
+    })
   },
 
   async getGroupMessages(groupId: string, params?: { limit?: number; before?: string }): Promise<GroupMessage[]> {
-    return request.get(`/groups/${groupId}/messages`, { params })
+    return request<GroupMessage[]>(`/groups/${groupId}/messages`, { params })
   },
 
   async sendMessage(groupId: string, data: SendMessageRequest): Promise<GroupMessage> {
-    return request.post(`/groups/${groupId}/messages`, data)
+    return request<GroupMessage>(`/groups/${groupId}/messages`, {
+      method: 'POST',
+      data: data,
+    })
   },
 
   async getPendingInvitations(): Promise<GroupInvitation[]> {
-    return request.get('/invitations/pending')
+    return request<GroupInvitation[]>('/invitations/pending')
+  },
+
+  async getSentInvitations(): Promise<SentInvitation[]> {
+    return request<SentInvitation[]>('/invitations/sent')
   },
 
   async acceptInvitation(invitationId: string): Promise<GroupMember> {
-    return request.post(`/invitations/${invitationId}/accept`)
+    return request<GroupMember>(`/invitations/${invitationId}/accept`, {
+      method: 'POST',
+    })
   },
 
   async declineInvitation(invitationId: string): Promise<void> {
-    return request.post(`/invitations/${invitationId}/decline`)
+    return request<void>(`/invitations/${invitationId}/decline`, {
+      method: 'POST',
+    })
   },
 
   async getNotifications(params?: { limit?: number; unread_only?: boolean }): Promise<Notification[]> {
-    return request.get('/notifications/', { params })
+    return request<Notification[]>('/notifications/', { params })
   },
 
   async markNotificationRead(notificationId: string): Promise<void> {
-    return request.put(`/notifications/${notificationId}/read`)
+    return request<void>(`/notifications/${notificationId}/read`, {
+      method: 'PUT',
+    })
   },
 
   async markAllNotificationsRead(): Promise<void> {
-    return request.put('/notifications/read-all')
+    return request<void>('/notifications/read-all', {
+      method: 'PUT',
+    })
   },
 
   async deleteNotification(notificationId: string): Promise<void> {
-    return request.delete(`/notifications/${notificationId}`)
+    return request<void>(`/notifications/${notificationId}`, {
+      method: 'DELETE',
+    })
   },
 
   async deleteNotificationsBatch(notificationIds: string[]): Promise<{ deleted_count: number }> {
-    return request.post('/notifications/delete-batch', notificationIds)
+    return request<{ deleted_count: number }>('/notifications/delete-batch', {
+      method: 'POST',
+      data: notificationIds,
+    })
   },
 
   async clearAllNotifications(): Promise<void> {
-    return request.delete('/notifications/')
+    return request<void>('/notifications/clear-all', {
+      method: 'POST',
+    })
+  },
+
+  async resendInvitationNotification(invitationId: string): Promise<void> {
+    return request<void>(`/notifications/resend-invitation/${invitationId}`, {
+      method: 'POST',
+    })
   },
 
   async getOnlineMembers(groupId: string): Promise<string[]> {
-    return request.get(`/groups/${groupId}/online-members`)
+    return request<string[]>(`/groups/${groupId}/online-members`)
   },
 
   createWebSocketConnection(groupId: string): WebSocket {
     const token = localStorage.getItem('rag_token')
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const wsUrl = `${protocol}//${window.location.host}/api/v1/ws/groups/${groupId}?token=${token}`
+    const wsUrl = `${protocol}//${window.location.host}/ws-api/v1/ws/groups/${groupId}?token=${token}`
+    console.log('WebSocket connecting to:', wsUrl)
     return new WebSocket(wsUrl)
   }
 }
 
 export interface WebSocketMessage {
-  type: 'new_message' | 'member_joined' | 'member_left' | 'member_removed' | 
-        'group_updated' | 'typing' | 'online_status' | 'invitation_received' |
-        'notification' | 'error'
+  type: 'new_message' | 'group_message' | 'member_joined' | 'member_left' | 'member_removed' |
+        'member_online' | 'member_offline' | 'members_sync' | 'group_updated' | 'typing' |
+        'online_status' | 'invitation_received' | 'notification' | 'messages_read' | 'user_typing' | 'error'
   data?: any
   sender_id?: string
   timestamp?: string

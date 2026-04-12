@@ -46,11 +46,10 @@ async def chat_with_rag(
 
     print(f"🔍 [V1] 租户 {tenant_context['tenant_id']} 正在搜索: {request.query}")
     
-    # 添加租户过滤器
     search_results = await search_service.search(
-        request.query, 
-        request.top_k,
-        filters={'tenant_id': tenant_context['tenant_id']}  # 🔒 租户隔离
+        query=request.query,
+        top_k=request.top_k,
+        tenant_id=tenant_context['tenant_id']
     )
 
     if not search_results:
@@ -170,7 +169,9 @@ async def chat_stream_persistent(
     search_results = await search_service.search(
         query=request.query,
         top_k=request.top_k,
-        kb_id=request.kb_id
+        kb_id=request.kb_id,
+        tenant_id=str(current_user.tenant_id),
+        user_id=str(current_user.id)
     )
     context_texts = [item.content for item in search_results] if search_results else []
 
@@ -217,6 +218,12 @@ async def chat_stream_persistent(
                 db.add(ai_msg)
                 await db.commit()
                 print(f"💾 AI 回答已保存 (长度: {len(full_answer)}, tokens: {total_tokens})")
+        except (ValueError, KeyError) as e:
+            print(f"❌ 保存 AI 消息数据错误: {e}")
+        except (OSError, IOError) as e:
+            print(f"❌ 保存 AI 消息IO错误: {e}")
+        except (OSError, IOError) as e:
+            raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
         except Exception as e:
             print(f"❌ 保存 AI 消息失败: {e}")
 
@@ -302,6 +309,14 @@ async def chat_with_agent(
     except HTTPException:
         # 拦截上面主动抛出的 403 等 HTTP 异常，直接向上抛出，避免变成 500
         raise
+    except (ValueError, KeyError) as e:
+        print(f"❌ [Agent 运行数据错误]: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except (OSError, IOError) as e:
+        print(f"❌ [Agent 运行IO错误]: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         print(f"❌ [Agent 运行出错]: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -362,22 +377,73 @@ async def chat_with_agent_stream(
     # 2. 构造流式生成器 (Generator)
     async def event_generator():
         # SSE 标准要求数据以 "data: " 开头，以 "\n\n" 结尾
+        
+        # 流式输出缓冲配置
+        BUFFER_SIZE = 5  # 每积累 N 个字符发送一次（平衡延迟和性能）
+        MAX_WAIT_TIME = 0.1  # 最大等待时间（秒），超时后立即发送
 
         # 先把 session_id 发给前端，让前端知道当前会话的 ID
         init_data = json.dumps({"type": "init", "session_id": session_id})
         yield f"data: {init_data}\n\n"
 
-        # 🧠 调用集成了记忆系统的流式服务，传入user_id
-        async for chunk in agent_service.chat_stream(
-            user_input=request.query, 
-            kb_id=request.kb_id, 
-            session_id=session_id, 
-            history=[],  # 空历史，使用记忆系统替代
-            user_id=str(current_user.id)  # 🧠 传入user_id
-        ):
-            # 将每个文字片段转为 JSON 发送
-            chunk_data = json.dumps({"type": "chunk", "content": chunk}, ensure_ascii=False)
-            yield f"data: {chunk_data}\n\n"
+        # 缓冲区
+        text_buffer = ""
+        last_send_time = time.time()
+
+        async def flush_buffer():
+            nonlocal text_buffer, last_send_time
+            if text_buffer:
+                chunk_data = json.dumps({"type": "chunk", "content": text_buffer}, ensure_ascii=False)
+                yield f"data: {chunk_data}\n\n"
+                text_buffer = ""
+                last_send_time = time.time()
+
+        try:
+            # 🧠 调用集成了记忆系统的流式服务，传入user_id
+            async for chunk in agent_service.chat_stream(
+                user_input=request.query, 
+                kb_id=request.kb_id, 
+                session_id=session_id, 
+                history=[],  # 空历史，使用记忆系统替代
+                user_id=str(current_user.id)  # 🧠 传入user_id
+            ):
+                # 识别 sources 信息并单独发送
+                if chunk.startswith("__SOURCES_EVENT__:"):
+                    # 先刷新缓冲区
+                    async for data in flush_buffer():
+                        yield data
+                    
+                    sources_json = chunk[len("__SOURCES_EVENT__:"):]
+                    try:
+                        sources_data = json.loads(sources_json)
+                        sources_event = json.dumps({"type": "sources", "sources": sources_data}, ensure_ascii=False)
+                        yield f"data: {sources_event}\n\n"
+                    except json.JSONDecodeError:
+                        print(f"⚠️ [sources解析失败]: {sources_json[:100]}")
+                    continue
+                
+                # 累积到缓冲区
+                text_buffer += chunk
+                
+                # 达到缓冲区大小或超时时发送
+                current_time = time.time()
+                if len(text_buffer) >= BUFFER_SIZE or (current_time - last_send_time) >= MAX_WAIT_TIME:
+                    async for data in flush_buffer():
+                        yield data
+                    
+        except (ValueError, KeyError) as e:
+            print(f"⚠️ [流式生成器数据错误]: {e}")
+        except (OSError, IOError) as e:
+            print(f"⚠️ [流式生成器IO错误]: {e}")
+        except (OSError, IOError) as e:
+            raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
+        except Exception as e:
+            print(f"⚠️ [流式生成器异常]: {e}")
+        
+        finally:
+            # 最后刷新缓冲区
+            async for data in flush_buffer():
+                yield data
 
         # 🧠 不再手动存储AI回答，记忆系统会自动处理
         # 移除了手动存储AI回答的代码
@@ -435,7 +501,7 @@ async def chat_with_orchestrator(
     print(f"🎭 [编排器接口被调用] 用户: {current_user.email} | 问题: {request.query}")
     
     try:
-        from app.multi_agent_system import AgentOrchestrator
+        from app.multi_agent_system import AgentOrchestrator, OrchestrationContext
         
         orchestrator = AgentOrchestrator(
             tenant_id=str(current_user.id),
@@ -446,27 +512,41 @@ async def chat_with_orchestrator(
         
         await orchestrator.initialize()
         
-        result = await orchestrator.process(
-            user_input=request.query,
-            session_id=request.session_id,
-            history=[]
+        context = OrchestrationContext(
+            session_id=request.session_id or str(uuid.uuid4()),
+            tenant_id=str(current_user.id),
+            user_id=str(current_user.id),
+            user_query=request.query,
+            context={"history": []},
+            enable_reflection=request.enable_reflection,
+            enable_rag=request.enable_rag
         )
         
+        result = await orchestrator.process(context)
+        
         return {
-            "status": result.get("status", "success"),
-            "session_id": result.get("session_id"),
-            "answer": result.get("response", ""),
-            "intent": result.get("intent"),
-            "confidence": result.get("confidence", 0.0),
-            "requires_specialists": result.get("requires_specialists", []),
-            "needs_human_review": result.get("needs_human_review", False),
-            "processing_time": result.get("processing_time", 0),
+            "status": "success" if result.final_response else "error",
+            "session_id": context.session_id,
+            "answer": result.final_response or "",
+            "intent": result.intent_result.intent.value if result.intent_result else None,
+            "confidence": result.intent_result.confidence if result.intent_result else 0.0,
+            "requires_specialists": [r.get('specialist_type', '') for r in result.specialist_results],
+            "needs_human_review": result.needs_human_review,
+            "processing_time": 0,
             "metadata": {
                 "enable_reflection": request.enable_reflection,
                 "enable_rag": request.enable_rag
             }
         }
         
+    except (ValueError, KeyError) as e:
+        print(f"❌ [编排器运行数据错误]: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except (OSError, IOError) as e:
+        print(f"❌ [编排器运行IO错误]: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         print(f"❌ [编排器运行出错]: {e}")
         import traceback
@@ -514,20 +594,27 @@ async def chat_with_orchestrator_stream(
             
             await orchestrator.initialize()
             
-            async for chunk in orchestrator.stream_process(
+            async for event_json in orchestrator.stream_process(
                 user_input=request.query,
                 session_id=session_id,
                 history=[]
             ):
-                chunk_data = json.dumps({
-                    "type": "chunk",
-                    "content": chunk
-                }, ensure_ascii=False)
-                yield f"data: {chunk_data}\n\n"
+                yield f"data: {event_json}\n\n"
             
-            done_data = json.dumps({"type": "done"})
-            yield f"data: {done_data}\n\n"
-            
+        except (ValueError, KeyError) as e:
+            error_data = json.dumps({
+                "type": "error",
+                "error": f"数据错误: {str(e)}"
+            })
+            yield f"data: {error_data}\n\n"
+        except (OSError, IOError) as e:
+            error_data = json.dumps({
+                "type": "error",
+                "error": f"IO错误: {str(e)}"
+            })
+            yield f"data: {error_data}\n\n"
+        except (OSError, IOError) as e:
+            raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
         except Exception as e:
             error_data = json.dumps({
                 "type": "error",

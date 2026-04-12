@@ -51,14 +51,14 @@ export const authApi = {
   async sendSMS(data: SendSMSRequest): Promise<SendSMSResponse> {
     return request<SendSMSResponse>('/auth/sms/send', {
       method: 'POST',
-      body: JSON.stringify(data),
+      data: JSON.stringify(data),
     })
   },
 
   async verifySMS(data: VerifySMSRequest): Promise<VerifySMSResponse> {
     return request<VerifySMSResponse>('/auth/sms/verify', {
       method: 'POST',
-      body: JSON.stringify(data),
+      data: JSON.stringify(data),
     })
   },
 
@@ -69,7 +69,7 @@ export const authApi = {
   async updateProfile(data: UpdateProfileRequest): Promise<UserProfile> {
     return request<UserProfile>('/auth/profile', {
       method: 'PUT',
-      body: JSON.stringify(data),
+      data: JSON.stringify(data),
     })
   },
 

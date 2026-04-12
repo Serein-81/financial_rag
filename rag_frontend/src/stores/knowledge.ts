@@ -94,6 +94,20 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
     selectedKnowledgeBaseId.value = kb_id
   }
 
+  async function deleteDocument(kb_id: string, doc_id: string) {
+    try {
+      await knowledgeApi.deleteDocument(doc_id)
+      if (documents.value[kb_id]) {
+        documents.value[kb_id] = documents.value[kb_id].filter(
+          (doc) => doc.id !== doc_id
+        )
+      }
+    } catch (error) {
+      console.error('Failed to delete document:', error)
+      throw error
+    }
+  }
+
   return {
     knowledgeBases,
     selectedKnowledgeBaseId,
@@ -106,5 +120,6 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
     fetchDocuments,
     uploadFile,
     selectKnowledgeBase,
+    deleteDocument,
   }
 })

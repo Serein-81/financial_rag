@@ -34,6 +34,7 @@ class GraphBuilder:
         text: str,
         user_id: Optional[int] = None,
         session_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
         extract_entities: bool = True,
         extract_relations: bool = True,
         callback: Optional[Callable] = None
@@ -45,6 +46,7 @@ class GraphBuilder:
             text: 输入文本
             user_id: 用户 ID
             session_id: 会话 ID
+            tenant_id: 租户 ID（多租户隔离必需）
             extract_entities: 是否提取实体
             extract_relations: 是否提取关系
             callback: 进度回调函数
@@ -79,7 +81,7 @@ class GraphBuilder:
             if entities_data:
                 progress.info(f"📤 创建 {len(entities_data)} 个实体到图数据库")
                 created_entities = await self._batch_create_entities(
-                    entities_data, user_id, session_id, progress
+                    entities_data, user_id, session_id, tenant_id, progress
                 )
                 progress.success(f"✅ 成功创建 {len(created_entities)} 个实体")
 
@@ -87,7 +89,7 @@ class GraphBuilder:
             if relations_data:
                 progress.info(f"📤 创建 {len(relations_data)} 个关系到图数据库")
                 created_relations = await self._batch_create_relations(
-                    relations_data, user_id, session_id, progress
+                    relations_data, user_id, session_id, tenant_id, progress
                 )
                 progress.success(f"✅ 成功创建 {len(created_relations)} 个关系")
 
@@ -106,6 +108,12 @@ class GraphBuilder:
                 message=f"成功创建 {total_entities} 个实体和 {total_relations} 个关系"
             )
 
+        except (ValueError, KeyError) as e:
+            error_msg = f"图构建数据错误: {str(e)}"
+            progress.error(error_msg)
+        except (OSError, IOError) as e:
+            error_msg = f"图构建IO错误: {str(e)}"
+            progress.error(error_msg)
         except Exception as e:
             error_msg = f"图构建失败: {str(e)}"
             progress.error(error_msg)
@@ -149,6 +157,12 @@ class GraphBuilder:
                         )
                         all_relations.extend(relations_data)
 
+                except (ValueError, KeyError) as e:
+                    progress.warning(f"处理文本 {idx + 1} 数据错误: {e}")
+                    continue
+                except (OSError, IOError) as e:
+                    progress.warning(f"处理文本 {idx + 1} IO错误: {e}")
+                    continue
                 except Exception as e:
                     progress.warning(f"处理文本 {idx + 1} 失败: {e}")
                     continue
@@ -179,6 +193,12 @@ class GraphBuilder:
                 message=f"成功创建 {len(created_entities)} 个实体和 {len(created_relations)} 个关系"
             )
 
+        except (ValueError, KeyError) as e:
+            error_msg = f"批量构建数据错误: {str(e)}"
+            progress.error(error_msg)
+        except (OSError, IOError) as e:
+            error_msg = f"批量构建IO错误: {str(e)}"
+            progress.error(error_msg)
         except Exception as e:
             error_msg = f"批量构建失败: {str(e)}"
             progress.error(error_msg)
@@ -194,6 +214,7 @@ class GraphBuilder:
         entities: List[Dict[str, Any]],
         user_id: Optional[int] = None,
         session_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
         progress: Optional[ProgressCallback] = None
     ) -> List[Dict[str, Any]]:
         """批量创建实体（支持消歧和置信度）"""
@@ -204,11 +225,13 @@ class GraphBuilder:
                 if progress:
                     progress.debug(f"创建实体: {entity.get('name', 'unknown')}")
 
-                properties = entity.get("properties", {})
+                properties = entity.get("properties", {}) or {}
+                if isinstance(properties, str):
+                    properties = {}
                 if user_id:
-                    properties["user_id"] = user_id
+                    properties["user_id"] = str(user_id)
                 if session_id:
-                    properties["session_id"] = session_id
+                    properties["session_id"] = str(session_id)
 
                 if "confidence" in entity:
                     properties["confidence"] = entity["confidence"]
@@ -224,6 +247,7 @@ class GraphBuilder:
                 result = self.neo4j_manager.create_entity(
                     name=entity_name,
                     entity_type=entity["type"],
+                    tenant_id=tenant_id,
                     properties=properties,
                     unique_key=unique_key
                 )
@@ -240,6 +264,18 @@ class GraphBuilder:
                     if progress:
                         progress.debug(f"✅ 创建实体: {entity_name} ({entity['type']})")
 
+            except (ValueError, KeyError) as e:
+                if progress:
+                    progress.warning(f"创建实体数据错误 {entity.get('name', 'unknown')}: {e}")
+            except (OSError, IOError) as e:
+                if progress:
+                    progress.warning(f"创建实体IO错误 {entity.get('name', 'unknown')}: {e}")
+            except (ValueError, KeyError) as e:
+                if progress:
+                    progress.warning(f"创建关系数据错误: {e}")
+            except (OSError, IOError) as e:
+                if progress:
+                    progress.warning(f"创建关系IO错误: {e}")
             except Exception as e:
                 if progress:
                     progress.warning(f"创建实体失败 {entity.get('name', 'unknown')}: {e}")
@@ -255,6 +291,7 @@ class GraphBuilder:
         relations: List[Dict[str, Any]],
         user_id: Optional[int] = None,
         session_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
         progress: Optional[ProgressCallback] = None
     ) -> List[Dict[str, Any]]:
         """批量创建关系"""
@@ -269,14 +306,15 @@ class GraphBuilder:
 
                 properties = relation.get("properties", {})
                 if user_id:
-                    properties["user_id"] = user_id
+                    properties["user_id"] = str(user_id)
                 if session_id:
-                    properties["session_id"] = session_id
+                    properties["session_id"] = str(session_id)
 
                 result = self.neo4j_manager.create_relation(
                     source_name=relation["source"],
                     target_name=relation["target"],
                     relation_type=relation["type"],
+                    tenant_id=tenant_id,
                     properties=properties
                 )
 
@@ -305,15 +343,42 @@ class GraphBuilder:
 
     async def build_from_memory(
         self,
-        memory_id: int,
+        memory_id: str,
         content: str,
-        db: Session
+        db: Any
     ) -> GraphBuildResponse:
         """从记忆构建图谱（集成到 semantic_memory）"""
+        import uuid as uuid_lib
+        from sqlalchemy import select
+        from sqlalchemy.ext.asyncio import AsyncSession
         from app.models.semantic_memory import SemanticMemory
-        memory = db.query(SemanticMemory).filter(
-            SemanticMemory.id == memory_id
-        ).first()
+        from app.models.user import User
+        
+        try:
+            memory_uuid = uuid_lib.UUID(memory_id)
+        except (ValueError, TypeError):
+            return GraphBuildResponse(
+                success=False,
+                message=f"无效的 memory_id: {memory_id}"
+            )
+
+        if isinstance(db, AsyncSession):
+            stmt = select(SemanticMemory).where(SemanticMemory.id == memory_uuid)
+            result = await db.execute(stmt)
+            memory = result.scalar_one_or_none()
+            
+            tenant_id = None
+            if memory and memory.user_id:
+                user_stmt = select(User).where(User.id == memory.user_id)
+                user_result = await db.execute(user_stmt)
+                user = user_result.scalar_one_or_none()
+                if user:
+                    tenant_id = str(user.tenant_id)
+        else:
+            memory = db.query(SemanticMemory).filter(
+                SemanticMemory.id == memory_uuid
+            ).first()
+            tenant_id = str(memory.user.tenant_id) if memory and memory.user else None
 
         if not memory:
             return GraphBuildResponse(
@@ -323,8 +388,9 @@ class GraphBuilder:
 
         return await self.build_from_text(
             text=content,
-            user_id=memory.user_id,
-            session_id=memory.session_id
+            user_id=str(memory.user_id) if memory.user_id else None,
+            session_id=str(memory.source_session_id) if memory.source_session_id else None,
+            tenant_id=tenant_id
         )
 
     async def build_with_enhancements(
@@ -332,6 +398,7 @@ class GraphBuilder:
         texts: List[str],
         user_id: Optional[int] = None,
         session_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
         generate_descriptions: bool = True,
         callback: Optional[Callable] = None
     ) -> GraphBuildResponse:
@@ -397,6 +464,12 @@ class GraphBuilder:
                     except asyncio.CancelledError:
                         progress.warning(f"⚠️ 文本 {idx + 1} 处理被取消")
                         raise
+                    except (ValueError, KeyError) as e:
+                        progress.warning(f"⚠️ 文本 {idx + 1} 处理数据错误: {e}")
+                        logger.error(f"处理文本 {idx + 1} 数据错误: {e}", exc_info=True)
+                    except (OSError, IOError) as e:
+                        progress.warning(f"⚠️ 文本 {idx + 1} 处理IO错误: {e}")
+                        logger.error(f"处理文本 {idx + 1} IO错误: {e}", exc_info=True)
                     except Exception as e:
                         progress.warning(f"⚠️ 文本 {idx + 1} 处理失败: {e}")
                         logger.error(f"处理文本 {idx + 1} 失败: {e}", exc_info=True)
@@ -417,13 +490,13 @@ class GraphBuilder:
 
             progress.info(f"📤 创建实体到图数据库")
             created_entities = await self._batch_create_entities(
-                merged_entities, user_id, session_id, progress
+                merged_entities, user_id, session_id, tenant_id, progress
             )
             progress.success(f"✅ 成功创建 {len(created_entities)} 个实体")
 
             progress.info(f"📤 创建关系到图数据库")
             created_relations = await self._batch_create_relations(
-                merged_relations, user_id, session_id, progress
+                merged_relations, user_id, session_id, tenant_id, progress
             )
             progress.success(f"✅ 成功创建 {len(created_relations)} 个关系")
 
@@ -449,6 +522,12 @@ class GraphBuilder:
                 message=error_msg
             )
 
+        except (ValueError, KeyError) as e:
+            error_msg = f"增强构建数据错误: {str(e)}"
+            progress.error(error_msg)
+        except (OSError, IOError) as e:
+            error_msg = f"增强构建IO错误: {str(e)}"
+            progress.error(error_msg)
         except Exception as e:
             error_msg = f"增强构建失败: {str(e)}"
             progress.error(error_msg)

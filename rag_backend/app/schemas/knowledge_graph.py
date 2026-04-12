@@ -153,3 +153,26 @@ class GraphVisualizationResponse(BaseModel):
     nodes: List[GraphNode] = Field(default_factory=list)
     edges: List[GraphEdge] = Field(default_factory=list)
     center_node: Optional[str] = None
+
+
+class EntityListItem(BaseModel):
+    """实体列表项"""
+    id: str = Field(..., description="Neo4j 节点 ID")
+    name: str = Field(..., description="实体名称")
+    type: str = Field(..., description="实体类型")
+    properties: Dict[str, Any] = Field(default_factory=dict, description="实体属性")
+    created_at: Optional[str] = Field(None, description="创建时间")
+    updated_at: Optional[str] = Field(None, description="更新时间")
+
+
+class EntityListResponse(BaseModel):
+    """实体列表响应"""
+    entities: List[EntityListItem] = Field(default_factory=list)
+    total: int = Field(0, description="总数")
+    limit: int = Field(200, description="每页数量")
+    offset: int = Field(0, description="偏移量")
+
+
+class EntityTypesResponse(BaseModel):
+    """实体类型列表响应"""
+    types: List[str] = Field(default_factory=list)

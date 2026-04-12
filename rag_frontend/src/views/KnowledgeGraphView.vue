@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { useKnowledgeStore } from '@/stores/knowledge'
 import { knowledgeGraphApi } from '@/api/knowledge-graph'
 import type { KnowledgeGraphEntity, KnowledgeGraphRelation } from '@/api/knowledge-graph'
@@ -16,6 +16,52 @@ import {
   AlertCircle,
   CheckCircle
 } from 'lucide-vue-next'
+
+const SESSION_KEY = 'knowledge_graph_state'
+
+function saveSessionState() {
+  const state = {
+    activeTab: activeTab.value,
+    inputText: inputText.value,
+    searchQuery: searchQuery.value,
+    entityName: entityName.value,
+    buildResult: buildResult.value,
+    error: error.value,
+    success: success.value
+  }
+  sessionStorage.setItem(SESSION_KEY, JSON.stringify(state))
+}
+
+function loadSessionState() {
+  const saved = sessionStorage.getItem(SESSION_KEY)
+  if (saved) {
+    try {
+      const state = JSON.parse(saved)
+      activeTab.value = state.activeTab || 'build'
+      inputText.value = state.inputText || ''
+      searchQuery.value = state.searchQuery || ''
+      entityName.value = state.entityName || ''
+      buildResult.value = state.buildResult || null
+      error.value = state.error || ''
+      success.value = state.success || ''
+    } catch (e) {
+      console.error('Failed to load session state:', e)
+    }
+  }
+}
+
+function clearSessionState() {
+  sessionStorage.removeItem(SESSION_KEY)
+  activeTab.value = 'build'
+  inputText.value = ''
+  searchQuery.value = ''
+  entityName.value = ''
+  buildResult.value = null
+  searchResults.value = []
+  queryResult.value = null
+  error.value = ''
+  success.value = ''
+}
 
 const knowledgeStore = useKnowledgeStore()
 
@@ -40,7 +86,12 @@ const selectedKB = computed(() => knowledgeStore.selectedKnowledgeBase)
 
 onMounted(async () => {
   await knowledgeStore.fetchKnowledgeBases()
+  loadSessionState()
 })
+
+watch([activeTab, inputText, searchQuery, entityName, buildResult, error, success], () => {
+  saveSessionState()
+}, { deep: true })
 
 async function handleBuildGraph() {
   if (!inputText.value.trim()) {
@@ -122,11 +173,11 @@ async function handleQueryEntity() {
 
 function getEntityTypeColor(type: string): string {
   const colors: Record<string, string> = {
-    'Person': 'bg-blue-100 text-blue-700 border-blue-300',
-    'Organization': 'bg-purple-100 text-purple-700 border-purple-300',
+    'Person': 'bg-emerald-100 text-emerald-700 border-emerald-300',
+    'Organization': 'bg-teal-100 text-teal-700 border-teal-300',
     'Location': 'bg-green-100 text-green-700 border-green-300',
     'Event': 'bg-orange-100 text-orange-700 border-orange-300',
-    'Product': 'bg-pink-100 text-pink-700 border-pink-300',
+    'Product': 'bg-teal-100 text-teal-700 border-teal-300',
     'default': 'bg-gray-100 text-gray-700 border-gray-300'
   }
   return colors[type] || colors.default
@@ -140,7 +191,7 @@ function getEntityTypeColor(type: string): string {
       <div class="flex items-center justify-between">
         <div>
           <h1 class="text-2xl font-bold text-gray-900 flex items-center gap-2">
-            <Network :size="28" class="text-blue-600" />
+            <Network :size="28" class="text-emerald-600" />
             知识图谱
           </h1>
           <p class="text-sm text-gray-500 mt-1">构建、可视化和查询知识图谱</p>
@@ -148,13 +199,14 @@ function getEntityTypeColor(type: string): string {
       </div>
 
       <!-- Tabs -->
-      <div class="flex gap-4 mt-4">
-        <button
+      <div class="flex items-center justify-between mt-4">
+        <div class="flex gap-4">
+          <button
           @click="activeTab = 'build'"
           :class="[
             'px-4 py-2 font-medium rounded-lg transition-colors',
             activeTab === 'build'
-              ? 'bg-blue-100 text-blue-600'
+              ? 'bg-emerald-100 text-emerald-600'
               : 'text-gray-600 hover:bg-gray-100'
           ]"
         >
@@ -165,7 +217,7 @@ function getEntityTypeColor(type: string): string {
           :class="[
             'px-4 py-2 font-medium rounded-lg transition-colors',
             activeTab === 'query'
-              ? 'bg-blue-100 text-blue-600'
+              ? 'bg-emerald-100 text-emerald-600'
               : 'text-gray-600 hover:bg-gray-100'
           ]"
         >
@@ -176,11 +228,18 @@ function getEntityTypeColor(type: string): string {
           :class="[
             'px-4 py-2 font-medium rounded-lg transition-colors',
             activeTab === 'visualize'
-              ? 'bg-blue-100 text-blue-600'
+              ? 'bg-emerald-100 text-emerald-600'
               : 'text-gray-600 hover:bg-gray-100'
           ]"
         >
           混合检索
+        </button>
+        </div>
+        <button
+          @click="clearSessionState"
+          class="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+        >
+          清除数据
         </button>
       </div>
     </div>
@@ -206,14 +265,14 @@ function getEntityTypeColor(type: string): string {
             v-model="inputText"
             rows="8"
             placeholder="请输入需要分析的文本内容，系统将自动提取实体和关系..."
-            class="w-full px-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-200 focus:border-blue-500 outline-none resize-none"
+            class="w-full px-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-emerald-200 focus:border-emerald-500 outline-none resize-none"
           />
           <div class="flex items-center justify-between mt-4">
             <p class="text-sm text-gray-500">支持从文档或对话中提取结构化知识</p>
             <button
               @click="handleBuildGraph"
               :disabled="isLoading"
-              class="px-6 py-2.5 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              class="px-6 py-2.5 bg-emerald-600 text-white font-medium rounded-lg hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               <Loader2 v-if="isLoading" :size="18" class="animate-spin" />
               <Plus v-else :size="18" />
@@ -239,7 +298,7 @@ function getEntityTypeColor(type: string): string {
                     {{ entity.type }}
                   </span>
                 </div>
-                <div v-if="Object.keys(entity.properties).length > 0" class="text-sm text-gray-600">
+                <div v-if="entity.properties && Object.keys(entity.properties).length > 0" class="text-sm text-gray-600">
                   <span v-for="(value, key) in entity.properties" :key="key" class="inline-block mr-3">
                     <span class="text-gray-500">{{ key }}:</span> {{ value }}
                   </span>
@@ -257,13 +316,13 @@ function getEntityTypeColor(type: string): string {
                 :key="index"
                 class="p-4 border border-gray-200 rounded-lg flex items-center gap-3"
               >
-                <span class="font-medium text-blue-600">{{ relation.source }}</span>
+                <span class="font-medium text-emerald-600">{{ relation.source }}</span>
                 <span class="text-gray-400">→</span>
                 <span class="px-2 py-0.5 bg-gray-100 text-gray-700 text-xs font-medium rounded">
                   {{ relation.type }}
                 </span>
                 <span class="text-gray-400">→</span>
-                <span class="font-medium text-purple-600">{{ relation.target }}</span>
+                <span class="font-medium text-teal-600">{{ relation.target }}</span>
               </div>
             </div>
           </div>
@@ -279,13 +338,13 @@ function getEntityTypeColor(type: string): string {
               v-model="entityName"
               type="text"
               placeholder="输入实体名称，如：苹果公司"
-              class="flex-1 px-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-200 focus:border-blue-500 outline-none"
+              class="flex-1 px-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-emerald-200 focus:border-emerald-500 outline-none"
               @keydown.enter="handleQueryEntity"
             />
             <button
               @click="handleQueryEntity"
               :disabled="isLoading"
-              class="px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              class="px-6 py-3 bg-emerald-600 text-white font-medium rounded-lg hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               <Loader2 v-if="isLoading" :size="18" class="animate-spin" />
               <Search v-else :size="18" />
@@ -305,7 +364,7 @@ function getEntityTypeColor(type: string): string {
               <span :class="['px-3 py-1 text-sm font-medium rounded-full border', getEntityTypeColor(queryResult.entity.type)]">
                 {{ queryResult.entity.type }}
               </span>
-              <div v-if="Object.keys(queryResult.entity.properties).length > 0" class="mt-3 grid grid-cols-2 gap-4">
+              <div v-if="queryResult.entity.properties && Object.keys(queryResult.entity.properties).length > 0" class="mt-3 grid grid-cols-2 gap-4">
                 <div v-for="(value, key) in queryResult.entity.properties" :key="key" class="text-sm">
                   <span class="text-gray-500">{{ key }}:</span>
                   <span class="ml-2 text-gray-900">{{ value }}</span>
@@ -324,7 +383,7 @@ function getEntityTypeColor(type: string): string {
                 >
                   <div class="flex items-center gap-3 mb-2">
                     <span class="font-semibold text-gray-900">{{ queryResult.entity.name }}</span>
-                    <span class="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs font-medium rounded">
+                    <span class="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-xs font-medium rounded">
                       {{ rel.relation }}
                     </span>
                     <span class="font-semibold text-gray-900">{{ rel.target.name }}</span>
@@ -350,13 +409,13 @@ function getEntityTypeColor(type: string): string {
               v-model="searchQuery"
               type="text"
               placeholder="输入查询内容..."
-              class="flex-1 px-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-200 focus:border-blue-500 outline-none"
+              class="flex-1 px-4 py-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-emerald-200 focus:border-emerald-500 outline-none"
               @keydown.enter="handleSearch"
             />
             <button
               @click="handleSearch"
               :disabled="isLoading"
-              class="px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              class="px-6 py-3 bg-emerald-600 text-white font-medium rounded-lg hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               <Loader2 v-if="isLoading" :size="18" class="animate-spin" />
               <Search v-else :size="18" />
@@ -378,8 +437,8 @@ function getEntityTypeColor(type: string): string {
                   :class="[
                     'px-2 py-1 text-xs font-medium rounded',
                     result.source === 'vector'
-                      ? 'bg-blue-100 text-blue-700'
-                      : 'bg-purple-100 text-purple-700'
+                      ? 'bg-emerald-100 text-emerald-700'
+                      : 'bg-teal-100 text-teal-700'
                   ]"
                 >
                   {{ result.source === 'vector' ? '向量检索' : '图谱检索' }}

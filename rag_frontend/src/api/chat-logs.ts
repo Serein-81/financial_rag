@@ -304,7 +304,7 @@ export const chatLogsApi = {
     return request<{
       success: boolean
       data: EnterpriseLogsResponse
-    }>(`/api/v1/logs/system?${searchParams.toString()}`)
+    }>(`/logs/system?${searchParams.toString()}`)
   },
 }
 

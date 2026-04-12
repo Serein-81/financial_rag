@@ -111,6 +111,14 @@ async def get_logs_root(
             "page": page,
             "page_size": page_size
         }
+    except (ValueError, KeyError) as e:
+        import traceback
+        error_detail = f"获取日志数据错误: {str(e)}\n{traceback.format_exc()}"
+        raise HTTPException(status_code=400, detail=error_detail)
+    except (OSError, IOError) as e:
+        import traceback
+        error_detail = f"获取日志IO错误: {str(e)}\n{traceback.format_exc()}"
+        raise HTTPException(status_code=500, detail=error_detail)
     except Exception as e:
         import traceback
         error_detail = f"获取日志失败: {str(e)}\n{traceback.format_exc()}"
@@ -376,6 +384,10 @@ async def cleanup_old_logs(
                 "cleanup_time": datetime.utcnow().isoformat()
             }
         }
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"清理日志数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"清理日志IO错误: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"清理日志失败: {str(e)}")
 

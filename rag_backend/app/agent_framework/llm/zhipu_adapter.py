@@ -49,9 +49,12 @@ class ZhipuAdapter(BaseLLMAdapter):
         self.client = ZhipuAI(api_key=api_key)
         self.api_key = api_key
 
-        print(f"✅ 智谱 AI 适配器初始化完成")
-        print(f"   - 模型: {self.model_name}")
-        print(f"   - API Key: {api_key[:8]}...{api_key[-4:]}")
+        # 只在首次初始化时打印详细信息
+        if not getattr(ZhipuAdapter, '_initialized', False):
+            ZhipuAdapter._initialized = True
+            print(f"✅ 智谱 AI 适配器初始化完成")
+            print(f"   - 模型: {self.model_name}")
+            print(f"   - API Key: {api_key[:8]}...{api_key[-4:]}")
 
     async def generate(
         self,
@@ -109,6 +112,14 @@ class ZhipuAdapter(BaseLLMAdapter):
                 finish_reason=response.choices[0].finish_reason if hasattr(response.choices[0], 'finish_reason') else None
             )
 
+        except (ValueError, KeyError) as e:
+            error_msg = f"智谱 AI 调用数据错误: {str(e)}"
+            print(f"❌ [智谱AI] {error_msg}")
+            raise Exception(error_msg)
+        except (OSError, IOError) as e:
+            error_msg = f"智谱 AI 调用IO错误: {str(e)}"
+            print(f"❌ [智谱AI] {error_msg}")
+            raise Exception(error_msg)
         except Exception as e:
             error_msg = f"智谱 AI 调用失败: {str(e)}"
             print(f"❌ [智谱AI] {error_msg}")
@@ -180,6 +191,14 @@ class ZhipuAdapter(BaseLLMAdapter):
                     "model": self.model_name,
                 }
 
+        except (ValueError, KeyError) as e:
+            error_msg = f"智谱 AI 流式调用数据错误: {str(e)}"
+            print(f"❌ [智谱AI] {error_msg}")
+            yield {"delta": f"[错误: {error_msg}]"}
+        except (OSError, IOError) as e:
+            error_msg = f"智谱 AI 流式调用IO错误: {str(e)}"
+            print(f"❌ [智谱AI] {error_msg}")
+            yield {"delta": f"[错误: {error_msg}]"}
         except Exception as e:
             error_msg = f"智谱 AI 流式调用失败: {str(e)}"
             print(f"❌ [智谱AI] {error_msg}")

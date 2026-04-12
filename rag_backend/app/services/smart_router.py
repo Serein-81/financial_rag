@@ -12,32 +12,45 @@ from app.services.llm_service import llm_service
 
 GREETING_PATTERNS = [
     r'^[\s]*$',
-    r'^你好[吗呀啊哦嗯\?\.！!]*[\s]*$',
-    r'^hi[,\s]*$',
-    r'^hello[,\s]*$',
-    r'^嗨[吗呀啊哦嗯\?\.！!]*[\s]*$',
-    r'^hey[,\s]*$',
-    r'^在吗[吗呀啊哦嗯\?\.！!]*[\s]*$',
-    r'^在不在[\?\.！!]*$',
-    r'^早上好[啊呀吗\?\.！!]*$',
-    r'^下午好[啊呀吗\?\.！!]*$',
-    r'^晚上好[啊呀吗\?\.！!]*$',
-    r'^晚安[啊呀吗\?\.！!]*$',
-    r'^谢谢[你呀啊哦嗯\?\.！!]*$',
-    r'^thanks[,\s]*$',
+    r'^你好[吗呀啊哦嗯\?\.！!''""]*[\s]*$',
+    r'^您好[吗呀啊哦嗯\?\.！!''""]*[\s]*$',
+    r'^hi[,\s''"]*$',
+    r'^hello[,\s''"]*$',
+    r'^嗨[吗呀啊哦嗯\?\.！!''""]*[\s]*$',
+    r'^hey[,\s''"]*$',
+    r'^在吗[吗呀啊哦嗯\?\.！!''""]*[\s]*$',
+    r'^在不在[\?\.！!''""]*$',
+    r'^早上好[啊呀吗\?\.！!''""]*$',
+    r'^下午好[啊呀吗\?\.！!''""]*$',
+    r'^晚上好[啊呀吗\?\.！!''""]*$',
+    r'^晚安[啊呀吗\?\.！!''""]*$',
+    r'^谢谢[你呀啊哦嗯\?\.！!''""]*$',
+    r'^thanks[,\s''"]*$',
     r'^请问你是谁',
     r'^你是谁',
+    r'^你是.*吗',
     r'^你能做什么',
     r'^有什么功能',
     r'^介绍一下',
     r'^帮帮我',
     r'^救命',
+    r'^打扰.*',
+    r'^冒昧.*',
+    r'^你还[好吗呀啊哦嗯\?\.！!''""]*$',
+    r'^最近怎么样',
+    r'^怎么样',
+    r'^最近.*好',
 ]
 
 
 def is_greeting_query(query: str) -> bool:
     """
-    判断是否为问候型/闲聊型查询
+    智能判断是否为问候型/闲聊型查询
+    
+    支持智能识别：
+    - 纯问候语："你好"、"你好吗"
+    - 带轻微输入错误："你好1"、"你好.."（数字/重复符号过滤后仍为问候语）
+    - 排除明显测试输入：包含实质内容如"123测试"等
     """
     query = query.strip()
     if not query:
@@ -47,11 +60,38 @@ def is_greeting_query(query: str) -> bool:
         if re.match(pattern, query, re.IGNORECASE):
             return True
     
-    short_words = ["你好", "嗨", "hi", "hello", "在吗", "在不在", "早", "晚"]
-    if len(query) <= 4 and any(w in query.lower() for w in short_words):
+    cleaned = _clean_query_for_greeting_check(query)
+    if cleaned in GREETING_PATTERNS_STRICT or cleaned in GREETING_WORDS_STRICT:
+        return True
+    
+    if len(cleaned) <= 3 and any(cleaned == w for w in GREETING_WORDS_STRICT):
         return True
     
     return False
+
+
+def _clean_query_for_greeting_check(query: str) -> str:
+    """
+    清理输入，只保留核心词汇用于问候语判断
+    - 去除末尾的数字（"你好15" -> "你好"）
+    - 去除末尾的重复标点（"你好.." -> "你好"）
+    - 去除末尾的引号（"你好''" -> "你好"、"你好\"" -> "你好"）
+    - 去除首尾的引号（"'你好'" -> "你好"）
+    """
+    cleaned = query.strip()
+    cleaned = re.sub(r'\d+$', '', cleaned)
+    cleaned = re.sub(r'[。？！!.?''""\']+$', '', cleaned)
+    cleaned = re.sub(r"^[''\"']+", '', cleaned)
+    return cleaned.strip()
+
+
+GREETING_PATTERNS_STRICT = [
+    "你好", "您好", "嗨", "hi", "hello", "在吗", "在不在", "早", "晚", "好", "呀", "哈"
+]
+
+GREETING_WORDS_STRICT = [
+    "你好", "您好", "嗨", "hi", "hello", "在", "早", "晚", "好"
+]
 
 
 class RouteMode(str, Enum):

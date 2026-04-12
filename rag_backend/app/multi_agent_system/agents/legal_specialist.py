@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pydantic import BaseModel, Field
 
 from .base_specialist import BaseSpecialistAgent
+from .base_agent_prompt import load_agent_prompt
 from app.agent_framework.llm.base_adapter import BaseLLMAdapter
 from app.agent_framework.tools.tool_manager import ToolManager
 from ..state import AuditState, Finding, RiskLevel
@@ -30,6 +31,7 @@ class LegalDomain(str, Enum):
     COMPLIANCE = "compliance"  # 合规审查
     LITIGATION = "litigation"  # 诉讼支持
     REGULATORY = "regulatory"  # 监管合规
+    OTHER = "other"  # 其他法律领域
 
 
 class ContractType(str, Enum):
@@ -98,19 +100,7 @@ class LegalSpecialist(BaseSpecialistAgent):
             tool_manager: 工具管理器
             specialty: 专业领域标识
         """
-        system_prompt = """你是一位专业的企业法律顾问，具有以下能力：
-        1. 精通中国法律法规，包括公司法、合同法、劳动法、知识产权法等
-        2. 熟悉各类合同的审查要点和风险识别
-        3. 能够提供合规性建议和风险防控措施
-        4. 了解行业监管要求和最佳实践
-        
-        在回答时，请：
-        - 引用相关法律法规条款
-        - 明确指出法律风险点
-        - 提供具体的修改建议（针对合同条款）
-        - 建议合理的风险防控措施
-        - 明确说明法律界限和合规要求
-        """
+        system_prompt = self._load_system_prompt()
         
         super().__init__(
             specialty=specialty,
@@ -123,7 +113,42 @@ class LegalSpecialist(BaseSpecialistAgent):
         
         self.entity_patterns = self._compile_entity_patterns()
         self.contract_templates = self._load_contract_templates()
-        
+    
+    def _load_system_prompt(self) -> str:
+        """从外部文件加载系统提示词"""
+        try:
+            return load_agent_prompt(
+                agent_name="legal",
+                filename="legal_agent.md",
+                context=self._get_prompt_context()
+            )
+        except Exception as e:
+            print(f"⚠️ [法务专家智能体] 加载提示词失败，使用默认提示词: {e}")
+            return self._build_default_prompt()
+    
+    def _get_prompt_context(self) -> Dict[str, Any]:
+        """获取提示词渲染上下文"""
+        return {
+            "legal_domains": [d.value for d in LegalDomain],
+            "contract_types": [c.value for c in ContractType],
+        }
+    
+    def _build_default_prompt(self) -> str:
+        """构建默认提示词"""
+        return """你是一位专业的企业法律顾问，具有以下能力：
+1. 精通中国法律法规，包括公司法、合同法、劳动法、知识产权法等
+2. 熟悉各类合同的审查要点和风险识别
+3. 能够提供合规性建议和风险防控措施
+4. 了解行业监管要求和最佳实践
+
+在回答时，请：
+- 引用相关法律法规条款
+- 明确指出法律风险点
+- 提供具体的修改建议（针对合同条款）
+- 建议合理的风险防控措施
+- 明确说明法律界限和合规要求
+"""
+    
     def _compile_entity_patterns(self) -> Dict[str, re.Pattern]:
         """编译法律实体提取正则表达式"""
         return {
@@ -339,9 +364,9 @@ class LegalSpecialist(BaseSpecialistAgent):
         5. 修改建议
         """
         
+        full_prompt = f"{self.system_prompt}\n\n{prompt}" if self.system_prompt else prompt
         response = await self.llm_adapter.generate(
-            prompt=prompt,
-            system_prompt=self.system_prompt,
+            prompt=full_prompt,
             temperature=0.3
         )
         
@@ -379,13 +404,14 @@ class LegalSpecialist(BaseSpecialistAgent):
             
             prompt = self._build_legal_prompt(user_input, entities, domain)
             
-            response = await self.llm_adapter.generate(
-                prompt=prompt,
-                system_prompt=self.system_prompt,
+            full_prompt = f"{self.system_prompt}\n\n{prompt}" if self.system_prompt else prompt
+            llm_response = await self.llm_adapter.generate(
+                prompt=full_prompt,
                 temperature=0.3
             )
             
-            analysis = self._parse_llm_response(response, domain, contract_type)
+            response_text = llm_response.content if hasattr(llm_response, 'content') else str(llm_response)
+            analysis = self._parse_llm_response(response_text, domain, contract_type)
             
             risk_assessment = self.assess_legal_risk(analysis, entities)
             
@@ -405,8 +431,26 @@ class LegalSpecialist(BaseSpecialistAgent):
                 "confidence": analysis.confidence
             }
             
+        except (ValueError, KeyError) as e:
+            import traceback
+            logger.error(f"法律分析数据失败: {e}")
+            return {
+                "success": False,
+                "error": f"数据错误: {str(e)}",
+                "fallback": "建议您咨询专业法律顾问获取准确信息"
+            }
+        except (OSError, IOError) as e:
+            import traceback
+            logger.error(f"法律分析IO失败: {e}")
+            return {
+                "success": False,
+                "error": f"IO错误: {str(e)}",
+                "fallback": "建议您咨询专业法律顾问获取准确信息"
+            }
         except Exception as e:
+            import traceback
             logger.error(f"法律分析失败: {e}")
+            logger.error(f"详细错误: {traceback.format_exc()}")
             return {
                 "success": False,
                 "error": str(e),
@@ -474,6 +518,20 @@ class LegalSpecialist(BaseSpecialistAgent):
                 risk_clauses=risk_clauses,
                 compliance_status="review_required" if risk_clauses else "compliant",
                 confidence=confidence
+            )
+        except (ValueError, KeyError) as e:
+            logger.warning(f"解析法律响应数据失败: {e}")
+            return LegalAnalysisResult(
+                domain=LegalDomain.OTHER,
+                confidence=0.0,
+                compliance_status="error"
+            )
+        except (OSError, IOError) as e:
+            logger.warning(f"解析法律响应IO失败: {e}")
+            return LegalAnalysisResult(
+                domain=LegalDomain.OTHER,
+                confidence=0.0,
+                compliance_status="error"
             )
         except Exception as e:
             logger.warning(f"解析法律响应失败: {e}")
@@ -578,36 +636,45 @@ class LegalSpecialist(BaseSpecialistAgent):
             
             if contract_type:
                 findings.append(Finding(
-                    finding_id=f"LEG_CON_{len(findings) + 1}",
+                    id=f"LEG_CON_{len(findings) + 1}",
+                    agent_name="legal",
                     category="合同管理",
                     description=f"发现{contract_type.value}类型合同",
-                    severity="info",
-                    document_id=doc.get("doc_id"),
-                    recommendation="核实合同条款完备性"
+                    risk_level=RiskLevel.INFO,
+                    risk_score=10.0,
+                    confidence=0.8,
+                    evidence=[],
+                    recommendations=["核实合同条款完备性"]
                 ))
             
             for pattern_name, pattern in self.entity_patterns.items():
                 matches = pattern.findall(content)
                 if matches and pattern_name == "date" and len(matches) >= 2:
                     findings.append(Finding(
-                        finding_id=f"LEG_DATE_{len(findings) + 1}",
+                        id=f"LEG_DATE_{len(findings) + 1}",
+                        agent_name="legal",
                         category="日期审查",
                         description=f"发现合同日期信息",
-                        severity="info",
-                        document_id=doc.get("doc_id"),
-                        recommendation="核实日期的合理性"
+                        risk_level=RiskLevel.INFO,
+                        risk_score=10.0,
+                        confidence=0.8,
+                        evidence=[],
+                        recommendations=["核实日期的合理性"]
                     ))
             
             for rule in self.knowledge_base:
                 if rule.get("rule_id", "").startswith("LEG"):
                     if any(keyword in content for keyword in ["不符", "违规", "缺失", "模糊"]):
                         findings.append(Finding(
-                            finding_id=f"LEG_KB_{len(findings) + 1}",
+                            id=f"LEG_KB_{len(findings) + 1}",
+                            agent_name="legal",
                             category=rule.get("category", "法律合规"),
                             description=rule.get("description", ""),
-                            severity="high",
-                            document_id=doc.get("doc_id"),
-                            recommendation="进行法律合规性检查"
+                            risk_level=RiskLevel.HIGH,
+                            risk_score=70.0,
+                            confidence=0.8,
+                            evidence=[],
+                            recommendations=["进行法律合规性检查"]
                         ))
         
         return findings
@@ -668,3 +735,27 @@ class LegalSpecialist(BaseSpecialistAgent):
         }
         
         return legal_knowledge_map.get(domain, [])
+    
+    async def stream_run(
+        self,
+        user_input: str,
+        history: List[Dict[str, Any]] = None,
+        **kwargs
+    ):
+        """
+        流式执行法务专家智能体
+        
+        实现基类的抽象方法
+        
+        Args:
+            user_input: 用户输入
+            history: 对话历史
+            
+        Yields:
+            处理结果片段
+        """
+        result = await self.run(user_input, history, **kwargs)
+        result_str = json.dumps(result, ensure_ascii=False, indent=2)
+        
+        for char in result_str:
+            yield char

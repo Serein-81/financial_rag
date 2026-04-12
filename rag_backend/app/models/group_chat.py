@@ -139,3 +139,21 @@ class GroupMessage(Base):
             "edited_at": self.edited_at.isoformat() if self.edited_at else None,
             "created_at": self.created_at.isoformat()
         }
+
+
+class MessageReadReceipt(Base):
+    __tablename__ = "message_read_receipts"
+    
+    id = Column(String, primary_key=True, default=lambda: f"mrr_{uuid.uuid4().hex}")
+    message_id = Column(String, ForeignKey("group_messages.id"), nullable=False)
+    user_id = Column(String, nullable=False)
+    group_id = Column(String, nullable=False)
+    
+    read_at = Column(DateTime, default=datetime.utcnow)
+    
+    __table_args__ = (
+        {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_unicode_ci"},
+    )
+    
+    def __repr__(self):
+        return f"<MessageReadReceipt(message_id={self.message_id}, user_id={self.user_id})>"

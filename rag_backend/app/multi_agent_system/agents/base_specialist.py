@@ -24,6 +24,8 @@ class BaseSpecialistAgent(BaseAgent):
     4. 风险评估方法
     """
     
+    _initialized_instances: Dict[str, bool] = {}
+    
     def __init__(
         self,
         specialty: str,
@@ -44,7 +46,13 @@ class BaseSpecialistAgent(BaseAgent):
             max_iterations: 最大迭代次数
             timeout: 超时时间
         """
-        super().__init__(llm_adapter, tool_manager, system_prompt, max_iterations, timeout)
+        super().__init__(
+            llm_adapter=llm_adapter,
+            tool_manager=tool_manager,
+            system_prompt=system_prompt,
+            max_iterations=max_iterations,
+            timeout=timeout
+        )
         
         self.specialty = specialty
         self.current_state: Optional[AuditState] = None
@@ -55,10 +63,13 @@ class BaseSpecialistAgent(BaseAgent):
         # 风险评估规则
         self.risk_rules = self._load_risk_rules()
         
-        print(f"🤖 [{self.specialty.upper()} Agent] 初始化完成")
-        print(f"   - 专业领域: {specialty}")
-        print(f"   - 知识库规则: {len(self.knowledge_base)} 条")
-        print(f"   - 风险规则: {len(self.risk_rules)} 条")
+        # 只在首次初始化时打印详细信息
+        if not BaseSpecialistAgent._initialized_instances.get(specialty, False):
+            BaseSpecialistAgent._initialized_instances[specialty] = True
+            print(f"🤖 [{self.specialty.upper()} Agent] 初始化完成")
+            print(f"   - 专业领域: {specialty}")
+            print(f"   - 知识库规则: {len(self.knowledge_base)} 条")
+            print(f"   - 风险规则: {len(self.risk_rules)} 条")
     
     @abstractmethod
     async def audit(

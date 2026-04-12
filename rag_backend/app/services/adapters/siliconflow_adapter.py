@@ -7,7 +7,7 @@
 """
 
 from typing import List
-import requests
+import httpx
 from .base_adapter import BaseEmbeddingAdapter
 
 
@@ -46,15 +46,23 @@ class SiliconFlowEmbeddingAdapter(BaseEmbeddingAdapter):
         
         super().__init__(api_key, model_name, base_url, **kwargs)
         
+        self.max_length = self.MAX_LENGTH
+        
         self.headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
         
-        print(f"✅ 硅基流动 Embedding 适配器初始化完成")
-        print(f"   - 模型: {self.model_name}")
-        print(f"   - Base URL: {self.base_url}")
-        print(f"   - API Key: {api_key[:8]}...{api_key[-4:]}")
+        self.client = httpx.AsyncClient(timeout=httpx.Timeout(60.0))
+        
+        # 只在首次初始化时打印详细信息
+        if not getattr(SiliconFlowAdapter, '_initialized', False):
+            SiliconFlowAdapter._initialized = True
+            print(f"✅ 硅基流动 Embedding 适配器初始化完成")
+            print(f"   - 模型: {self.model_name}")
+            print(f"   - Base URL: {self.base_url}")
+            print(f"   - 最大长度: {self.max_length}")
+            print(f"   - API Key: {api_key[:8]}...{api_key[-4:]}")
     
     async def _encode_single(self, text: str, task_type: str) -> List[float]:
         """
@@ -67,23 +75,39 @@ class SiliconFlowEmbeddingAdapter(BaseEmbeddingAdapter):
         Returns:
             文本的向量表示
         """
+        if not isinstance(text, str):
+            raise ValueError(f"Expected str, got {type(text)}: {text}")
+        
         text = self.truncate_text(text, self.max_length)
+        
+        if not text or len(text.strip()) == 0:
+            self.logger.warning(f"文本为空，跳过编码")
+            return [0.0] * 1024
         
         payload = {
             "model": self.model_name,
             "input": text,
-            "encoding_format": "float"
         }
         
-        response = requests.post(
-            self.base_url,
-            headers=self.headers,
-            json=payload,
-            timeout=60
-        )
-        
-        if response.status_code != 200:
-            raise Exception(f"API 请求失败: {response.status_code} - {response.text}")
-        
-        result = response.json()
-        return result["data"][0]["embedding"]
+        try:
+            response = await self.client.post(
+                self.base_url,
+                headers=self.headers,
+                json=payload
+            )
+            
+            if response.status_code != 200:
+                error_detail = response.json() if response.text else {}
+                error_code = error_detail.get("code", "unknown")
+                error_message = error_detail.get("message", response.text)
+                
+                if error_code == 20015:
+                    raise Exception(f"API 参数无效或账户余额不足: {error_message}")
+                else:
+                    raise Exception(f"API 请求失败: {response.status_code} - {error_message}")
+            
+            result = response.json()
+            return result["data"][0]["embedding"]
+            
+        except httpx.HTTPError as e:
+            raise Exception(f"HTTP 请求错误: {str(e)}")
