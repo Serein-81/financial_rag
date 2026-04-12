@@ -37,6 +37,7 @@ rag_backend/tests/
 rag_backend/mass_/
 rag_backend/migrations/
 rag_backend/logs/
+rag_backend/test_templates/  # 测试模板（空目录）
 
 # ========================
 # 忽略 MinIO 的本地持久化数据
@@ -55,9 +56,15 @@ rag_backend/.env/
 # 4. 数据库备份与缓存 (绝对不能传)
 # ==========================
 rag_backend/*.dump
-rag_backend/*.sql
+rag_backend/insert_test_data.sql  # 测试数据（开发时使用）
 rag_backend/redis_data/
 rag_backend/chat_history/
+
+# ✅ 保留数据库初始化脚本（sql/目录下的其他文件）
+# 这些脚本用于初始化数据库结构，新环境部署时必需
+!rag_backend/sql/create_tenant_settings_table.sql
+!rag_backend/sql/fix_enum_types.sql
+!rag_backend/sql/initialize_tenant_settings.sql
 
 # ==========================
 # 5. 测试报告与日志
