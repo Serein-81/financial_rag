@@ -568,6 +568,48 @@ async def get_financial_statistics(
         raise HTTPException(status_code=500, detail="Failed to get financial statistics")
 
 
+@router.get("/template-description")
+async def get_template_description():
+    """
+    获取财务数据模板说明
+
+    返回模板的使用说明、字段解释和注意事项
+    前端可以先显示此说明，引导用户正确填写数据后再下载模板
+    """
+    description = {
+        "title": "财务数据模板使用说明",
+        "sections": [
+            {
+                "title": "📋 模板说明",
+                "content": "本模板用于批量导入企业财务数据。请按照模板格式填写您的财务数据，确保数据准确无误后上传。"
+            },
+            {
+                "title": "📝 必填字段",
+                "content": "• 会计年度 (fiscal_year): 填写年份，如 2024\n• 期间类型 (period_type): yearly/quarterly/monthly\n• 期间开始日期 (period_start): YYYY-MM-DD格式\n• 期间结束日期 (period_end): YYYY-MM-DD格式\n• 总收入 (total_revenue): 填写金额，单位：元"
+            },
+            {
+                "title": "💰 财务指标说明",
+                "content": "• 总收入 (total_revenue): 企业当期全部收入\n• 应税销售额 (taxable_sales): 需要缴纳增值税的销售额\n• 进项税额 (input_tax): 采购时收到的增值税专用发票税额\n• 销项税额 (output_tax): 销售时开具的增值税专用发票税额\n• 营业收入 (taxable_income): 应纳税所得额"
+            },
+            {
+                "title": "⚠️ 注意事项",
+                "content": "• 年份列必须填写有效年份（2000-2100）\n• 金额字段请填写数字，不要包含货币符号\n• 日期格式请使用 YYYY-MM-DD\n• 小规模纳税人请将 is_small_enterprise 设为 True\n• 建议先下载测试数据进行测试"
+            },
+            {
+                "title": "🔧 税率说明",
+                "content": "• 企业所得税税率 (corporate_tax_rate): 一般为 0.25（25%）\n• 增值税税率 (vat_rate): 一般为 0.13（13%）或 0.09（9%）\n• 小规模纳税人增值税税率为 0.01-0.03"
+            },
+            {
+                "title": "📊 批量导入建议",
+                "content": "• 建议先导入少量数据测试（如3-5条）\n• 确认数据格式正确后再批量导入\n• 可以使用「下载测试数据」功能获取1000条测试数据\n• 导入过程中请勿关闭页面"
+            }
+        ],
+        "download_hint": "阅读完毕后，点击「下载模板」按钮获取Excel文件"
+    }
+
+    return description
+
+
 @router.get("/download-template")
 async def download_financial_data_template():
     """

@@ -46,7 +46,7 @@ import {
 
 } from 'lucide-vue-next'
 
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { ElDialog } from 'element-plus'
 
@@ -622,19 +622,40 @@ async function handleUploadExcel() {
 
 
 async function handleDownloadTemplate() {
-
   try {
+    const description = await financialDataApiClient.getTemplateDescription()
+    
+    const sectionsHtml = description.sections
+      .map((section: any) => `<div style="margin-bottom: 16px;">
+        <div style="font-weight: 600; font-size: 14px; margin-bottom: 8px; color: #303133;">${section.title}</div>
+        <div style="font-size: 13px; line-height: 1.8; color: #606266; white-space: pre-line;">${section.content}</div>
+      </div>`)
+      .join('')
 
-    await financialDataApiClient.downloadTemplate()
-
+    ElMessageBox.confirm(
+      `<div style="max-height: 500px; overflow-y: auto;">
+        <h3 style="margin: 0 0 16px 0; font-size: 16px; color: #303133;">${description.title}</h3>
+        ${sectionsHtml}
+      </div>`,
+      '模板使用说明',
+      {
+        confirmButtonText: '下载模板',
+        cancelButtonText: '取消',
+        distinguishCancelAndClose: true,
+        dangerouslyUseHTMLString: true,
+        customClass: 'template-guide-dialog'
+      }
+    ).then(async () => {
+      await financialDataApiClient.downloadTemplate()
+    }).catch((action: any) => {
+      if (action === 'cancel') {
+        console.log('User cancelled template download')
+      }
+    })
   } catch (error: any) {
-
     console.error('Failed to download template:', error)
-
     ElMessage.error('模板下载失败')
-
   }
-
 }
 
 

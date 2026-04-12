@@ -383,6 +383,19 @@ export const financialDataApiClient = {
   },
 
   /**
+   * 获取财务数据模板说明
+   */
+  async getTemplateDescription(): Promise<any> {
+    try {
+      const response = await financialDataApi.get('/financial-data/template-description')
+      return response.data
+    } catch (error: any) {
+      console.error('获取模板说明失败:', error)
+      throw error
+    }
+  },
+
+  /**
    * 下载财务数据Excel模板
    */
   async downloadTemplate(): Promise<void> {
