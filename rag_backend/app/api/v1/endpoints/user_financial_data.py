@@ -573,75 +573,43 @@ async def download_financial_data_template():
     """
     下载财务数据Excel模板
 
-    返回一个包含示例数据的Excel模板文件
+    返回标准中文Excel模板文件
     用户可以按照模板格式填写数据后上传
     """
-    template_data = {
-        'fiscal_year': [2024, 2024, 2024],
-        'period_type': ['yearly', 'quarterly', 'quarterly'],
-        'period_start': ['2024-01-01', '2024-01-01', '2024-04-01'],
-        'period_end': ['2024-12-31', '2024-03-31', '2024-06-30'],
-        'total_revenue': [1250000.0, 300000.0, 350000.0],
-        'taxable_sales': [1125000.0, 270000.0, 315000.0],
-        'tax_free_sales': [125000.0, 30000.0, 35000.0],
-        'total_expenses': [750000.0, 180000.0, 210000.0],
-        'deductible_expenses': [600000.0, 144000.0, 168000.0],
-        'non_deductible_expenses': [150000.0, 36000.0, 42000.0],
-        'input_tax': [97500.0, 23400.0, 27300.0],
-        'output_tax': [146250.0, 35100.0, 40950.0],
-        'vat_rate': [0.13, 0.13, 0.13],
-        'taxable_income': [375000.0, 90000.0, 105000.0],
-        'corporate_tax_rate': [0.25, 0.25, 0.25],
-        'is_small_enterprise': [False, False, False],
-        'total_payroll': [500000.0, 120000.0, 140000.0],
-        'special_deductions': [50000.0, 12000.0, 14000.0],
-        'total_invoices': [120, 30, 35],
-        'input_invoice_count': [80, 20, 23],
-        'output_invoice_count': [40, 10, 12]
-    }
+    from pathlib import Path
+    from urllib.parse import quote
 
-    df = pd.DataFrame(template_data)
+    templates_dir = Path(__file__).parent.parent.parent.parent.parent / 'test_templates'
 
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "财务数据"
+    if not templates_dir.exists():
+        logger.error(f"Templates directory not found: {templates_dir}")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Templates directory not found: {templates_dir}"
+        )
 
-    for r_idx, row in enumerate(dataframe_to_rows(df, index=False, header=True), 1):
-        for c_idx, value in enumerate(row, 1):
-            cell = ws.cell(row=r_idx, column=c_idx, value=value)
+    filename = "01_标准中文模板.xlsx"
+    file_path = templates_dir / filename
 
-            if r_idx == 1:
-                cell.font = Font(bold=True, color="FFFFFF")
-                cell.fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
-                cell.alignment = Alignment(horizontal="center", vertical="center")
-            else:
-                cell.alignment = Alignment(horizontal="center", vertical="center")
+    if not file_path.exists():
+        logger.error(f"Template file not found: {file_path}")
+        raise HTTPException(
+            status_code=404,
+            detail=f"模板文件不存在: {filename}"
+        )
 
-                col_name = df.columns[c_idx - 1]
-                if 'revenue' in col_name or 'tax' in col_name or 'income' in col_name or 'payroll' in col_name or 'expense' in col_name or 'deduction' in col_name or 'sales' in col_name:
-                    cell.number_format = '#,##0.00'
+    with open(file_path, 'rb') as f:
+        file_content = f.read()
 
-    for column in ws.columns:
-        max_length = 0
-        column_letter = column[0].column_letter
-        for cell in column:
-            try:
-                if len(str(cell.value)) > max_length:
-                    max_length = len(str(cell.value))
-            except:
-                pass
-        adjusted_width = min(max_length + 2, 30)
-        ws.column_dimensions[column_letter].width = adjusted_width
+    logger.info(f"Serving template file: {filename}, size: {len(file_content)} bytes")
 
-    output = io.BytesIO()
-    wb.save(output)
-    output.seek(0)
+    encoded_filename = quote(filename, safe='')
 
     return StreamingResponse(
-        iter([output.getvalue()]),
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        iter([file_content]),
+        media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         headers={
-            "Content-Disposition": "attachment; filename=financial_data_template.xlsx"
+            'Content-Disposition': f'attachment; filename*=UTF-8\'\'{encoded_filename}'
         }
     )
 
