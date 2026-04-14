@@ -36,23 +36,27 @@ class ReActAgent(BaseAgent):
     ReAct (Reasoning and Acting) Agent
     
     实现思考-行动-观察的循环推理模式
+    
+    提示词加载：
+    - 通过 agent_name 从 app/prompts/agents/{agent_name}/system.md 加载
+    - 如果没有指定 agent_name，回退到静态 system_prompt
     """
     
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, agent_name: str = None, **kwargs):
         """
         初始化 ReAct Agent
+        
+        Args:
+            agent_name: Agent名称，用于加载结构化提示词（可选）
+            *args, **kwargs: 传递给父类 BaseAgent 的其他参数
         """
         # 提取ReAct特有的参数
         self.similarity_threshold = kwargs.pop('similarity_threshold', 0.8)
         self.max_consecutive_failures = kwargs.pop('max_consecutive_failures', 3)
         self.early_stop_enabled = kwargs.pop('early_stop_enabled', True)
         
-        # 如果没有指定 template_name，默认使用 react_agent 模板
-        if 'template_name' not in kwargs:
-            kwargs['template_name'] = 'react_agent'
-        
-        # 调用父类初始化
-        super().__init__(*args, **kwargs)
+        # 调用父类初始化，传递 agent_name
+        super().__init__(*args, agent_name=agent_name, **kwargs)
         
         # 状态跟踪
         self.iteration_history = []  # 迭代历史记录

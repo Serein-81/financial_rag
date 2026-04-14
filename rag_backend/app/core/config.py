@@ -49,8 +49,8 @@ class Settings(BaseSettings):
     # 支持的模式：cloud（云端 MCP）、local（本地）、auto（自动选择）
     # - cloud: 强制使用云端 MCP 工具
     # - local: 强制使用本地工具
-    # - auto: 优先使用云端，云端不可用时降级到本地
-    MCP_MODE: str = "cloud"
+    # - auto: 同时注册本地和云端工具（用于 Agent Discovery 显示）
+    MCP_MODE: str = "auto"
     
     # 通用 LLM 重试配置
     LLM_MAX_RETRIES: int = 5

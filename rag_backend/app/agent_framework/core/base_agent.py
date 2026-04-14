@@ -4,9 +4,7 @@
 Agent 抽象基类
 
 定义所有 Agent 的通用接口和基础功能
-支持两种提示词模式：
-1. 静态模式：直接使用 system_prompt
-2. 动态模板模式：使用 PromptEngine 渲染模板
+每个 Agent 有一份主系统提示词，通过 agent_name 从结构化提示词系统加载
 """
 
 from abc import ABC, abstractmethod
@@ -18,7 +16,6 @@ import json
 from ..tools.tool_manager import ToolManager
 from ..llm.base_adapter import BaseLLMAdapter
 from app.services.agent_tracer import agent_tracer
-from app.services.prompt_service import PromptEngine
 
 
 class BaseAgent(ABC):
@@ -27,17 +24,18 @@ class BaseAgent(ABC):
     
     所有具体的 Agent 实现都应该继承这个类
     
-    支持两种提示词模式：
-    - 静态模式：传入 system_prompt
-    - 动态模板模式：传入 template_name，通过 render_prompt() 渲染
+    提示词加载规则：
+    - 每个 Agent 有一份主系统提示词
+    - 通过 agent_name 从 app/prompts/agents/{agent_name}/system.md 加载
+    - 如果 agent_name 不存在，使用传入的 system_prompt
     """
     
     def __init__(
         self, 
         llm_adapter: BaseLLMAdapter,
         tool_manager: ToolManager,
+        agent_name: str = None,
         system_prompt: str = "",
-        template_name: str = None,
         max_iterations: int = 10,
         timeout: float = 300.0
     ):
@@ -47,8 +45,8 @@ class BaseAgent(ABC):
         Args:
             llm_adapter: 大模型适配器
             tool_manager: 工具管理器
-            system_prompt: 系统提示词（静态模式）
-            template_name: 模板名称（动态模式，二选一）
+            agent_name: Agent名称，用于从结构化提示词系统加载提示词
+            system_prompt: 系统提示词（静态模式，回退方案）
             max_iterations: 最大迭代次数（防止死循环）
             timeout: 超时时间（秒）
         """
@@ -59,12 +57,8 @@ class BaseAgent(ABC):
         self.timeout = timeout
         
         # 提示词配置
+        self.agent_name = agent_name
         self.system_prompt = system_prompt
-        self.template_name = template_name
-        self.use_template = template_name is not None
-        
-        # PromptEngine 实例
-        self.prompt_engine = PromptEngine()
         
         # 运行时状态
         self.current_iteration = 0
@@ -76,34 +70,47 @@ class BaseAgent(ABC):
         self.current_trace_id = None
         self.enable_tracing = True
         
-        # Prompt 优化
-        self.current_template_id = None
-        self.enable_prompt_optimization = True
-        
         print(f"[OK] {self.__class__.__name__} 初始化完成")
-        print(f"   - 提示词模式: {'模板 [' + template_name + ']' if self.use_template else '静态'}")
+        print(f"   - Agent名称: {agent_name or '未指定'}")
+        print(f"   - 提示词来源: {'结构化系统' if agent_name else '静态提示词'}")
         print(f"   - 可用工具: {len(self.tool_manager.tools)} 个")
         print(f"   - 最大迭代: {self.max_iterations} 次")
         print(f"   - 超时设置: {self.timeout} 秒")
         print(f"   - 追踪功能: {'启用' if self.enable_tracing else '禁用'}")
-        print(f"   - Prompt优化: {'启用' if self.enable_prompt_optimization else '禁用'}")
     
     def _render_system_prompt(self, context: Dict[str, Any] = None) -> str:
         """
-        渲染系统提示词（支持动态模板）
-        
+        渲染系统提示词
+
+        加载顺序：
+        1. 从 agent_name 对应的结构化提示词系统加载（优先）
+        2. 使用 self.system_prompt（静态提示词，作为回退）
+
         Args:
-            context: 渲染上下文，包含需要替换的变量
-            
+            context: 渲染上下文，包含需要替换的变量（可选）
+
         Returns:
-            渲染后的系统提示词
+            系统提示词
         """
-        if self.use_template:
-            return self.prompt_engine.render(
-                template_name=self.template_name,
-                context=context or {},
-                load_skills=True
-            )
+        # 1. 优先使用结构化提示词系统
+        if self.agent_name:
+            from app.prompts.prompt_registry import get_prompt_registry
+            from app.services.prompt_service import PromptEngine
+
+            registry = get_prompt_registry()
+            system_prompt = registry.load_system_prompt(self.agent_name)
+
+            if system_prompt:
+                # 使用 PromptEngine 渲染变量
+                engine = PromptEngine()
+                return engine.render(
+                    template_name=self.agent_name,
+                    context=context or {},
+                    use_cache=True,
+                    load_skills=False
+                )
+
+        # 2. 使用静态提示词（回退方案）
         return self.system_prompt
     
     @abstractmethod
@@ -266,112 +273,6 @@ class BaseAgent(ABC):
                 else:
                     print(f"    {key}: {value}")
     
-    async def get_optimized_prompt(
-        self,
-        agent_type: str,
-        use_case: str = "general",
-        db_session = None
-    ) -> tuple[str, Optional[str]]:
-        """
-        获取优化后的 Prompt 模板
-        
-        Args:
-            agent_type: Agent 类型
-            use_case: 使用场景
-            db_session: 数据库会话
-            
-        Returns:
-            (prompt_text, template_id)
-        """
-        if not self.enable_prompt_optimization or not db_session:
-            return self.system_prompt, None
-        
-        try:
-            from app.services.prompt_optimizer import get_prompt_optimizer
-            from app.services.prompt_ab_test import get_ab_test_manager
-            
-            # 1. 检查是否有正在运行的 A/B 测试
-            ab_manager = get_ab_test_manager(db_session)
-            test_name = f"{agent_type}_{use_case}_test"
-            template_id = await ab_manager.select_template(test_name)
-            
-            if template_id:
-                # 使用 A/B 测试选择的模板
-                optimizer = get_prompt_optimizer(db_session)
-                template = await optimizer.get_template(template_id)
-                if template and template.is_active:
-                    self.current_template_id = str(template_id)
-                    return template.template_text, str(template_id)
-            
-            # 2. 获取当前激活的最佳模板
-            optimizer = get_prompt_optimizer(db_session)
-            template = await optimizer.get_active_template(agent_type, use_case)
-            
-            if template:
-                self.current_template_id = str(template.id)
-                return template.template_text, str(template.id)
-            
-            # 3. 回退到默认 Prompt
-            return self.system_prompt, None
-            
-        except Exception as e:
-            print(f"[WARNING] Prompt 优化失败，使用默认 Prompt: {e}")
-            return self.system_prompt, None
-    
-    async def record_prompt_execution(
-        self,
-        user_query: str,
-        final_answer: str,
-        success: bool,
-        execution_time: float,
-        iterations_count: int,
-        tool_calls_count: int,
-        auto_score: float = None,
-        error_type: str = None,
-        error_message: str = None,
-        db_session = None
-    ):
-        """
-        记录 Prompt 执行结果
-        
-        Args:
-            user_query: 用户查询
-            final_answer: 最终答案
-            success: 是否成功
-            execution_time: 执行时间
-            iterations_count: 迭代次数
-            tool_calls_count: 工具调用次数
-            auto_score: 自动评分
-            error_type: 错误类型
-            error_message: 错误信息
-            db_session: 数据库会话
-        """
-        if not self.enable_prompt_optimization or not self.current_template_id or not db_session:
-            return
-        
-        try:
-            from app.services.prompt_optimizer import get_prompt_optimizer
-            from uuid import UUID
-            
-            optimizer = get_prompt_optimizer(db_session)
-            
-            await optimizer.record_execution(
-                template_id=UUID(self.current_template_id),
-                user_query=user_query,
-                trace_id=UUID(self.current_trace_id) if self.current_trace_id else None,
-                final_answer=final_answer,
-                execution_time=execution_time,
-                iterations_count=iterations_count,
-                tool_calls_count=tool_calls_count,
-                success=success,
-                auto_score=auto_score,
-                error_type=error_type,
-                error_message=error_message
-            )
-            
-        except Exception as e:
-            print(f"[WARNING] 记录 Prompt 执行失败: {e}")
-    
     def _reset_state(self):
         """
         重置运行状态
@@ -380,7 +281,6 @@ class BaseAgent(ABC):
         self.start_time = time.time()
         self.execution_log = []
         self.current_trace_id = None
-        self.current_template_id = None
     
     async def _log_step(
         self,

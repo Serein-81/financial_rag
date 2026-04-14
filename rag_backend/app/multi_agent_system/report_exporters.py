@@ -7,7 +7,7 @@ from typing import Dict, Any
 import json
 from pathlib import Path
 
-from .report_generator import AuditReport
+from .agents.report_generator import AuditReport
 from .report_templates import ReportTemplates, ReportType
 
 

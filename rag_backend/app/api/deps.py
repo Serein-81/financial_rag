@@ -81,6 +81,9 @@ async def get_current_user_from_token(
     """
     从 JWT Token 获取当前用户
     
+    支持从 Authorization Header 或 URL Query 参数获取 token
+    （URL Query 参数主要用于 SSE 连接，因为 EventSource 无法设置自定义 headers）
+    
     Args:
         request: FastAPI 请求对象
         db: 数据库会话
@@ -91,16 +94,22 @@ async def get_current_user_from_token(
     Raises:
         HTTPException: 认证失败
     """
-    # 从请求头获取 Token
+    token = None
+    
+    # 优先从请求头获取 Token
     auth_header = request.headers.get("Authorization")
-    if not auth_header or not auth_header.startswith("Bearer "):
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ")[1]
+    else:
+        # 备用方案：从 URL query 参数获取 token（SSE 连接场景）
+        token = request.query_params.get("token")
+    
+    if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing or invalid authorization header",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
-    token = auth_header.split(" ")[1]
     
     try:
         # 解码 Token

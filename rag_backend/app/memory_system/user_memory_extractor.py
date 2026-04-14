@@ -15,9 +15,12 @@
 
 import json
 import re
+import logging
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 from datetime import datetime
 
 from app.agent_framework.llm.factory import LLMAdapterFactory
@@ -123,10 +126,10 @@ class UserMemoryExtractor:
             try:
                 with open(prompt_path, "r", encoding="utf-8") as f:
                     content = f.read()
-                    print(f"✅ [用户记忆提取器] 成功加载提示词: {prompt_path}")
+                    logger.debug(f"[用户记忆提取器] 成功加载提示词: {prompt_path}")
                     return content
             except Exception as e:
-                print(f"⚠️ [用户记忆提取器] 加载提示词失败: {e}")
+                logger.debug(f"[用户记忆提取器] 加载提示词失败: {e}")
         
         # 返回默认提示词
         return self._get_default_prompt()

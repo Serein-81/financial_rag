@@ -14,8 +14,13 @@ from typing import Dict, List, Any, Optional, AsyncGenerator
 from datetime import datetime
 from dataclasses import dataclass, field
 
-from .agents.receptionist_agent import ReceptionistAgent
-from .agents.intent_agent import IntentAgent, IntentAnalysisResult, IntentCategory, RoutingStrategy
+from .agents.intent_router_agent import (
+    IntentRouterAgent, 
+    IntentRoutingResult,
+    IntentAnalysisResult, 
+    IntentCategory, 
+    RoutingStrategy
+)
 from .agents.finance_specialist import FinanceSpecialist
 from .agents.tax_specialist import TaxSpecialist
 from .agents.legal_specialist import LegalSpecialist
@@ -121,8 +126,7 @@ class AgentOrchestrator:
         self.message_bus = MessageBus()
         self.memory_manager = None
         
-        self.receptionist: Optional[ReceptionistAgent] = None
-        self.intent_agent: Optional[IntentAgent] = None
+        self.intent_router: Optional[IntentRouterAgent] = None
         self.finance_specialist: Optional[FinanceSpecialist] = None
         self.tax_specialist: Optional[TaxSpecialist] = None
         self.legal_specialist: Optional[LegalSpecialist] = None
@@ -183,24 +187,23 @@ class AgentOrchestrator:
                 content="开始多智能体协作流程"
             )
             
-            simple_result = await self.receptionist.run(
+            routing_result = await self.intent_router.run(
                 user_input=user_input,
                 history=[],
-                tenant_id=context.tenant_id,
-                user_id=context.user_id
+                context={"session_id": context.session_id, "tenant_id": context.tenant_id}
             )
             step_number += 1
             await agent_tracer.add_step(
                 trace_id=trace_id,
                 step_number=step_number,
                 step_type="action",
-                content=f"接待Agent处理完成: {simple_result[:100]}...",
-                tool_name="ReceptionistAgent",
+                content=f"意图路由Agent处理完成: {routing_result.model_dump_json()[:200]}...",
+                tool_name="IntentRouterAgent",
                 tool_input={"user_input": user_input},
-                tool_output=simple_result[:500]
+                tool_output=routing_result.model_dump_json()[:500]
             )
             
-            if self._is_simple_response(simple_result):
+            if routing_result.is_simple:
                 step_number += 1
                 await agent_tracer.add_step(
                     trace_id=trace_id,
@@ -210,17 +213,13 @@ class AgentOrchestrator:
                 )
                 await agent_tracer.end_trace(
                     trace_id=trace_id,
-                    final_answer=simple_result,
+                    final_answer=routing_result.simple_response,
                     success=True
                 )
-                context.final_response = simple_result
+                context.final_response = routing_result.simple_response
                 return context
             
-            intent_result = await self.intent_agent.run(
-                user_input=user_input,
-                history=[],
-                context={"session_id": context.session_id}
-            )
+            intent_result = routing_result.intent_result
             context.intent_result = intent_result
             step_number += 1
             await agent_tracer.add_step(
@@ -228,7 +227,7 @@ class AgentOrchestrator:
                 step_number=step_number,
                 step_type="thought",
                 content=f"意图识别完成: {intent_result.intent.value}, 置信度: {intent_result.confidence:.2f}, 路由策略: {intent_result.routing_strategy.value}",
-                tool_name="IntentAgent",
+                tool_name="IntentRouterAgent",
                 tool_input={"user_input": user_input},
                 tool_output={
                     "intent": intent_result.intent.value,
@@ -566,19 +565,8 @@ class AgentOrchestrator:
             )
             logger.info(f"已注册 {tool_result['total_count']} 个工具")
             
-            print("🤖 [编排器] 创建接待智能体...")
-            self.receptionist = ReceptionistAgent(
-                llm_adapter=self.llm_adapter,
-                tool_manager=self.tool_manager,
-                message_bus=self.message_bus,
-                timeout=30.0
-            )
-            
-            print("📊 [编排器] 初始化能力配置...")
-            self._initialize_capabilities()
-            
-            print("🧠 [编排器] 创建意图识别智能体...")
-            self.intent_agent = IntentAgent(
+            print("🤖 [编排器] 创建意图路由智能体（融合接待+意图识别）...")
+            self.intent_router = IntentRouterAgent(
                 llm_adapter=self.llm_adapter,
                 tool_manager=self.tool_manager,
                 confidence_threshold=0.7,
@@ -586,6 +574,8 @@ class AgentOrchestrator:
                 specialist_descriptions=self._specialist_descriptions,
                 intent_mapping=self._intent_mapping
             )
+            
+            print("📊 [编排器] 初始化能力配置...")
             
             print("💼 [编排器] 创建专业智能体...")
             self.finance_specialist = FinanceSpecialist(
@@ -883,18 +873,17 @@ class AgentOrchestrator:
                 }, ensure_ascii=False)
                 return
             
-            simple_result = await self.receptionist.run(
+            routing_result = await self.intent_router.run(
                 user_input=user_input,
                 history=[],
-                tenant_id=context.tenant_id,
-                user_id=context.user_id
+                context={"session_id": context.session_id, "tenant_id": context.tenant_id}
             )
             
-            if self._is_simple_response(simple_result):
+            if routing_result.is_simple:
                 yield json.dumps({"type": "stage", "stage": "response"}, ensure_ascii=False)
                 yield json.dumps({
                     "type": "text",
-                    "content": simple_result
+                    "content": routing_result.simple_response
                 }, ensure_ascii=False)
                 
                 processing_time = int((datetime.now() - start_time).total_seconds() * 1000)
@@ -906,11 +895,7 @@ class AgentOrchestrator:
             
             yield json.dumps({"type": "stage", "stage": "intent"}, ensure_ascii=False)
             
-            intent_result = await self.intent_agent.run(
-                user_input=user_input,
-                history=[],
-                context={"session_id": context.session_id}
-            )
+            intent_result = routing_result.intent_result
             context.intent_result = intent_result
             
             if hasattr(intent_result, 'needs_report_generation') and intent_result.needs_report_generation:

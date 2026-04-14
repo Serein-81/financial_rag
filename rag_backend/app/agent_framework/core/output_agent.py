@@ -18,6 +18,7 @@ import json
 import random
 import uuid
 import logging
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any, TYPE_CHECKING
 from datetime import datetime
 from dataclasses import dataclass, field
@@ -134,43 +135,90 @@ class OutputReviewResult(BaseModel):
 
 
 class OutputAgentPrompts:
-    """输出智能体提示词（从文件加载）"""
+    """输出智能体提示词（从 app/prompts/agents/output_agent/ 目录加载）"""
+
+    _prompt_dir = Path(__file__).parent.parent.parent / "prompts" / "agents" / "output_agent"
+
+    @classmethod
+    def _load_prompt_file(cls, filename: str) -> str:
+        """从文件加载提示词"""
+        file_path = cls._prompt_dir / filename
+        if file_path.exists():
+            return file_path.read_text(encoding="utf-8")
+        return ""
 
     @staticmethod
     def get_system_prompt() -> str:
         """获取系统提示词"""
         try:
-            from app.prompts.output_agent import get_system_prompt
-            return get_system_prompt()
+            from app.prompts.prompt_registry import get_prompt_registry
+            registry = get_prompt_registry()
+            prompt = registry.load_system_prompt("output_agent")
+            if prompt:
+                return prompt
         except Exception:
-            return "你是一位专业的企业级输出整合师..."
+            pass
+        return "你是一位专业的企业级输出整合师..."
 
     @staticmethod
     def get_synthesis_prompt(user_query: str, specialist_results: str) -> str:
         """获取整合提示词"""
         try:
-            from app.prompts.output_agent import get_synthesis_prompt
-            return get_synthesis_prompt(user_query, specialist_results)
+            from app.agent_framework.core.output_agent import OutputAgentPrompts
+            template = OutputAgentPrompts._load_prompt_file("synthesis.md")
+            if template:
+                return template.format(user_query=user_query, specialist_results=specialist_results)
         except Exception:
-            return f"请整合以下专家结果回答用户问题：{user_query}\n\n{specialist_results}"
+            pass
+        return f"请整合以下专家结果回答用户问题：{user_query}\n\n{specialist_results}"
+
+    @staticmethod
+    def get_quick_review_prompt(user_query: str, output: str) -> str:
+        """获取快速审查提示词"""
+        try:
+            from app.agent_framework.core.output_agent import OutputAgentPrompts
+            template = OutputAgentPrompts._load_prompt_file("quick_review.md")
+            if template:
+                return template.format(user_query=user_query, output=output)
+        except Exception:
+            pass
+        return f"请审查以下输出：\n{output}"
 
     @staticmethod
     def get_deep_review_prompt(user_query: str, output: str) -> str:
         """获取深度审查提示词"""
         try:
-            from app.prompts.output_agent import get_deep_review_prompt
-            return get_deep_review_prompt(user_query, output)
+            from app.agent_framework.core.output_agent import OutputAgentPrompts
+            template = OutputAgentPrompts._load_prompt_file("deep_review.md")
+            if template:
+                return template.format(user_query=user_query, output=output)
         except Exception:
-            return f"请审查以下输出：\n{output}"
+            pass
+        return f"请审查以下输出：\n{output}"
 
     @staticmethod
     def get_regeneration_hint_prompt(user_query: str, original_output: str, feedback: str) -> str:
         """获取改进提示词"""
         try:
-            from app.prompts.output_agent import get_regeneration_hint_prompt
-            return get_regeneration_hint_prompt(user_query, original_output, feedback)
+            from app.agent_framework.core.output_agent import OutputAgentPrompts
+            template = OutputAgentPrompts._load_prompt_file("regeneration.md")
+            if template:
+                return template.format(user_query=user_query, original_output=original_output, feedback=feedback)
         except Exception:
-            return f"请根据反馈改进：{feedback}"
+            pass
+        return f"请根据反馈改进：{feedback}"
+
+    @staticmethod
+    def get_final_output_prompt(user_query: str, tool_result: str) -> str:
+        """获取最终输出提示词"""
+        try:
+            from app.agent_framework.core.output_agent import OutputAgentPrompts
+            template = OutputAgentPrompts._load_prompt_file("final_output.md")
+            if template:
+                return template.format(user_query=user_query, tool_result=tool_result)
+        except Exception:
+            pass
+        return f"请回答用户问题：{user_query}"
 
     NO_RESULT_ANSWERS = [
         "抱歉，我暂时没有找到相关的信息。能否请您提供更多细节或换个方式描述您的问题？",

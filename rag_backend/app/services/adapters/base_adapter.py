@@ -7,6 +7,7 @@ Embedding 适配器抽象基类
 """
 
 import time
+import asyncio
 import logging
 from abc import ABC, abstractmethod
 from typing import List, Tuple
@@ -184,6 +185,6 @@ class BaseEmbeddingAdapter(ABC):
                         f"Attempt {attempt + 1}/{self.max_retries} failed: {e}. "
                         f"Retrying in {delay:.1f}s..."
                     )
-                    time.sleep(delay)
+                    await asyncio.sleep(delay)
         
         raise last_exception

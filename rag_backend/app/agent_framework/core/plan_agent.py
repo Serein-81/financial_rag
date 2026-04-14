@@ -34,12 +34,17 @@ class PlanAgent(BaseAgent):
     - 有明确的执行计划
     - 避免重复或无效的工具调用
     - 更适合复杂任务
+    
+    提示词加载：
+    - 通过 agent_name 从 app/prompts/agents/{agent_name}/system.md 加载
+    - 如果没有指定 agent_name，回退到静态 system_prompt
     """
     
     def __init__(
         self,
         llm_adapter: BaseLLMAdapter,
         tool_manager: ToolManager,
+        agent_name: str = None,
         max_iterations: int = 10,
         max_steps: int = 10,
         **kwargs
@@ -50,14 +55,11 @@ class PlanAgent(BaseAgent):
         Args:
             llm_adapter: LLM 适配器
             tool_manager: 工具管理器
+            agent_name: Agent名称，用于加载结构化提示词（可选）
             max_iterations: 最大执行步骤数
             max_steps: 计划最大步骤数
         """
-        # 如果没有指定 template_name，默认使用 plan_agent 模板
-        if 'template_name' not in kwargs:
-            kwargs['template_name'] = 'plan_agent'
-        
-        super().__init__(llm_adapter, tool_manager, max_iterations, **kwargs)
+        super().__init__(llm_adapter, tool_manager, agent_name=agent_name, max_iterations=max_iterations, **kwargs)
         
         self.max_steps = max_steps
         

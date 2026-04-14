@@ -29,10 +29,11 @@ class PromptLoader:
         Returns:
             提示词内容
         """
-        if use_cache and file_path in self._cache:
-            return self._cache[file_path]
-        
         full_path = self.prompts_dir / file_path
+        cache_key = str(full_path.resolve())
+        
+        if use_cache and cache_key in self._cache:
+            return self._cache[cache_key]
         
         if not full_path.exists():
             raise FileNotFoundError(f"提示词文件不存在: {full_path}")
@@ -41,7 +42,7 @@ class PromptLoader:
             content = f.read()
         
         if use_cache:
-            self._cache[file_path] = content
+            self._cache[cache_key] = content
         
         return content
     
@@ -76,8 +77,13 @@ class PromptLoader:
         Returns:
             重新加载的内容
         """
-        if file_path in cls._cache:
-            del cls._cache[file_path]
+        if prompts_dir is None:
+            prompts_dir = Path(__file__).parent
+        full_path = prompts_dir / file_path
+        cache_key = str(full_path.resolve())
+        
+        if cache_key in cls._cache:
+            del cls._cache[cache_key]
         
         loader = PromptLoader(prompts_dir)
         return loader.load(file_path, use_cache=False)

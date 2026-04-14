@@ -10,9 +10,11 @@ from sqlalchemy import text
 from app.db.session import AsyncSessionLocal
 from app.core.security import decode_access_token
 from app.core.exceptions import TokenExpiredException, TokenInvalidException
+from app.middleware.auth_types import AuthErrorType, AuthErrorMessages
 from contextvars import ContextVar
 import logging
 import uuid
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +37,42 @@ def safe_error_str(e: Exception) -> str:
 # 使用 ContextVar 来存储租户上下文，解决异步并发问题
 tenant_context: ContextVar[str] = ContextVar('tenant_context', default=None)
 user_context: ContextVar[str] = ContextVar('user_context', default=None)
+
+
+class TenantCache:
+    """
+    租户信息缓存
+    
+    用于减少数据库查询，提升性能
+    """
+    
+    def __init__(self, ttl: int = 300):
+        self._cache = {}
+        self._ttl = ttl
+    
+    def get(self, key: str) -> str:
+        """获取缓存的租户 ID"""
+        if key in self._cache:
+            cached = self._cache[key]
+            if time.time() - cached["timestamp"] < self._ttl:
+                return cached["tenant_id"]
+            else:
+                del self._cache[key]
+        return None
+    
+    def set(self, key: str, tenant_id: str):
+        """设置租户 ID 缓存"""
+        self._cache[key] = {
+            "tenant_id": tenant_id,
+            "timestamp": time.time()
+        }
+    
+    def clear(self):
+        """清空缓存"""
+        self._cache = {}
+
+
+tenant_cache = TenantCache(ttl=300)
 
 
 class TenantContextMiddleware(BaseHTTPMiddleware):
@@ -112,37 +150,78 @@ class TenantContextMiddleware(BaseHTTPMiddleware):
         if excluded:
             return await call_next(request)
         
-        payload = await self._extract_jwt_payload(request)
+        # 1. 提取 Token（用于区分是否有 Token）
+        token = self._extract_token(request)
         
-        # 检查 Token 是否过期或无效
-        if payload and payload.get("__token_expired__"):
-            print(f"❌ [AUTH] Token expired: {request.url.path}")
+        # 2. 如果没有 Token，返回 401（兼容前端）
+        if not token:
+            logger.warning(
+                f"[AUTH] [{AuthErrorType.NO_TOKEN.value}] Path={request.url.path} "
+                f"Method={request.method} Client={request.client.host if request.client else 'unknown'}"
+            )
+            error_response = AuthErrorMessages.get_response(AuthErrorType.NO_TOKEN)
             return JSONResponse(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                content={"detail": "Login expired, please login again"}
+                content=error_response
             )
         
-        if payload and payload.get("__token_invalid__"):
-            print(f"❌ [AUTH] Token invalid: {request.url.path}")
+        # 3. 解析 JWT Token
+        payload = await self._extract_jwt_payload(request)
+        
+        # 4. 检查 Token 是否过期
+        if payload and payload.get("__token_expired__"):
+            user_id_short = payload.get("sub", "unknown")[:8] if payload else "unknown"
+            logger.warning(
+                f"[AUTH] [{AuthErrorType.TOKEN_EXPIRED.value}] User={user_id_short} "
+                f"Path={request.url.path} Method={request.method}"
+            )
+            error_response = AuthErrorMessages.get_response(AuthErrorType.TOKEN_EXPIRED)
             return JSONResponse(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                content={"detail": "Login session invalid, please login again"}
+                content=error_response
+            )
+        
+        # 5. 检查 Token 是否无效
+        if payload and payload.get("__token_invalid__"):
+            logger.warning(
+                f"[AUTH] [{AuthErrorType.TOKEN_INVALID.value}] Path={request.url.path} "
+                f"Method={request.method} Client={request.client.host if request.client else 'unknown'}"
+            )
+            error_response = AuthErrorMessages.get_response(AuthErrorType.TOKEN_INVALID)
+            return JSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content=error_response
             )
         
         user_id = payload.get("sub") if payload else None
         
-        # 从 JWT 中获取 tenant_id
+        # 6. 从 JWT 或缓存中获取 tenant_id
         tenant_id = None
         if payload:
+            # 优先级1：JWT Token 中直接获取
             tenant_id = payload.get("tenant_id")
             if not tenant_id and user_id:
-                tenant_id = await self.get_user_tenant_id(user_id)
+                # 优先级2：从缓存获取
+                tenant_id = tenant_cache.get(user_id)
+                if not tenant_id:
+                    # 优先级3：从数据库查询
+                    tenant_id = await self.get_user_tenant_id(user_id)
+                    if tenant_id:
+                        # 缓存结果
+                        tenant_cache.set(user_id, tenant_id)
         
+        # 7. 如果 tenant_id 仍然不存在，返回 401（而非 403）
+        # 这样前端会知道需要重新登录
         if not tenant_id:
-            print(f"❌ [AUTH] Missing tenant_id: {request.url.path}")
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Missing tenant context"
+            user_id_short = user_id[:8] if user_id else "unknown"
+            logger.warning(
+                f"[AUTH] [{AuthErrorType.TENANT_MISSING.value}] User={user_id_short} "
+                f"Path={request.url.path} Method={request.method}"
+            )
+            error_response = AuthErrorMessages.get_response(AuthErrorType.TENANT_MISSING)
+            return JSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,  # ⬅️ 改为 401，前端会重新登录
+                content=error_response
             )
         
         # 设置上下文变量
@@ -232,34 +311,66 @@ class TenantContextMiddleware(BaseHTTPMiddleware):
         logger.warning(f"No Authorization header found or invalid format")
         return None
     
+    def _extract_token(self, request: Request) -> str:
+        """
+        提取 Token（不解析）
+        
+        用于判断请求是否包含 Token
+        
+        支持：
+        1. Authorization Header（Bearer Token）
+        2. URL Query 参数（token，用于 SSE 连接）
+        """
+        # 优先从 Authorization Header 获取 Token
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            return auth_header.split(" ")[1]
+        
+        # 备用方案：从 URL query 参数获取 token（SSE 连接场景）
+        return request.query_params.get("token")
+    
     async def _extract_jwt_payload(self, request: Request) -> dict:
-        """提取 JWT Payload（只解析一次）"""
+        """提取 JWT Payload（只解析一次）
+        
+        支持从 Authorization Header 或 URL Query 参数获取 token
+        （URL Query 参数主要用于 SSE 连接，因为 EventSource 无法设置自定义 headers）
+        """
+        token = None
+        
+        # 优先从 Authorization Header 获取 Token
         auth_header = request.headers.get("Authorization")
         if auth_header and auth_header.startswith("Bearer "):
             token = auth_header.split(" ")[1]
+        else:
+            # 备用方案：从 URL query 参数获取 token（SSE 连接场景）
+            token = request.query_params.get("token")
+        
+        if not token:
+            return None
+        
+        try:
+            payload = decode_access_token(token)
+            return payload
+        except TokenExpiredException:
+            return {"__token_expired__": True}
+        except TokenInvalidException as e:
+            logger.warning(f"JWT Token invalid: {e.message}")
+            return {"__token_invalid__": True}
+        except (ValueError, KeyError) as e:
             try:
-                payload = decode_access_token(token)
-                return payload
-            except TokenExpiredException:
-                return {"__token_expired__": True}
-            except TokenInvalidException as e:
-                logger.warning(f"JWT Token invalid: {e.message}")
-                return {"__token_invalid__": True}
-            except (ValueError, KeyError) as e:
-                try:
-                    logger.error(f"JWT Token data error: {safe_error_str(e)}")
-                except Exception:
-                    logger.error("JWT Token data error: <failed to format error message>")
-            except (OSError, IOError) as e:
-                try:
-                    logger.error(f"JWT Token IO error: {safe_error_str(e)}")
-                except Exception:
-                    logger.error("JWT Token IO error: <failed to format error message>")
-            except Exception as e:
-                try:
-                    logger.error(f"JWT Token parsing failed: {safe_error_str(e)}")
-                except Exception:
-                    logger.error("JWT Token parsing failed: <failed to format error message>")
+                logger.error(f"JWT Token data error: {safe_error_str(e)}")
+            except Exception:
+                logger.error("JWT Token data error: <failed to format error message>")
+        except (OSError, IOError) as e:
+            try:
+                logger.error(f"JWT Token IO error: {safe_error_str(e)}")
+            except Exception:
+                logger.error("JWT Token IO error: <failed to format error message>")
+        except Exception as e:
+            try:
+                logger.error(f"JWT Token parsing failed: {safe_error_str(e)}")
+            except Exception:
+                logger.error("JWT Token parsing failed: <failed to format error message>")
         return None
     
     async def extract_user_id(self, request: Request) -> str:

@@ -9,6 +9,7 @@ Agent 追踪服务
 
 import time
 import logging
+import asyncio
 from typing import Dict, Any, List, Optional
 from sqlalchemy import select, func
 from app.db.session import AsyncSessionLocal
@@ -18,18 +19,73 @@ from app.langsmith_integration import get_tracer, get_langsmith_config
 logger = logging.getLogger(__name__)
 
 
+class AgentTracerSession:
+    """Agent追踪会话上下文管理器
+    
+    为每个trace维护独立的数据库会话，
+    减少事务数量并确保数据完整性
+    """
+    
+    def __init__(self, tracer: 'AgentTracer', trace_id: str):
+        self.tracer = tracer
+        self.trace_id = trace_id
+        self.db = None
+        self.pending_steps: List[AgentStep] = []
+        self._closed = False
+    
+    async def __aenter__(self):
+        self.db = AsyncSessionLocal()
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if self._closed:
+            return
+        
+        try:
+            if self.pending_steps:
+                self.db.add_all(self.pending_steps)
+                await self.db.commit()
+        except Exception as e:
+            logger.error(f"AgentTracerSession commit失败: {e}")
+            await self.db.rollback()
+        finally:
+            await self.db.close()
+            self._closed = True
+    
+    async def add_step(self, step_data: Dict[str, Any]) -> None:
+        """添加步骤到缓冲"""
+        step = AgentStep(
+            trace_id=self.trace_id,
+            **step_data
+        )
+        self.pending_steps.append(step)
+    
+    async def flush_steps(self) -> None:
+        """手动刷新缓冲（可选调用）"""
+        if self.pending_steps:
+            self.db.add_all(self.pending_steps)
+            await self.db.flush()
+            self.pending_steps = []
+
+
 class AgentTracer:
     """
     Agent 追踪服务
     
     负责记录和查询 Agent 的执行过程
     支持双写模式：本地数据库（业务必需）+ LangSmith（LLM 调试）
+    
+    优化：使用缓冲机制减少事务数量
     """
     
     def __init__(self):
         self.langsmith_tracer = None
         self.langsmith_enabled = False
         self._init_langsmith()
+        self._current_trace_id: Optional[str] = None
+        self._current_db = None
+        self._pending_steps: List[AgentStep] = []
+        self._lock = asyncio.Lock()
     
     def _init_langsmith(self):
         """初始化 LangSmith 追踪器"""
@@ -79,7 +135,6 @@ class AgentTracer:
             except Exception as e:
                 logger.warning(f"[AgentTracer] LangSmith start_trace 失败: {e}")
         
-        # 写入本地数据库
         async with AsyncSessionLocal() as db:
             trace = AgentTrace(
                 agent_type=agent_type,
@@ -92,6 +147,11 @@ class AgentTracer:
             db.add(trace)
             await db.commit()
             await db.refresh(trace)
+            
+            async with self._lock:
+                self._current_trace_id = str(trace.id)
+                self._current_db = db
+                self._pending_steps = []
             
             logger.info(f"🎬 开始追踪: {trace.id} | Agent: {agent_type}")
             if langsmith_run_id:
@@ -126,9 +186,11 @@ class AgentTracer:
             tool_duration: 工具执行时间（可选）
             confidence: 置信度（可选）
             metadata: 元数据（可选）
+        
+        优化：使用缓冲机制，将多个step缓存在内存中，
+        减少事务提交次数。只在end_trace时统一提交。
         """
-        # 写入本地数据库
-        async with AsyncSessionLocal() as db:
+        async with self._lock:
             step = AgentStep(
                 trace_id=trace_id,
                 step_number=step_number,
@@ -143,14 +205,16 @@ class AgentTracer:
                 timestamp=time.time()
             )
             
-            db.add(step)
-            await db.commit()
+            if self._current_trace_id == trace_id and self._current_db is not None:
+                self._pending_steps.append(step)
+            else:
+                async with AsyncSessionLocal() as db:
+                    db.add(step)
+                    await db.commit()
             
-            # 打印日志
             icon = self._get_step_icon(step_type)
             logger.debug(f"{icon} Step {step_number} ({step_type}): {content[:50]}...")
         
-        # 写入 LangSmith（如果启用）
         if self.langsmith_enabled and self.langsmith_tracer:
             try:
                 self.langsmith_tracer.add_agent_step(
@@ -180,58 +244,66 @@ class AgentTracer:
             final_answer: 最终答案
             success: 是否成功
             error_message: 错误信息（如果失败）
+        
+        优化：提交所有pending的steps，减少事务数量
         """
-        # 查询所有步骤（用于统计）
         async with AsyncSessionLocal() as db:
-            steps = []
+            pending_steps_to_commit = []
+            async with self._lock:
+                if self._current_trace_id == trace_id and self._pending_steps:
+                    pending_steps_to_commit = self._pending_steps
+                    self._pending_steps = []
+                    self._current_trace_id = None
+                    self._current_db = None
+            
+            if pending_steps_to_commit:
+                db.add_all(pending_steps_to_commit)
+                await db.flush()
+            
             trace = await db.get(AgentTrace, trace_id)
             if not trace:
                 logger.warning(f"⚠️ 追踪记录不存在: {trace_id}")
                 return
             
-            # 查询所有步骤
+            all_steps = pending_steps_to_commit.copy()
             result = await db.execute(
                 select(AgentStep)
                 .where(AgentStep.trace_id == trace_id)
                 .order_by(AgentStep.step_number.asc())
             )
-            steps = result.scalars().all()
+            existing_steps = result.scalars().all()
+            all_steps.extend(existing_steps)
             
-            # 计算总时间
             total_duration_ms = None
-            if steps:
-                total_duration_ms = (steps[-1].timestamp - steps[0].timestamp) * 1000
+            if all_steps:
+                total_duration_ms = (all_steps[-1].timestamp - all_steps[0].timestamp) * 1000
             
-            # 更新数据库统计信息
             trace.final_answer = final_answer
-            trace.total_iterations = len(steps)
-            trace.tool_calls_count = len([s for s in steps if s.step_type == "action"])
+            trace.total_iterations = len(all_steps)
+            trace.tool_calls_count = len([s for s in all_steps if s.step_type == "action"])
             trace.status = "completed" if success else "failed"
             trace.error_message = error_message
             trace.completed_at = func.now()
             
-            # 计算总时间
-            if steps:
-                trace.total_time = steps[-1].timestamp - steps[0].timestamp
+            if all_steps:
+                trace.total_time = all_steps[-1].timestamp - all_steps[0].timestamp
             
             await db.commit()
             
-            # 打印摘要
             logger.info(f"🏁 追踪结束: {trace_id}")
             logger.info(f"   状态: {trace.status}")
             logger.info(f"   总步骤: {trace.total_iterations}")
             logger.info(f"   工具调用: {trace.tool_calls_count}")
             logger.info(f"   总耗时: {trace.total_time:.2f}s")
             
-            # 写入 LangSmith（如果启用）
             if self.langsmith_enabled and self.langsmith_tracer:
                 try:
                     self.langsmith_tracer.end_agent_run(
-                        run_id=str(trace_id),  # 这里应该使用 LangSmith Run ID
+                        run_id=str(trace_id),
                         final_answer=final_answer[:500],
                         success=success,
                         error_message=error_message,
-                        total_steps=len(steps),
+                        total_steps=len(all_steps),
                         total_duration_ms=total_duration_ms
                     )
                 except Exception as e:

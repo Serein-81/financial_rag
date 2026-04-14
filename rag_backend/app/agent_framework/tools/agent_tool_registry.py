@@ -179,11 +179,24 @@ def get_specialist_tools_config(specialty: str = "general") -> dict:
     获取专家智能体专用工具配置
 
     Args:
-        specialty: 专业领域 (finance, tax, legal, general)
+        specialty: 专业领域 (finance/tax/legal/general 或 财务/税务/法律/通用)
 
     Returns:
         工具配置字典
     """
+    specialty_mapping = {
+        "finance": "finance",
+        "财务": "finance",
+        "tax": "tax",
+        "税务": "tax",
+        "legal": "legal",
+        "法律": "legal",
+        "general": "general",
+        "通用": "general",
+    }
+
+    normalized_specialty = specialty_mapping.get(specialty.lower(), "general")
+
     base_config = {
         "mcp_tools": ["search_web"],
         "local_tools": [
@@ -193,7 +206,7 @@ def get_specialist_tools_config(specialty: str = "general") -> dict:
         ]
     }
 
-    if specialty == "finance":
+    if normalized_specialty == "finance":
         base_config["mcp_tools"].extend([
             "calculate_asset_liability_ratio",
             "calculate_current_ratio",
@@ -204,14 +217,14 @@ def get_specialist_tools_config(specialty: str = "general") -> dict:
             "assess_enterprise_risk"
         ])
 
-    elif specialty == "tax":
+    elif normalized_specialty == "tax":
         base_config["mcp_tools"].extend([
             "calculate_tax_vat",
             "calculate_corporate_tax",
             "calculate_personal_tax"
         ])
 
-    elif specialty == "legal":
+    elif normalized_specialty == "legal":
         base_config["mcp_tools"].extend([
             "check_contract_essentials",
             "match_legal_provisions"

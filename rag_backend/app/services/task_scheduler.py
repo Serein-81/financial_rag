@@ -5,6 +5,7 @@
 
 import asyncio
 import logging
+import traceback
 import uuid
 from dataclasses import dataclass, field
 from typing import Dict, Any, List, Optional, Callable
@@ -58,6 +59,9 @@ class ScheduledTask:
     enabled: bool = True
     retry_count: int = 0
     max_retries: int = 3
+    db_id: Optional[str] = None
+    user_id: Optional[str] = None
+    tenant_id: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
@@ -71,7 +75,10 @@ class ScheduledTask:
             "last_run_time": self.last_run_time.isoformat() if self.last_run_time else None,
             "status": self.status.value,
             "enabled": self.enabled,
-            "retry_count": self.retry_count
+            "retry_count": self.retry_count,
+            "db_id": self.db_id,
+            "user_id": self.user_id,
+            "tenant_id": self.tenant_id
         }
 
 
@@ -171,11 +178,17 @@ class TaskScheduler:
 
     async def _queue_task(self, task: ScheduledTask):
         """将任务加入执行队列"""
+        if not isinstance(task, ScheduledTask):
+            task = self._convert_to_dataclass(task)
+        
         task.status = TaskStatus.PENDING
         await self._task_queue.put(task)
 
     async def _execute_task(self, task: ScheduledTask, is_manual: bool = False):
         """执行任务"""
+        if not isinstance(task, ScheduledTask):
+            task = self._convert_to_dataclass(task)
+        
         start_time = datetime.now()
         
         execution_record = {
@@ -205,27 +218,78 @@ class TaskScheduler:
             logger.info(f"✅ 任务执行成功: {task.name} ({task.task_id})")
             
             await self._sync_task_to_db(task)
+            
+            end_time = datetime.now()
+            await self._save_execution_log_to_db(
+                task=task,
+                status="completed",
+                start_time=start_time,
+                end_time=end_time,
+                result_data={"message": "任务执行成功", "task_name": task.name},
+                is_manual=is_manual
+            )
 
         except (ValueError, KeyError) as e:
             logger.error(f"❌ 任务执行数据错误: {task.name} ({task.task_id}): {e}", exc_info=True)
+            end_time = datetime.now()
+            await self._save_execution_log_to_db(
+                task=task,
+                status="failed",
+                start_time=start_time,
+                end_time=end_time,
+                error=str(e),
+                error_traceback=traceback.format_exc() if hasattr(traceback, 'format_exc') else None,
+                is_manual=is_manual
+            )
         except (OSError, IOError) as e:
             logger.error(f"❌ 任务执行IO错误: {task.name} ({task.task_id}): {e}", exc_info=True)
+            end_time = datetime.now()
+            await self._save_execution_log_to_db(
+                task=task,
+                status="failed",
+                start_time=start_time,
+                end_time=end_time,
+                error=str(e),
+                error_traceback=traceback.format_exc() if hasattr(traceback, 'format_exc') else None,
+                is_manual=is_manual
+            )
         except Exception as e:
             logger.error(f"❌ 任务执行失败: {task.name} ({task.task_id}): {e}", exc_info=True)
 
             task.retry_count += 1
+            end_time = datetime.now()
 
             if task.retry_count < task.max_retries:
                 task.status = TaskStatus.PENDING
                 logger.info(f"🔄 任务将重试 ({task.retry_count}/{task.max_retries}): {task.name}")
                 await asyncio.sleep(60 * (2 ** task.retry_count))
                 await self._queue_task(task)
+                
+                await self._save_execution_log_to_db(
+                    task=task,
+                    status="failed",
+                    start_time=start_time,
+                    end_time=end_time,
+                    error=str(e),
+                    error_traceback=traceback.format_exc() if hasattr(traceback, 'format_exc') else None,
+                    is_manual=is_manual
+                )
             else:
                 task.status = TaskStatus.FAILED
                 execution_record["status"] = "failed"
                 execution_record["error"] = str(e)
 
                 await self._notify_task_failure(task, e)
+                
+                await self._save_execution_log_to_db(
+                    task=task,
+                    status="failed",
+                    start_time=start_time,
+                    end_time=end_time,
+                    error=str(e),
+                    error_traceback=traceback.format_exc() if hasattr(traceback, 'format_exc') else None,
+                    is_manual=is_manual
+                )
 
             await self._sync_task_to_db(task)
 
@@ -297,8 +361,37 @@ class TaskScheduler:
 
     async def add_task(self, task: ScheduledTask) -> None:
         """添加预创建的定时任务"""
+        if not isinstance(task, ScheduledTask):
+            task = self._convert_to_dataclass(task)
+        
         self._tasks[task.task_id] = task
         logger.info(f"📋 添加定时任务: {task.name} ({task.task_id}), 下次执行: {task.next_run_time}")
+    
+    def _convert_to_dataclass(self, db_task) -> ScheduledTask:
+        """将数据库模型转换为调度器数据类"""
+        from app.models.scheduled_task import ScheduledTask as DBTaskModel
+        
+        task_type = TaskType(db_task.task_type) if isinstance(db_task.task_type, str) else db_task.task_type
+        frequency = TaskFrequency(db_task.frequency) if isinstance(db_task.frequency, str) else db_task.frequency
+        status = TaskStatus(db_task.status) if isinstance(db_task.status, str) else db_task.status
+        
+        return ScheduledTask(
+            task_id=db_task.task_id,
+            task_type=task_type,
+            name=db_task.name,
+            description=db_task.description or "",
+            frequency=frequency,
+            next_run_time=db_task.next_run_time,
+            last_run_time=db_task.last_run_time,
+            params=db_task.task_params or {},
+            status=status,
+            enabled=db_task.enabled,
+            retry_count=db_task.retry_count,
+            max_retries=db_task.max_retries,
+            db_id=str(db_task.id),
+            user_id=str(db_task.user_id),
+            tenant_id=str(db_task.tenant_id)
+        )
 
     def get_task(self, task_id: str) -> Optional[ScheduledTask]:
         """获取任务"""
@@ -315,6 +408,9 @@ class TaskScheduler:
 
     async def run_task_now(self, task: ScheduledTask) -> str:
         """手动立即执行任务"""
+        if not isinstance(task, ScheduledTask):
+            task = self._convert_to_dataclass(task)
+        
         execution_id = f"exec_{uuid.uuid4().hex[:12]}"
         logger.info(f"▶️ 手动执行任务: {task.name} ({task.task_id}), execution_id: {execution_id}")
         
@@ -344,6 +440,52 @@ class TaskScheduler:
                     logger.info(f"💾 已同步任务状态到数据库: {task.name}")
         except Exception as e:
             logger.error(f"❌ 同步任务状态失败: {e}", exc_info=True)
+
+    async def _save_execution_log_to_db(
+        self,
+        task: ScheduledTask,
+        status: str,
+        start_time: datetime,
+        end_time: datetime,
+        error: Optional[str] = None,
+        error_traceback: Optional[str] = None,
+        result_data: Optional[Dict[str, Any]] = None,
+        is_manual: bool = False
+    ):
+        """保存任务执行日志到数据库"""
+        try:
+            from app.db.session import AsyncSessionLocal
+            from app.models.scheduled_task import TaskExecutionLog
+            
+            async with AsyncSessionLocal() as db:
+                duration_seconds = int((end_time - start_time).total_seconds())
+                
+                execution_log = TaskExecutionLog(
+                    task_id=task.task_id,
+                    scheduled_task_id=task.db_id,
+                    user_id=task.user_id,
+                    tenant_id=task.tenant_id,
+                    task_type=task.task_type.value if hasattr(task.task_type, 'value') else str(task.task_type),
+                    start_time=start_time,
+                    end_time=end_time,
+                    duration_seconds=duration_seconds,
+                    status=status,
+                    result=result_data,
+                    error_message=error,
+                    error_traceback=error_traceback,
+                    execution_type="manual" if is_manual else "scheduled",
+                    triggered_manually=is_manual,
+                    created_at=datetime.now(timezone.utc)
+                )
+                
+                db.add(execution_log)
+                await db.commit()
+                
+                log_status = "成功" if status == "completed" else "失败"
+                logger.info(f"📝 已保存执行日志到数据库: {task.name} - {log_status} (耗时: {duration_seconds}s)")
+                
+        except Exception as e:
+            logger.error(f"❌ 保存执行日志失败: {e}", exc_info=True)
 
     def list_tasks(
         self,

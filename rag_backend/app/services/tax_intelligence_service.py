@@ -24,7 +24,7 @@ from app.schemas.tax_intelligence import (
 from app.agent_framework.tools.financial_data_tools import FinancialDataQueryTool, TaxCalculationTool
 from app.services.policy_retrieval_service import PolicyRetrievalService
 from app.multi_agent_system.human_review import HumanReviewQueue, ReviewTrigger, ReviewPriority
-from app.multi_agent_system.report_generator import ReportGenerator
+from app.multi_agent_system.agents.report_generator import ReportGenerator
 from app.services.agent_tracer import AgentTracer
 from app.services.admin_notification_service import AdminNotificationService, RiskLevel, RiskCategory, HighRiskBehavior
 from app.multi_agent_system.agents.tax_specialist import TaxSpecialist

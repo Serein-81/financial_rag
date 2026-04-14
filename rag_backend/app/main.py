@@ -14,8 +14,9 @@ from app.db.base import Base
 # ➕ 2. 必须导入 models 里的文件！
 # 只有导入了 document，SQLAlchemy 才知道 "哦，原来有一个叫 Document 的子类要建表"
 # 如果不导入这行，Base.metadata 里面是空的，就不会建表。
-from app.models import document, tax_report, audit_task, review_request, user_financial_data, tenant_settings, policy, policy_relation, enterprise_policy_match, financial_health, contract_review, scheduled_task
-from app.api.v1.endpoints import document as document_router, search, chat, auth, session, knowledge, agent_trace, tool_trace, prompt_optimization, memory, knowledge_graph, audit, invite_code, enterprise, logs, chat_logs, tax_report, human_review, multi_agent, group_chat, user_financial_data, tenant_settings, policy, rate_limit, streaming, snapshot, suggestion, tax_intelligence, financial_health, policy_tracking, contract_review, task_manager, agent_llm_config, agent_discovery, financial_tools_test, workflow_events
+from app.models import document, tax_report, audit_task, review_request, user_financial_data, tenant_settings, policy, policy_relation, enterprise_policy_match, financial_health, contract_review, scheduled_task, workflow_trace
+from app.api.v1.endpoints import document as document_router, search, chat, auth, session, knowledge, agent_trace, tool_trace, prompt_optimization, memory, knowledge_graph, audit, invite_code, enterprise, logs, chat_logs, tax_report, human_review, multi_agent, group_chat, user_financial_data, tenant_settings, policy, rate_limit, streaming, snapshot, suggestion, tax_intelligence, financial_health, policy_tracking, contract_review, task_manager, agent_llm_config, agent_discovery, financial_tools_test, workflow_events, policy_notifications, policy_agent, workflow
+from app.api.v1.endpoints import circuit_breaker_router
 
 # 🔒 导入租户中间件
 from app.middleware.tenant_middleware import TenantContextMiddleware
@@ -116,6 +117,17 @@ async def lifespan(app: FastAPI):
             logger.warning(f"⚠️ ModelContextManager 运行时错误: {e}")
         except Exception as e:
             logger.warning(f"⚠️ ModelContextManager 初始化失败: {e}")
+        
+        try:
+            from app.langgraph.circuit_breaker_integration import initialize_circuit_breaker_manager
+            await initialize_circuit_breaker_manager()
+            logger.info("✅ CircuitBreaker Manager 初始化完成")
+        except ImportError as e:
+            logger.warning(f"⚠️ CircuitBreaker Manager 导入失败: {e}")
+        except RuntimeError as e:
+            logger.warning(f"⚠️ CircuitBreaker Manager 运行时错误: {e}")
+        except Exception as e:
+            logger.warning(f"⚠️ CircuitBreaker Manager 初始化失败: {e}")
         
         yield
 
@@ -247,6 +259,13 @@ app.include_router(multi_agent.router, prefix="/api/v1/multi-agent", tags=["Mult
 app.include_router(user_financial_data.router, prefix="/api/v1", tags=["Financial Data Management"]) # 🆕 财务数据管理
 
 try:
+    from app.api.v1.endpoints.langsmith_api import router as langsmith_router
+    app.include_router(langsmith_router, prefix="/api/v1/langsmith", tags=["LangSmith Integration"])
+except ImportError as e:
+    logger = get_logger(__name__)
+    logger.warning(f"LangSmith API 路由未注册: {e}")
+
+try:
     from app.api.v1.endpoints.a2a_protocol import router as a2a_router
     app.include_router(a2a_router, prefix="/api/v1", tags=["A2A Protocol"])
 except ImportError as e:
@@ -279,6 +298,16 @@ app.include_router(task_manager.router, prefix="/api/v1/task-manager", tags=["Ta
 
 # 工作流事件 SSE 推送
 app.include_router(workflow_events.router, prefix="/api/v1", tags=["Workflow Events"]) # 🆕 工作流事件实时推送
+
+# 工作流监控 API
+app.include_router(workflow.router, prefix="/api/v1", tags=["Workflow Monitor"]) # 🆕 工作流监控
+
+# 熔断器管理 API
+app.include_router(circuit_breaker_router, prefix="/api/v1", tags=["Circuit Breaker Management"]) # 🆕 熔断器管理
+
+# 政策通知 SSE 推送
+app.include_router(policy_notifications.router, prefix="/api/v1", tags=["Policy Notifications"]) # 🆕 政策通知实时推送
+app.include_router(policy_agent.router, prefix="/api/v1", tags=["Policy Notification Agent"]) # 🆕 政策通知智能体
 
 @app.get("/")
 def root():

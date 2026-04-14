@@ -47,19 +47,23 @@ class A2AInitializer:
 
     def _convert_tool_manager_tools(self, tool_manager, specialty: str) -> List[ToolInfo]:
         """将 ToolManager 的工具转换为 ToolInfo"""
-        from app.mcp.mcp_factory import MCPClientFactory
+        from app.agent_framework.tools.tool_router import TOOL_ROUTING_CONFIG, ToolCategory
 
         tools = []
         for tool_name, tool in tool_manager.tools.items():
-            description = getattr(tool, 'description', '') or getattr(tool, '__doc__', '') or ''
+            config = TOOL_ROUTING_CONFIG.get(tool_name, {})
+            
+            description = config.get('description', '') or getattr(tool, 'description', '') or getattr(tool, '__doc__', '') or ''
+            category = config.get('category', ToolCategory.LOCAL)
 
-            factory = MCPClientFactory()
-            if factory.is_local():
+            if category == ToolCategory.LOCAL:
                 location = ToolLocation.LOCAL
-            elif factory.is_cloud():
+            elif category == ToolCategory.MCP:
                 location = ToolLocation.CLOUD
             else:
-                location = ToolLocation.MCP
+                location = ToolLocation.CLOUD
+
+            tool_category = self._infer_tool_category(tool_name, description, specialty)
 
             tools.append(ToolInfo(
                 name=tool_name,
@@ -67,12 +71,34 @@ class A2AInitializer:
                 location=location,
                 parameters={},
                 tags=[specialty.lower()],
-                category=specialty.lower(),
+                category=tool_category,
                 is_async=True,
                 enabled=True
             ))
 
         return tools
+
+    def _infer_tool_category(self, tool_name: str, description: str, specialty: str) -> str:
+        """从工具名称和描述推断工具类别"""
+        tool_name_lower = tool_name.lower()
+        desc_lower = description.lower()
+        
+        if 'search_web' in tool_name_lower or '网络搜索' in desc_lower or 'web' in tool_name_lower and 'search' in tool_name_lower:
+            return '搜索'
+        elif ('enterprise' in tool_name_lower or '企业信息' in desc_lower or '企业' in desc_lower) and ('assess' in tool_name_lower or 'risk' in tool_name_lower or '风险' in desc_lower):
+            return '企业信息'
+        elif 'calculate_tax' in tool_name_lower or '税务' in desc_lower or '增值税' in desc_lower or '所得税' in desc_lower or 'tax' in tool_name_lower:
+            return '税务'
+        elif 'finance' in tool_name_lower or '财务' in desc_lower or 'asset' in tool_name_lower or 'liability' in tool_name_lower or 'profit' in tool_name_lower or 'revenue' in tool_name_lower:
+            return '财务'
+        elif 'legal' in tool_name_lower or '法律' in desc_lower or 'contract' in tool_name_lower or 'provision' in desc_lower or '条款' in desc_lower:
+            return '法律'
+        elif 'knowledge' in tool_name_lower or '知识' in desc_lower or 'document' in tool_name_lower or '文档' in desc_lower:
+            return '知识库'
+        elif 'weather' in tool_name_lower or '天气' in desc_lower or 'location' in tool_name_lower or '位置' in desc_lower:
+            return '生活服务'
+        else:
+            return specialty.lower()
 
     def _register_to_discovery(
         self,
@@ -84,7 +110,34 @@ class A2AInitializer:
         tool_manager
     ) -> None:
         """注册 Agent 到发现注册中心"""
-        tools = self._convert_tool_manager_tools(tool_manager, specialty)
+        from app.agent_framework.tools.agent_tool_registry import get_specialist_tools_config
+
+        specialist_config = get_specialist_tools_config(specialty.lower())
+        allowed_mcp_tools = set(specialist_config.get("mcp_tools", []))
+        allowed_local_tools = set(specialist_config.get("local_tools", []))
+
+        logger.debug(f"   [DEBUG] {agent_name} allowed MCP tools: {allowed_mcp_tools}")
+        logger.debug(f"   [DEBUG] {agent_name} allowed local tools: {allowed_local_tools}")
+
+        all_tools = self._convert_tool_manager_tools(tool_manager, specialty)
+        logger.debug(f"   [DEBUG] {agent_name} total tools: {len(all_tools)}")
+
+        tools = []
+        for tool in all_tools:
+            if tool.location == ToolLocation.CLOUD:
+                if tool.name in allowed_mcp_tools:
+                    tools.append(tool)
+                    logger.debug(f"   [ADD] CLOUD tool: {tool.name}")
+                else:
+                    logger.debug(f"   [SKIP] CLOUD tool (not in config): {tool.name}")
+            elif tool.location == ToolLocation.LOCAL:
+                if tool.name in allowed_local_tools:
+                    tools.append(tool)
+                    logger.debug(f"   [ADD] local tool: {tool.name}")
+                else:
+                    logger.debug(f"   [SKIP] local tool (not in config): {tool.name}")
+
+        logger.info(f"   [INFO] {agent_name} assigned {len(tools)} tools (CLOUD: {len([t for t in tools if t.location == ToolLocation.CLOUD])}, local: {len([t for t in tools if t.location == ToolLocation.LOCAL])})")
 
         agent_info = AgentInfo(
             agent_id=agent_id,
@@ -101,7 +154,7 @@ class A2AInitializer:
     
     async def initialize(self) -> None:
         """初始化所有 Agent"""
-        logger.info("🚀 A2A 协议初始化")
+        logger.info("[INIT] Starting A2A protocol initialization")
         
         await self._register_tax_specialist()
         await self._register_finance_specialist()
@@ -113,11 +166,13 @@ class A2AInitializer:
             strategy=DispatchStrategy.LOCAL_FIRST
         )
         
-        logger.info(f"✅ A2A 初始化完成: {list(self.wrappers.keys())}")
+        logger.info(f"[OK] A2A initialized: {list(self.wrappers.keys())}")
     
     async def _register_tax_specialist(self) -> None:
         """注册税务专家"""
+        logger.info("[START] _register_tax_specialist")
         try:
+            logger.info("[STEP1] Creating LLM adapter")
             import logging
             logging.getLogger('app.agent_framework.llm.factory').setLevel(logging.WARNING)
             logging.getLogger('app.agent_framework.tools.tool_manager').setLevel(logging.WARNING)
@@ -129,11 +184,16 @@ class A2AInitializer:
             
             from app.multi_agent_system.agents import TaxSpecialist
             from app.agent_framework.tools.tool_manager import ToolManager
+            from app.agent_framework.tools.agent_tool_registry import initialize_tool_manager
             from app.agent_framework.llm.factory import LLMAdapterFactory
             from app.core.config import settings
 
             llm = LLMAdapterFactory.create_adapter(settings.LLM_PROVIDER)
             tool_manager = ToolManager()
+            
+            tool_reg_result = await initialize_tool_manager(tool_manager)
+            logger.info(f"   [TOOL] tax_specialist registered {tool_reg_result['total_count']} tools")
+            
             agent = TaxSpecialist(llm_adapter=llm, tool_manager=tool_manager)
 
             wrapper = wrap_tax_specialist(agent, self.base_url)
@@ -149,13 +209,13 @@ class A2AInitializer:
                 tool_manager=tool_manager
             )
 
-            logger.info("   ✅ tax_specialist")
-        except (ValueError, KeyError) as e:
-            logger.warning(f"   ⚠️ tax_specialist 跳过数据错误: {e}")
+            logger.info("   [OK] tax_specialist registered")
+        except (ValueError, KeyError, UnicodeEncodeError) as e:
+             logger.warning(f"   [WARN] tax_specialist step1 failed: {type(e).__name__}: {e}")
         except (OSError, IOError) as e:
-            logger.warning(f"   ⚠️ tax_specialist 跳过IO错误: {e}")
+             logger.warning(f"   [WARN] tax_specialist step2 failed: {type(e).__name__}: {e}")
         except Exception as e:
-            logger.warning(f"   ⚠️ tax_specialist 跳过: {e}")
+             logger.warning(f"   [WARN] tax_specialist step3 failed: {type(e).__name__}: {e}")
     
     async def _register_finance_specialist(self) -> None:
         """注册财务专家"""
@@ -171,11 +231,16 @@ class A2AInitializer:
             
             from app.multi_agent_system.agents import FinanceSpecialist
             from app.agent_framework.tools.tool_manager import ToolManager
+            from app.agent_framework.tools.agent_tool_registry import initialize_tool_manager
             from app.agent_framework.llm.factory import LLMAdapterFactory
             from app.core.config import settings
 
             llm = LLMAdapterFactory.create_adapter(settings.LLM_PROVIDER)
             tool_manager = ToolManager()
+            
+            tool_reg_result = await initialize_tool_manager(tool_manager)
+            logger.info(f"   [TOOL] finance_specialist registered {tool_reg_result['total_count']} tools")
+            
             agent = FinanceSpecialist(llm_adapter=llm, tool_manager=tool_manager)
 
             wrapper = wrap_finance_specialist(agent, self.base_url)
@@ -191,13 +256,13 @@ class A2AInitializer:
                 tool_manager=tool_manager
             )
 
-            logger.info("   ✅ finance_specialist")
-        except (ValueError, KeyError) as e:
-            logger.warning(f"   ⚠️ finance_specialist 跳过数据错误: {e}")
+            logger.info("   [OK] finance_specialist registered")
+        except (ValueError, KeyError, UnicodeEncodeError) as e:
+            logger.warning(f"   [WARN] finance_specialist skipped due to encoding/data error: {e}")
         except (OSError, IOError) as e:
-            logger.warning(f"   ⚠️ finance_specialist 跳过IO错误: {e}")
+            logger.warning(f"   [WARN] finance_specialist skipped due to IO error: {e}")
         except Exception as e:
-            logger.warning(f"   ⚠️ finance_specialist 跳过: {e}")
+            logger.warning(f"   [WARN] finance_specialist skipped: {e}")
     
     async def _register_legal_specialist(self) -> None:
         """注册法律专家"""
@@ -213,11 +278,16 @@ class A2AInitializer:
             
             from app.multi_agent_system.agents import LegalSpecialist
             from app.agent_framework.tools.tool_manager import ToolManager
+            from app.agent_framework.tools.agent_tool_registry import initialize_tool_manager
             from app.agent_framework.llm.factory import LLMAdapterFactory
             from app.core.config import settings
 
             llm = LLMAdapterFactory.create_adapter(settings.LLM_PROVIDER)
             tool_manager = ToolManager()
+            
+            tool_reg_result = await initialize_tool_manager(tool_manager)
+            logger.info(f"   [TOOL] legal_specialist registered {tool_reg_result['total_count']} tools")
+            
             agent = LegalSpecialist(llm_adapter=llm, tool_manager=tool_manager)
 
             wrapper = wrap_legal_specialist(agent, self.base_url)
@@ -233,13 +303,13 @@ class A2AInitializer:
                 tool_manager=tool_manager
             )
 
-            logger.info("   ✅ legal_specialist")
-        except (ValueError, KeyError) as e:
-            logger.warning(f"   ⚠️ legal_specialist 跳过数据错误: {e}")
+            logger.info("   [OK] legal_specialist registered")
+        except (ValueError, KeyError, UnicodeEncodeError) as e:
+            logger.warning(f"   [WARN] legal_specialist skipped due to encoding/data error: {e}")
         except (OSError, IOError) as e:
-            logger.warning(f"   ⚠️ legal_specialist 跳过IO错误: {e}")
+            logger.warning(f"   [WARN] legal_specialist skipped due to IO error: {e}")
         except Exception as e:
-            logger.warning(f"   ⚠️ legal_specialist 跳过: {e}")
+            logger.warning(f"   [WARN] legal_specialist skipped: {e}")
     
     async def _register_react_agent(self) -> None:
         """注册 ReAct 通用 Agent"""
@@ -255,11 +325,16 @@ class A2AInitializer:
             
             from app.agent_framework.core.react_agent import ReActAgent
             from app.agent_framework.tools.tool_manager import ToolManager
+            from app.agent_framework.tools.agent_tool_registry import initialize_tool_manager
             from app.agent_framework.llm.factory import LLMAdapterFactory
             from app.core.config import settings
 
             llm_adapter = LLMAdapterFactory.create_adapter(settings.LLM_PROVIDER)
             tool_manager = ToolManager()
+            
+            tool_reg_result = await initialize_tool_manager(tool_manager)
+            logger.info(f"   [TOOL] react_agent registered {tool_reg_result['total_count']} tools")
+            
             agent = ReActAgent(llm_adapter=llm_adapter, tool_manager=tool_manager)
 
             wrapper = wrap_react_agent(agent, self.base_url)
@@ -275,13 +350,13 @@ class A2AInitializer:
                 tool_manager=tool_manager
             )
 
-            logger.info("   ✅ react_agent")
+            logger.info("   [OK] react_agent registered")
         except (ValueError, KeyError) as e:
-            logger.warning(f"   ⚠️ react_agent 跳过数据错误: {e}")
+            logger.warning(f"   [WARN] react_agent skipped due to data error: {e}")
         except (OSError, IOError) as e:
-            logger.warning(f"   ⚠️ react_agent 跳过IO错误: {e}")
+            logger.warning(f"   [WARN] react_agent skipped due to IO error: {e}")
         except Exception as e:
-            logger.warning(f"   ⚠️ react_agent 跳过: {e}")
+            logger.warning(f"   [WARN] react_agent skipped: {e}")
     
     def get_dispatcher(self) -> HybridDispatcher:
         """获取调度器"""

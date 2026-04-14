@@ -54,10 +54,10 @@ class SiliconFlowEmbeddingAdapter(BaseEmbeddingAdapter):
         }
         
         self.client = httpx.AsyncClient(timeout=httpx.Timeout(60.0))
-        
+
         # 只在首次初始化时打印详细信息
-        if not getattr(SiliconFlowAdapter, '_initialized', False):
-            SiliconFlowAdapter._initialized = True
+        if not getattr(SiliconFlowEmbeddingAdapter, '_initialized', False):
+            SiliconFlowEmbeddingAdapter._initialized = True
             print(f"✅ 硅基流动 Embedding 适配器初始化完成")
             print(f"   - 模型: {self.model_name}")
             print(f"   - Base URL: {self.base_url}")
@@ -96,18 +96,25 @@ class SiliconFlowEmbeddingAdapter(BaseEmbeddingAdapter):
                 json=payload
             )
             
-            if response.status_code != 200:
-                error_detail = response.json() if response.text else {}
-                error_code = error_detail.get("code", "unknown")
-                error_message = error_detail.get("message", response.text)
+            response.raise_for_status()
+            result = response.json()
+            return result["data"][0]["embedding"]
+            
+        except httpx.HTTPStatusError as e:
+            try:
+                error_text = e.response.text
+                try:
+                    error_detail = e.response.json()
+                    error_code = error_detail.get("code", "unknown")
+                    error_message = error_detail.get("message", error_text)
+                except Exception:
+                    error_message = error_text
                 
                 if error_code == 20015:
                     raise Exception(f"API 参数无效或账户余额不足: {error_message}")
                 else:
-                    raise Exception(f"API 请求失败: {response.status_code} - {error_message}")
-            
-            result = response.json()
-            return result["data"][0]["embedding"]
-            
-        except httpx.HTTPError as e:
+                    raise Exception(f"API 请求失败: {e.response.status_code} - {error_message}")
+            except Exception:
+                raise
+        except httpx.RequestError as e:
             raise Exception(f"HTTP 请求错误: {str(e)}")

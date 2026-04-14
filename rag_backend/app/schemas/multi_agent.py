@@ -19,7 +19,7 @@ class SpecialistType(str, Enum):
 
 
 class IntentCategory(str, Enum):
-    """意图类别（与IntentAgent保持一致）"""
+    """意图类别（与IntentRouterAgent保持一致）"""
     FINANCIAL_INQUIRY = "financial_inquiry"
     TAX_PLANNING = "tax_planning"
     CONTRACT_REVIEW = "contract_review"
@@ -69,17 +69,31 @@ class MultiAgentRequest(BaseModel):
 
 
 class SpecialistResult(BaseModel):
-    """单个专家智能体结果"""
+    """单个专家智能体结果
+    
+    整合自：
+    - schemas/multi_agent.py: 原始完整结构（analysis, entities, recommendations, risks）
+    - langgraph/state.py: 执行追踪字段（query, response, tools_used, execution_time_ms）
+    """
     specialist_type: SpecialistType
     specialist_name: str
     success: bool
     confidence: float = Field(ge=0.0, le=1.0)
-    analysis: Dict[str, Any]
+    
+    # 执行追踪（整合自 langgraph/state.py）
+    query: str = Field(default="", description="原始查询")
+    response: str = Field(default="", description="生成响应")
+    tools_used: List[str] = Field(default_factory=list, description="使用的工具列表")
+    execution_time_ms: float = Field(default=0.0, description="执行时间（毫秒）")
+    
+    # 分析结果（原始字段）
+    analysis: Dict[str, Any] = Field(default_factory=dict)
     entities: List[Dict[str, Any]] = Field(default_factory=list)
     recommendations: List[str] = Field(default_factory=list)
     risks: List[Dict[str, Any]] = Field(default_factory=list)
+    
     metadata: Dict[str, Any] = Field(default_factory=dict)
-    processing_time: float
+    processing_time: float = Field(default=0.0, description="处理时间（秒）")
     error_message: Optional[str] = None
 
 

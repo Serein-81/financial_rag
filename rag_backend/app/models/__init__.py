@@ -50,3 +50,4 @@ from .scheduled_task import (
     TaskExecutionLog,
     TaskNotification
 )
+from .workflow_trace import WorkflowTrace, WorkflowNodeExecution, WorkflowStatus

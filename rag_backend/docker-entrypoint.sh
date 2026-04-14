@@ -16,5 +16,10 @@ for i in 1 2 3; do
     fi
 done
 
-echo "🚀 启动应用..."
-exec uvicorn app.main:app --host 0.0.0.0 --port 8000
+echo "🚀 启动应用（uvloop 高性能模式 + 热重载）..."
+exec uvicorn app.main:app \
+    --host 0.0.0.0 \
+    --port 8000 \
+    --loop uvloop \
+    --http h11 \
+    --reload

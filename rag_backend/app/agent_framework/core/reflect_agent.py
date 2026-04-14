@@ -44,20 +44,18 @@ class ReflectAgent(BaseAgent):
     - Token 消耗较大
     - 响应时间较长
     
-    提示词支持：
-    - 使用 reflection.txt 模板
-    - 动态替换 {original_task}, {current_answer}, {reflection_round} 等变量
+    提示词加载：
+    - 通过 agent_name 从 app/prompts/agents/{agent_name}/system.md 加载
+    - 如果没有指定 agent_name，回退到静态 system_prompt
     """
-    
-    DEFAULT_TEMPLATE_NAME = "reflection"
     
     def __init__(
         self,
         llm_adapter: BaseLLMAdapter,
         tool_manager: ToolManager,
+        agent_name: str = None,
         max_iterations: int = 5,
         max_reflections: int = 2,
-        template_name: str = None,
         **kwargs
     ):
         """
@@ -66,14 +64,14 @@ class ReflectAgent(BaseAgent):
         Args:
             llm_adapter: LLM 适配器
             tool_manager: 工具管理器
+            agent_name: Agent名称，用于加载结构化提示词（可选）
             max_iterations: 最大执行迭代数
             max_reflections: 最大反思次数
-            template_name: 反思模板名称（可选，默认使用 reflection）
         """
         super().__init__(
             llm_adapter,
             tool_manager,
-            template_name=template_name or self.DEFAULT_TEMPLATE_NAME,
+            agent_name=agent_name,
             max_iterations=max_iterations,
             **kwargs
         )

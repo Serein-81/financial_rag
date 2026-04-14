@@ -61,7 +61,29 @@ class MinioService:
         return filename
     
     def _retry_operation(self, operation, *args, **kwargs):
-        """通用重试机制"""
+        """同步重试机制（已废弃 - 请使用异步版本）
+        
+        ⚠️ 警告：此方法会阻塞事件循环，在 FastAPI 异步环境中可能导致并发性能下降！
+        强烈建议使用异步版本：upload_document_async(), download_document_async()
+        
+        Args:
+            operation: 要执行的操作
+            *args: 位置参数
+            **kwargs: 关键字参数
+            
+        Returns:
+            操作结果
+        """
+        import warnings
+        warnings.warn(
+            "MinIO 同步方法 _retry_operation() 已废弃！"
+            "这会阻塞 FastAPI 事件循环，影响并发性能。"
+            "请使用异步版本：upload_document_async(), download_document_async(), delete_document_async()",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        logger.warning("⚠️ [MinIO] 使用了已废弃的同步方法，可能阻塞事件循环！")
+        
         if self._client is None:
             self._init_client()
         
@@ -74,6 +96,7 @@ class MinioService:
             except (ValueError, KeyError) as e:
                 last_exception = e
                 if attempt < self.retry_max_attempts - 1:
+                    logger.warning(f"⏰ [MinIO同步] 同步阻塞等待 {delay} 秒...")
                     time.sleep(delay)
                     delay *= 2 if self.retry_exponential else 1
                     continue
@@ -81,6 +104,7 @@ class MinioService:
             except (OSError, IOError) as e:
                 last_exception = e
                 if attempt < self.retry_max_attempts - 1:
+                    logger.warning(f"⏰ [MinIO同步] 同步阻塞等待 {delay} 秒...")
                     time.sleep(delay)
                     delay *= 2 if self.retry_exponential else 1
                     continue
@@ -89,7 +113,7 @@ class MinioService:
                 last_exception = e
                 if attempt < self.retry_max_attempts - 1:
                     wait_time = self.retry_delay * (2 ** attempt) if self.retry_exponential else self.retry_delay
-                    logger.warning(f"[重试] {operation.__name__} 第 {attempt + 1} 次失败: {e}, {wait_time:.1f}秒后重试...")
+                    logger.warning(f"[重试] {operation.__name__} 第 {attempt + 1} 次失败: {e}, {wait_time:.1f}秒后重试...（同步阻塞！）")
                     time.sleep(wait_time)
                     self._init_client()
                 else:
@@ -359,13 +383,41 @@ class MinioService:
         return await self._retry_operation_async(_do_download)
     
     def delete_document(self, object_name: str, tenant_id: Optional[str] = None):
-        """删除文档"""
+        """删除文档（已废弃 - 请使用异步版本）
+        
+        ⚠️ 警告：此方法会阻塞事件循环！
+        """
+        import warnings
+        warnings.warn(
+            "MinIO 同步方法 delete_document() 已废弃！"
+            "请使用异步版本：delete_document_async()",
+            DeprecationWarning,
+            stacklevel=2
+        )
         def _do_delete():
             resolved_name = self._resolve_object_name(object_name)
             resolved_path = self._resolve_path(resolved_name, tenant_id)
             self._client.remove_object(self.doc_bucket, resolved_path)
         
         return self._retry_operation(_do_delete)
+    
+    async def delete_document_async(self, object_name: str, tenant_id: Optional[str] = None):
+        """异步删除文档（使用 asyncio 避免阻塞）
+        
+        Args:
+            object_name: 对象名称
+            tenant_id: 租户ID
+        
+        Returns:
+            None
+        """
+        def _do_delete():
+            resolved_name = self._resolve_object_name(object_name)
+            resolved_path = self._resolve_path(resolved_name, tenant_id)
+            logger.info(f"[MinIO异步] delete_document_async: object_name={object_name}, resolved_path={resolved_path}")
+            self._client.remove_object(self.doc_bucket, resolved_path)
+        
+        return await self._retry_operation_async(_do_delete)
     
     def document_exists(self, object_name: str, tenant_id: Optional[str] = None) -> bool:
         """检查文档是否存在"""
@@ -391,7 +443,17 @@ class MinioService:
             return False
     
     def list_documents(self, prefix: str = "", tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
-        """列出文档"""
+        """列出文档（已废弃 - 请使用异步版本）
+        
+        ⚠️ 警告：此方法会阻塞事件循环！
+        """
+        import warnings
+        warnings.warn(
+            "MinIO 同步方法 list_documents() 已废弃！"
+            "请使用异步版本：list_documents_async()",
+            DeprecationWarning,
+            stacklevel=2
+        )
         def _do_list():
             resolved_prefix = self._resolve_path(prefix, tenant_id) if prefix else ""
             if self.prefix_path and tenant_id:
@@ -412,6 +474,37 @@ class MinioService:
             ]
         
         return self._retry_operation(_do_list)
+    
+    async def list_documents_async(self, prefix: str = "", tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """异步列出文档（使用 asyncio 避免阻塞）
+        
+        Args:
+            prefix: 前缀
+            tenant_id: 租户ID
+        
+        Returns:
+            文档列表
+        """
+        def _do_list():
+            resolved_prefix = self._resolve_path(prefix, tenant_id) if prefix else ""
+            if self.prefix_path and tenant_id:
+                resolved_prefix = f"{self.prefix_path}/{tenant_id}/" + prefix
+            elif self.prefix_path:
+                resolved_prefix = f"{self.prefix_path}/" + prefix
+            elif tenant_id:
+                resolved_prefix = f"{tenant_id}/" + prefix
+            
+            objects = self._client.list_objects(self.doc_bucket, prefix=resolved_prefix, recursive=True)
+            return [
+                {
+                    "name": obj.object_name,
+                    "size": obj.size,
+                    "last_modified": obj.last_modified.isoformat() if obj.last_modified else None
+                }
+                for obj in objects
+            ]
+        
+        return await self._retry_operation_async(_do_list)
     
     # ==========================================
     # [健康检查]
@@ -488,13 +581,47 @@ class MinioService:
         expires: int = 3600,
         tenant_id: Optional[str] = None
     ) -> Optional[str]:
-        """获取预签名 URL"""
+        """获取预签名 URL（已废弃 - 请使用异步版本）
+        
+        ⚠️ 警告：此方法会阻塞事件循环！
+        """
+        import warnings
+        warnings.warn(
+            "MinIO 同步方法 get_presigned_url() 已废弃！"
+            "请使用异步版本：get_presigned_url_async()",
+            DeprecationWarning,
+            stacklevel=2
+        )
         def _do_get_url():
             resolved_name = self._resolve_object_name(object_name)
             resolved_path = self._resolve_path(resolved_name, tenant_id)
             return self._client.get_presigned_url("GET", self.doc_bucket, resolved_path, expires)
         
         return self._retry_operation(_do_get_url)
+    
+    async def get_presigned_url_async(
+        self,
+        object_name: str,
+        expires: int = 3600,
+        tenant_id: Optional[str] = None
+    ) -> Optional[str]:
+        """异步获取预签名 URL（使用 asyncio 避免阻塞）
+        
+        Args:
+            object_name: 对象名称
+            expires: 过期时间（秒）
+            tenant_id: 租户ID
+        
+        Returns:
+            预签名 URL
+        """
+        def _do_get_url():
+            resolved_name = self._resolve_object_name(object_name)
+            resolved_path = self._resolve_path(resolved_name, tenant_id)
+            logger.info(f"[MinIO异步] get_presigned_url_async: object_name={object_name}, resolved_path={resolved_path}")
+            return self._client.get_presigned_url("GET", self.doc_bucket, resolved_path, expires)
+        
+        return await self._retry_operation_async(_do_get_url)
     
     # ==========================================
     # [桶管理]

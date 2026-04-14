@@ -11,7 +11,13 @@ from .state import (
     Finding,
     Conflict,
     Report,
-    create_initial_state
+    create_initial_state,
+    TaskStatus,
+    TaskPriority,
+    AgentRole,
+    TaskContext,
+    AgentRegistry,
+    BlackboardEvent
 )
 
 from .coordinator import AgentCoordinator
@@ -25,9 +31,9 @@ from .result_merger import ResultMerger
 
 # Agent 相关
 from .agents.base_specialist import BaseSpecialistAgent
-from .agents.receptionist_agent import ReceptionistAgent
-from .agents.intent_agent import (
-    IntentAgent,
+from .agents.intent_router_agent import (
+    IntentRouterAgent,
+    IntentRoutingResult,
     IntentCategory,
     ComplexityLevel,
     RoutingStrategy,
@@ -44,6 +50,14 @@ __all__ = [
     "Report",
     "create_initial_state",
     
+    # 任务管理（整合自 task_blackboard.py）
+    "TaskStatus",
+    "TaskPriority",
+    "AgentRole",
+    "TaskContext",
+    "AgentRegistry",
+    "BlackboardEvent",
+    
     # 核心组件
     "AgentCoordinator",
     "AgentOrchestrator",
@@ -59,8 +73,8 @@ __all__ = [
     
     # Agent 基类
     "BaseSpecialistAgent",
-    "ReceptionistAgent",
-    "IntentAgent",
+    "IntentRouterAgent",
+    "IntentRoutingResult",
     "IntentCategory",
     "ComplexityLevel",
     "RoutingStrategy",
