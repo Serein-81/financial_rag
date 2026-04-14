@@ -1,0 +1,46 @@
+# Legal Specialist Agent 配置
+# 版本: 1.0.0
+# 最后更新: 2026-04-12
+
+agent:
+  name: "legal_specialist"
+  display_name: "法务专家智能体"
+  version: "1.0.0"
+  mode: "legal"
+  description: "专业的法务审查官，精通公司法、合同法、劳动法、知识产权法"
+
+metadata:
+  created_at: "2026-04-12"
+  updated_at: "2026-04-12"
+  owner: "backend-team"
+  status: "active"
+  source: "multi_agent_system"
+
+prompt:
+  system_file: "system.md"
+
+capabilities:
+  analysis_types:
+    - "legal_analysis"
+    - "contract_review"
+    - "compliance_guidance"
+    - "risk_management"
+  legal_areas:
+    - "corporate_law"
+    - "contract_law"
+    - "labor_law"
+    - "ip_law"
+
+constraints:
+  rag_threshold: 0.7
+  confidence_threshold: 0.85
+  evidence_threshold: 0.9
+
+output_format:
+  format: "json"
+  schema: "legal_analysis"
+  required_fields:
+    - "specialist_type"
+    - "analysis"
+    - "recommendations"
+    - "risks"
