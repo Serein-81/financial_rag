@@ -46,7 +46,9 @@ import {
 
   Copy,
 
-  Check
+  Check,
+
+  HelpCircle
 
 } from 'lucide-vue-next'
 
@@ -73,14 +75,11 @@ const pageSize = ref(10)
 
 
 const showCreateModal = ref(false)
-
 const showQuickSetupModal = ref(false)
-
 const selectedLogDetail = ref<TaskExecutionLog | null>(null)
-
 const showLogDetailModal = ref(false)
-
 const isLoadingLogDetail = ref(false)
+const showHelp = ref(false)
 
 const newTask = ref({
 
@@ -574,13 +573,29 @@ onMounted(() => {
 
           <button
 
+            @click="showHelp = true"
+
+            class="px-4 py-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 flex items-center gap-2 transition-colors"
+
+          >
+
+            <HelpCircle :size="16" />
+
+            使用说明
+
+          </button>
+
+          <button
+
             @click="showQuickSetupModal = true"
 
             class="px-4 py-2 border border-amber-200 text-amber-600 rounded-lg hover:bg-amber-50 transition-colors"
 
           >
 
-            快速创建          </button>
+            快速创建
+
+          </button>
 
           <button
 
@@ -1732,6 +1747,315 @@ onMounted(() => {
 
       </div>
 
+    </div>
+
+    <!-- 使用说明弹窗 -->
+    <div
+      v-if="showHelp"
+      class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+      @click.self="showHelp = false"
+    >
+      <div class="bg-white rounded-2xl shadow-2xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-hidden">
+        <div class="bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-4 flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <HelpCircle :size="24" class="text-white" />
+            <h2 class="text-xl font-bold text-white">定时任务管理使用指南</h2>
+          </div>
+          <button @click="showHelp = false" class="p-2 hover:bg-white hover:bg-opacity-20 rounded-lg transition-colors">
+            <X :size="20" class="text-white" />
+          </button>
+        </div>
+
+        <div class="p-6 overflow-y-auto max-h-[calc(90vh-80px)] space-y-6">
+          <!-- 功能概述 -->
+          <div class="bg-blue-50 rounded-xl p-5">
+            <div class="flex items-start gap-3">
+              <div class="p-2 bg-blue-100 rounded-lg">
+                <Timer :size="20" class="text-blue-600" />
+              </div>
+              <div>
+                <h3 class="font-semibold text-blue-900 mb-2">功能概述</h3>
+                <p class="text-sm text-blue-700 leading-relaxed">
+                  定时任务管理模块帮助您自动化执行重复性工作，如税务提醒、财务报告生成、政策更新检查和异常数据检测。通过灵活的配置和监控，您可以确保关键业务流程准时运行。
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <!-- 创建任务 -->
+          <div class="border border-gray-200 rounded-xl overflow-hidden">
+            <div class="bg-gray-50 px-5 py-3 border-b border-gray-200">
+              <div class="flex items-center gap-2">
+                <Plus :size="18" class="text-emerald-600" />
+                <h3 class="font-semibold text-gray-900">创建任务</h3>
+              </div>
+            </div>
+            <div class="p-5 space-y-4">
+              <div>
+                <h4 class="font-medium text-gray-900 mb-2">方式一：快速创建</h4>
+                <p class="text-sm text-gray-600 mb-3">适合常见场景，快速配置预定义模板：</p>
+                <ol class="text-sm text-gray-600 space-y-1 ml-6 list-decimal">
+                  <li>点击右上角「快速创建」按钮</li>
+                  <li>选择任务类型（税务提醒、财务报告、政策更新、异常检测）</li>
+                  <li>根据类型填写相应参数</li>
+                  <li>点击「创建」完成设置</li>
+                </ol>
+              </div>
+              <div>
+                <h4 class="font-medium text-gray-900 mb-2">方式二：自定义创建</h4>
+                <p class="text-sm text-gray-600 mb-3">适合特殊需求，完整配置所有参数：</p>
+                <ol class="text-sm text-gray-600 space-y-1 ml-6 list-decimal">
+                  <li>点击右上角「新建任务」按钮</li>
+                  <li>填写任务名称和描述</li>
+                  <li>选择任务类型和执行频率</li>
+                  <li>设置下次执行时间</li>
+                  <li>点击「创建」完成设置</li>
+                </ol>
+              </div>
+            </div>
+          </div>
+
+          <!-- 任务类型 -->
+          <div class="border border-gray-200 rounded-xl overflow-hidden">
+            <div class="bg-gray-50 px-5 py-3 border-b border-gray-200">
+              <div class="flex items-center gap-2">
+                <Calendar :size="18" class="text-emerald-600" />
+                <h3 class="font-semibold text-gray-900">任务类型说明</h3>
+              </div>
+            </div>
+            <div class="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div class="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
+                <div class="p-2 bg-amber-100 rounded-lg">
+                  <Calendar :size="16" class="text-amber-600" />
+                </div>
+                <div>
+                  <h4 class="font-medium text-gray-900 text-sm">税务提醒</h4>
+                  <p class="text-xs text-gray-500 mt-1">自动提醒各类税务申报截止日期，避免逾期</p>
+                </div>
+              </div>
+              <div class="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
+                <div class="p-2 bg-blue-100 rounded-lg">
+                  <BarChart3 :size="16" class="text-blue-600" />
+                </div>
+                <div>
+                  <h4 class="font-medium text-gray-900 text-sm">财务报告</h4>
+                  <p class="text-xs text-gray-500 mt-1">定期生成财务报表，汇总财务数据</p>
+                </div>
+              </div>
+              <div class="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
+                <div class="p-2 bg-emerald-100 rounded-lg">
+                  <Clock :size="16" class="text-emerald-600" />
+                </div>
+                <div>
+                  <h4 class="font-medium text-gray-900 text-sm">政策更新</h4>
+                  <p class="text-xs text-gray-500 mt-1">监控最新政策法规，及时获取更新信息</p>
+                </div>
+              </div>
+              <div class="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
+                <div class="p-2 bg-red-100 rounded-lg">
+                  <AlertTriangle :size="16" class="text-red-600" />
+                </div>
+                <div>
+                  <h4 class="font-medium text-gray-900 text-sm">异常检测</h4>
+                  <p class="text-xs text-gray-500 mt-1">自动检测数据异常，发现潜在问题</p>
+                </div>
+              </div>
+              <div class="flex items-start gap-3 p-3 bg-gray-50 rounded-lg md:col-span-2">
+                <div class="p-2 bg-slate-100 rounded-lg">
+                  <Settings :size="16" class="text-slate-600" />
+                </div>
+                <div>
+                  <h4 class="font-medium text-gray-900 text-sm">自定义任务</h4>
+                  <p class="text-xs text-gray-500 mt-1">根据业务需求自定义执行逻辑和参数</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 执行频率 -->
+          <div class="border border-gray-200 rounded-xl overflow-hidden">
+            <div class="bg-gray-50 px-5 py-3 border-b border-gray-200">
+              <div class="flex items-center gap-2">
+                <RefreshCw :size="18" class="text-emerald-600" />
+                <h3 class="font-semibold text-gray-900">执行频率</h3>
+              </div>
+            </div>
+            <div class="p-5 space-y-3">
+              <div class="flex items-start gap-3">
+                <CheckCircle :size="16" class="text-emerald-600 mt-0.5" />
+                <div>
+                  <p class="text-sm font-medium text-gray-900">仅执行一次</p>
+                  <p class="text-xs text-gray-500 mt-1">任务将在指定时间执行一次后自动删除</p>
+                </div>
+              </div>
+              <div class="flex items-start gap-3">
+                <CheckCircle :size="16" class="text-emerald-600 mt-0.5" />
+                <div>
+                  <p class="text-sm font-medium text-gray-900">每天</p>
+                  <p class="text-xs text-gray-500 mt-1">每天在指定时间自动执行</p>
+                </div>
+              </div>
+              <div class="flex items-start gap-3">
+                <CheckCircle :size="16" class="text-emerald-600 mt-0.5" />
+                <div>
+                  <p class="text-sm font-medium text-gray-900">每周</p>
+                  <p class="text-xs text-gray-500 mt-1">每周在指定日期和时间执行</p>
+                </div>
+              </div>
+              <div class="flex items-start gap-3">
+                <CheckCircle :size="16" class="text-emerald-600 mt-0.5" />
+                <div>
+                  <p class="text-sm font-medium text-gray-900">每月</p>
+                  <p class="text-xs text-gray-500 mt-1">每月在指定日期和时间执行</p>
+                </div>
+              </div>
+              <div class="flex items-start gap-3">
+                <CheckCircle :size="16" class="text-emerald-600 mt-0.5" />
+                <div>
+                  <p class="text-sm font-medium text-gray-900">每季度</p>
+                  <p class="text-xs text-gray-500 mt-1">每季度在指定日期和时间执行，适合财务季度报告</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 任务管理 -->
+          <div class="border border-gray-200 rounded-xl overflow-hidden">
+            <div class="bg-gray-50 px-5 py-3 border-b border-gray-200">
+              <div class="flex items-center gap-2">
+                <Settings :size="18" class="text-emerald-600" />
+                <h3 class="font-semibold text-gray-900">任务管理操作</h3>
+              </div>
+            </div>
+            <div class="p-5 space-y-4">
+              <div>
+                <h4 class="font-medium text-gray-900 mb-2 flex items-center gap-2">
+                  <Pause :size="14" class="text-amber-600" />
+                  暂停/启用任务
+                </h4>
+                <p class="text-sm text-gray-600 ml-6">点击任务卡片右侧的暂停/播放按钮，可以临时停止或重新启用定时任务。暂停的任务不会消耗系统资源，也不会执行。</p>
+              </div>
+              <div>
+                <h4 class="font-medium text-gray-900 mb-2 flex items-center gap-2">
+                  <PlayCircle :size="14" class="text-blue-600" />
+                  立即执行
+                </h4>
+                <p class="text-sm text-gray-600 ml-6">点击播放按钮可以手动触发任务立即执行，绕过定时调度。这对于测试任务配置或紧急执行非常有用。</p>
+              </div>
+              <div>
+                <h4 class="font-medium text-gray-900 mb-2 flex items-center gap-2">
+                  <Trash2 :size="14" class="text-red-600" />
+                  删除任务
+                </h4>
+                <p class="text-sm text-gray-600 ml-6">点击删除按钮可以永久移除任务。删除操作不可恢复，请确认后再执行。</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- 查看日志 -->
+          <div class="border border-gray-200 rounded-xl overflow-hidden">
+            <div class="bg-gray-50 px-5 py-3 border-b border-gray-200">
+              <div class="flex items-center gap-2">
+                <FileText :size="18" class="text-emerald-600" />
+                <h3 class="font-semibold text-gray-900">执行日志</h3>
+              </div>
+            </div>
+            <div class="p-5 space-y-3">
+              <p class="text-sm text-gray-600">点击顶部导航栏的「执行日志」标签，可以查看所有任务的执行历史：</p>
+              <div class="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                <p class="text-xs text-amber-800 flex items-start gap-2">
+                  <AlertTriangle :size="14" class="flex-shrink-0 mt-0.5" />
+                  <span>提示：点击任意日志条目可以查看完整的执行详情，包括开始时间、执行时长、返回结果和错误信息（如有）。</span>
+                </p>
+              </div>
+              <div class="space-y-2">
+                <div class="flex items-start gap-2">
+                  <span class="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-xs rounded">已完成</span>
+                  <p class="text-xs text-gray-600">任务成功完成</p>
+                </div>
+                <div class="flex items-start gap-2">
+                  <span class="px-2 py-0.5 bg-red-100 text-red-700 text-xs rounded">失败</span>
+                  <p class="text-xs text-gray-600">任务执行过程中发生错误</p>
+                </div>
+                <div class="flex items-start gap-2">
+                  <span class="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded">运行中</span>
+                  <p class="text-xs text-gray-600">任务正在执行中</p>
+                </div>
+                <div class="flex items-start gap-2">
+                  <span class="px-2 py-0.5 bg-slate-100 text-slate-700 text-xs rounded">已取消</span>
+                  <p class="text-xs text-gray-600">任务被手动取消或系统中断</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 统计概览 -->
+          <div class="border border-gray-200 rounded-xl overflow-hidden">
+            <div class="bg-gray-50 px-5 py-3 border-b border-gray-200">
+              <div class="flex items-center gap-2">
+                <BarChart3 :size="18" class="text-emerald-600" />
+                <h3 class="font-semibold text-gray-900">统计概览</h3>
+              </div>
+            </div>
+            <div class="p-5 space-y-3">
+              <p class="text-sm text-gray-600">点击顶部导航栏的「统计概览」标签，可以查看任务执行的统计数据：</p>
+              <div class="grid grid-cols-2 gap-3">
+                <div class="bg-slate-50 rounded-lg p-3">
+                  <p class="text-xs text-gray-500">任务总数</p>
+                  <p class="text-lg font-bold text-gray-900 mt-1">所有创建的任务数量</p>
+                </div>
+                <div class="bg-emerald-50 rounded-lg p-3">
+                  <p class="text-xs text-gray-500">活跃任务</p>
+                  <p class="text-lg font-bold text-emerald-600 mt-1">当前启用的任务数量</p>
+                </div>
+                <div class="bg-amber-50 rounded-lg p-3">
+                  <p class="text-xs text-gray-500">今日完成</p>
+                  <p class="text-lg font-bold text-gray-900 mt-1">今日成功执行的任务数</p>
+                </div>
+                <div class="bg-red-50 rounded-lg p-3">
+                  <p class="text-xs text-gray-500">今日失败</p>
+                  <p class="text-lg font-bold text-red-500 mt-1">今日执行失败的任务数</p>
+                </div>
+              </div>
+              <div class="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                <p class="text-xs text-blue-800 flex items-start gap-2">
+                  <AlertTriangle :size="14" class="flex-shrink-0 mt-0.5" />
+                  <span>即将执行：显示接下来24小时内将要执行的任务列表，帮助您提前了解系统负载。</span>
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <!-- 常见问题 -->
+          <div class="bg-gradient-to-br from-slate-50 to-white rounded-xl border border-slate-200">
+            <div class="px-5 py-4 border-b border-slate-200">
+              <div class="flex items-center gap-2">
+                <AlertTriangle :size="18" class="text-amber-600" />
+                <h3 class="font-semibold text-gray-900">常见问题</h3>
+              </div>
+            </div>
+            <div class="p-5 space-y-4">
+              <div>
+                <h4 class="font-medium text-gray-900 mb-2 text-sm">Q: 任务没有按时执行怎么办？</h4>
+                <p class="text-xs text-gray-600 ml-4">A: 首先检查任务是否为启用状态，然后查看执行日志确认是否有错误信息。如果问题持续，请联系系统管理员。</p>
+              </div>
+              <div>
+                <h4 class="font-medium text-gray-900 mb-2 text-sm">Q: 如何修改已创建的任务？</h4>
+                <p class="text-xs text-gray-600 ml-4">A: 当前版本不支持直接修改任务配置。如需调整，请先删除原任务，然后重新创建。</p>
+              </div>
+              <div>
+                <h4 class="font-medium text-gray-900 mb-2 text-sm">Q: 任务执行失败会自动重试吗？</h4>
+                <p class="text-xs text-gray-600 ml-4">A: 不会自动重试。失败的任务会在下一个执行周期重新运行。如果您需要立即重试，可以使用「立即执行」功能。</p>
+              </div>
+              <div>
+                <h4 class="font-medium text-gray-900 mb-2 text-sm">Q: 可以同时运行多个任务吗？</h4>
+                <p class="text-xs text-gray-600 ml-4">A: 可以。系统支持并发执行多个任务，每个任务独立运行，互不干扰。</p>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
     </div>
 
   </div>

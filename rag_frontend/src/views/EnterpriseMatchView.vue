@@ -18,7 +18,10 @@ import {
   Calendar,
   Bell,
   BarChart3,
-  Sparkles
+  Sparkles,
+  Brain,
+  Zap,
+  Cpu
 } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -27,6 +30,24 @@ const isLoading = ref(false)
 const isRefreshing = ref(false)
 const matches = ref<PolicyMatchResult[]>([])
 const selectedMatch = ref<PolicyMatchResult | null>(null)
+
+// PolicyNotificationAgent 状态
+const useLLM = ref(true)
+const agentStatus = ref<any>(null)
+const isCheckingAgent = ref(false)
+const detailedMatches = ref<any[]>([])
+const isLoadingDetails = ref(false)
+
+// 获取企业画像（示例数据）
+const enterpriseProfile = ref({
+  enterprise_id: 'ENT-001',
+  enterprise_name: '示例科技有限公司',
+  industry: '科技',
+  region: '北京',
+  scale: '中型企业',
+  tax_types: ['增值税', '企业所得税'],
+  qualifications: ['高新技术企业', '软件企业']
+})
 
 const statistics = computed(() => ({
   total: matches.value.length,
@@ -37,7 +58,21 @@ const statistics = computed(() => ({
 
 onMounted(async () => {
   await loadMatches()
+  await checkAgentStatus()
 })
+
+async function checkAgentStatus() {
+  isCheckingAgent.value = true
+  try {
+    agentStatus.value = await policyApi.getPolicyAgentStatus()
+    useLLM.value = agentStatus.value.use_llm
+  } catch (error: any) {
+    console.error('Failed to check agent status:', error)
+    agentStatus.value = null
+  } finally {
+    isCheckingAgent.value = false
+  }
+}
 
 async function loadMatches() {
   const enterpriseId = getEnterpriseId()
@@ -67,6 +102,48 @@ async function refreshMatches() {
   }
 }
 
+async function loadDetailedMatches() {
+  if (matches.value.length === 0) {
+    ElMessage.warning('请先加载匹配结果')
+    return
+  }
+
+  isLoadingDetails.value = true
+  detailedMatches.value = []
+
+  try {
+    for (const match of matches.value.slice(0, 5)) {
+      const policy = match.policy
+
+      const matchRequest = {
+        policy: {
+          policy_id: policy.id || policy.policy_id,
+          title: policy.title,
+          content: policy.content || '',
+          source: 'policy_center',
+          priority: policy.priority || 'medium'
+        },
+        enterprise: enterpriseProfile.value,
+        use_llm: useLLM.value
+      }
+
+      const result = await policyApi.matchPolicyWithEnterprise(matchRequest)
+      detailedMatches.value.push({
+        policy_id: policy.id || policy.policy_id,
+        title: policy.title,
+        ...result
+      })
+    }
+
+    ElMessage.success('详细匹配分析完成')
+  } catch (error: any) {
+    ElMessage.error('加载详细匹配失败')
+    console.error('Failed to load detailed matches:', error)
+  } finally {
+    isLoadingDetails.value = false
+  }
+}
+
 function viewPolicyDetail(policyId: string) {
   router.push(`/policy/${policyId}`)
 }
@@ -91,6 +168,15 @@ function getMatchStatusLabel(score: number) {
   if (score >= 0.4) return '一般匹配'
   return '低匹配'
 }
+
+function toggleLLMMode() {
+  useLLM.value = !useLLM.value
+  ElMessage.success(useLLM.value ? '已启用 LLM 智能匹配模式' : '已切换到规则匹配模式')
+}
+
+function getDetailedMatch(policyId: string) {
+  return detailedMatches.value.find(m => m.policy_id === policyId)
+}
 </script>
 
 <template>
@@ -108,6 +194,43 @@ function getMatchStatusLabel(score: number) {
       </div>
 
       <div class="flex items-center gap-3">
+        <!-- Agent Status -->
+        <div v-if="agentStatus" class="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-purple-50 to-indigo-50 rounded-lg border border-purple-200">
+          <Brain :size="16" class="text-purple-600" />
+          <span class="text-xs font-medium text-purple-700">
+            {{ agentStatus.use_llm ? 'LLM智能模式' : '规则匹配模式' }}
+          </span>
+          <span v-if="agentStatus.llm_provider" class="text-xs text-purple-500">
+            ({{ agentStatus.llm_provider }})
+          </span>
+        </div>
+
+        <!-- LLM Mode Toggle -->
+        <button
+          v-if="agentStatus"
+          @click="toggleLLMMode"
+          :disabled="isCheckingAgent"
+          :class="[
+            'px-4 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2',
+            useLLM
+              ? 'bg-purple-600 text-white hover:bg-purple-700'
+              : 'border border-gray-200 text-gray-700 hover:bg-gray-50'
+          ]"
+        >
+          <Cpu :size="16" />
+          {{ useLLM ? '已启用LLM' : '启用LLM' }}
+        </button>
+
+        <!-- LLM智能分析按钮 -->
+        <button
+          @click="loadDetailedMatches"
+          :disabled="isLoadingDetails || matches.length === 0"
+          class="px-4 py-2 rounded-xl bg-gradient-to-r from-teal-600 to-emerald-600 text-white text-sm font-medium hover:from-teal-700 hover:to-emerald-700 transition-all disabled:opacity-50 flex items-center gap-2"
+        >
+          <Sparkles :size="16" :class="{ 'animate-pulse': isLoadingDetails }" />
+          {{ isLoadingDetails ? '分析中...' : 'LLM智能分析' }}
+        </button>
+
         <button
           @click="refreshMatches"
           :disabled="isRefreshing"
@@ -280,6 +403,122 @@ function getMatchStatusLabel(score: number) {
                       <Eye :size="12" />
                       查看详情
                     </span>
+                  </div>
+
+                  <!-- LLM详细分析结果 -->
+                  <div v-if="getDetailedMatch(match.policy_id)" class="mt-4 p-4 bg-gradient-to-r from-purple-50 to-indigo-50 rounded-xl border border-purple-200">
+                    <div class="flex items-center gap-2 mb-3">
+                      <Brain :size="16" class="text-purple-600" />
+                      <span class="text-sm font-semibold text-purple-900">LLM智能分析</span>
+                    </div>
+
+                    <!-- 详细分数展示 -->
+                    <div class="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
+                      <div class="bg-white rounded-lg p-2 border border-purple-100">
+                        <div class="text-xs text-gray-500 mb-1">语义匹配</div>
+                        <div class="flex items-center gap-2">
+                          <div class="flex-1 bg-gray-200 rounded-full h-2 overflow-hidden">
+                            <div
+                              class="bg-purple-600 h-full rounded-full transition-all"
+                              :style="{ width: `${(getDetailedMatch(match.policy_id)?.semantic_score || 0) * 100}%` }"
+                            ></div>
+                          </div>
+                          <span class="text-xs font-semibold text-purple-700">
+                            {{ ((getDetailedMatch(match.policy_id)?.semantic_score || 0) * 100).toFixed(0) }}%
+                          </span>
+                        </div>
+                      </div>
+
+                      <div class="bg-white rounded-lg p-2 border border-purple-100">
+                        <div class="text-xs text-gray-500 mb-1">行业匹配</div>
+                        <div class="flex items-center gap-2">
+                          <div class="flex-1 bg-gray-200 rounded-full h-2 overflow-hidden">
+                            <div
+                              class="bg-blue-600 h-full rounded-full transition-all"
+                              :style="{ width: `${(getDetailedMatch(match.policy_id)?.industry_score || 0) * 100}%` }"
+                            ></div>
+                          </div>
+                          <span class="text-xs font-semibold text-blue-700">
+                            {{ ((getDetailedMatch(match.policy_id)?.industry_score || 0) * 100).toFixed(0) }}%
+                          </span>
+                        </div>
+                      </div>
+
+                      <div class="bg-white rounded-lg p-2 border border-purple-100">
+                        <div class="text-xs text-gray-500 mb-1">地区匹配</div>
+                        <div class="flex items-center gap-2">
+                          <div class="flex-1 bg-gray-200 rounded-full h-2 overflow-hidden">
+                            <div
+                              class="bg-emerald-600 h-full rounded-full transition-all"
+                              :style="{ width: `${(getDetailedMatch(match.policy_id)?.region_score || 0) * 100}%` }"
+                            ></div>
+                          </div>
+                          <span class="text-xs font-semibold text-emerald-700">
+                            {{ ((getDetailedMatch(match.policy_id)?.region_score || 0) * 100).toFixed(0) }}%
+                          </span>
+                        </div>
+                      </div>
+
+                      <div class="bg-white rounded-lg p-2 border border-purple-100">
+                        <div class="text-xs text-gray-500 mb-1">规模匹配</div>
+                        <div class="flex items-center gap-2">
+                          <div class="flex-1 bg-gray-200 rounded-full h-2 overflow-hidden">
+                            <div
+                              class="bg-amber-600 h-full rounded-full transition-all"
+                              :style="{ width: `${(getDetailedMatch(match.policy_id)?.scale_score || 0) * 100}%` }"
+                            ></div>
+                          </div>
+                          <span class="text-xs font-semibold text-amber-700">
+                            {{ ((getDetailedMatch(match.policy_id)?.scale_score || 0) * 100).toFixed(0) }}%
+                          </span>
+                        </div>
+                      </div>
+
+                      <div class="bg-white rounded-lg p-2 border border-purple-100">
+                        <div class="text-xs text-gray-500 mb-1">税种匹配</div>
+                        <div class="flex items-center gap-2">
+                          <div class="flex-1 bg-gray-200 rounded-full h-2 overflow-hidden">
+                            <div
+                              class="bg-teal-600 h-full rounded-full transition-all"
+                              :style="{ width: `${(getDetailedMatch(match.policy_id)?.tax_type_score || 0) * 100}%` }"
+                            ></div>
+                          </div>
+                          <span class="text-xs font-semibold text-teal-700">
+                            {{ ((getDetailedMatch(match.policy_id)?.tax_type_score || 0) * 100).toFixed(0) }}%
+                          </span>
+                        </div>
+                      </div>
+
+                      <div class="bg-white rounded-lg p-2 border border-purple-100">
+                        <div class="text-xs text-gray-500 mb-1">紧急程度</div>
+                        <div class="flex items-center gap-2">
+                          <div class="flex-1 bg-gray-200 rounded-full h-2 overflow-hidden">
+                            <div
+                              class="bg-red-600 h-full rounded-full transition-all"
+                              :style="{ width: `${(getDetailedMatch(match.policy_id)?.urgency_score || 0) * 100}%` }"
+                            ></div>
+                          </div>
+                          <span class="text-xs font-semibold text-red-700">
+                            {{ ((getDetailedMatch(match.policy_id)?.urgency_score || 0) * 100).toFixed(0) }}%
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- LLM匹配原因 -->
+                    <div v-if="getDetailedMatch(match.policy_id)?.reasons?.length > 0">
+                      <div class="text-xs font-medium text-purple-900 mb-2">智能分析理由：</div>
+                      <div class="space-y-1">
+                        <div
+                          v-for="(reason, idx) in getDetailedMatch(match.policy_id)?.reasons"
+                          :key="idx"
+                          class="flex items-start gap-2 text-xs text-purple-800"
+                        >
+                          <Zap :size="12" class="text-purple-600 mt-0.5 flex-shrink-0" />
+                          <span>{{ reason }}</span>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>

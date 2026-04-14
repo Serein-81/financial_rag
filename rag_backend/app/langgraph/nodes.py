@@ -64,7 +64,7 @@ class AgentNodeFactory:
         """
         创建接待员节点
         
-        封装 ReceptionistAgent
+        封装 IntentRouterAgent
         """
         async def receptionist_node(state: AgentState) -> AgentState:
             """接待员节点 - 解析用户意图和上下文"""
@@ -98,7 +98,7 @@ class AgentNodeFactory:
         """
         创建意图识别节点
         
-        封装 IntentAgent
+        封装 IntentRouterAgent
         """
         async def intent_node(state: AgentState) -> AgentState:
             """意图识别节点 - 分类用户意图"""

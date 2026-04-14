@@ -178,7 +178,7 @@ class FinanceSpecialist(BaseSpecialistAgent):
                 context=self._get_prompt_context()
             )
         except Exception as e:
-            print(f"⚠️ [财务专家智能体] 加载提示词失败，使用默认提示词: {e}")
+            logger.debug(f"[财务专家智能体] 加载提示词失败，使用默认提示词: {e}")
             return self._build_default_prompt()
     
     def _get_prompt_context(self) -> Dict[str, Any]:

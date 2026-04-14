@@ -10,7 +10,8 @@ from langgraph.graph import StateGraph, END, START
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.errors import GraphRecursionError
 
-from .state import AgentState, IntentCategory, SpecialistType, create_initial_state
+from .state import AgentState, create_initial_state
+from ..schemas.multi_agent import IntentCategory, SpecialistType, SpecialistResult
 from .nodes import AgentNodeFactory, create_retry_node, create_human_review_node
 from .conditional import (
     route_by_intent,
@@ -227,9 +228,10 @@ class MultiAgentWorkflowBuilder:
                     context=state.get("rag_context")
                 )
                 
-                from .state import SpecialistResult
                 specialist_result = SpecialistResult(
                     specialist_type=SpecialistType.REPORT,
+                    specialist_name="direct_answer",
+                    success=True,
                     query=state["user_query"],
                     response=response,
                     confidence=0.9

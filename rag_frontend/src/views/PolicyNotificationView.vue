@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { policyApi, type PolicyNotification } from '@/api/policy'
+import { policyApi, type PolicyNotification, type SSEPolicyNotification } from '@/api/policy'
 import { policyTrackingApi } from '@/api/policy-tracking'
-import { getEnterpriseId, isAuthenticated } from '@/utils/request'
+import { getEnterpriseId, getTenantIdFromToken, isAuthenticated } from '@/utils/request'
 import { ElMessage } from 'element-plus'
 import {
   Bell,
@@ -21,7 +21,14 @@ import {
   X,
   Building2,
   Tag,
-  Mail
+  Mail,
+  Wifi,
+  WifiOff,
+  Activity,
+  Zap,
+  Brain,
+  Cpu,
+  MessageSquare
 } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -33,6 +40,166 @@ const selectedNotifications = ref<Set<string>>(new Set())
 const showEnterpriseProfile = ref(false)
 const showSubscriptionManagement = ref(false)
 const showPushConfig = ref(false)
+
+// PolicyNotificationAgent 状态
+const agentStatus = ref<any>(null)
+const isCheckingAgent = ref(false)
+const llmGeneratedContent = ref<Map<string, any>>(new Map())
+const isGeneratingContent = ref(false)
+
+// SSE Real-time Push State
+const sseConnected = ref(false)
+const sseConnecting = ref(false)
+const eventSource = ref<EventSource | null>(null)
+const realTimeNotification = ref<SSEPolicyNotification | null>(null)
+const showRealTimeAlert = ref(false)
+const sseLastHeartbeat = ref<string>('')
+
+// SSE Connection Management
+function getAuthToken(): string {
+  return localStorage.getItem('rag_token') || ''
+}
+
+function connectSSE() {
+  const token = getAuthToken()
+  if (!token) {
+    console.warn('⚠️ 未登录或认证已过期，无法建立实时推送连接')
+    ElMessage.warning('请先登录以启用实时推送功能')
+    return
+  }
+
+  const tenantId = getTenantIdFromToken()
+  if (!tenantId) {
+    console.warn('⚠️ 无法获取租户ID，无法建立实时推送连接')
+    ElMessage.warning('租户信息缺失，请重新登录')
+    return
+  }
+
+  if (eventSource.value) {
+    console.log('SSE connection already exists')
+    return
+  }
+
+  sseConnecting.value = true
+  console.log('🔌 正在建立SSE连接...')
+
+  const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+  const url = `${baseUrl}/api/v1/policy-notifications/stream?token=${encodeURIComponent(token)}&tenant_id=${encodeURIComponent(tenantId)}`
+
+  try {
+    eventSource.value = new EventSource(url)
+
+    eventSource.value.onopen = () => {
+      console.log('✅ SSE连接已建立')
+      sseConnected.value = true
+      sseConnecting.value = false
+      ElMessage.success('实时推送已连接')
+    }
+
+    eventSource.value.addEventListener('heartbeat', (event) => {
+      try {
+        const data = JSON.parse(event.data)
+        sseLastHeartbeat.value = new Date(data.timestamp).toLocaleTimeString('zh-CN')
+        console.log('💓 心跳:', sseLastHeartbeat.value)
+      } catch (error) {
+        console.error('解析心跳数据失败:', error)
+      }
+    })
+
+    eventSource.value.addEventListener('policy_matched', (event) => {
+      try {
+        const data: SSEPolicyNotification = JSON.parse(event.data)
+        console.log('📨 收到实时政策推送:', data)
+
+        realTimeNotification.value = data
+        showRealTimeAlert.value = true
+
+        if (Notification.permission === 'granted') {
+          new Notification('🔔 新政策通知', {
+            body: `${data.policy_title}\n匹配度: ${(data.match_score * 100).toFixed(0)}%`,
+            icon: '🔔',
+            tag: data.policy_id
+          })
+        }
+
+        ElMessage.success(`收到新政策推送: ${data.policy_title}`)
+
+        setTimeout(() => {
+          showRealTimeAlert.value = false
+        }, 10000)
+      } catch (error) {
+        console.error('解析政策推送数据失败:', error)
+      }
+    })
+
+    eventSource.value.addEventListener('message', (event) => {
+      try {
+        const data = JSON.parse(event.data)
+        console.log('📨 收到消息:', data)
+      } catch (error) {
+        console.error('解析消息失败:', error)
+      }
+    })
+
+    eventSource.value.onerror = (error) => {
+      console.error('❌ SSE连接错误:', error)
+      sseConnected.value = false
+      sseConnecting.value = false
+      ElMessage.error('实时推送连接失败，正在尝试重新连接...')
+
+      disconnectSSE()
+
+      setTimeout(() => {
+        connectSSE()
+      }, 5000)
+    }
+  } catch (error) {
+    console.error('创建SSE连接失败:', error)
+    sseConnecting.value = false
+    ElMessage.error('建立实时推送失败')
+  }
+}
+
+function disconnectSSE() {
+  if (eventSource.value) {
+    eventSource.value.close()
+    eventSource.value = null
+    sseConnected.value = false
+    sseConnecting.value = false
+    console.log('❌ SSE连接已断开')
+  }
+}
+
+function dismissRealTimeNotification() {
+  showRealTimeAlert.value = false
+  realTimeNotification.value = null
+}
+
+async function viewRealTimePolicyDetail() {
+  if (realTimeNotification.value) {
+    dismissRealTimeNotification()
+    router.push(`/policy/${realTimeNotification.value.policy_id}`)
+  }
+}
+
+onMounted(async () => {
+  if (isAuthenticated()) {
+    await Promise.all([
+      loadNotifications(),
+      loadSubscriptions(),
+      connectSSE(),
+      checkAgentStatus()
+    ])
+
+    if (Notification.permission === 'default') {
+      Notification.requestPermission()
+    }
+  }
+})
+
+onUnmounted(() => {
+  disconnectSSE()
+})
 
 const enterpriseProfile = ref({
   industry: '',
@@ -191,6 +358,102 @@ function getMatchScoreColor(score: number) {
   return 'text-gray-600 bg-gray-50'
 }
 
+async function checkAgentStatus() {
+  isCheckingAgent.value = true
+  try {
+    agentStatus.value = await policyApi.getPolicyAgentStatus()
+  } catch (error: any) {
+    console.error('Failed to check agent status:', error)
+    agentStatus.value = null
+  } finally {
+    isCheckingAgent.value = false
+  }
+}
+
+async function generateLLMNotificationContent(policyId: string, policy: any) {
+  if (!agentStatus.value?.use_llm) {
+    ElMessage.warning('请先启用LLM模式以生成个性化通知')
+    return
+  }
+
+  if (llmGeneratedContent.value.has(policyId)) {
+    ElMessage.info('该通知已生成LLM分析内容')
+    return
+  }
+
+  isGeneratingContent.value = true
+  try {
+    const enterpriseId = getEnterpriseId() || 'default'
+
+    const request = {
+      policy: {
+        policy_id: policyId,
+        title: policy.title || '政策通知',
+        content: policy.content || policy.summary || '',
+        source: 'policy_notifications'
+      },
+      enterprise_profile: {
+        enterprise_id: enterpriseId,
+        enterprise_name: enterpriseProfile.value.industry || '企业',
+        industry: enterpriseProfile.value.industry || '通用',
+        region: enterpriseProfile.value.region || '全国',
+        scale: enterpriseProfile.value.scale || '中型企业',
+        tax_types: enterpriseProfile.value.tax_types || [],
+        qualifications: enterpriseProfile.value.qualifications || []
+      },
+      match_result: {
+        match_score: policy.match_score || 0.5,
+        industry_match: true,
+        region_match: true,
+        scale_match: true,
+        reasons: []
+      }
+    }
+
+    const result = await policyApi.generatePolicyNotification(request)
+
+    llmGeneratedContent.value.set(policyId, result)
+    ElMessage.success('已生成个性化通知内容')
+  } catch (error: any) {
+    ElMessage.error('生成失败')
+    console.error('Failed to generate LLM content:', error)
+  } finally {
+    isGeneratingContent.value = false
+  }
+}
+
+async function batchGenerateLLMContent() {
+  if (notifications.value.length === 0) {
+    ElMessage.warning('暂无通知可生成')
+    return
+  }
+
+  const pendingNotifications = notifications.value.slice(0, 5)
+  isGeneratingContent.value = true
+
+  try {
+    for (const notification of pendingNotifications) {
+      if (!llmGeneratedContent.value.has(notification.policy_id)) {
+        await generateLLMNotificationContent(notification.policy_id, {
+          title: notification.policy_title,
+          match_score: notification.match_score
+        })
+      }
+    }
+
+    ElMessage.success('批量生成完成')
+  } catch (error: any) {
+    ElMessage.error('批量生成失败')
+    console.error('Failed to batch generate:', error)
+  } finally {
+    isGeneratingContent.value = false
+  }
+}
+
+function getLLMContent(policyId: string) {
+  return llmGeneratedContent.value.get(policyId)
+}
+
 async function saveEnterpriseProfile() {
   try {
     await policyTrackingApi.subscribe({
@@ -263,7 +526,52 @@ async function savePushConfiguration() {
           <p class="text-xs text-gray-500">查看和管理政策匹配通知</p>
         </div>
       </div>
-      <div class="flex items-center gap-2">
+      <div class="flex items-center gap-4">
+        <!-- SSE Status Indicator -->
+        <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-gray-50">
+          <template v-if="sseConnecting">
+            <Loader2 :size="14" class="text-amber-600 animate-spin" />
+            <span class="text-xs text-amber-600">连接中...</span>
+          </template>
+          <template v-else-if="sseConnected">
+            <Activity :size="14" class="text-emerald-600" />
+            <span class="text-xs text-emerald-600">实时推送已连接</span>
+            <span v-if="sseLastHeartbeat" class="text-xs text-gray-400">{{ sseLastHeartbeat }}</span>
+          </template>
+          <template v-else>
+            <WifiOff :size="14" class="text-gray-400" />
+            <span class="text-xs text-gray-400">实时推送已断开</span>
+            <button
+              @click="connectSSE"
+              class="text-xs text-blue-600 hover:text-blue-700"
+            >
+              重新连接
+            </button>
+          </template>
+        </div>
+
+        <!-- Agent Status -->
+        <div v-if="agentStatus" class="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-purple-50 to-indigo-50 rounded-lg border border-purple-200">
+          <Brain :size="16" class="text-purple-600" />
+          <span class="text-xs font-medium text-purple-700">
+            {{ agentStatus.use_llm ? 'LLM智能通知' : '规则通知' }}
+          </span>
+          <span v-if="agentStatus.llm_provider" class="text-xs text-purple-500">
+            ({{ agentStatus.llm_provider }})
+          </span>
+        </div>
+
+        <!-- LLM批量生成按钮 -->
+        <button
+          v-if="agentStatus?.use_llm"
+          @click="batchGenerateLLMContent"
+          :disabled="isGeneratingContent || notifications.length === 0"
+          class="px-4 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 text-white text-sm font-medium hover:from-purple-700 hover:to-indigo-700 transition-all disabled:opacity-50 flex items-center gap-2"
+        >
+          <Sparkles :size="16" :class="{ 'animate-pulse': isGeneratingContent }" />
+          {{ isGeneratingContent ? '生成中...' : '批量生成LLM通知' }}
+        </button>
+
         <button
           @click="showEnterpriseProfile = true"
           class="px-3 py-1.5 text-sm bg-white border border-gray-200 rounded-lg hover:bg-gray-50 flex items-center gap-1.5 transition-colors"
@@ -287,6 +595,59 @@ async function savePushConfiguration() {
         </button>
       </div>
     </div>
+
+    <!-- Real-time Notification Alert -->
+    <Transition
+      enter-active-class="transition ease-out duration-300"
+      enter-from-class="transform -translate-y-full opacity-0"
+      enter-to-class="transform translate-y-0 opacity-100"
+      leave-active-class="transition ease-in duration-200"
+      leave-from-class="transform translate-y-0 opacity-100"
+      leave-to-class="transform -translate-y-full opacity-0"
+    >
+      <div
+        v-if="showRealTimeAlert && realTimeNotification"
+        class="bg-gradient-to-r from-emerald-500 to-teal-500 text-white px-6 py-4 shadow-lg z-50"
+      >
+        <div class="max-w-5xl mx-auto flex items-center justify-between gap-4">
+          <div class="flex items-center gap-3 flex-1">
+            <div class="w-10 h-10 bg-white/20 rounded-lg flex items-center justify-center">
+              <Zap :size="20" class="text-white" />
+            </div>
+            <div class="flex-1">
+              <div class="flex items-center gap-2 mb-1">
+                <span class="px-2 py-0.5 bg-white/20 rounded text-xs font-medium">
+                  实时推送
+                </span>
+                <span class="text-xs text-white/80">
+                  {{ new Date(realTimeNotification.timestamp).toLocaleTimeString('zh-CN') }}
+                </span>
+              </div>
+              <h4 class="text-sm font-semibold mb-1">{{ realTimeNotification.policy_title }}</h4>
+              <div class="flex items-center gap-3 text-xs text-white/80">
+                <span>匹配度: {{ (realTimeNotification.match_score * 100).toFixed(0) }}%</span>
+                <span>影响级别: {{ realTimeNotification.impact_level }}</span>
+              </div>
+            </div>
+          </div>
+          <div class="flex items-center gap-2">
+            <button
+              @click="viewRealTimePolicyDetail"
+              class="px-4 py-2 bg-white text-emerald-600 rounded-lg text-sm font-medium hover:bg-emerald-50 transition-colors flex items-center gap-1"
+            >
+              <Eye :size="14" />
+              查看详情
+            </button>
+            <button
+              @click="dismissRealTimeNotification"
+              class="p-2 hover:bg-white/20 rounded-lg transition-colors"
+            >
+              <X :size="20" />
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
 
     <!-- Main Content -->
     <div class="flex-1 overflow-y-auto p-6">
@@ -449,6 +810,17 @@ async function savePushConfiguration() {
 
                   <!-- Actions -->
                   <div class="flex items-center gap-2">
+                    <!-- LLM生成按钮 -->
+                    <button
+                      v-if="agentStatus?.use_llm"
+                      @click.stop="generateLLMNotificationContent(notification.policy_id, { title: notification.policy_title, match_score: notification.match_score })"
+                      :disabled="isGeneratingContent || llmGeneratedContent.has(notification.policy_id)"
+                      class="px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg text-xs font-medium hover:from-purple-700 hover:to-indigo-700 transition-all disabled:opacity-50 flex items-center gap-1"
+                    >
+                      <Brain :size="12" :class="{ 'animate-pulse': isGeneratingContent }" />
+                      {{ llmGeneratedContent.has(notification.policy_id) ? '已生成' : 'LLM分析' }}
+                    </button>
+
                     <button
                       v-if="notification.status === 'pending' || notification.status === 'sent'"
                       @click="acknowledgeNotification(notification.id)"
@@ -474,6 +846,68 @@ async function savePushConfiguration() {
                       <Eye :size="12" />
                       查看详情
                     </button>
+                  </div>
+                </div>
+
+                <!-- LLM生成内容展示 -->
+                <div
+                  v-if="getLLMContent(notification.policy_id)"
+                  class="mt-4 p-4 bg-gradient-to-r from-purple-50 to-indigo-50 rounded-xl border border-purple-200"
+                >
+                  <div class="flex items-center gap-2 mb-3">
+                    <Brain :size="16" class="text-purple-600" />
+                    <span class="text-sm font-semibold text-purple-900">LLM个性化分析</span>
+                  </div>
+
+                  <div class="space-y-3">
+                    <div v-if="getLLMContent(notification.policy_id)?.title">
+                      <div class="text-xs text-gray-500 mb-1">个性化标题：</div>
+                      <div class="text-sm font-medium text-purple-900">
+                        {{ getLLMContent(notification.policy_id)?.title }}
+                      </div>
+                    </div>
+
+                    <div v-if="getLLMContent(notification.policy_id)?.summary">
+                      <div class="text-xs text-gray-500 mb-1">政策摘要：</div>
+                      <div class="text-sm text-gray-700">
+                        {{ getLLMContent(notification.policy_id)?.summary }}
+                      </div>
+                    </div>
+
+                    <div v-if="getLLMContent(notification.policy_id)?.personalized_message">
+                      <div class="text-xs text-gray-500 mb-1">个性化说明：</div>
+                      <div class="text-sm text-gray-700">
+                        {{ getLLMContent(notification.policy_id)?.personalized_message }}
+                      </div>
+                    </div>
+
+                    <div v-if="getLLMContent(notification.policy_id)?.key_benefits?.length > 0">
+                      <div class="text-xs text-gray-500 mb-2">关键利好：</div>
+                      <div class="space-y-1">
+                        <div
+                          v-for="(benefit, idx) in getLLMContent(notification.policy_id)?.key_benefits"
+                          :key="idx"
+                          class="flex items-start gap-2 text-xs text-gray-700"
+                        >
+                          <MessageSquare :size="12" class="text-purple-600 mt-0.5 flex-shrink-0" />
+                          <span>{{ benefit }}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div v-if="getLLMContent(notification.policy_id)?.action_items?.length > 0">
+                      <div class="text-xs text-gray-500 mb-2">建议行动：</div>
+                      <div class="space-y-1">
+                        <div
+                          v-for="(action, idx) in getLLMContent(notification.policy_id)?.action_items"
+                          :key="idx"
+                          class="flex items-start gap-2 text-xs text-gray-700"
+                        >
+                          <Zap :size="12" class="text-emerald-600 mt-0.5 flex-shrink-0" />
+                          <span>{{ action }}</span>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>

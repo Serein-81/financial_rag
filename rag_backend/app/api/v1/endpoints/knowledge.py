@@ -303,13 +303,12 @@ async def process_document_task(doc_id: UUID, tenant_id: str):
                 raise Exception("文本切分后为空")
 
             print(f"🧩 文档被切分为 {len(chunk_results)} 个片段，开始向量化...")
-            success_count = 0
             first_error_msg = None
-
+            
+            chunks_to_insert = []
             for idx, chunk_result in enumerate(chunk_results):
                 vector = await embedding_service.get_embedding(chunk_result.content)
                 if vector:
-                    # 构建元数据
                     meta_info = {
                         "chunk_index": idx, 
                         "source": doc.filename
@@ -317,24 +316,27 @@ async def process_document_task(doc_id: UUID, tenant_id: str):
                     if chunk_result.metadata:
                         meta_info.update(chunk_result.metadata)
                     
-                    new_chunk = DocumentChunk(
+                    chunk = DocumentChunk(
                         document_id=doc.id,
                         content=chunk_result.content,
                         embedding=vector,
                         chunk_index=idx,
                         meta_info=meta_info,
-                        # 🌟 保存新的元数据字段
                         heading_path=chunk_result.heading_path,
                         chunk_start=chunk_result.start,
                         chunk_end=chunk_result.end,
                         token_count=chunk_result.tokens,
                         tenant_id=tenant_id
                     )
-                    db.add(new_chunk)
-                    success_count += 1
+                    chunks_to_insert.append(chunk)
                 else:
                     if not first_error_msg:
                         first_error_msg = "AI 接口调用失败"
+            
+            success_count = len(chunks_to_insert)
+            
+            if chunks_to_insert:
+                db.add_all(chunks_to_insert)
 
             if success_count == 0:
                 doc.status = "failed"
@@ -745,12 +747,11 @@ async def delete_document(
         
         if doc.file_path:
             try:
-                minio_service.delete_document(doc.file_path)
+                await minio_service.delete_document_async(doc.file_path)
             except (ValueError, KeyError) as e:
                 print(f"⚠️ MinIO delete data error: {e}")
             except (OSError, IOError) as e:
                 print(f"⚠️ MinIO delete IO error: {e}")
-            except (OSError, IOError) as e:
                 raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
             except Exception as e:
                 print(f"⚠️ MinIO delete warning: {e}")

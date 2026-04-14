@@ -35,35 +35,20 @@ class PolicyRetrievalService:
         self._initialize_agents()
     
     def _initialize_agents(self):
-        """初始化PolicyAgent和NotificationAgent"""
+        """初始化PolicyETLService和NotificationService"""
         try:
-            from app.agent_framework.llm.factory import LLMAdapterFactory
-            from app.agent_framework.tools.tool_manager import ToolManager
-            from app.multi_agent_system.agents.policy_agent import PolicyAgent
-            from app.multi_agent_system.agents.notification_agent import NotificationAgent
-            from app.core.config import settings
+            from app.services.policy_etl_service import PolicyETLService
+            from app.services.notification_service import NotificationService
             
-            specialist_provider = settings.get_llm_provider_for_agent("finance")
-            llm_adapter = LLMAdapterFactory.create_adapter(specialist_provider)
+            self.policy_service = PolicyETLService()
+            self.notification_service = NotificationService()
             
-            tool_manager = ToolManager()
-            
-            self.policy_agent = PolicyAgent(
-                llm_adapter=llm_adapter,
-                tool_manager=tool_manager
-            )
-            
-            self.notification_agent = NotificationAgent(
-                llm_adapter=llm_adapter,
-                tool_manager=tool_manager
-            )
-            
-            logger.info("✅ PolicyRetrievalService: PolicyAgent和NotificationAgent初始化成功")
+            logger.info("✅ PolicyRetrievalService: PolicyETLService和NotificationService初始化成功")
             
         except Exception as e:
-            logger.warning(f"⚠️ PolicyRetrievalService: Agent初始化失败: {e}")
-            self.policy_agent = None
-            self.notification_agent = None
+            logger.warning(f"⚠️ PolicyRetrievalService: Service初始化失败: {e}")
+            self.policy_service = None
+            self.notification_service = None
     
     async def semantic_search(
         self,
@@ -306,30 +291,30 @@ class PolicyRetrievalService:
                 enterprise_profile
             )
         
-        logger.info(f"🔍 检查是否需要增强: notification_agent={self.notification_agent is not None}, enterprise_profile={enterprise_profile}")
+        logger.info(f"🔍 检查是否需要增强: notification_service={self.notification_service is not None}, enterprise_profile={enterprise_profile}")
         
-        if self.notification_agent and enterprise_profile:
-            logger.info(f"✅ 开始使用NotificationAgent增强匹配结果")
-            results = await self._enhance_with_notification_agent(
+        if self.notification_service and enterprise_profile:
+            logger.info(f"✅ 开始使用NotificationService增强匹配结果")
+            results = await self._enhance_with_notification_service(
                 results,
                 enterprise_profile
             )
         else:
-            logger.warning(f"⚠️ 跳过NotificationAgent增强: "
-                          f"agent={'存在' if self.notification_agent else '不存在'}, "
+            logger.warning(f"⚠️ 跳过NotificationService增强: "
+                          f"service={'存在' if self.notification_service else '不存在'}, "
                           f"profile={'有数据' if enterprise_profile else '为空'}")
         
         results.sort(key=lambda x: x.get("match_score", 0), reverse=True)
         
         return results
     
-    async def _enhance_with_notification_agent(
+    async def _enhance_with_notification_service(
         self,
         results: List[Dict[str, Any]],
         enterprise_profile: Dict[str, Any]
     ) -> List[Dict[str, Any]]:
         """
-        使用NotificationAgent增强匹配结果
+        使用NotificationService增强匹配结果
         
         Args:
             results: 原始匹配结果
@@ -339,7 +324,7 @@ class PolicyRetrievalService:
             List[Dict]: 增强后的匹配结果
         """
         try:
-            from app.multi_agent_system.agents.notification_agent import EnterpriseProfile
+            from app.services.notification_service import NotificationService, EnterpriseProfile
             
             ep = EnterpriseProfile(
                 enterprise_id=enterprise_profile.get("enterprise_id", str(uuid.uuid4())),
@@ -363,7 +348,7 @@ class PolicyRetrievalService:
                         ).scalar_one_or_none()
                         
                         if policy:
-                            match_score, match_reasons = await self.notification_agent.match_enterprise(
+                            match_score, match_reasons = await self.notification_service.match_enterprise(
                                 policy=policy,
                                 enterprise_profile=ep
                             )
@@ -404,7 +389,7 @@ class PolicyRetrievalService:
             return results
             
         except Exception as e:
-            logger.warning(f"⚠️ NotificationAgent增强失败: {e}")
+            logger.warning(f"⚠️ NotificationService增强失败: {e}")
             return results
     
     async def _sync_enterprise_profile_to_settings(

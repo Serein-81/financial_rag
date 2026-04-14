@@ -193,7 +193,6 @@ class PolicyScheduler:
         
         try:
             from .policy_collector import policy_collector
-            from ..multi_agent_system.agents.policy_agent import PolicyAgent
             
             for source in policy_collector.sources:
                 if self._config.enabled_sources and source.name not in self._config.enabled_sources:

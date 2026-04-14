@@ -34,7 +34,11 @@ import {
   FileDown,
   ChevronDown,
   File,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Brain,
+  FileText as FileTextIcon,
+  Cpu,
+  Wand2
 } from 'lucide-vue-next'
 import ExportProgressModal from '@/components/ExportProgressModal.vue'
 import { useExport, type ExportFormat } from '@/composables/useExport'
@@ -47,6 +51,15 @@ const totalPolicies = ref(0)
 const currentPage = ref(1)
 const pageSize = ref(20)
 const isLoading = ref(false)
+
+// PolicyNotificationAgent 状态
+const agentStatus = ref<any>(null)
+const isCheckingAgent = ref(false)
+
+// LLM 摘要状态
+const llmSummaries = ref<Map<string, any>>(new Map())
+const isGeneratingSummary = ref(false)
+const batchGeneratingPolicies = ref<Set<string>>(new Set())
 
 const searchQuery = ref('')
 const showFilters = ref(false)
@@ -110,7 +123,10 @@ const activeFilterCount = computed(() => {
 })
 
 onMounted(async () => {
-  await fetchPolicies()
+  await Promise.all([
+    fetchPolicies(),
+    checkAgentStatus()
+  ])
 })
 
 async function fetchPolicies() {
@@ -132,6 +148,107 @@ async function fetchPolicies() {
   } finally {
     isLoading.value = false
   }
+}
+
+async function checkAgentStatus() {
+  isCheckingAgent.value = true
+  try {
+    agentStatus.value = await policyApi.getPolicyAgentStatus()
+  } catch (error: any) {
+    console.error('Failed to check agent status:', error)
+    agentStatus.value = null
+  } finally {
+    isCheckingAgent.value = false
+  }
+}
+
+async function generateLLMSummary(policyId: string, policy: Policy) {
+  if (!agentStatus.value?.use_llm) {
+    ElMessage.warning('请先启用LLM模式以生成摘要')
+    return
+  }
+
+  if (llmSummaries.value.has(policyId)) {
+    ElMessage.info('该政策已生成LLM摘要')
+    return
+  }
+
+  isGeneratingSummary.value = true
+  batchGeneratingPolicies.value.add(policyId)
+
+  try {
+    const request = {
+      policy: {
+        policy_id: policyId,
+        title: policy.title,
+        content: policy.content || policy.summary || '',
+        source: policy.source_name || 'policy_center'
+      },
+      enterprise_profile: {
+        enterprise_id: 'default',
+        enterprise_name: '企业',
+        industry: '通用',
+        region: '全国',
+        scale: '中型企业',
+        tax_types: policy.tax_types || [],
+        qualifications: []
+      },
+      match_result: {
+        match_score: 0.5,
+        industry_match: true,
+        region_match: true,
+        scale_match: true,
+        reasons: []
+      }
+    }
+
+    const result = await policyApi.generatePolicyNotification(request)
+
+    llmSummaries.value.set(policyId, {
+      summary: result.content || policy.summary,
+      key_points: result.key_points || [],
+      recommendations: result.action_steps || []
+    })
+
+    ElMessage.success('已生成政策摘要')
+  } catch (error: any) {
+    ElMessage.error('生成摘要失败')
+    console.error('Failed to generate LLM summary:', error)
+  } finally {
+    isGeneratingSummary.value = false
+    batchGeneratingPolicies.value.delete(policyId)
+  }
+}
+
+async function batchGenerateSummaries() {
+  if (policies.value.length === 0) {
+    ElMessage.warning('暂无政策可生成摘要')
+    return
+  }
+
+  isGeneratingSummary.value = true
+
+  try {
+    const policiesToProcess = policies.value.slice(0, 10)
+
+    for (const policy of policiesToProcess) {
+      if (!llmSummaries.value.has(policy.id)) {
+        await generateLLMSummary(policy.id, policy)
+        await new Promise(resolve => setTimeout(resolve, 500))
+      }
+    }
+
+    ElMessage.success('批量生成摘要完成')
+  } catch (error: any) {
+    ElMessage.error('批量生成失败')
+    console.error('Failed to batch generate summaries:', error)
+  } finally {
+    isGeneratingSummary.value = false
+  }
+}
+
+function getLLMSummary(policyId: string) {
+  return llmSummaries.value.get(policyId)
 }
 
 function handleSearch() {
@@ -286,6 +403,28 @@ function selectExportFormat(format: ExportFormat) {
       </div>
 
       <div class="flex items-center gap-3">
+        <!-- Agent Status -->
+        <div v-if="agentStatus" class="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-purple-50 to-indigo-50 rounded-lg border border-purple-200">
+          <Brain :size="16" class="text-purple-600" />
+          <span class="text-xs font-medium text-purple-700">
+            {{ agentStatus.use_llm ? 'LLM智能摘要' : '基础摘要' }}
+          </span>
+          <span v-if="agentStatus.llm_provider" class="text-xs text-purple-500">
+            ({{ agentStatus.llm_provider }})
+          </span>
+        </div>
+
+        <!-- LLM Batch Generate Button -->
+        <button
+          v-if="agentStatus?.use_llm"
+          @click="batchGenerateSummaries"
+          :disabled="isGeneratingSummary || policies.length === 0"
+          class="px-4 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 text-white hover:from-purple-700 hover:to-indigo-700 transition-all flex items-center gap-2 text-sm font-medium shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <Sparkles :size="16" :class="{ 'animate-pulse': isGeneratingSummary }" />
+          {{ isGeneratingSummary ? '生成中...' : '批量生成摘要' }}
+        </button>
+
         <div class="relative">
           <input
             v-model="searchQuery"
@@ -744,6 +883,66 @@ function selectExportFormat(format: ExportFormat) {
                   >
                     {{ tag }}
                   </span>
+                </div>
+
+                <!-- LLM Summary Section -->
+                <div v-if="agentStatus?.use_llm" class="mt-4 pt-4 border-t border-gray-100">
+                  <button
+                    @click.stop="generateLLMSummary(policy.id, policy)"
+                    :disabled="isGeneratingSummary && batchGeneratingPolicies.has(policy.id)"
+                    class="text-xs text-purple-600 hover:text-purple-700 flex items-center gap-1"
+                  >
+                    <Brain :size="12" />
+                    {{ getLLMSummary(policy.id) ? '查看智能摘要' : '生成智能摘要' }}
+                    <Loader2 v-if="batchGeneratingPolicies.has(policy.id)" :size="12" class="animate-spin" />
+                  </button>
+
+                  <div v-if="getLLMSummary(policy.id)" class="mt-3 p-4 bg-gradient-to-r from-purple-50 to-indigo-50 rounded-xl border border-purple-200">
+                    <div class="flex items-center gap-2 mb-3">
+                      <Cpu :size="14" class="text-purple-600" />
+                      <span class="text-sm font-semibold text-purple-900">智能摘要</span>
+                    </div>
+
+                    <div class="space-y-3">
+                      <!-- Summary -->
+                      <div v-if="getLLMSummary(policy.id).summary">
+                        <div class="text-xs text-purple-700 font-medium mb-1">摘要：</div>
+                        <p class="text-xs text-gray-700 leading-relaxed">
+                          {{ getLLMSummary(policy.id).summary }}
+                        </p>
+                      </div>
+
+                      <!-- Key Points -->
+                      <div v-if="getLLMSummary(policy.id).key_points?.length > 0">
+                        <div class="text-xs text-purple-700 font-medium mb-2">关键要点：</div>
+                        <div class="space-y-1">
+                          <div
+                            v-for="(point, idx) in getLLMSummary(policy.id).key_points.slice(0, 4)"
+                            :key="idx"
+                            class="flex items-start gap-2 text-xs text-gray-700"
+                          >
+                            <Wand2 :size="10" class="text-purple-600 mt-0.5 flex-shrink-0" />
+                            <span>{{ point }}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <!-- Recommendations -->
+                      <div v-if="getLLMSummary(policy.id).recommendations?.length > 0">
+                        <div class="text-xs text-purple-700 font-medium mb-2">建议行动：</div>
+                        <div class="space-y-1">
+                          <div
+                            v-for="(rec, idx) in getLLMSummary(policy.id).recommendations.slice(0, 3)"
+                            :key="idx"
+                            class="flex items-start gap-2 text-xs text-gray-700"
+                          >
+                            <Sparkles :size="10" class="text-blue-600 mt-0.5 flex-shrink-0" />
+                            <span>{{ rec }}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
 

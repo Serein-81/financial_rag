@@ -13,6 +13,7 @@ from app.models.enterprise_policy_match import EnterprisePolicyMatch, Notificati
 from app.db.session import SessionLocal
 from sqlalchemy import select, and_, update
 from sqlalchemy.orm import Session
+from app.services.policy_event_service import policy_event_service
 
 logger = logging.getLogger(__name__)
 
@@ -304,6 +305,13 @@ class PolicyNotificationService:
                 f"{policy_data['title'][:30]}... (分数: {match_score:.2f})"
             )
             
+            await self._publish_policy_matched_event(
+                enterprise_id=enterprise_id,
+                policy_data=policy_data,
+                match_score=match_score,
+                match_id=str(match.id)
+            )
+            
             await self._send_notification(match, policy_data)
             
         except (ValueError, KeyError) as e:
@@ -476,6 +484,54 @@ class PolicyNotificationService:
             
         finally:
             db.close()
+    
+    async def _publish_policy_matched_event(
+        self,
+        enterprise_id: str,
+        policy_data: Dict[str, Any],
+        match_score: float,
+        match_id: str
+    ):
+        """
+        发布政策匹配事件
+        
+        Args:
+            enterprise_id: 企业ID
+            policy_data: 政策数据
+            match_score: 匹配分数
+            match_id: 匹配记录ID
+        """
+        try:
+            impact_level = "low"
+            if policy_data.get("priority") == "critical":
+                impact_level = "high"
+            elif policy_data.get("priority") == "high":
+                impact_level = "medium"
+            
+            match_details = {
+                "match_id": match_id,
+                "policy_id": policy_data["policy_id"],
+                "title": policy_data["title"],
+                "industries": policy_data.get("industries", []),
+                "regions": policy_data.get("regions", []),
+                "tax_types": policy_data.get("tax_types", []),
+                "priority": policy_data.get("priority"),
+                "source": policy_data.get("source_name")
+            }
+            
+            await policy_event_service.emit_policy_matched(
+                enterprise_id=enterprise_id,
+                policy_id=policy_data["policy_id"],
+                policy_title=policy_data["title"],
+                match_score=match_score,
+                impact_level=impact_level,
+                match_details=match_details
+            )
+            
+            logger.info(f"📤 政策匹配事件已发布: {enterprise_id} - {policy_data['policy_id']}")
+            
+        except Exception as e:
+            logger.error(f"❌ 发布政策匹配事件失败: {e}", exc_info=True)
 
 
 policy_notification_service = PolicyNotificationService()

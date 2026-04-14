@@ -8,8 +8,9 @@ import logging
 from typing import Dict, Any, Optional, List
 from langgraph.graph import StateGraph, END, START
 
-from .state import AgentState, SpecialistType, IntentCategory, create_initial_state
+from .state import AgentState, create_initial_state
 from .conditional import route_by_intent, route_reflection_result, route_by_specialists
+from ..schemas.multi_agent import SpecialistType, IntentCategory, SpecialistResult
 from ..multi_agent_system.orchestrator import AgentOrchestrator
 
 logger = logging.getLogger(__name__)
@@ -96,8 +97,6 @@ class OrchestratorAdapter:
         logger.info("[Adapter:Finance] 执行任务")
         
         try:
-            from .state import SpecialistResult
-            
             start_time = self.orchestrator._get_time_ms()
             response = await self.orchestrator.finance_specialist.run(
                 user_input=state["user_query"],
@@ -107,6 +106,8 @@ class OrchestratorAdapter:
             
             result = SpecialistResult(
                 specialist_type=SpecialistType.FINANCE,
+                specialist_name="finance_specialist",
+                success=True,
                 query=state["user_query"],
                 response=response,
                 confidence=0.8,
@@ -129,8 +130,6 @@ class OrchestratorAdapter:
         logger.info("[Adapter:Tax] 执行任务")
         
         try:
-            from .state import SpecialistResult
-            
             start_time = self.orchestrator._get_time_ms()
             response = await self.orchestrator.tax_specialist.run(
                 user_input=state["user_query"],
@@ -140,6 +139,8 @@ class OrchestratorAdapter:
             
             result = SpecialistResult(
                 specialist_type=SpecialistType.TAX,
+                specialist_name="tax_specialist",
+                success=True,
                 query=state["user_query"],
                 response=response,
                 confidence=0.8,
@@ -162,8 +163,6 @@ class OrchestratorAdapter:
         logger.info("[Adapter:Legal] 执行任务")
         
         try:
-            from .state import SpecialistResult
-            
             start_time = self.orchestrator._get_time_ms()
             response = await self.orchestrator.legal_specialist.run(
                 user_input=state["user_query"],
@@ -173,6 +172,8 @@ class OrchestratorAdapter:
             
             result = SpecialistResult(
                 specialist_type=SpecialistType.LEGAL,
+                specialist_name="legal_specialist",
+                success=True,
                 query=state["user_query"],
                 response=response,
                 confidence=0.8,

@@ -1,5 +1,5 @@
 """
-通知智能体 (Notification Agent)
+通知服务 (Notification Service)
 负责企业匹配、个性化推送、追踪确认
 """
 
@@ -14,9 +14,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.agent_framework.core.base_agent import BaseAgent
-from app.agent_framework.llm.base_adapter import BaseLLMAdapter
-from app.agent_framework.tools.tool_manager import ToolManager
 from app.models.policy import Policy, PolicyStatus, PolicyPriority
 from app.models.enterprise_policy_match import EnterprisePolicyMatch, NotificationStatus, MatchStatus
 from app.db.session import SessionLocal
@@ -73,9 +70,9 @@ class NotificationResult(BaseModel):
     failure_reason: Optional[str] = None
 
 
-class NotificationAgent:
+class NotificationService:
     """
-    通知智能体
+    通知服务
     
     职责：
     1. 匹配: 企业画像与政策匹配
@@ -83,34 +80,27 @@ class NotificationAgent:
     3. 追踪: 用户确认状态
     """
     
+    _initialized: bool = False
+    
     def __init__(
         self,
-        llm_adapter: BaseLLMAdapter,
-        tool_manager: ToolManager,
         session: Optional[Session] = None
     ):
         """
-        初始化通知智能体
+        初始化通知服务
         
         Args:
-            llm_adapter: 大模型适配器
-            tool_manager: 工具管理器
             session: 数据库会话（可选，不提供时自动创建）
         """
-        self.llm_adapter = llm_adapter
-        self.tool_manager = tool_manager
-        
+        self.session: Optional[Session]
         if session is not None:
             self.session = session
         else:
             try:
-                from app.db.session import SessionLocal
                 self.session = SessionLocal()
             except Exception as e:
                 logger.warning(f"⚠️ 无法创建数据库会话: {e}")
                 self.session = None
-        
-        self.specialty = "notification"
         
         self.match_weights = {
             "industry": 0.3,
@@ -123,10 +113,9 @@ class NotificationAgent:
         
         self.notification_templates = self._load_notification_templates()
         
-        # 只在首次初始化时打印详细信息
-        if not getattr(NotificationAgent, '_initialized', False):
-            NotificationAgent._initialized = True
-            print("🤖 [Notification Agent] 初始化完成")
+        if not getattr(NotificationService, '_initialized', False):
+            NotificationService._initialized = True
+            print("📋 [Notification Service] 初始化完成")
             print(f"   - 职责: 企业匹配、个性化推送、追踪确认")
             print(f"   - 匹配权重: {self.match_weights}")
             print(f"   - 通知渠道: {len(self.notification_channels)} 个")
@@ -195,23 +184,28 @@ class NotificationAgent:
         """
         logger.info(f"匹配企业与政策: {policy.policy_id} <-> {enterprise_profile.enterprise_id}")
         
+        industries_list = list(policy.industries) if policy.industries else []
+        regions_list = list(policy.regions) if policy.regions else []
+        scales_list = list(policy.scales) if policy.scales else []
+        tax_types_list = list(policy.tax_types) if policy.tax_types else []
+        
         industry_score, industry_reasons = self._calculate_industry_score(
-            policy.industries or [],
+            industries_list,
             enterprise_profile.industries
         )
         
         region_score, region_reasons = self._calculate_region_score(
-            policy.regions or [],
+            regions_list,
             enterprise_profile.regions
         )
         
         scale_score, scale_reasons = self._calculate_scale_score(
-            policy.scales or [],
+            scales_list,
             enterprise_profile.scales
         )
         
         tax_type_score, tax_reasons = self._calculate_tax_type_score(
-            policy.tax_types or [],
+            tax_types_list,
             enterprise_profile.tax_types
         )
         
@@ -320,6 +314,10 @@ class NotificationAgent:
         """
         logger.info(f"保存匹配记录: {enterprise_id} <-> {policy_id}")
         
+        if not self.session:
+            logger.error("无法保存匹配记录：数据库会话未初始化")
+            raise RuntimeError("数据库会话未初始化")
+        
         match = EnterprisePolicyMatch(
             enterprise_id=enterprise_id,
             policy_id=policy_id,
@@ -336,7 +334,7 @@ class NotificationAgent:
         self.session.commit()
         self.session.refresh(match)
         
-        return match.id
+        return match.id  # type: ignore[return-value]
     
     async def generate_notification(
         self,
@@ -357,7 +355,7 @@ class NotificationAgent:
         """
         logger.info(f"生成通知消息: {policy.policy_id}")
         
-        meta_info = policy.meta_info or {}
+        meta_info: Dict[str, Any] = dict(policy.meta_info) if policy.meta_info else {}
         impact_level = meta_info.get("impact_level", "medium")
         
         if impact_level == "high":
@@ -367,25 +365,28 @@ class NotificationAgent:
         else:
             template = self.notification_templates["low_impact"]
         
-        key_points = policy.tags[:3] if policy.tags else []
+        tags_list = list(policy.tags) if policy.tags else []
+        key_points = tags_list[:3]
         key_points_text = "\n".join([f"- {point}" for point in key_points])
         
-        title = f"【政策提醒】{policy.title[:50]}"
+        title = f"【政策提醒】{str(policy.title)[:50]}"
+        policy_id_str = str(policy.policy_id)
+        policy_title_str = str(policy.title)
         
         content = template.format(
-            policy_title=policy.title,
+            policy_title=policy_title_str,
             key_points=key_points_text,
-            action_url=f"/policies/{policy.policy_id}"
+            action_url=f"/policies/{policy_id_str}"
         )
         
         return NotificationMessage(
             title=title,
             content=content,
-            policy_id=policy.policy_id,
-            policy_title=policy.title,
+            policy_id=policy_id_str,
+            policy_title=policy_title_str,
             impact_level=impact_level,
             key_points=key_points,
-            action_url=f"/policies/{policy.policy_id}"
+            action_url=f"/policies/{policy_id_str}"
         )
     
     async def send_notification(
@@ -405,9 +406,18 @@ class NotificationAgent:
         """
         logger.info(f"发送通知: {match.id}")
         
+        if not self.session:
+            logger.error("无法发送通知：数据库会话未初始化")
+            return NotificationResult(
+                success=False,
+                notification_status=NotificationStatus.FAILED,
+                message="数据库会话未初始化",
+                failure_reason="数据库会话未初始化"
+            )
+        
         try:
-            match.notification_status = NotificationStatus.SENT
-            match.notified_at = datetime.now()
+            match.notification_status = NotificationStatus.SENT  # type: ignore[assignment]
+            match.notified_at = datetime.now()  # type: ignore[assignment]
             self.session.commit()
             
             return NotificationResult(
@@ -419,12 +429,25 @@ class NotificationAgent:
         
         except (ValueError, KeyError) as e:
             logger.error(f"发送通知数据失败: {e}")
+            return NotificationResult(
+                success=False,
+                notification_status=NotificationStatus.FAILED,
+                message="通知发送失败",
+                failure_reason=str(e)
+            )
         except (OSError, IOError) as e:
             logger.error(f"发送通知IO失败: {e}")
+            return NotificationResult(
+                success=False,
+                notification_status=NotificationStatus.FAILED,
+                message="通知发送失败",
+                failure_reason=str(e)
+            )
         except Exception as e:
             logger.error(f"发送通知失败: {e}")
             
-            match.notification_status = NotificationStatus.FAILED
+            match.notification_status = NotificationStatus.FAILED  # type: ignore[assignment]
+            match.notified_at = datetime.now()  # type: ignore[assignment]
             self.session.commit()
             
             return NotificationResult(
@@ -451,6 +474,10 @@ class NotificationAgent:
         """
         logger.info(f"确认通知: {match_id}")
         
+        if not self.session:
+            logger.error("无法确认通知：数据库会话未初始化")
+            return False
+        
         stmt = select(EnterprisePolicyMatch).where(
             EnterprisePolicyMatch.id == match_id
         )
@@ -459,11 +486,11 @@ class NotificationAgent:
         if not match:
             return False
         
-        match.notification_status = NotificationStatus.ACKNOWLEDGED
-        match.acknowledged_at = datetime.now()
+        match.notification_status = NotificationStatus.ACKNOWLEDGED  # type: ignore[assignment]
+        match.acknowledged_at = datetime.now()  # type: ignore[assignment]
         
         if feedback:
-            match.feedback = feedback
+            match.feedback = feedback  # type: ignore[assignment]
         
         self.session.commit()
         
@@ -486,6 +513,10 @@ class NotificationAgent:
         """
         logger.info(f"忽略通知: {match_id}")
         
+        if not self.session:
+            logger.error("无法忽略通知：数据库会话未初始化")
+            return False
+        
         stmt = select(EnterprisePolicyMatch).where(
             EnterprisePolicyMatch.id == match_id
         )
@@ -494,11 +525,11 @@ class NotificationAgent:
         if not match:
             return False
         
-        match.notification_status = NotificationStatus.DISMISSED
-        match.dismissed_at = datetime.now()
+        match.notification_status = NotificationStatus.DISMISSED  # type: ignore[assignment]
+        match.dismissed_at = datetime.now()  # type: ignore[assignment]
         
         if reason:
-            match.feedback = {"dismiss_reason": reason}
+            match.feedback = {"dismiss_reason": reason}  # type: ignore[assignment]
         
         self.session.commit()
         
@@ -520,6 +551,10 @@ class NotificationAgent:
             待处理通知列表
         """
         logger.info(f"获取待处理通知: {enterprise_id}")
+        
+        if not self.session:
+            logger.error("无法获取待处理通知：数据库会话未初始化")
+            return []
         
         stmt = select(
             EnterprisePolicyMatch, Policy
@@ -571,6 +606,10 @@ class NotificationAgent:
         """
         logger.info(f"批量通知: {policy_id}, 最低分数: {min_score}")
         
+        if not self.session:
+            logger.error("无法执行批量通知：数据库会话未初始化")
+            return 0
+        
         stmt = select(EnterprisePolicyMatch).where(
             and_(
                 EnterprisePolicyMatch.policy_id == policy_id,
@@ -594,7 +633,7 @@ class NotificationAgent:
         
         for match in matches:
             score = MatchScore(
-                total_score=match.match_score,
+                total_score=float(match.match_score),  # type: ignore[arg-type]
                 industry_score=0.5,
                 region_score=0.5,
                 scale_score=0.5,
@@ -604,7 +643,7 @@ class NotificationAgent:
             notification = await self.generate_notification(
                 policy,
                 score,
-                EnterpriseProfile(enterprise_id=match.enterprise_id, name="")
+                EnterpriseProfile(enterprise_id=str(match.enterprise_id), name="")  # type: ignore[arg-type]
             )
             
             result = await self.send_notification(match, notification)

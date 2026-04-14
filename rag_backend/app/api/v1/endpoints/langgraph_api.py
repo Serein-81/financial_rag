@@ -116,7 +116,7 @@ def _create_agents_registry() -> Dict[str, Any]:
     from app.agent_framework.llm.openai_adapter import OpenAIAdapter
     from app.agent_framework.tools.tool_manager import ToolManager
     from app.agent_framework.core.react_agent import ReActAgent
-    from app.multi_agent_system.agents.intent_agent import IntentAgent
+    from app.multi_agent_system.agents.intent_router_agent import IntentRouterAgent
     from app.multi_agent_system.agents.finance_specialist import FinanceSpecialist
     from app.multi_agent_system.agents.tax_specialist import TaxSpecialist
     from app.multi_agent_system.agents.legal_specialist import LegalSpecialist
@@ -131,7 +131,7 @@ def _create_agents_registry() -> Dict[str, Any]:
             tool_manager=tool_manager,
             system_prompt="你是一个友好的智能助手接待员..."
         ),
-        "intent": IntentAgent(
+        "intent": IntentRouterAgent(
             llm_adapter=llm_adapter,
             tool_manager=tool_manager
         ),

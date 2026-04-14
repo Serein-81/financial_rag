@@ -50,13 +50,14 @@ class BaseAgentPromptLoader(ABC):
         
         优先级：
         1. 环境变量指定的路径
-        2. prompts/system/{agent_name}.md
-        3. 降级到 _get_fallback_prompt()
+        2. prompts/agents/{agent_name}/system.md（新结构）
+        3. prompts/system/{agent_name}_agent.md（旧结构，向后兼容）
+        4. 降级到 _get_fallback_prompt()
         """
         prompt_filename = self._get_prompt_filename()
         
         if not prompt_filename:
-            logger.warning(f"⚠️ [{self.__class__.__name__}] 未指定提示词文件名")
+            logger.debug(f"[{self.__class__.__name__}] 未指定提示词文件名，启用内置默认提示词")
             return self._get_fallback_prompt()
         
         env_path = os.environ.get(f"PROMPT_{self.__class__.__name__.upper()}")
@@ -66,12 +67,26 @@ class BaseAgentPromptLoader(ABC):
             except FileNotFoundError:
                 logger.warning(f"⚠️ 环境变量路径不存在: {env_path}")
         
-        default_path = self.PROMPT_DIR / prompt_filename
+        prompts_root = Path(__file__).parent.parent.parent / "prompts"
         
+        agent_name = self.__class__.__name__.replace("Agent", "").lower()
+        normalized_name = _normalize_agent_name(agent_name)
+        
+        new_path = prompts_root / "agents" / normalized_name / "system.md"
         try:
-            return self._load_from_path(default_path)
+            content = self._load_from_path(new_path)
+            logger.info(f"✅ 成功加载提示词（新结构）: {new_path}")
+            return content
         except FileNotFoundError:
-            logger.warning(f"⚠️ [{self.__class__.__name__}] 提示词文件不存在: {default_path}")
+            pass
+        
+        old_path = prompts_root / "system" / f"{agent_name}_agent.md"
+        try:
+            content = self._load_from_path(old_path)
+            logger.debug(f"使用旧路径提示词（向后兼容）: {old_path}")
+            return content
+        except FileNotFoundError:
+            logger.debug(f"[{self.__class__.__name__}] 提示词文件不存在，启用内置默认提示词")
             return self._get_fallback_prompt()
     
     def _load_from_path(self, path: Path) -> str:
@@ -154,7 +169,11 @@ class BaseAgentPromptLoader(ABC):
     
     def reload_prompt(self):
         """重新加载提示词（热更新）"""
-        cache_key = str(self.PROMPT_DIR / self._get_prompt_filename())
+        prompts_root = Path(__file__).parent.parent.parent / "prompts"
+        agent_name = self.__class__.__name__.replace("Agent", "").lower()
+        normalized_name = _normalize_agent_name(agent_name)
+        cache_key = str(prompts_root / "agents" / normalized_name / "system.md")
+        
         if cache_key in self._prompt_cache:
             del self._prompt_cache[cache_key]
         
@@ -173,6 +192,29 @@ class BaseAgentPromptLoader(ABC):
         cls._use_cache = enabled
 
 
+def _normalize_agent_name(agent_name: str) -> str:
+    """
+    标准化agent名称到目录名
+    
+    映射规则：
+    - "finance" -> "finance_specialist"
+    - "tax" -> "tax_specialist"
+    - "legal" -> "legal_specialist"
+    - 其他 -> 保持原样
+    """
+    name_mapping = {
+        "finance": "finance_specialist",
+        "tax": "tax_specialist",
+        "legal": "legal_specialist",
+        "intent": "intent_router",
+        "reflection": "reflection_agent",
+        "report": "report_agent",
+        "output": "output_agent",
+        "triage": "triage_agent",
+    }
+    return name_mapping.get(agent_name, agent_name)
+
+
 def load_agent_prompt(
     agent_name: str,
     filename: Optional[str] = None,
@@ -183,24 +225,34 @@ def load_agent_prompt(
     
     Args:
         agent_name: 智能体名称
-        filename: 提示词文件名（默认为 {agent_name}_agent.md）
+        filename: 提示词文件名（默认为 system.md）
         context: 渲染上下文
         
     Returns:
         提示词内容
     """
-    if filename is None:
-        filename = f"{agent_name}_agent.md"
+    normalized_name = _normalize_agent_name(agent_name)
     
-    prompt_dir = Path(__file__).parent.parent.parent / "prompts" / "system"
-    prompt_path = prompt_dir / filename
+    if filename is None:
+        filename = "system.md"
+    
+    prompts_root = Path(__file__).parent.parent.parent / "prompts"
+    
+    new_prompt_path = prompts_root / "agents" / normalized_name / filename
     
     try:
-        with open(prompt_path, 'r', encoding='utf-8') as f:
+        with open(new_prompt_path, 'r', encoding='utf-8') as f:
             content = f.read()
+        logger.info(f"✅ 成功加载提示词（新结构）: {new_prompt_path}")
     except FileNotFoundError:
-        logger.warning(f"⚠️ 提示词文件不存在: {prompt_path}")
-        return ""
+        old_prompt_path = prompts_root / "system" / f"{agent_name}_agent.md"
+        try:
+            with open(old_prompt_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            logger.debug(f"使用旧路径提示词（向后兼容）: {old_prompt_path}")
+        except FileNotFoundError:
+            logger.debug(f"提示词文件不存在: 新路径 {new_prompt_path}, 旧路径 {old_prompt_path}")
+            return ""
     
     if context:
         for key, value in context.items():

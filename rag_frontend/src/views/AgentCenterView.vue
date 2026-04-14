@@ -2,6 +2,7 @@
 import { ref, onMounted, computed, watch, nextTick } from 'vue'
 import { agentDiscoveryApi, type AgentSummary, type AgentDetail, type ToolInfo, type RegistrySummary, type AgentTrace, ToolLocation } from '@/api/agent-discovery'
 import { multiAgentApi, type SystemHealth, type TaskPipeline, type AgentMetric, SessionState } from '@/api/multi-agent'
+import { langSmithApi, type LangSmithStatus, type LangSmithStats, type LangSmithDashboard, type LangSmithProjectInfo, type LangSmithTrace } from '@/api/langsmith'
 import {
   Compass,
   Monitor,
@@ -11,7 +12,6 @@ import {
   Wrench,
   Server,
   Cloud,
-  Database,
   RefreshCw,
   ChevronDown,
   ChevronRight,
@@ -35,10 +35,14 @@ import {
   Maximize2,
   ArrowLeft,
   Layers,
+  Link2,
+  Settings,
+  ExternalLink,
+  ActivitySquare,
 } from 'lucide-vue-next'
 import * as d3 from 'd3'
 
-const activeTab = ref<'discovery' | 'monitor' | 'trace' | 'history'>('discovery')
+const activeTab = ref<'discovery' | 'monitor' | 'trace' | 'history' | 'langsmith'>('discovery')
 const isLoading = ref(false)
 const error = ref('')
 const lastRefresh = ref(new Date())
@@ -66,6 +70,21 @@ const visualizationData = ref<{
   summary: any
 } | null>(null)
 const flowChartContainer = ref<HTMLElement | null>(null)
+
+// LangSmith 监控状态
+const langSmithStatus = ref<LangSmithStatus | null>(null)
+const langSmithStats = ref<LangSmithStats | null>(null)
+const langSmithDashboard = ref<LangSmithDashboard | null>(null)
+const langSmithProjectInfo = ref<LangSmithProjectInfo | null>(null)
+const recentTraces = ref<LangSmithTrace[]>([])
+const langSmithLoading = ref(false)
+const langSmithError = ref('')
+const showLangSmithConfig = ref(false)
+const langSmithConfigForm = ref({
+  api_key: '',
+  project: '',
+  tracing: true
+})
 
 const statusColors = {
   healthy: 'text-green-600 bg-green-50',
@@ -379,6 +398,75 @@ async function refresh() {
     await loadHistoryData()
   } else if (activeTab.value === 'trace') {
     await loadTraceData()
+  } else if (activeTab.value === 'langsmith') {
+    await loadLangSmithData()
+  }
+}
+
+async function loadLangSmithData() {
+  try {
+    langSmithLoading.value = true
+    langSmithError.value = ''
+    const [status, stats, dashboard, projectInfo, traces] = await Promise.allSettled([
+      langSmithApi.getStatus(),
+      langSmithApi.getStats(),
+      langSmithApi.getDashboard(),
+      langSmithApi.getProjectInfo(),
+      langSmithApi.getRecentTraces(10)
+    ])
+
+    if (status.status === 'fulfilled') {
+      langSmithStatus.value = status.value
+    }
+    if (stats.status === 'fulfilled') {
+      langSmithStats.value = stats.value
+    }
+    if (dashboard.status === 'fulfilled') {
+      langSmithDashboard.value = dashboard.value
+    }
+    if (projectInfo.status === 'fulfilled') {
+      langSmithProjectInfo.value = projectInfo.value
+    }
+    if (traces.status === 'fulfilled') {
+      recentTraces.value = traces.value.traces || []
+    }
+  } catch (err: any) {
+    langSmithError.value = err.message || '加载 LangSmith 数据失败'
+  } finally {
+    langSmithLoading.value = false
+  }
+}
+
+async function testLangSmithConnection() {
+  try {
+    langSmithError.value = ''
+    const result = await langSmithApi.testConnection()
+    if (!result.success) {
+      langSmithError.value = result.message
+    } else {
+      alert('LangSmith 连接测试成功！')
+    }
+  } catch (err: any) {
+    langSmithError.value = err.message || '测试连接失败'
+  }
+}
+
+async function updateLangSmithConfig() {
+  try {
+    const result = await langSmithApi.updateConfig(langSmithConfigForm.value)
+    if (result.current_config) {
+      langSmithStatus.value = result.current_config
+    }
+    showLangSmithConfig.value = false
+    alert('LangSmith 配置已更新！')
+  } catch (err: any) {
+    langSmithError.value = err.message || '更新配置失败'
+  }
+}
+
+function openLangSmithDashboard() {
+  if (langSmithDashboard.value?.dashboard_url) {
+    window.open(langSmithDashboard.value.dashboard_url, '_blank')
   }
 }
 
@@ -417,7 +505,8 @@ onMounted(() => {
               { id: 'discovery', label: '发现', icon: Compass },
               { id: 'monitor', label: '监控', icon: Monitor },
               { id: 'trace', label: '追踪', icon: Activity },
-              { id: 'history', label: '历史', icon: History }
+              { id: 'history', label: '历史', icon: History },
+              { id: 'langsmith', label: 'LangSmith', icon: ActivitySquare }
             ]"
             :key="tab.id"
             @click="activeTab = tab.id as any; refresh()"
@@ -482,13 +571,6 @@ onMounted(() => {
               <p class="text-3xl font-bold text-slate-900">{{ summary.tool_breakdown?.cloud || 0 }}</p>
             </div>
             <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200 hover:shadow-md transition-shadow">
-              <div class="flex items-center gap-3 mb-3">
-                <div class="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center">
-                  <Database :size="20" class="text-indigo-600" />
-                </div>
-                <span class="text-sm font-medium text-slate-600">MCP工具</span>
-              </div>
-              <p class="text-3xl font-bold text-slate-900">{{ summary.tool_breakdown?.mcp || 0 }}</p>
             </div>
           </div>
 
@@ -609,7 +691,7 @@ onMounted(() => {
               <div class="p-5 space-y-4 max-h-[500px] overflow-y-auto">
                 <!-- 按位置分类视图-->
                 <template v-if="toolViewMode === 'location'">
-                  <div v-for="location in ['local', 'cloud', 'mcp']" :key="location" class="border border-slate-200 rounded-lg overflow-hidden">
+                  <div v-for="location in ['local', 'cloud']" :key="location" class="border border-slate-200 rounded-lg overflow-hidden">
                     <div :class="[
                       'px-4 py-3 flex items-center justify-between',
                       location === 'local' ? 'bg-emerald-50' :
@@ -617,16 +699,16 @@ onMounted(() => {
                     ]">
                       <div class="flex items-center gap-2">
                         <component
-                          :is="location === 'local' ? Server : location === 'cloud' ? Cloud : Database"
+                          :is="location === 'local' ? Server : Cloud"
                           :size="18"
-                          :class="location === 'local' ? 'text-emerald-600' : location === 'cloud' ? 'text-orange-600' : 'text-blue-600'"
+                          :class="location === 'local' ? 'text-emerald-600' : 'text-orange-600'"
                         />
                         <span :class="[
                           'font-medium',
                           location === 'local' ? 'text-emerald-700' :
                           location === 'cloud' ? 'text-orange-700' : 'text-blue-700'
                         ]">
-                          {{ location === 'local' ? '本地工具 (LangChain)' : location === 'cloud' ? '云端工具' : 'MCP工具' }}
+                          {{ location === 'local' ? '本地工具 (LangChain)' : '云端工具' }}
                         </span>
                       </div>
                       <span class="text-sm text-slate-600">
@@ -655,7 +737,7 @@ onMounted(() => {
                         </div>
                       </div>
                       <div v-if="tools.filter(t => t.location === location).length === 0" class="text-sm text-slate-400 text-center py-2">
-                        暂无{{ location === 'local' ? '本地' : location === 'cloud' ? '云端' : 'MCP' }}工具
+                        暂无{{ location === 'local' ? '本地' : '云端' }}工具
                       </div>
                     </div>
                   </div>
@@ -689,7 +771,7 @@ onMounted(() => {
                               tool.location === 'cloud' ? 'bg-orange-100 text-orange-700' :
                               'bg-blue-100 text-blue-700'
                             ]">
-                              {{ tool.location === 'local' ? '本地' : tool.location === 'cloud' ? '云端' : 'MCP' }}
+                              {{ tool.location === 'local' ? '本地' : '云端' }}
                             </span>
                           </div>
                           <p class="text-xs text-slate-500 mt-0.5">{{ tool.description }}</p>
@@ -722,10 +804,9 @@ onMounted(() => {
                             <span :class="[
                               'px-1.5 py-0.5 rounded text-xs',
                               tool.location === 'local' ? 'bg-emerald-100 text-emerald-700' :
-                              tool.location === 'cloud' ? 'bg-orange-100 text-orange-700' :
-                              'bg-blue-100 text-blue-700'
+                              'bg-orange-100 text-orange-700'
                             ]">
-                              {{ tool.location === 'local' ? '本地' : tool.location === 'cloud' ? '云端' : 'MCP' }}
+                              {{ tool.location === 'local' ? '本地' : '云端' }}
                             </span>
                           </div>
                           <p class="text-xs text-slate-500 mt-0.5">{{ tool.description }}</p>
@@ -769,10 +850,9 @@ onMounted(() => {
                           <span :class="[
                             'inline-block mt-1 px-1.5 py-0.5 rounded text-xs',
                             tool.location === 'local' ? 'bg-emerald-100 text-emerald-700' :
-                            tool.location === 'cloud' ? 'bg-orange-100 text-orange-700' :
-                            'bg-blue-100 text-blue-700'
+                            'bg-orange-100 text-orange-700'
                           ]">
-                            {{ tool.location === 'local' ? '本地' : tool.location === 'cloud' ? '云端' : 'MCP' }}
+                            {{ tool.location === 'local' ? '本地' : '云端' }}
                           </span>
                         </div>
                       </div>
@@ -1059,6 +1139,297 @@ onMounted(() => {
                   </tr>
                 </tbody>
               </table>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="activeTab === 'langsmith'" class="space-y-6">
+          <div v-if="langSmithLoading" class="flex items-center justify-center h-64">
+            <Loader2 :size="32" class="animate-spin text-indigo-500" />
+          </div>
+
+          <div v-else-if="langSmithError" class="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
+            {{ langSmithError }}
+          </div>
+
+          <div v-else>
+            <div class="flex items-center justify-between mb-4">
+              <div class="flex items-center gap-3">
+                <div :class="[
+                  'w-3 h-3 rounded-full',
+                  langSmithStatus?.enabled ? 'bg-emerald-500 animate-pulse' : 'bg-gray-400'
+                ]" />
+                <span class="text-lg font-semibold text-slate-900">
+                  {{ langSmithStatus?.enabled ? 'LangSmith 已启用' : 'LangSmith 未启用' }}
+                </span>
+              </div>
+              <div class="flex items-center gap-2">
+                <button
+                  @click="openLangSmithDashboard"
+                  :disabled="!langSmithDashboard?.dashboard_url"
+                  class="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <ExternalLink :size="16" />
+                  <span>打开 LangSmith Dashboard</span>
+                </button>
+                <button
+                  @click="showLangSmithConfig = true"
+                  class="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
+                >
+                  <Settings :size="16" />
+                  <span>配置</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
+                <div class="flex items-center gap-3 mb-3">
+                  <div class="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center">
+                    <Activity :size="20" class="text-indigo-600" />
+                  </div>
+                  <span class="text-sm font-medium text-slate-600">追踪总数</span>
+                </div>
+                <p class="text-3xl font-bold text-slate-900">{{ langSmithStats?.total_traces || 0 }}</p>
+              </div>
+              <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
+                <div class="flex items-center gap-3 mb-3">
+                  <div class="w-10 h-10 bg-emerald-100 rounded-lg flex items-center justify-center">
+                    <Brain :size="20" class="text-emerald-600" />
+                  </div>
+                  <span class="text-sm font-medium text-slate-600">LLM 调用</span>
+                </div>
+                <p class="text-3xl font-bold text-slate-900">{{ langSmithStats?.total_llm_calls || 0 }}</p>
+              </div>
+              <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
+                <div class="flex items-center gap-3 mb-3">
+                  <div class="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
+                    <Cpu :size="20" class="text-purple-600" />
+                  </div>
+                  <span class="text-sm font-medium text-slate-600">工具调用</span>
+                </div>
+                <p class="text-3xl font-bold text-slate-900">{{ langSmithStats?.total_tool_calls || 0 }}</p>
+              </div>
+              <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
+                <div class="flex items-center gap-3 mb-3">
+                  <div class="w-10 h-10 bg-amber-100 rounded-lg flex items-center justify-center">
+                    <Zap :size="20" class="text-amber-600" />
+                  </div>
+                  <span class="text-sm font-medium text-slate-600">活跃运行</span>
+                </div>
+                <p class="text-3xl font-bold text-slate-900">{{ langSmithStats?.active_runs || 0 }}</p>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+              <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                <div class="px-5 py-4 border-b border-slate-200 bg-slate-50">
+                  <h2 class="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                    <Link2 :size="20" class="text-indigo-600" />
+                    LangSmith 项目信息
+                  </h2>
+                </div>
+                <div class="p-5 space-y-4">
+                  <div class="flex items-center justify-between py-2 border-b border-slate-100">
+                    <span class="text-sm text-slate-600">项目名称</span>
+                    <span class="text-sm font-medium text-slate-900">{{ langSmithStatus?.project || '未配置' }}</span>
+                  </div>
+                  <div class="flex items-center justify-between py-2 border-b border-slate-100">
+                    <span class="text-sm text-slate-600">API Key 配置</span>
+                    <span :class="langSmithStatus?.api_key_configured ? 'text-emerald-600' : 'text-red-600'">
+                      {{ langSmithStatus?.api_key_configured ? '已配置' : '未配置' }}
+                    </span>
+                  </div>
+                  <div class="flex items-center justify-between py-2 border-b border-slate-100">
+                    <span class="text-sm text-slate-600">追踪状态</span>
+                    <span :class="langSmithStatus?.tracing_enabled ? 'text-emerald-600' : 'text-red-600'">
+                      {{ langSmithStatus?.tracing_enabled ? '已启用' : '已禁用' }}
+                    </span>
+                  </div>
+                  <div class="flex items-center justify-between py-2 border-b border-slate-100">
+                    <span class="text-sm text-slate-600">客户端状态</span>
+                    <span :class="langSmithStatus?.client_initialized ? 'text-emerald-600' : 'text-red-600'">
+                      {{ langSmithStatus?.client_initialized ? '已初始化' : '未初始化' }}
+                    </span>
+                  </div>
+                  <div class="flex items-center justify-between py-2">
+                    <span class="text-sm text-slate-600">最后检查</span>
+                    <span class="text-sm text-slate-500">{{ langSmithStatus?.last_check ? formatTime(langSmithStatus.last_check) : '-' }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                <div class="px-5 py-4 border-b border-slate-200 bg-slate-50">
+                  <h2 class="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                    <ExternalLink :size="20" class="text-indigo-600" />
+                    快速链接
+                  </h2>
+                </div>
+                <div class="p-5 space-y-3">
+                  <a
+                    v-if="langSmithDashboard?.dashboard_url"
+                    :href="langSmithDashboard.dashboard_url"
+                    target="_blank"
+                    class="flex items-center justify-between p-3 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors"
+                  >
+                    <div class="flex items-center gap-3">
+                      <ActivitySquare :size="18" class="text-indigo-600" />
+                      <span class="text-sm font-medium text-slate-900">Dashboard</span>
+                    </div>
+                    <ExternalLink :size="14" class="text-slate-400" />
+                  </a>
+                  <a
+                    v-if="langSmithDashboard?.project_url"
+                    :href="langSmithDashboard.project_url"
+                    target="_blank"
+                    class="flex items-center justify-between p-3 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors"
+                  >
+                    <div class="flex items-center gap-3">
+                      <Layers :size="18" class="text-purple-600" />
+                      <span class="text-sm font-medium text-slate-900">项目页面</span>
+                    </div>
+                    <ExternalLink :size="14" class="text-slate-400" />
+                  </a>
+                  <a
+                    v-if="langSmithDashboard?.traces_url"
+                    :href="langSmithDashboard.traces_url"
+                    target="_blank"
+                    class="flex items-center justify-between p-3 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors"
+                  >
+                    <div class="flex items-center gap-3">
+                      <Activity :size="18" class="text-emerald-600" />
+                      <span class="text-sm font-medium text-slate-900">追踪记录</span>
+                    </div>
+                    <ExternalLink :size="14" class="text-slate-400" />
+                  </a>
+                  <a
+                    v-if="langSmithDashboard?.datasets_url"
+                    :href="langSmithDashboard.datasets_url"
+                    target="_blank"
+                    class="flex items-center justify-between p-3 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors"
+                  >
+                    <div class="flex items-center gap-3">
+                      <Shield :size="18" class="text-amber-600" />
+                      <span class="text-sm font-medium text-slate-900">数据集</span>
+                    </div>
+                    <ExternalLink :size="14" class="text-slate-400" />
+                  </a>
+                  <div v-if="!langSmithDashboard?.dashboard_url" class="text-center text-slate-500 py-4">
+                    暂无链接可用
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mt-6">
+              <div class="px-5 py-4 border-b border-slate-200 bg-slate-50">
+                <h2 class="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                  <Activity :size="20" class="text-indigo-600" />
+                  最近追踪记录
+                </h2>
+              </div>
+              <div class="divide-y divide-slate-100 max-h-[400px] overflow-y-auto">
+                <div
+                  v-for="trace in recentTraces"
+                  :key="trace.run_id"
+                  class="p-4 hover:bg-slate-50 transition-colors"
+                >
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                      <span :class="[
+                        'px-2.5 py-1 rounded-full text-xs font-medium',
+                        trace.error ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'
+                      ]">
+                        {{ trace.run_type }}
+                      </span>
+                      <span class="font-medium text-slate-900">{{ trace.name }}</span>
+                    </div>
+                    <span class="text-xs text-slate-400">{{ formatTime(trace.created_at) }}</span>
+                  </div>
+                  <p v-if="trace.error" class="mt-2 text-sm text-red-600">{{ trace.error }}</p>
+                  <div v-if="trace.tags?.length" class="mt-2 flex gap-2">
+                    <span
+                      v-for="tag in trace.tags"
+                      :key="tag"
+                      class="px-2 py-0.5 bg-slate-100 text-slate-600 rounded text-xs"
+                    >
+                      {{ tag }}
+                    </span>
+                  </div>
+                </div>
+                <div v-if="recentTraces.length === 0" class="p-8 text-center text-slate-500">
+                  暂无追踪记录
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="showLangSmithConfig" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div class="bg-white rounded-xl shadow-xl max-w-md w-full mx-4">
+            <div class="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+              <h3 class="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                <Settings :size="20" class="text-indigo-600" />
+                LangSmith 配置
+              </h3>
+              <button
+                @click="showLangSmithConfig = false"
+                class="text-slate-400 hover:text-slate-600 transition-colors"
+              >
+                <XCircle :size="20" />
+              </button>
+            </div>
+            <div class="p-6 space-y-4">
+              <div>
+                <label class="block text-sm font-medium text-slate-700 mb-2">API Key</label>
+                <input
+                  v-model="langSmithConfigForm.api_key"
+                  type="password"
+                  placeholder="输入 LangSmith API Key"
+                  class="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+                />
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-slate-700 mb-2">项目名称</label>
+                <input
+                  v-model="langSmithConfigForm.project"
+                  type="text"
+                  placeholder="默认项目名称"
+                  class="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+                />
+              </div>
+              <div class="flex items-center gap-2">
+                <input
+                  v-model="langSmithConfigForm.tracing"
+                  type="checkbox"
+                  id="tracing-enabled"
+                  class="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
+                />
+                <label for="tracing-enabled" class="text-sm font-medium text-slate-700">
+                  启用追踪
+                </label>
+              </div>
+            </div>
+            <div class="px-6 py-4 border-t border-slate-200 flex items-center justify-end gap-3">
+              <button
+                @click="testLangSmithConnection"
+                class="px-4 py-2 text-indigo-600 border border-indigo-200 rounded-lg hover:bg-indigo-50 transition-colors"
+              >
+                测试连接
+              </button>
+              <button
+                @click="showLangSmithConfig = false"
+                class="px-4 py-2 text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
+              >
+                取消
+              </button>
+              <button
+                @click="updateLangSmithConfig"
+                class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
+              >
+                保存配置
+              </button>
             </div>
           </div>
         </div>

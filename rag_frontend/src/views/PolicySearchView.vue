@@ -22,7 +22,10 @@ import {
   Bell,
   Star,
   Filter,
-  X
+  X,
+  Cpu,
+  Lightbulb,
+  Wand2
 } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -33,6 +36,16 @@ const isSearching = ref(false)
 const searchResults = ref<PolicyMatchResult[]>([])
 const recommendations = ref<PolicyMatchResult[]>([])
 const isLoadingRecommendations = ref(false)
+
+// PolicyNotificationAgent 状态
+const agentStatus = ref<any>(null)
+const isCheckingAgent = ref(false)
+const searchSuggestions = ref<string[]>([])
+const isGeneratingSuggestions = ref(false)
+
+// 语义相似度详情
+const semanticDetails = ref<Map<string, any>>(new Map())
+const isLoadingDetails = ref(false)
 
 const showFilters = ref(false)
 const filters = ref({
@@ -50,8 +63,107 @@ const filterOptions = {
 }
 
 onMounted(async () => {
-  await loadRecommendations()
+  await Promise.all([
+    loadRecommendations(),
+    checkAgentStatus()
+  ])
 })
+
+async function checkAgentStatus() {
+  isCheckingAgent.value = true
+  try {
+    agentStatus.value = await policyApi.getPolicyAgentStatus()
+    if (agentStatus.value?.use_llm) {
+      await generateSearchSuggestions()
+    }
+  } catch (error: any) {
+    console.error('Failed to check agent status:', error)
+    agentStatus.value = null
+  } finally {
+    isCheckingAgent.value = false
+  }
+}
+
+async function generateSearchSuggestions() {
+  if (!agentStatus.value?.use_llm) {
+    return
+  }
+
+  isGeneratingSuggestions.value = true
+  try {
+    const enterpriseId = getEnterpriseId() || 'default'
+
+    const policies = recommendations.value.slice(0, 3).map(r => ({
+      policy_id: r.policy_id,
+      title: r.policy_title,
+      content: r.policy?.content || ''
+    }))
+
+    if (policies.length > 0) {
+      const request = {
+        policies: policies,
+        enterprise_profile: {
+          enterprise_id: enterpriseId,
+          enterprise_name: '企业',
+          industry: '通用',
+          region: '全国',
+          scale: '中型企业',
+          tax_types: [],
+          qualifications: []
+        }
+      }
+
+      const result = await policyApi.prioritizePolicies(request)
+      if (result && result.length > 0) {
+        searchSuggestions.value = result.slice(0, 5).map((r: any) =>
+          `推荐：${r.policy_title} - 优先级提升原因：${r.reason || '高度匹配您的企业画像'}`
+        )
+      }
+    }
+  } catch (error: any) {
+    console.error('Failed to generate search suggestions:', error)
+    searchSuggestions.value = []
+  } finally {
+    isGeneratingSuggestions.value = false
+  }
+}
+
+async function loadSemanticDetails(policyId: string, policy: any) {
+  if (!agentStatus.value?.use_llm || semanticDetails.value.has(policyId)) {
+    return
+  }
+
+  const enterpriseId = getEnterpriseId() || 'default'
+
+  try {
+    const matchRequest = {
+      policy: {
+        policy_id: policyId,
+        title: policy.title,
+        content: policy.content || '',
+        source: 'policy_center'
+      },
+      enterprise: {
+        enterprise_id: enterpriseId,
+        enterprise_name: '企业',
+        industry: '通用',
+        region: '全国',
+        scale: '中型企业',
+        tax_types: []
+      },
+      use_llm: true
+    }
+
+    const result = await policyApi.matchPolicyWithEnterprise(matchRequest)
+    semanticDetails.value.set(policyId, result)
+  } catch (error: any) {
+    console.error('Failed to load semantic details:', error)
+  }
+}
+
+function getSemanticDetails(policyId: string) {
+  return semanticDetails.value.get(policyId)
+}
 
 async function loadRecommendations() {
   const enterpriseId = getEnterpriseId()
@@ -136,6 +248,17 @@ function formatMatchReasons(reasons: string[]) {
       </div>
 
       <div class="flex items-center gap-3">
+        <!-- Agent Status -->
+        <div v-if="agentStatus" class="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-purple-50 to-indigo-50 rounded-lg border border-purple-200">
+          <Brain :size="16" class="text-purple-600" />
+          <span class="text-xs font-medium text-purple-700">
+            {{ agentStatus.use_llm ? 'LLM智能搜索' : '规则搜索' }}
+          </span>
+          <span v-if="agentStatus.llm_provider" class="text-xs text-purple-500">
+            ({{ agentStatus.llm_provider }})
+          </span>
+        </div>
+
         <button
           @click="showFilters = !showFilters"
           :class="[
@@ -308,9 +431,34 @@ function formatMatchReasons(reasons: string[]) {
             </button>
           </div>
 
-          <div class="flex items-center gap-2 text-xs text-gray-500">
+          <div class="flex items-center gap-2 text-xs text-gray-500 mb-4">
             <Sparkles :size="14" class="text-purple-500" />
             <span>基于语义理解和向量检索的智能搜索</span>
+          </div>
+
+          <!-- LLM Search Suggestions -->
+          <div v-if="searchSuggestions.length > 0" class="mt-4 p-4 bg-gradient-to-r from-purple-50 to-indigo-50 rounded-xl border border-purple-200">
+            <div class="flex items-center gap-2 mb-3">
+              <Lightbulb :size="16" class="text-purple-600" />
+              <span class="text-sm font-semibold text-purple-900">智能搜索建议</span>
+              <span v-if="isGeneratingSuggestions" class="text-xs text-purple-600 flex items-center gap-1">
+                <Loader2 :size="12" class="animate-spin" />
+                生成中...
+              </span>
+            </div>
+            <div class="space-y-2">
+              <div
+                v-for="(suggestion, idx) in searchSuggestions.slice(0, 3)"
+                :key="idx"
+                @click="searchQuery = suggestion.split(' - ')[0].replace('推荐：', ''); handleSearch()"
+                class="p-3 bg-white rounded-lg border border-purple-100 hover:border-purple-300 cursor-pointer transition-all group"
+              >
+                <div class="flex items-start gap-2">
+                  <Wand2 :size="14" class="text-purple-600 mt-0.5 flex-shrink-0" />
+                  <span class="text-xs text-gray-700 group-hover:text-purple-700">{{ suggestion }}</span>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -360,6 +508,48 @@ function formatMatchReasons(reasons: string[]) {
                       <DollarSign :size="12" />
                       {{ result.policy.tax_types.slice(0, 2).join(', ') }}
                     </span>
+                  </div>
+
+                  <!-- LLM Semantic Details -->
+                  <div v-if="agentStatus?.use_llm" class="mt-3">
+                    <button
+                      @click.stop="loadSemanticDetails(result.policy_id, result.policy)"
+                      class="text-xs text-purple-600 hover:text-purple-700 flex items-center gap-1"
+                    >
+                      <Brain :size="12" />
+                      {{ getSemanticDetails(result.policy_id) ? '查看语义分析' : '加载语义分析' }}
+                    </button>
+
+                    <div v-if="getSemanticDetails(result.policy_id)" class="mt-3 p-3 bg-gradient-to-r from-purple-50 to-indigo-50 rounded-lg border border-purple-200">
+                      <div class="grid grid-cols-2 gap-2 mb-3">
+                        <div class="bg-white rounded p-2 border border-purple-100">
+                          <div class="text-xs text-gray-500 mb-1">语义匹配</div>
+                          <div class="text-xs font-semibold text-purple-700">
+                            {{ ((getSemanticDetails(result.policy_id)?.semantic_score || 0) * 100).toFixed(0) }}%
+                          </div>
+                        </div>
+                        <div class="bg-white rounded p-2 border border-purple-100">
+                          <div class="text-xs text-gray-500 mb-1">综合匹配</div>
+                          <div class="text-xs font-semibold text-blue-700">
+                            {{ ((getSemanticDetails(result.policy_id)?.match_score || 0) * 100).toFixed(0) }}%
+                          </div>
+                        </div>
+                      </div>
+
+                      <div v-if="getSemanticDetails(result.policy_id)?.reasons?.length > 0">
+                        <div class="text-xs font-medium text-purple-900 mb-2">智能分析理由：</div>
+                        <div class="space-y-1">
+                          <div
+                            v-for="(reason, idx) in getSemanticDetails(result.policy_id)?.reasons.slice(0, 3)"
+                            :key="idx"
+                            class="flex items-start gap-2 text-xs text-gray-700"
+                          >
+                            <Sparkles :size="10" class="text-purple-600 mt-0.5 flex-shrink-0" />
+                            <span>{{ reason }}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
@@ -437,6 +627,31 @@ function formatMatchReasons(reasons: string[]) {
                     >
                       {{ reason }}
                     </span>
+                  </div>
+
+                  <!-- LLM Semantic Details for Recommendations -->
+                  <div v-if="agentStatus?.use_llm" class="mt-3">
+                    <button
+                      @click.stop="loadSemanticDetails(result.policy_id, result.policy)"
+                      class="text-xs text-amber-600 hover:text-amber-700 flex items-center gap-1"
+                    >
+                      <Brain :size="12" />
+                      {{ getSemanticDetails(result.policy_id) ? '查看智能分析' : '加载智能分析' }}
+                    </button>
+
+                    <div v-if="getSemanticDetails(result.policy_id)" class="mt-3 p-3 bg-gradient-to-r from-amber-50 to-orange-50 rounded-lg border border-amber-200">
+                      <div class="text-xs font-medium text-amber-900 mb-2">智能分析理由：</div>
+                      <div class="space-y-1">
+                        <div
+                          v-for="(reason, idx) in getSemanticDetails(result.policy_id)?.reasons.slice(0, 3)"
+                          :key="idx"
+                          class="flex items-start gap-2 text-xs text-gray-700"
+                        >
+                          <Sparkles :size="10" class="text-amber-600 mt-0.5 flex-shrink-0" />
+                          <span>{{ reason }}</span>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>

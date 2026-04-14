@@ -102,7 +102,166 @@ export interface NotificationListResponse {
   total: number
 }
 
+export interface SSEPolicyNotification {
+  event_type: string
+  enterprise_id: string
+  policy_id: string
+  policy_title: string
+  match_score: number
+  impact_level: string
+  timestamp: string
+  match_details?: {
+    policy_id: string
+    title: string
+    industries: string[]
+    regions: string[]
+    tax_types: string[]
+    priority: string
+    source: string
+  }
+}
+
+export interface NotificationStatus {
+  enterprise_id: string
+  active_subscribers: number
+  total_notifications: number
+  stream_endpoint: string
+}
+
+// PolicyNotificationAgent 相关类型
+export interface PolicyAgentMatchRequest {
+  policy: {
+    policy_id: string
+    title: string
+    content: string
+    source?: string
+    publish_date?: string
+    priority?: string
+  }
+  enterprise: EnterpriseProfileInput
+  use_llm?: boolean
+}
+
+export interface EnterpriseProfileInput {
+  enterprise_id: string
+  enterprise_name: string
+  industry: string
+  region: string
+  scale: string
+  tax_types: string[]
+  qualifications?: string[]
+}
+
+export interface PolicyAgentMatchResponse {
+  match_score: number
+  semantic_score: number
+  industry_score: number
+  region_score: number
+  scale_score: number
+  tax_type_score: number
+  urgency_score: number
+  reasons: string[]
+  policy_id: string
+  enterprise_id: string
+  use_llm: boolean
+}
+
+export interface PolicyAgentNotificationRequest {
+  policy: Record<string, any>
+  enterprise_profile: EnterpriseProfileInput
+  match_result: Record<string, any>
+}
+
+export interface PolicyAgentNotificationResponse {
+  title: string
+  content: string
+  urgency_level: string
+  key_points: string[]
+  action_steps: string[]
+  deadline?: string
+  use_llm: boolean
+}
+
+export interface PolicyAgentPriorityRequest {
+  policies: Record<string, any>[]
+  enterprise_profile: EnterpriseProfileInput
+}
+
+export interface PolicyAgentStatus {
+  status: string
+  use_llm: boolean
+  llm_provider?: string
+  agent_capabilities: {
+    policy_understanding: boolean
+    semantic_matching: boolean
+    personalized_generation: boolean
+    fallback_mode: boolean
+  }
+  match_weights?: {
+    industry: number
+    region: number
+    scale: number
+    tax_type: number
+    semantic: number
+    urgency: number
+  }
+}
+
+export interface PolicyAgentTestRequest {
+  policies: {
+    policy_id: string
+    title: string
+    content: string
+    source?: string
+    publish_date?: string
+    priority?: string
+  }[]
+  enterprise: EnterpriseProfileInput
+  use_llm?: boolean
+}
+
+export interface PolicyAgentTestResponse {
+  enterprise_id: string
+  policies_processed: number
+  matches: PolicyAgentMatchResponse[]
+  notifications: PolicyAgentNotificationResponse[]
+  prioritized_policies: Record<string, any>[]
+  use_llm: boolean
+  llm_provider: string
+  processing_time: number
+}
+
 export const policyApi = {
+  createEventSource(token: string): EventSource {
+    const url = `${import.meta.env.VITE_API_BASE_URL}/api/v1/policy-notifications/stream`
+    return new EventSource(url, {
+      withCredentials: false
+    } as EventSourceInit & { headers?: Record<string, string> })
+  },
+
+  async getNotificationStatus(token: string): Promise<NotificationStatus> {
+    return request('/policy-notifications/status', {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    })
+  },
+
+  async getRecentNotifications(token: string, limit: number = 50): Promise<{
+    enterprise_id: string
+    count: number
+    notifications: SSEPolicyNotification[]
+  }> {
+    return request('/policy-notifications/recent', {
+      method: 'GET',
+      params: { limit },
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    })
+  },
+
   listPolicies: async (params: PolicySearchParams = {}): Promise<PolicyListResponse> => {
     return request('/policy/list', {
       method: 'POST',
@@ -231,5 +390,40 @@ export const policyApi = {
       responseType: 'blob'
     })
     return response as Blob
+  },
+
+  // PolicyNotificationAgent API
+  async getPolicyAgentStatus(): Promise<PolicyAgentStatus> {
+    return request('/policy-agent/status', {
+      method: 'GET'
+    })
+  },
+
+  async matchPolicyWithEnterprise(matchRequest: PolicyAgentMatchRequest): Promise<PolicyAgentMatchResponse> {
+    return request('/policy-agent/match', {
+      method: 'POST',
+      data: matchRequest
+    })
+  },
+
+  async generatePolicyNotification(notifyRequest: PolicyAgentNotificationRequest): Promise<PolicyAgentNotificationResponse> {
+    return request('/policy-agent/notify', {
+      method: 'POST',
+      data: notifyRequest
+    })
+  },
+
+  async prioritizePolicies(priorityRequest: PolicyAgentPriorityRequest): Promise<Record<string, any>[]> {
+    return request('/policy-agent/prioritize', {
+      method: 'POST',
+      data: priorityRequest
+    })
+  },
+
+  async testPolicyAgent(testRequest: PolicyAgentTestRequest): Promise<PolicyAgentTestResponse> {
+    return request('/policy-agent/test', {
+      method: 'POST',
+      data: testRequest
+    })
   }
 }

@@ -84,6 +84,47 @@ class AnalysisResult:
             self.timestamp = datetime.now()
 
 
+class AuditReport(BaseModel):
+    """审查报告数据结构（整合自 multi_agent_system/report_generator.py）
+    
+    用于从 AuditState 生成结构化审查报告
+    """
+    task_id: str = Field(description="任务ID")
+    tenant_id: str = Field(description="租户ID")
+    audit_type: str = Field(description="审计类型")
+    created_at: datetime = Field(default_factory=datetime.now, description="创建时间")
+    
+    summary: str = Field(default="", description="执行摘要")
+    overall_risk_score: float = Field(default=0.0, ge=0.0, le=100.0, description="综合风险评分")
+    total_findings: int = Field(default=0, description="总发现数")
+    high_risk_count: int = Field(default=0, description="高风险数量")
+    medium_risk_count: int = Field(default=0, description="中风险数量")
+    low_risk_count: int = Field(default=0, description="低风险数量")
+    
+    finance_findings: List[Dict[str, Any]] = Field(default_factory=list, description="财务发现")
+    tax_findings: List[Dict[str, Any]] = Field(default_factory=list, description="税务发现")
+    legal_findings: List[Dict[str, Any]] = Field(default_factory=list, description="法务发现")
+    
+    conflicts: List[Dict[str, Any]] = Field(default_factory=list, description="冲突列表")
+    confidence_scores: Dict[str, float] = Field(default_factory=dict, description="置信度评分")
+    reflection_summary: str = Field(default="", description="反思总结")
+    
+    immediate_actions: List[str] = Field(default_factory=list, description="立即行动")
+    recommendations: List[str] = Field(default_factory=list, description="建议")
+    legal_references: List[Dict[str, Any]] = Field(default_factory=list, description="法律依据")
+    
+    processing_time: float = Field(default=0.0, description="处理时间")
+    rework_count: int = Field(default=0, description="重做次数")
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为字典"""
+        return self.model_dump()
+    
+    def to_json(self) -> str:
+        """转换为 JSON 字符串"""
+        return json.dumps(self.to_dict(), ensure_ascii=False, indent=2)
+
+
 class ReportGenerator(BaseAgent):
     """
     报告生成器智能体
@@ -94,6 +135,7 @@ class ReportGenerator(BaseAgent):
     3. 支持多种报告格式输出
     4. 提供可视化的分析洞察
     5. 生成行动建议和后续步骤
+    6. 从 AuditState 生成审查报告
     """
     
     def __init__(
@@ -136,7 +178,7 @@ class ReportGenerator(BaseAgent):
                 context=self._get_prompt_context()
             )
         except Exception as e:
-            print(f"⚠️ [报告生成器智能体] 加载提示词失败，使用默认提示词: {e}")
+            logger.debug(f"[报告生成器智能体] 加载提示词失败，使用默认提示词: {e}")
             return self._build_default_prompt()
     
     def _get_prompt_context(self) -> Dict[str, Any]:
@@ -654,6 +696,206 @@ class ReportGenerator(BaseAgent):
             risks=[],
             next_steps=["重新尝试生成报告", "检查系统日志", "联系技术支持"]
         )
+    
+    async def generate_from_audit_state(
+        self,
+        state: "AuditState",
+        task_id: str,
+        processing_time: float = 0.0
+    ) -> AuditReport:
+        """
+        从 AuditState 生成审查报告（整合自 multi_agent_system/report_generator.py）
+        
+        Args:
+            state: 审查全局状态
+            task_id: 任务 ID
+            processing_time: 处理时间（秒）
+            
+        Returns:
+            AuditReport: 结构化审查报告
+        """
+        try:
+            report = AuditReport(
+                task_id=task_id,
+                tenant_id=state.get('tenant_id', 'unknown'),
+                audit_type=state.get('audit_type', 'comprehensive'),
+                processing_time=processing_time,
+                rework_count=state.get('rework_count', 0)
+            )
+            
+            report.finance_findings = self._serialize_findings(
+                state.get('finance_findings', [])
+            )
+            report.tax_findings = self._serialize_findings(
+                state.get('tax_findings', [])
+            )
+            report.legal_findings = self._serialize_findings(
+                state.get('legal_findings', [])
+            )
+            
+            all_findings = (
+                report.finance_findings + 
+                report.tax_findings + 
+                report.legal_findings
+            )
+            report.total_findings = len(all_findings)
+            
+            risk_counts = self._classify_risk_levels(all_findings)
+            report.high_risk_count = risk_counts['high']
+            report.medium_risk_count = risk_counts['medium']
+            report.low_risk_count = risk_counts['low']
+            
+            report.overall_risk_score = self._calculate_risk_score(
+                report.high_risk_count,
+                report.medium_risk_count,
+                report.low_risk_count
+            )
+            
+            report.conflicts = self._serialize_conflicts(state.get('conflicts', []))
+            report.confidence_scores = state.get('confidence_scores', {})
+            report.reflection_summary = state.get('reflection_summary', '')
+            
+            report.summary = self._generate_audit_summary(report)
+            report.immediate_actions = self._generate_immediate_actions_from_findings(all_findings)
+            report.recommendations = self._generate_recommendations_from_findings(all_findings)
+            report.legal_references = self._extract_legal_references_from_findings(all_findings)
+            
+            logger.info(
+                f"[报告生成器] 从AuditState生成报告完成: "
+                f"总发现数={report.total_findings}, "
+                f"风险分数={report.overall_risk_score}"
+            )
+            
+            return report
+            
+        except Exception as e:
+            logger.error(f"[报告生成器] 从AuditState生成报告失败: {e}")
+            raise
+    
+    def _serialize_findings(self, findings: List[Any]) -> List[Dict[str, Any]]:
+        """序列化发现列表"""
+        result = []
+        for finding in findings:
+            if isinstance(finding, dict):
+                result.append(finding)
+            else:
+                result.append({
+                    'type': getattr(finding, 'type', 'info'),
+                    'message': getattr(finding, 'message', ''),
+                    'severity': getattr(finding, 'severity', 'low'),
+                    'evidence': getattr(finding, 'evidence', ''),
+                    'legal_basis': getattr(finding, 'legal_basis', ''),
+                    'confidence': getattr(finding, 'confidence', 1.0)
+                })
+        return result
+    
+    def _serialize_conflicts(self, conflicts: List[Any]) -> List[Dict[str, Any]]:
+        """序列化冲突列表"""
+        result = []
+        for conflict in conflicts:
+            if isinstance(conflict, dict):
+                result.append(conflict)
+            else:
+                result.append({
+                    'type': getattr(conflict, 'type', 'unknown'),
+                    'agent1': getattr(conflict, 'agent1', ''),
+                    'agent2': getattr(conflict, 'agent2', ''),
+                    'description': getattr(conflict, 'description', ''),
+                    'severity': getattr(conflict, 'severity', 'medium'),
+                    'resolved': getattr(conflict, 'resolved', False)
+                })
+        return result
+    
+    def _classify_risk_levels(self, findings: List[Dict[str, Any]]) -> Dict[str, int]:
+        """分类风险等级"""
+        counts = {'high': 0, 'medium': 0, 'low': 0}
+        
+        for finding in findings:
+            severity = str(finding.get('severity', 'low')).lower()
+            
+            if severity in ['high', 'critical', 'error', 'risk']:
+                counts['high'] += 1
+            elif severity in ['medium', 'warning', 'moderate']:
+                counts['medium'] += 1
+            else:
+                counts['low'] += 1
+        
+        return counts
+    
+    def _calculate_risk_score(self, high: int, medium: int, low: int) -> float:
+        """计算综合风险分数 (0-100)"""
+        if high + medium + low == 0:
+            return 0.0
+        
+        weighted_score = high * 10 + medium * 5 + low * 1
+        max_possible = 20 * 10
+        normalized = min(100.0, (weighted_score / max_possible) * 100)
+        
+        return round(normalized, 2)
+    
+    def _generate_audit_summary(self, report: AuditReport) -> str:
+        """生成审查摘要"""
+        summary_parts = [
+            f"本次审查共发现 {report.total_findings} 个问题，"
+            f"综合风险评分为 {report.overall_risk_score:.1f}/100。"
+        ]
+        
+        if report.high_risk_count > 0:
+            summary_parts.append(f"其中高风险问题 {report.high_risk_count} 个，需要立即处理。")
+        
+        if report.medium_risk_count > 0:
+            summary_parts.append(f"中风险问题 {report.medium_risk_count} 个，建议尽快处理。")
+        
+        return "".join(summary_parts)
+    
+    def _generate_immediate_actions_from_findings(self, findings: List[Dict[str, Any]]) -> List[str]:
+        """从发现生成立即行动"""
+        actions = []
+        high_risk_findings = [
+            f for f in findings 
+            if str(f.get('severity', 'low')).lower() in ['high', 'critical']
+        ]
+        
+        for finding in high_risk_findings[:5]:
+            actions.append(f"处理高风险问题: {finding.get('message', '详情见报告')}")
+        
+        return actions
+    
+    def _generate_recommendations_from_findings(self, findings: List[Dict[str, Any]]) -> List[str]:
+        """从发现生成建议"""
+        recommendations = []
+        seen = set()
+        
+        for finding in findings:
+            if isinstance(finding, dict):
+                recs = finding.get('recommendations', [])
+                for rec in recs:
+                    rec_key = rec[:50]
+                    if rec_key not in seen:
+                        recommendations.append(rec)
+                        seen.add(rec_key)
+        
+        return recommendations[:10]
+    
+    def _extract_legal_references_from_findings(self, findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """从发现提取法律依据"""
+        references = []
+        seen = set()
+        
+        for finding in findings:
+            if isinstance(finding, dict):
+                legal_basis = finding.get('legal_basis', [])
+                if isinstance(legal_basis, list):
+                    for ref in legal_basis:
+                        ref_key = str(ref)[:50]
+                        if ref_key not in seen:
+                            references.append({
+                                'source': finding.get('type', 'unknown'),
+                                'reference': ref
+                            })
+                            seen.add(ref_key)
+        
+        return references
     
     async def export_report(
         self,

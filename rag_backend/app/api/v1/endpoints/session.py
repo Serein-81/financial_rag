@@ -8,6 +8,7 @@ from app.models.user import User
 from app.models.chat import ChatSession, ChatMessage
 from app.db import AsyncSessionLocal
 from app.schemas.chat import ChatMessageSchema, ChatSessionSchema
+from app.utils.time_utils import format_datetime
 from uuid import UUID
 
 # 引入日志装饰器
@@ -33,8 +34,8 @@ async def get_my_sessions(
         ChatSessionSchema(
             id=str(session.id),
             title=session.title,
-            created_at=session.created_at.isoformat() if session.created_at else None,
-            updated_at=session.updated_at.isoformat() if session.updated_at else (session.created_at.isoformat() if session.created_at else None)
+            created_at=format_datetime(session.created_at) if session.created_at else None,
+            updated_at=format_datetime(session.updated_at) if session.updated_at else (format_datetime(session.created_at) if session.created_at else None)
         )
         for session in sessions
     ]
@@ -65,7 +66,7 @@ async def get_session_history(
             role=msg.role,
             content=msg.content,
             sources=msg.sources,
-            created_at=msg.created_at.isoformat() if msg.created_at else None
+            created_at=format_datetime(msg.created_at) if msg.created_at else None
         )
         for msg in messages
     ]

@@ -1,22 +1,19 @@
 """
-政策智能体 (Policy Agent)
+政策ETL服务 (Policy ETL Service)
 负责政策采集、解析、理解、影响分析
 """
 
 import re
 import json
 import logging
-from typing import Dict, List, Any, Optional, AsyncGenerator
+from typing import Dict, List, Any, Optional
 from datetime import datetime
 from enum import Enum
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.agent_framework.core.base_agent import BaseAgent
-from app.agent_framework.llm.base_adapter import BaseLLMAdapter
-from app.agent_framework.tools.tool_manager import ToolManager
 from app.models.policy import Policy, PolicyStatus, PolicyPriority
 from app.models.policy_relation import PolicyRelation, RelationType
 from app.db.session import SessionLocal
@@ -28,19 +25,19 @@ logger = logging.getLogger(__name__)
 
 class PolicyType(str, Enum):
     """政策类型"""
-    NATIONAL = "national"              # 国家级政策
-    PROVINCIAL = "provincial"          # 省级政策
-    MUNICIPAL = "municipal"            # 市级政策
-    DEPARTMENTAL = "departmental"      # 部门规章
-    CIRCULAR = "circular"              # 公告通知
-    INTERPRETATION = "interpretation"   # 政策解读
+    NATIONAL = "national"
+    PROVINCIAL = "provincial"
+    MUNICIPAL = "municipal"
+    DEPARTMENTAL = "departmental"
+    CIRCULAR = "circular"
+    INTERPRETATION = "interpretation"
 
 
 class ImpactLevel(str, Enum):
     """影响级别"""
-    HIGH = "high"      # 高影响
-    MEDIUM = "medium"  # 中影响
-    LOW = "low"        # 低影响
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
 
 
 class PolicyScope(BaseModel):
@@ -89,9 +86,9 @@ class ImpactReport(BaseModel):
     generated_at: datetime = Field(default_factory=datetime.now)
 
 
-class PolicyAgent:
+class PolicyETLService:
     """
-    政策智能体
+    政策ETL服务
     
     职责：
     1. 采集: 从官方来源抓取政策
@@ -102,32 +99,22 @@ class PolicyAgent:
     
     def __init__(
         self,
-        llm_adapter: BaseLLMAdapter,
-        tool_manager: ToolManager,
         session: Optional[Session] = None
     ):
         """
-        初始化政策智能体
+        初始化政策ETL服务
         
         Args:
-            llm_adapter: 大模型适配器
-            tool_manager: 工具管理器
             session: 数据库会话（可选，不提供时自动创建）
         """
-        self.llm_adapter = llm_adapter
-        self.tool_manager = tool_manager
-        
         if session is not None:
             self.session = session
         else:
             try:
-                from app.db.session import SessionLocal
                 self.session = SessionLocal()
             except Exception as e:
                 logger.warning(f"⚠️ 无法创建数据库会话: {e}")
                 self.session = None
-        
-        self.specialty = "policy"
         
         self.entity_patterns = self._compile_entity_patterns()
         
@@ -135,10 +122,9 @@ class PolicyAgent:
         
         self.impact_keywords = self._load_impact_keywords()
         
-        # 只在首次初始化时打印详细信息
-        if not getattr(PolicyAgent, '_initialized', False):
-            PolicyAgent._initialized = True
-            print("🤖 [Policy Agent] 初始化完成")
+        if not getattr(PolicyETLService, '_initialized', False):
+            PolicyETLService._initialized = True
+            print("📋 [Policy ETL Service] 初始化完成")
             print(f"   - 职责: 政策采集、解析、影响分析")
             print(f"   - 实体模式: {len(self.entity_patterns)} 种")
             print(f"   - 范围关键词: {len(self.scope_keywords)} 个")
@@ -350,6 +336,32 @@ class PolicyAgent:
         
         return impact_report
     
+    async def process_batch(
+        self,
+        tasks: List[PolicyTask]
+    ) -> List[ImpactReport]:
+        """
+        批量处理政策任务
+        
+        Args:
+            tasks: 政策任务列表
+            
+        Returns:
+            影响分析报告列表
+        """
+        logger.info(f"批量处理政策任务: {len(tasks)} 个")
+        
+        reports = []
+        for task in tasks:
+            try:
+                report = await self.process(task)
+                reports.append(report)
+            except Exception as e:
+                logger.error(f"处理政策任务失败: {e}")
+                continue
+        
+        return reports
+    
     async def save_to_database(
         self,
         analysis: PolicyAnalysis,
@@ -490,7 +502,6 @@ class PolicyAgent:
         changes = []
         
         obligation_keywords = ["应当", "必须", "需要", "申报", "缴纳", "报送"]
-        deadline_keywords = ["自.*之日起", ".*日前", ".*前"]
         
         for keyword in obligation_keywords:
             if keyword in content:
@@ -584,7 +595,7 @@ class PolicyAgent:
         similar_stmt = select(Policy).where(
             Policy.id != policy.id,
             Policy.status == PolicyStatus.ACTIVE
-        ).limit(limit)
+        ).order_by(Policy.created_at.desc()).limit(limit)
         
         similar_policies = self.session.execute(similar_stmt).scalars().all()
         
@@ -593,7 +604,7 @@ class PolicyAgent:
                 "policy_id": p.policy_id,
                 "title": p.title,
                 "summary": p.summary,
-                "tags": p.tags
+                "created_at": p.created_at.isoformat() if p.created_at else None
             }
             for p in similar_policies
         ]

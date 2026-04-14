@@ -7,8 +7,9 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.db.session import AsyncSessionLocal
 from app.api import deps
@@ -175,7 +176,7 @@ async def list_review_requests(
         params["limit"] = page_size
         params["offset"] = (page - 1) * page_size
         
-        result = await db.execute(query, params)
+        result = await db.execute(text(query), params)
         requests = result.fetchall()
         
         # 获取总数
@@ -195,11 +196,30 @@ async def list_review_requests(
             count_query += " AND assigned_to = :user_id"
             count_params["user_id"] = str(current_user.id)
         
-        count_result = await db.execute(count_query, count_params)
+        count_result = await db.execute(text(count_query), count_params)
         total = count_result.scalar()
         
         items = []
         for req in requests:
+            # 计算 is_overdue（手动计算，因为是属性而非数据库列）
+            is_overdue = False
+            if req.sla_deadline:
+                now = datetime.now(timezone.utc)
+                sla_deadline = req.sla_deadline
+                if req.sla_deadline.tzinfo is None:
+                    sla_deadline = req.sla_deadline.replace(tzinfo=timezone.utc)
+                is_overdue = now > sla_deadline
+
+            # 计算 age_hours（手动计算，因为是属性而非数据库列）
+            age_hours = 0
+            if req.created_at:
+                now = datetime.now(timezone.utc)
+                created_at = req.created_at
+                if req.created_at.tzinfo is None:
+                    created_at = req.created_at.replace(tzinfo=timezone.utc)
+                delta = now - created_at
+                age_hours = int(delta.total_seconds() / 3600)
+
             items.append(ReviewRequestResponse(
                 id=str(req.id),
                 task_id=str(req.task_id),
@@ -221,8 +241,8 @@ async def list_review_requests(
                 sla_deadline=req.sla_deadline,
                 created_at=req.created_at,
                 updated_at=req.updated_at,
-                is_overdue=req.is_overdue if hasattr(req, 'is_overdue') else False,
-                age_hours=req.age_hours if hasattr(req, 'age_hours') else 0
+                is_overdue=is_overdue,
+                age_hours=age_hours
             ))
         
         total_pages = (total + page_size - 1) // page_size
@@ -257,14 +277,14 @@ async def get_review_statistics(
         
         # 待处理数量
         pending_result = await db.execute(
-            "SELECT COUNT(*) FROM review_requests WHERE tenant_id = :tenant_id AND status = 'pending'",
+            text("SELECT COUNT(*) FROM review_requests WHERE tenant_id = :tenant_id AND status = 'pending'"),
             {"tenant_id": tenant_id}
         )
         pending_count = pending_result.scalar()
         
         # 处理中数量
         in_progress_result = await db.execute(
-            "SELECT COUNT(*) FROM review_requests WHERE tenant_id = :tenant_id AND status = 'in_progress'",
+            text("SELECT COUNT(*) FROM review_requests WHERE tenant_id = :tenant_id AND status = 'in_progress'"),
             {"tenant_id": tenant_id}
         )
         in_progress_count = in_progress_result.scalar()
@@ -272,14 +292,14 @@ async def get_review_statistics(
         # 今日完成数量
         today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
         completed_today_result = await db.execute(
-            "SELECT COUNT(*) FROM review_requests WHERE tenant_id = :tenant_id AND status = 'completed' AND reviewed_at >= :today",
+            text("SELECT COUNT(*) FROM review_requests WHERE tenant_id = :tenant_id AND status = 'completed' AND reviewed_at >= :today"),
             {"tenant_id": tenant_id, "today": today_start}
         )
         completed_today = completed_today_result.scalar()
         
         # 逾期数量
         overdue_result = await db.execute(
-            "SELECT COUNT(*) FROM review_requests WHERE tenant_id = :tenant_id AND sla_deadline < :now AND status != 'completed'",
+            text("SELECT COUNT(*) FROM review_requests WHERE tenant_id = :tenant_id AND sla_deadline < :now AND status != 'completed'"),
             {"tenant_id": tenant_id, "now": datetime.utcnow()}
         )
         overdue_count = overdue_result.scalar()
@@ -288,18 +308,18 @@ async def get_review_statistics(
         priority_stats = {}
         for priority in ["urgent", "high", "normal", "low"]:
             result = await db.execute(
-                "SELECT COUNT(*) FROM review_requests WHERE tenant_id = :tenant_id AND priority = :priority AND status != 'completed'",
+                text("SELECT COUNT(*) FROM review_requests WHERE tenant_id = :tenant_id AND priority = :priority AND status != 'completed'"),
                 {"tenant_id": tenant_id, "priority": priority}
             )
             priority_stats[priority] = result.scalar()
         
         # 平均处理时间（小时）
         avg_time_result = await db.execute(
-            """
+            text("""
             SELECT AVG(EXTRACT(EPOCH FROM (reviewed_at - created_at)) / 3600) 
             FROM review_requests 
             WHERE tenant_id = :tenant_id AND status = 'completed' AND reviewed_at IS NOT NULL
-            """,
+            """),
             {"tenant_id": tenant_id}
         )
         avg_processing_hours = avg_time_result.scalar() or 0
@@ -333,14 +353,33 @@ async def get_review_request(
     """
     try:
         result = await db.execute(
-            "SELECT * FROM review_requests WHERE id = :id AND tenant_id = :tenant_id",
+            text("SELECT * FROM review_requests WHERE id = :id AND tenant_id = :tenant_id"),
             {"id": review_id, "tenant_id": tenant_context['tenant_id']}
         )
         req = result.fetchone()
         
         if not req:
             raise HTTPException(status_code=404, detail="审核请求不存在")
-        
+
+        # 计算 is_overdue（手动计算，因为是属性而非数据库列）
+        is_overdue = False
+        if req.sla_deadline:
+            now = datetime.now(timezone.utc)
+            sla_deadline = req.sla_deadline
+            if req.sla_deadline.tzinfo is None:
+                sla_deadline = req.sla_deadline.replace(tzinfo=timezone.utc)
+            is_overdue = now > sla_deadline
+
+        # 计算 age_hours（手动计算，因为是属性而非数据库列）
+        age_hours = 0
+        if req.created_at:
+            now = datetime.now(timezone.utc)
+            created_at = req.created_at
+            if req.created_at.tzinfo is None:
+                created_at = req.created_at.replace(tzinfo=timezone.utc)
+            delta = now - created_at
+            age_hours = int(delta.total_seconds() / 3600)
+
         return ReviewRequestResponse(
             id=str(req.id),
             task_id=str(req.task_id),
@@ -362,8 +401,8 @@ async def get_review_request(
             sla_deadline=req.sla_deadline,
             created_at=req.created_at,
             updated_at=req.updated_at,
-            is_overdue=req.is_overdue if hasattr(req, 'is_overdue') else False,
-            age_hours=req.age_hours if hasattr(req, 'age_hours') else 0
+            is_overdue=is_overdue,
+            age_hours=age_hours
         )
         
     except HTTPException:
@@ -470,7 +509,7 @@ async def add_review_comment(
     try:
         # 验证审核请求存在
         result = await db.execute(
-            "SELECT id FROM review_requests WHERE id = :id AND tenant_id = :tenant_id",
+            text("SELECT id FROM review_requests WHERE id = :id AND tenant_id = :tenant_id"),
             {"id": review_id, "tenant_id": tenant_context['tenant_id']}
         )
         if not result.fetchone():
@@ -525,18 +564,18 @@ async def list_review_comments(
     try:
         # 验证审核请求存在
         result = await db.execute(
-            "SELECT id FROM review_requests WHERE id = :id AND tenant_id = :tenant_id",
+            text("SELECT id FROM review_requests WHERE id = :id AND tenant_id = :tenant_id"),
             {"id": review_id, "tenant_id": tenant_context['tenant_id']}
         )
         if not result.fetchone():
             raise HTTPException(status_code=404, detail="审核请求不存在")
         
         comments_result = await db.execute(
-            """
+            text("""
             SELECT * FROM review_request_comments 
             WHERE review_request_id = :review_id 
             ORDER BY created_at ASC
-            """,
+            """),
             {"review_id": review_id}
         )
         comments = comments_result.fetchall()
@@ -579,18 +618,18 @@ async def list_review_actions(
     """
     try:
         result = await db.execute(
-            "SELECT id FROM review_requests WHERE id = :id AND tenant_id = :tenant_id",
+            text("SELECT id FROM review_requests WHERE id = :id AND tenant_id = :tenant_id"),
             {"id": review_id, "tenant_id": tenant_context['tenant_id']}
         )
         if not result.fetchone():
             raise HTTPException(status_code=404, detail="审核请求不存在")
         
         actions_result = await db.execute(
-            """
+            text("""
             SELECT * FROM review_request_actions 
             WHERE review_request_id = :review_id 
             ORDER BY created_at ASC
-            """,
+            """),
             {"review_id": review_id}
         )
         actions = actions_result.fetchall()

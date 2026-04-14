@@ -1,50 +1,195 @@
 /**
  * 财务数据管理 API 客户端
+ * 具有鲁棒的错误处理机制，支持租户上下文错误处理
  */
 
-import axios from 'axios'
+import axios, { AxiosResponse } from 'axios'
 import { ElMessage } from 'element-plus'
-import { API_BASE } from '@/config/api'
 
-const API_BASE_URL = '/api/v1'
+/**
+ * 防止重复登录提示的状态管理
+ */
+let isShowingReloginMessage = false
+let lastReloginTimestamp = 0
+const RELOGIN_COOLDOWN_MS = 5000 // 5秒内不重复提示
 
 const financialDataApi = axios.create({
-  baseURL: API_BASE_URL,
+  baseURL: '/api/v1',
   timeout: 60000,
 })
 
 financialDataApi.interceptors.request.use((config) => {
   const token = localStorage.getItem('rag_token')
   if (token) {
+    config.headers = config.headers || {}
     config.headers.Authorization = `Bearer ${token}`
   }
   return config
 })
 
+/**
+ * 认证错误类型枚举（与后端保持一致）
+ */
+enum AuthErrorType {
+  NO_TOKEN = 'no_token',
+  TOKEN_EXPIRED = 'token_expired',
+  TOKEN_INVALID = 'token_invalid',
+  TENANT_MISSING = 'tenant_missing',
+  TENANT_INACTIVE = 'tenant_inactive',
+  USER_NOT_FOUND = 'user_not_found',
+  PERMISSION_DENIED = 'permission_denied',
+  UNKNOWN_ERROR = 'unknown_error'
+}
+
+/**
+ * 认证错误消息映射
+ */
+const AuthErrorMessages: Record<AuthErrorType, string> = {
+  [AuthErrorType.NO_TOKEN]: '请先登录',
+  [AuthErrorType.TOKEN_EXPIRED]: '登录已过期，请重新登录',
+  [AuthErrorType.TOKEN_INVALID]: '登录会话无效，请重新登录',
+  [AuthErrorType.TENANT_MISSING]: '会话已失效，请重新登录',
+  [AuthErrorType.TENANT_INACTIVE]: '租户账户已被禁用',
+  [AuthErrorType.USER_NOT_FOUND]: '用户不存在',
+  [AuthErrorType.PERMISSION_DENIED]: '权限不足，无法访问该资源',
+  [AuthErrorType.UNKNOWN_ERROR]: '认证失败，请稍后重试'
+}
+
+/**
+ * 从错误响应中提取错误类型
+ */
+function extractErrorType(error: any): AuthErrorType | null {
+  // 优先从 error_type 字段获取（后端新版响应）
+  if (error.response?.data?.error_type) {
+    const errorType = error.response.data.error_type as string
+    if (Object.values(AuthErrorType).includes(errorType as AuthErrorType)) {
+      return errorType as AuthErrorType
+    }
+  }
+  
+  // 从错误消息推断（兼容旧版响应）
+  const errorMessage = error.response?.data?.detail || 
+                       error.response?.data?.message ||
+                       error.message
+  
+  if (!errorMessage) return null
+  
+  const lowerMessage = errorMessage.toLowerCase()
+  
+  if (lowerMessage.includes('tenant') || 
+      lowerMessage.includes('租户') ||
+      lowerMessage.includes('missing tenant')) {
+    return AuthErrorType.TENANT_MISSING
+  }
+  
+  if (lowerMessage.includes('expired') || 
+      lowerMessage.includes('过期')) {
+    return AuthErrorType.TOKEN_EXPIRED
+  }
+  
+  if (lowerMessage.includes('invalid') || 
+      lowerMessage.includes('无效')) {
+    return AuthErrorType.TOKEN_INVALID
+  }
+  
+  if (lowerMessage.includes('no token') || 
+      lowerMessage.includes('authentication required')) {
+    return AuthErrorType.NO_TOKEN
+  }
+  
+  return null
+}
+
+/**
+ * 安全地处理认证错误，显示登录提示
+ */
+function handleAuthError(error?: any): void {
+  // 防止重复提示
+  const now = Date.now()
+  if (isShowingReloginMessage || (now - lastReloginTimestamp < RELOGIN_COOLDOWN_MS)) {
+    return
+  }
+  
+  // 检查是否已经在登录页
+  if (window.location.pathname === '/login') {
+    return
+  }
+  
+  isShowingReloginMessage = true
+  lastReloginTimestamp = now
+  
+  // 清除本地认证信息
+  localStorage.removeItem('rag_token')
+  localStorage.removeItem('user')
+  
+  // 根据错误类型获取精确的消息
+  let message = '登录已过期，请重新登录'
+  
+  if (error) {
+    const errorType = extractErrorType(error)
+    if (errorType && AuthErrorMessages[errorType]) {
+      message = AuthErrorMessages[errorType]
+    }
+  }
+  
+  ElMessage.error({
+    message,
+    duration: 3000,
+    onClose: () => {
+      isShowingReloginMessage = false
+      window.location.href = '/login'
+    }
+  })
+}
+
 financialDataApi.interceptors.response.use(
   (response) => response,
   (error) => {
+    // 安全获取错误信息
     const status = error.response?.status
-    const errorMessage = error.response?.data?.detail || error.response?.data?.message
+    const errorMessage = error.response?.data?.detail || 
+                         error.response?.data?.message || 
+                         error.message
 
-    if (status === 401 || status === 403) {
-      localStorage.removeItem('rag_token')
-      localStorage.removeItem('user')
-      
-      const message = status === 401 
-        ? '登录已过期，请重新登录' 
-        : '登录已过期，请重新登录'
-      
-      ElMessage.error({
-        message,
-        duration: 3000,
-        onClose: () => {
-          window.location.href = '/login'
-        }
-      })
-    } else if (status === 500) {
+    // 处理 401 未授权错误
+    if (status === 401) {
+      handleAuthError(error)
+      return Promise.reject(error)
+    }
+    
+    // 处理 403 禁止访问错误
+    if (status === 403) {
+      // 区分 tenant context 错误和普通权限错误
+      const errorType = extractErrorType(error)
+      if (errorType === AuthErrorType.TENANT_MISSING || 
+          errorType === AuthErrorType.TENANT_INACTIVE ||
+          errorType === AuthErrorType.TOKEN_INVALID) {
+        // Tenant context 缺失或租户无效，视为未登录处理
+        handleAuthError(error)
+      } else {
+        // 其他 403 错误（如权限不足）
+        ElMessage.error({
+          message: errorMessage || '权限不足，无法访问该资源',
+          duration: 3000
+        })
+      }
+      return Promise.reject(error)
+    }
+    
+    // 处理 500 服务器错误
+    if (status === 500) {
       ElMessage.error({
         message: '服务器错误，请稍后重试',
+        duration: 3000
+      })
+      return Promise.reject(error)
+    }
+    
+    // 处理其他错误（如网络错误、超时等）
+    if (!error.response) {
+      console.error('[Financial Data API] Network error:', error.message)
+      ElMessage.error({
+        message: '网络连接失败，请检查网络',
         duration: 3000
       })
     }
@@ -197,7 +342,7 @@ export const financialDataApiClient = {
    * 创建财务数据记录
    */
   async create(data: FinancialDataCreate): Promise<FinancialDataResponse> {
-    const response = await financialDataApi.post('/financial-data', data)
+    const response = await financialDataApi.post<FinancialDataResponse>('/financial-data', data)
     ElMessage.success('财务数据创建成功')
     return response.data
   },
@@ -210,7 +355,7 @@ export const financialDataApiClient = {
     page_size?: number
     fiscal_year?: number
   } = {}): Promise<PaginatedResponse<FinancialDataResponse>> {
-    const response = await financialDataApi.get('/financial-data', { params })
+    const response = await financialDataApi.get<PaginatedResponse<FinancialDataResponse>>('/financial-data', { params })
     return response.data
   },
 
@@ -218,7 +363,7 @@ export const financialDataApiClient = {
    * 获取财务数据详情
    */
   async get(recordId: string): Promise<FinancialDataResponse> {
-    const response = await financialDataApi.get(`/financial-data/${recordId}`)
+    const response = await financialDataApi.get<FinancialDataResponse>(`/financial-data/${recordId}`)
     return response.data
   },
 
@@ -226,7 +371,7 @@ export const financialDataApiClient = {
    * 根据年度和周期类型获取财务数据
    */
   async getByYear(fiscalYear: number, periodType: string = 'yearly'): Promise<FinancialDataResponse | null> {
-    const response = await financialDataApi.get('/financial-data/by-year', {
+    const response = await financialDataApi.get<FinancialDataResponse | null>('/financial-data/by-year', {
       params: { fiscal_year: fiscalYear, period_type: periodType }
     })
     return response.data
@@ -236,7 +381,7 @@ export const financialDataApiClient = {
    * 更新财务数据
    */
   async update(recordId: string, data: FinancialDataUpdate): Promise<FinancialDataResponse> {
-    const response = await financialDataApi.put(`/financial-data/${recordId}`, data)
+    const response = await financialDataApi.put<FinancialDataResponse>(`/financial-data/${recordId}`, data)
     ElMessage.success('财务数据更新成功')
     return response.data
   },
@@ -253,7 +398,7 @@ export const financialDataApiClient = {
    * 查询税务信息
    */
   async queryTax(params: TaxQueryRequest = {}): Promise<TaxQueryResponse> {
-    const response = await financialDataApi.post('/financial-data/query-tax', params)
+    const response = await financialDataApi.post<TaxQueryResponse>('/financial-data/query-tax', params)
     return response.data
   },
 
@@ -262,7 +407,7 @@ export const financialDataApiClient = {
    */
   async getStatistics(fiscalYear?: number): Promise<FinancialStatistics> {
     const params = fiscalYear ? { fiscal_year: fiscalYear } : {}
-    const response = await financialDataApi.get('/financial-data/statistics', { params })
+    const response = await financialDataApi.get<FinancialStatistics>('/financial-data/statistics', { params })
     return response.data
   },
 
@@ -270,7 +415,7 @@ export const financialDataApiClient = {
    * 获取财务数据修改历史
    */
   async getHistory(recordId: string): Promise<any[]> {
-    const response = await financialDataApi.get(`/financial-data/history/${recordId}`)
+    const response = await financialDataApi.get<any[]>(`/financial-data/history/${recordId}`)
     return response.data
   },
 
@@ -289,7 +434,14 @@ export const financialDataApiClient = {
     formData.append('file', file)
     formData.append('overwrite_existing', String(overwriteExisting))
     
-    const response = await financialDataApi.post('/financial-data/upload-excel', formData, {
+    const response = await financialDataApi.post<{
+      success: boolean
+      message: string
+      records_created: number
+      records_updated: number
+      records_skipped: number
+      errors: Array<{ row: number; field: string; message: string }>
+    }>('/financial-data/upload-excel', formData, {
       headers: {
         'Content-Type': 'multipart/form-data'
       }
@@ -334,7 +486,15 @@ export const financialDataApiClient = {
     formData.append('overwrite_existing', String(options.overwriteExisting || false))
     
     try {
-      const response = await financialDataApi.post('/financial-data/upload-excel-intelligent', formData, {
+      const response = await financialDataApi.post<{
+        success: boolean
+        message: string
+        detected_columns: Record<string, string | null>
+        records_created: number
+        records_updated: number
+        records_skipped: number
+        validation_errors: Array<{ row: number; field: string; message: string }>
+      }>('/financial-data/upload-excel-intelligent', formData, {
         headers: {
           'Content-Type': 'multipart/form-data'
         }
@@ -387,7 +547,7 @@ export const financialDataApiClient = {
    */
   async getTemplateDescription(): Promise<any> {
     try {
-      const response = await financialDataApi.get('/financial-data/template-description')
+      const response = await financialDataApi.get<any>('/financial-data/template-description')
       return response.data
     } catch (error: any) {
       console.error('获取模板说明失败:', error)
@@ -400,11 +560,11 @@ export const financialDataApiClient = {
    */
   async downloadTemplate(): Promise<void> {
     try {
-      const response = await financialDataApi.get('/financial-data/download-template', {
+      const response = await financialDataApi.get<Blob>('/financial-data/download-template', {
         responseType: 'blob',
       })
 
-      const blob = new Blob([response.data])
+      const blob = new Blob([response.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
       const url = window.URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
@@ -439,7 +599,7 @@ export const financialDataApiClient = {
    */
   async downloadTestTemplate(type: string = 'all'): Promise<void> {
     try {
-      const response = await financialDataApi.get('/financial-data/download-test-templates', {
+      const response = await financialDataApi.get<Blob>('/financial-data/download-test-templates', {
         params: { template_type: type },
         responseType: 'blob',
       })
@@ -454,7 +614,7 @@ export const financialDataApiClient = {
         }
       }
 
-      const blob = new Blob([response.data])
+      const blob = new Blob([response.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
       const blobUrl = window.URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = blobUrl
