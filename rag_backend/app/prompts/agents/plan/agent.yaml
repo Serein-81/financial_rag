@@ -1,0 +1,32 @@
+agent:
+  name: "plan"
+  display_name: "计划执行引擎"
+  version: "1.0.0"
+  type: "reasoning_engine"
+  description: "基于Plan-Execute模式的智能体，先规划后执行，适合复杂多步骤任务"
+  
+  reasoning:
+    engine: "plan"
+    max_iterations: 10
+    max_steps: 10
+    timeout: 600
+    enable_monitoring: true
+    
+  prompts:
+    system: "system.md"
+    phases_dir: "phases/"
+    fewshot_dir: "FewShot/"
+    
+  tools:
+    enabled: true
+    required: []
+    optional: []
+    
+  output:
+    format: "structured"
+    confidence_required: true
+    
+  metadata:
+    author: "AI Team"
+    created: "2024-01-01"
+    tags: ["reasoning", "plan", "execution"]

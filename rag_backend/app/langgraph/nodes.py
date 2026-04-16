@@ -169,25 +169,26 @@ class AgentNodeFactory:
         """
         创建反思节点
         
-        封装 ReflectionSpecialist 进行质量审核
+        使用 review_quality 函数进行质量审核
         """
         async def reflection_node(state: AgentState) -> AgentState:
             """反思节点 - 质量审核"""
             logger.info(f"[Reflection] 开始质量审核")
             
             try:
-                agent = self.get_or_create_agent("reflection")
+                from app.prompts.llm_functions import review_quality
+                import json
                 
-                reflection_result = await agent.review(
-                    query=state["user_query"],
-                    specialist_responses=state["specialist_results"],
-                    confidence_threshold=state["metadata"].get("confidence_threshold", 0.7)
+                specialist_results_str = json.dumps(state["specialist_results"], ensure_ascii=False)
+                reflection_result = await review_quality(
+                    user_question=state["user_query"],
+                    ai_answer=specialist_results_str
                 )
                 
                 return {
                     **state,
                     "reflection_result": reflection_result,
-                    "needs_human_review": reflection_result.needs_human_review
+                    "needs_human_review": not reflection_result.get("is_quality_acceptable", True)
                 }
                 
             except Exception as e:

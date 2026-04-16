@@ -1,0 +1,33 @@
+agent:
+  name: "react"
+  display_name: "ReAct推理引擎"
+  version: "1.0.0"
+  type: "reasoning_engine"
+  description: "基于Reasoning and Acting模式的智能体，实现思考-行动-观察的循环推理"
+  
+  reasoning:
+    engine: "react"
+    max_iterations: 10
+    timeout: 300
+    early_stop_enabled: true
+    similarity_threshold: 0.8
+    max_consecutive_failures: 3
+    
+  prompts:
+    system: "system.md"
+    fewshot_dir: "FewShot/"
+    tools_dir: "tools/"
+    
+  tools:
+    enabled: true
+    required: []
+    optional: []
+    
+  output:
+    format: "structured"
+    confidence_required: true
+    
+  metadata:
+    author: "AI Team"
+    created: "2024-01-01"
+    tags: ["reasoning", "react", "base"]

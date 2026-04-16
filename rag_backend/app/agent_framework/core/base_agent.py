@@ -78,7 +78,7 @@ class BaseAgent(ABC):
         print(f"   - 超时设置: {self.timeout} 秒")
         print(f"   - 追踪功能: {'启用' if self.enable_tracing else '禁用'}")
     
-    def _render_system_prompt(self, context: Dict[str, Any] = None) -> str:
+    def _render_system_prompt(self, context: Dict[str, Any] = None, **render_kwargs) -> str:
         """
         渲染系统提示词
 
@@ -88,27 +88,28 @@ class BaseAgent(ABC):
 
         Args:
             context: 渲染上下文，包含需要替换的变量（可选）
+            **render_kwargs: 传递给 PromptEngine.render() 的额外参数
+                          支持: load_skills, include_shared 等
 
         Returns:
             系统提示词
         """
         # 1. 优先使用结构化提示词系统
         if self.agent_name:
-            from app.prompts.prompt_registry import get_prompt_registry
             from app.services.prompt_service import PromptEngine
 
-            registry = get_prompt_registry()
-            system_prompt = registry.load_system_prompt(self.agent_name)
-
-            if system_prompt:
-                # 使用 PromptEngine 渲染变量
-                engine = PromptEngine()
-                return engine.render(
-                    template_name=self.agent_name,
-                    context=context or {},
-                    use_cache=True,
-                    load_skills=False
-                )
+            # 使用 PromptEngine 渲染变量
+            engine = PromptEngine()
+            rendered = engine.render(
+                template_name=self.agent_name,
+                context=context or {},
+                use_cache=True,
+                load_skills=render_kwargs.get('load_skills', False),
+                include_shared=render_kwargs.get('include_shared')
+            )
+            
+            if rendered:
+                return rendered
 
         # 2. 使用静态提示词（回退方案）
         return self.system_prompt

@@ -1,0 +1,22 @@
+name: "政策通知专家"
+agent_name: "policy_notification"
+description: "政策通知智能体 - 语义理解政策内容，智能匹配企业并生成个性化通知"
+version: "1.0.0"
+created_at: "2025-01-15"
+
+capabilities:
+  - "政策语义理解"
+  - "企业-政策智能匹配"
+  - "个性化通知生成"
+  - "风险提示"
+  - "合规建议"
+
+prompt:
+  system_file: "system.md"
+  max_tokens: 4000
+  temperature: 0.7
+
+metadata:
+  category: "coordinator"
+  layer: "output"
+  is_critical: false

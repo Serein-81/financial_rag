@@ -1,0 +1,35 @@
+agent:
+  name: "report"
+  display_name: "报告生成专家"
+  version: "1.0.0"
+  type: "output"
+  description: "整合多专家分析结果，生成结构化、可视化的报告"
+  
+  reasoning:
+    engine: "plan"
+    max_iterations: 5
+    timeout: 120
+    
+  prompts:
+    system: "system.md"
+    templates_dir: "templates/"
+    
+  tools:
+    enabled: true
+    required: []
+    optional: []
+    
+  report_types:
+    - sales
+    - financial
+    - executive
+    - technical
+    
+  output:
+    format: "structured"
+    confidence_required: true
+    
+  metadata:
+    author: "AI Team"
+    created: "2024-01-01"
+    tags: ["report", "generation", "document"]

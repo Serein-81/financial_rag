@@ -1,0 +1,28 @@
+agent:
+  name: "intent_router"
+  display_name: "意图路由"
+  version: "1.0.0"
+  type: "coordination"
+  description: "用户输入分类和意图识别，融合接待和意图识别功能"
+  
+  reasoning:
+    engine: "react"
+    max_iterations: 3
+    timeout: 30
+    confidence_threshold: 0.7
+    
+  prompts:
+    system: "system.md"
+    patterns_dir: "patterns/"
+    
+  tools:
+    enabled: false
+    
+  output:
+    format: "structured"
+    confidence_required: true
+    
+  metadata:
+    author: "AI Team"
+    created: "2024-01-01"
+    tags: ["routing", "intent", "classification"]

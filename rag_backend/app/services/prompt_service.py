@@ -76,7 +76,8 @@ class PromptEngine:
         template_name: str, 
         context: Dict[str, Any],
         use_cache: bool = True,
-        load_skills: bool = True
+        load_skills: bool = True,
+        include_shared: List[str] = None
     ) -> str:
         """
         渲染提示词模板
@@ -86,6 +87,7 @@ class PromptEngine:
             context: 上下文变量字典
             use_cache: 是否使用缓存
             load_skills: 是否自动加载工具的 skill 文件
+            include_shared: 需要加载的共享组件名称列表
         
         Returns:
             渲染后的提示词字符串
@@ -97,33 +99,102 @@ class PromptEngine:
             print(f"⚠️ [PromptEngine] 模板不存在: {template_name}")
             return ""
         
-        # 2. 动态加载 Skills
+        # 2. 加载共享组件
+        if include_shared:
+            shared_parts = []
+            for shared_name in include_shared:
+                shared_content = self._load_shared_component(shared_name, use_cache)
+                if shared_content:
+                    shared_parts.append(shared_content)
+                    print(f"✅ [PromptEngine] 已加载共享组件: {shared_name}")
+            
+            if shared_parts:
+                template = template + "\n\n" + "\n\n".join(shared_parts)
+        
+        # 3. 动态加载 Skills
         if load_skills and "tools" in context:
-            skills_content = self._load_skills_for_tools(context["tools"], use_cache)
+            tools_list = context["tools"]
+            
+            if isinstance(tools_list, dict):
+                tools_list = [{"name": name, **info} for name, info in tools_list.items()]
+            elif isinstance(tools_list, list) and tools_list and isinstance(tools_list[0], str):
+                tools_list = [{"name": tool} for tool in tools_list]
+            
+            skills_content = self._load_skills_for_tools(tools_list, use_cache)
             if skills_content:
                 template = template + "\n\n" + skills_content
         
-        # 3. 处理循环渲染
+        # 4. 处理循环渲染
         template = self._process_for_loops(template, context)
         
-        # 4. 处理条件渲染
+        # 5. 处理条件渲染
         template = self._process_conditions(template, context)
         
-        # 5. 替换变量
+        # 6. 替换变量
         template = self._replace_variables(template, context)
         
-        # 6. 清理多余空行
+        # 7. 清理多余空行
         template = self._clean_whitespace(template)
         
         return template.strip()
     
-    def _load_template(self, template_name: str, use_cache: bool) -> str:
-        """从文件加载模板"""
-        # 检查缓存
-        if use_cache and template_name in self.templates_cache:
-            return self.templates_cache[template_name]
+    def _load_shared_component(self, component_name: str, use_cache: bool) -> str:
+        """加载共享组件"""
+        cache_key = f"shared:{component_name}"
         
-        # 从文件加载
+        if use_cache and cache_key in self.skills_cache:
+            return self.skills_cache[cache_key]
+        
+        shared_dir = self.prompts_root / "shared"
+        component_path = shared_dir / f"{component_name}.yaml"
+        
+        if not component_path.exists():
+            component_path = shared_dir / f"{component_name}.md"
+        
+        if not component_path.exists():
+            print(f"⚠️ [PromptEngine] 共享组件不存在: {component_name}")
+            return ""
+        
+        try:
+            with open(component_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            if use_cache:
+                self.skills_cache[cache_key] = content
+            
+            return content
+        
+        except Exception as e:
+            print(f"❌ [PromptEngine] 加载共享组件失败: {component_name} | 错误: {e}")
+            return ""
+    
+    def _load_template(self, template_name: str, use_cache: bool) -> str:
+        """从文件加载模板
+        
+        加载顺序：
+        1. 优先从 agents/{template_name}/system.md 加载（结构化提示词）
+        2. 回退到 templates/{template_name}.txt
+        """
+        # 检查缓存
+        cache_key = f"agent:{template_name}"
+        if use_cache and cache_key in self.templates_cache:
+            return self.templates_cache[cache_key]
+        
+        # 1. 优先从 agents 目录加载
+        agent_prompt_path = self.prompts_root / "agents" / template_name / "system.md"
+        if agent_prompt_path.exists():
+            try:
+                with open(agent_prompt_path, 'r', encoding='utf-8') as f:
+                    template = f.read()
+                
+                if use_cache:
+                    self.templates_cache[cache_key] = template
+                
+                return template
+            except Exception as e:
+                print(f"❌ [PromptEngine] 加载Agent提示词失败: {template_name} | 错误: {e}")
+        
+        # 2. 回退到 templates 目录
         template_path = self.templates_dir / f"{template_name}.txt"
         
         if not template_path.exists():
@@ -135,7 +206,7 @@ class PromptEngine:
             
             # 缓存模板
             if use_cache:
-                self.templates_cache[template_name] = template
+                self.templates_cache[cache_key] = template
             
             return template
         

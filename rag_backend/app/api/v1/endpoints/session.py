@@ -66,7 +66,9 @@ async def get_session_history(
             role=msg.role,
             content=msg.content,
             sources=msg.sources,
-            created_at=format_datetime(msg.created_at) if msg.created_at else None
+            created_at=format_datetime(msg.created_at) if msg.created_at else None,
+            sender_name=(current_user.nickname or current_user.username or '用户') if msg.role == 'user' else 'AI助手',
+            sender_avatar=current_user.avatar_url if msg.role == 'user' else None
         )
         for msg in messages
     ]

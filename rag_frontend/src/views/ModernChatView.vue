@@ -93,8 +93,21 @@ async function sendMessage() {
   const query = userInput.value.trim()
   userInput.value = ''
 
-  sessionStore.addMessage({ role: 'user', content: query })
-  sessionStore.addMessage({ role: 'assistant', content: '' })
+  const now = new Date().toISOString()
+  sessionStore.addMessage({
+    role: 'user',
+    content: query,
+    sender_name: authStore.userName || '用户',
+    sender_avatar: authStore.avatarUrl || undefined,
+    created_at: now
+  })
+  sessionStore.addMessage({
+    role: 'assistant',
+    content: '',
+    sender_name: 'AI助手',
+    sender_avatar: undefined,
+    created_at: now
+  })
 
   isLoading.value = true
   scrollToBottom()
@@ -276,6 +289,23 @@ function getStatusColor(status: string) {
   }
 }
 
+function getInitials(name: string): string {
+  return name.charAt(0).toUpperCase()
+}
+
+function getAvatarColor(name: string): string {
+  const colors = [
+    'from-emerald-500 to-teal-600',
+    'from-teal-500 to-emerald-600',
+    'from-green-500 to-emerald-600',
+    'from-orange-500 to-red-600',
+    'from-cyan-500 to-teal-600',
+    'from-lime-500 to-emerald-600'
+  ]
+  const index = name.charCodeAt(0) % colors.length
+  return colors[index]
+}
+
 function formatFileSize(bytes: number | null): string {
   if (!bytes) return '-'
   if (bytes < 1024) return bytes + ' B'
@@ -391,24 +421,45 @@ function createNewChat() {
 
         <div v-for="(message, index) in messages" :key="index">
           <!-- User Message -->
-          <div v-if="message.role === 'user'" class="flex gap-4 max-w-4xl ml-auto">
-            <div class="flex-1 flex justify-end">
-              <div class="bg-emerald-600 text-white px-6 py-4 rounded-2xl rounded-br-md max-w-xl">
+          <div v-if="message.role === 'user'" class="flex gap-3 max-w-4xl ml-auto items-end">
+            <!-- Message Content -->
+            <div class="flex-1 flex flex-col items-end">
+              <div class="flex items-center gap-2 mb-1">
+                <span class="text-xs text-gray-400">{{ message.created_at ? formatChatTime(message.created_at) : '' }}</span>
+                <span class="text-sm font-medium text-gray-700">{{ message.sender_name || authStore.userName || '用户' }}</span>
+              </div>
+              <div class="bg-gradient-to-br from-emerald-500 to-teal-600 text-white px-4 py-3 rounded-2xl rounded-br-md max-w-xl">
                 <p class="whitespace-pre-wrap">{{ message.content }}</p>
               </div>
             </div>
-            <div class="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-600 to-teal-600 flex items-center justify-center text-white font-medium flex-shrink-0">
-              {{ authStore.userName?.charAt(0) || 'U' }}
+
+            <!-- Avatar (Right side for user's messages) -->
+            <div class="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold flex-shrink-0 overflow-hidden bg-gradient-to-br from-emerald-500 to-teal-600">
+              <img
+                v-if="message.sender_avatar"
+                :src="message.sender_avatar"
+                :alt="message.sender_name || 'User'"
+                class="w-full h-full object-cover"
+                @error="$event.target.style.display = 'none'"
+              />
+              <span v-else>{{ getInitials(message.sender_name || authStore.userName || 'U') }}</span>
             </div>
           </div>
 
           <!-- Assistant Message -->
-          <div v-else class="flex gap-4 max-w-4xl">
-            <div class="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-600 to-teal-600 flex items-center justify-center text-white font-medium flex-shrink-0">
-              <Sparkles :size="20" />
+          <div v-else class="flex gap-3 max-w-4xl">
+            <!-- Avatar -->
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center text-white font-bold flex-shrink-0">
+              <Sparkles :size="18" />
             </div>
+
+            <!-- Message Content -->
             <div class="flex-1">
-              <div class="bg-white border border-gray-200 px-6 py-4 rounded-2xl rounded-bl-md">
+              <div class="flex items-center gap-2 mb-1">
+                <span class="text-sm font-medium text-gray-700">{{ message.sender_name || 'AI助手' }}</span>
+                <span class="text-xs text-gray-400">{{ message.created_at ? formatChatTime(message.created_at) : '' }}</span>
+              </div>
+              <div class="bg-white border border-gray-200 px-4 py-3 rounded-2xl rounded-bl-md">
                 <div v-if="message.content" class="prose prose-sm max-w-none" v-html="renderMarkdown(message.content)"></div>
                 <div v-else class="flex items-center gap-2 text-gray-500">
                   <Loader2 :size="18" class="animate-spin" />

@@ -26,8 +26,8 @@ from app.agent_framework.tools import (
 # 导入现有的工具
 from app.tools import get_all_tools
 
-# 导入提示词加载器（已从简单版升级到高级版）
-from app.services.prompt_service import load_agent_system_prompt
+# 导入统一提示词加载器
+from app.prompts.loader import AgentPromptLoader
 
 
 class HybridEnterpriseAgentService:
@@ -84,7 +84,8 @@ class HybridEnterpriseAgentService:
         compat_layer.register_langchain_tools(langchain_tools)
         
         # 4. 加载系统提示词
-        system_prompt = load_agent_system_prompt()
+        prompt_loader = AgentPromptLoader()
+        system_prompt = prompt_loader.load_system_prompt("react") or "你是一个智能助手。"
         
         # 5. 创建 ReAct Agent
         self.agent = ReActAgent(

@@ -1,0 +1,38 @@
+agent:
+  name: "tax"
+  display_name: "税务专家"
+  version: "1.0.0"
+  type: "specialist"
+  description: "处理企业税务相关问题，包括增值税、企业所得税、个人所得税等"
+  
+  reasoning:
+    engine: "react"
+    max_iterations: 10
+    timeout: 60
+    
+  prompts:
+    system: "system.md"
+    domains_dir: "domains/"
+    
+  tools:
+    enabled: true
+    required: []
+    optional: []
+    
+  domains:
+    - vat
+    - income_tax
+    - personal_income_tax
+    - consumption_tax
+    - property_tax
+    - stamp_tax
+    - environment_tax
+    
+  output:
+    format: "structured"
+    confidence_required: true
+    
+  metadata:
+    author: "AI Team"
+    created: "2024-01-01"
+    tags: ["tax", "finance", "expert"]

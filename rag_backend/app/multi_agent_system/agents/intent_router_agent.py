@@ -636,13 +636,12 @@ class IntentRouterAgent(BaseAgent):
         
         try:
             response = await self.llm_adapter.agenerate(
-                prompt=prompt,
-                system_prompt=self.system_prompt,
+                prompts=[prompt],
                 temperature=0.1,
                 max_tokens=500
             )
             
-            result_text = response.strip()
+            result_text = response.content.strip()
             
             if result_text.startswith("```"):
                 lines = result_text.split("\n")

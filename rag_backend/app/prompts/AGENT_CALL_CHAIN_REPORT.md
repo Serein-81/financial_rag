@@ -17,7 +17,7 @@
 | **FinanceSpecialist** | 专家Agent | 智能协作页面 | `/api/v1/multi-agent/query` | `orchestrator.py` | `finance_specialist.run()` | ✅ |
 | **TaxSpecialist** | 专家Agent | 智能协作页面 | `/api/v1/multi-agent/query` | `orchestrator.py` | `tax_specialist.run()` | ✅ |
 | **LegalSpecialist** | 专家Agent | 智能协作页面 | `/api/v1/multi-agent/query` | `orchestrator.py` | `legal_specialist.run()` | ✅ |
-| **ReflectionSpecialist** | 审核Agent | 智能协作页面 | `/api/v1/multi-agent/query` | `orchestrator.py` | `reflection.run()` | ✅ |
+| **review_quality()** | 质量审查 | 智能协作页面 | `/api/v1/multi-agent/query` | `orchestrator.py` | `review_quality()` | ✅ |
 | **OutputAgent** | 输出合成Agent | 智能协作页面 | `/api/v1/multi-agent/query` | `orchestrator.py` | `output_agent.synthesize()` | ✅ |
 | **ReportGenerator** | 报告生成Agent | 需单独调用 | `/api/v1/multi-agent/report/generate` | `multi_agent.py` | `orch.generate_report()` | ✅ |
 | **PolicyNotificationAgent** | 政策通知Agent | 政策追踪页面 | `/api/v1/policy-agent/*` | `policy_agent.py` | `service.match_policy()` | ✅ |
@@ -27,7 +27,7 @@
 | Agent名称 | 是否继承BaseAgent | LLM调用 | 问题 | 建议 |
 |-----------|-----------------|---------|------|------|
 | **NotificationAgent** | ❌ 否 | ❌ 无 | 只是规则匹配Service | 重构为Service，不继承Agent |
-| **TriageSpecialist** | ✅ 是 | ❌ 无 | 可能是路由逻辑 | 合并到IntentAgent或改为Service |
+| **triage_document()** | ✅ 是 | ✅ 是 | 文档分诊 | 已迁移到 llm_functions |
 | **PolicyAgent** | ❌ 否 | ❌ 无 | 只是数据处理Service | 重构为Service |
 
 ---
@@ -161,7 +161,7 @@ async def process_multi_agent_query(
 1. **接待Agent** (ReceptionistAgent) - 预处理用户输入
 2. **意图识别** (IntentAgent) - 分析用户意图和路由策略
 3. **专家处理** (Finance/Tax/Legal Specialist) - 执行专业分析
-4. **反思审核** (ReflectionSpecialist) - 可选（`enable_reflection=True`）
+4. **反思审核** (`review_quality()` 函数) - 可选（`enable_reflection=True`）
 5. **输出合成** (OutputAgent) - **✅ 正常流程的最后一步**
 6. **报告生成** (ReportGenerator) - 仅当用户明确要求（很少触发）
 
@@ -229,7 +229,7 @@ AgentOrchestrator.process_context()
   ├→ FinanceSpecialist.run() [金融专家] ✅
   ├→ TaxSpecialist.run() [税务专家] ✅
   ├→ LegalSpecialist.run() [法律专家] ✅
-  ├→ ReflectionSpecialist.run() [反思审核] ✅ (可选)
+  ├→ review_quality() [反思审核] ✅ (可选)
   └→ OutputAgent.synthesize() [输出合成] ✅ ← 正常流程的最后一步
       ↓ (仅当用户明确要求时)
       ReportGenerator.generate() [报告生成]
@@ -248,9 +248,6 @@ async def query_specialist(request: SpecialistQueryRequest):
         result = await specialist.run(query=request.query, ...)
     elif request.specialist_type == SpecialistType.LEGAL:
         specialist = get_legal_specialist()
-        result = await specialist.run(query=request.query, ...)
-    elif request.specialist_type == SpecialistType.REFLECTION:
-        specialist = get_reflection_specialist()
         result = await specialist.run(query=request.query, ...)
 ```
 

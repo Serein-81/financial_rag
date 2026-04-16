@@ -187,12 +187,9 @@ async def get_chat_log_user_statistics(
     """
     获取指定用户的对话统计
 
-    - 普通用户：只能查看自己的统计
-    - 企业管理员：可以查看企业内任意用户的统计
+    - 所有用户：只能查看自己的统计
     """
-    is_admin = await chat_log_service.is_tenant_admin(str(current_user.id))
-
-    if not is_admin and str(current_user.id) != user_id:
+    if str(current_user.id) != user_id:
         raise HTTPException(status_code=403, detail="无权访问此用户的数据")
 
     statistics = await chat_log_service.get_user_statistics(

@@ -1188,6 +1188,223 @@ curl http://localhost:8000/api/v1/health
 # http://localhost:8000/docs
 ```
 
+### 5. 数据库初始化
+
+首次部署需要执行数据库迁移：
+
+```bash
+# 进入后端容器
+docker exec -it rag_backend bash
+
+# 运行数据库迁移
+alembic upgrade head
+
+# 创建初始超级管理员用户
+python -m app.scripts.create_admin --email admin@example.com --password your_password
+
+# 退出容器
+exit
+```
+
+---
+
+## 🔑 必需 API 密钥配置指南
+
+### 必需密钥（必须配置）
+
+#### 1. LLM 大模型 API
+
+系统支持多种大模型提供商，**至少需要配置其中一种**：
+
+| 提供商 | 环境变量 | 获取地址 | 说明 |
+|--------|----------|----------|------|
+| **智谱 AI** | `ZHIPU_API_KEY` | [智谱AI开放平台](https://open.bigmodel.cn/) | 推荐首选，免费额度充足 |
+| OpenAI | `OPENAI_API_KEY` | [OpenAI Platform](https://platform.openai.com/) | 需要科学上网 |
+| Claude | `CLAUDE_API_KEY` | [Anthropic Console](https://console.anthropic.com/) | 需要科学上网 |
+| DeepSeek | `DEEPSEEK_API_KEY` | [DeepSeek Platform](https://platform.deepseek.com/) | 性价比高 |
+| 硅基流动 | `SILICONFLOW_API_KEY` | [硅基流动](https://siliconflow.cn/) | 支持多种开源模型 |
+
+**配置示例（使用智谱AI）：**
+
+```env
+LLM_PROVIDER=zhipu
+ZHIPU_API_KEY=your_zhipu_api_key_here
+ZHIPU_MODEL=glm-4-flash
+```
+
+#### 2. 数据库密码
+
+```env
+# PostgreSQL
+POSTGRES_PASSWORD=your_secure_postgres_password
+
+# Redis
+REDIS_PASSWORD=your_secure_redis_password
+
+# Neo4j 图数据库
+NEO4J_PASSWORD=your_secure_neo4j_password
+```
+
+#### 3. 安全密钥
+
+```env
+# JWT 认证密钥（至少32位字符）
+SECRET_KEY=your-super-secret-key-at-least-32-characters-long
+ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=1440
+```
+
+---
+
+### 可选密钥（根据需要配置）
+
+#### 1. Embedding 向量化 API
+
+用于将文档和查询转换为向量：
+
+```env
+# 智谱 AI Embedding（与 LLM 共享密钥）
+EMBEDDING_PROVIDER=zhipu
+ZHIPU_EMBEDDING_MODEL=embedding-3
+
+# 或使用硅基流动
+EMBEDDING_PROVIDER=siliconflow
+SILICONFLOW_API_KEY=your_siliconflow_api_key
+SILICONFLOW_EMBEDDING_MODEL=BAAI/bge-m3
+```
+
+#### 2. 天气查询 API（可选）
+
+```env
+# 和风天气 API
+QWEATHER_API_KEY=your_qweather_api_key
+QWEATHER_WEATHER_HOST=your_host
+QWEATHER_GEO_HOST=your_host
+```
+获取地址：[和风天气开发者平台](https://dev.qweather.com/)
+
+#### 3. 地图 API（可选）
+
+```env
+# 高德地图 API
+GAODE_API_KEY=your_gaode_api_key
+```
+获取地址：[高德开放平台](https://lbs.amap.com/)
+
+#### 4. 搜索增强 API（可选）
+
+```env
+# Tavily 搜索 API
+TAVILY_API_KEY=your_tavily_api_key
+```
+获取地址：[Tavily](https://tavily.com/)
+
+#### 5. 短信服务 API（可选，用于用户注册验证）
+
+```env
+# 阿里云短信服务
+ALIYUN_ACCESS_KEY_ID=your_access_key_id
+ALIYUN_ACCESS_KEY_SECRET=your_access_key_secret
+ALIYUN_SMS_SIGN_NAME=签名名称
+ALIYUN_SMS_TEMPLATE_CODE=SMS_xxx
+```
+
+#### 6. LangSmith 追踪（可选，用于调试和分析）
+
+```env
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY=your_langsmith_api_key
+LANGSMITH_PROJECT=financial_rag
+```
+获取地址：[LangSmith](https://smith.langchain.com/)
+
+---
+
+### MinIO 对象存储配置
+
+MinIO 用于存储上传的文档和文件：
+
+```env
+# MinIO 访问凭证（Docker Compose 中已设置默认值）
+MINIO_ENDPOINT=minio:9000
+MINIO_ACCESS_KEY=minioadmin
+MINIO_SECRET_KEY=minioadmin
+MINIO_SECURE=false
+
+# 存储桶名称
+MINIO_BUCKET=documents
+MINIO_AVATAR_BUCKET=avatars
+```
+
+**注意**：生产环境中请务必修改默认的 Access Key 和 Secret Key。
+
+---
+
+### 完整 .env 配置示例
+
+```env
+# ==========================================
+# 项目基础配置
+# ==========================================
+PROJECT_NAME="RAG Knowledge Base"
+
+# ==========================================
+# 数据库配置 (PostgreSQL)
+# ==========================================
+POSTGRES_USER=rag_user
+POSTGRES_PASSWORD=your_secure_postgres_password
+POSTGRES_SERVER=localhost
+POSTGRES_PORT=5432
+POSTGRES_DB=rag_db
+
+# ==========================================
+# 安全配置
+# ==========================================
+SECRET_KEY=your-super-secret-key-at-least-32-characters-long
+ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=1440
+
+# ==========================================
+# LLM 大模型配置（必需）
+# ==========================================
+LLM_PROVIDER=zhipu
+ZHIPU_API_KEY=your_zhipu_api_key_here
+ZHIPU_MODEL=glm-4-flash
+
+# ==========================================
+# MinIO 对象存储
+# ==========================================
+MINIO_ENDPOINT=127.0.0.1:9000
+MINIO_ACCESS_KEY=minioadmin
+MINIO_SECRET_KEY=minioadmin
+MINIO_SECURE=false
+MINIO_BUCKET=documents
+MINIO_AVATAR_BUCKET=avatars
+
+# ==========================================
+# Redis
+# ==========================================
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_DB=0
+REDIS_PASSWORD=your_secure_redis_password
+
+# ==========================================
+# Neo4j 图数据库
+# ==========================================
+ENABLE_KNOWLEDGE_GRAPH=false
+NEO4J_URI=bolt://localhost:7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=your_secure_neo4j_password
+
+# ==========================================
+# Embedding 向量化
+# ==========================================
+EMBEDDING_PROVIDER=zhipu
+SILICONFLOW_API_KEY=your_siliconflow_api_key_here
+SILICONFLOW_EMBEDDING_MODEL=BAAI/bge-m3
+```
+
 ---
 
 ## 🔧 云端 MCP 服务部署（Docker）
@@ -1418,38 +1635,53 @@ VITE_API_BASE_URL=http://localhost:8000
 
 ## ✅ 部署检查清单
 
-### 本地环境
-- [ ] Docker 和 Docker Compose 已安装
-- [ ] `.env` 文件已配置
-- [ ] Docker Compose 服务已启动
-- [ ] 后端 API 可访问 (http://localhost:8000/docs)
-- [ ] MinIO Web 控制台可访问 (http://localhost:9001)
-- [ ] Neo4j Web 控制台可访问 (http://localhost:7474)
+### 环境准备
+- [ ] Docker 和 Docker Compose 已安装（版本 20.10+）
+- [ ] Git 已安装
+- [ ] 代码已克隆到本地
 
-### 云端环境
-- [ ] 云服务器 Docker 已安装
-- [ ] MCP 服务已部署
-- [ ] MCP 服务可访问
-- [ ] 防火墙/安全组已配置端口 8080
+### 后端配置
+- [ ] 已复制 `rag_backend/.env.example` 为 `.env`
+- [ ] `SECRET_KEY` 已配置（至少32位字符）
+- [ ] 数据库密码已配置（PostgreSQL、Redis）
+- [ ] **LLM API Key 已配置**（至少一种大模型）
+- [ ] 数据库迁移已执行（`alembic upgrade head`）
+- [ ] 初始管理员用户已创建
 
-### 前端环境
-- [ ] API 地址已正确配置
-- [ ] 构建成功
-- [ ] 静态资源已部署
+### Docker 服务状态
+- [ ] PostgreSQL 服务运行正常（端口 5432）
+- [ ] Redis 服务运行正常（端口 6379）
+- [ ] Neo4j 服务运行正常（端口 7474, 7687）
+- [ ] MinIO 服务运行正常（端口 9000, 9001）
+- [ ] 后端 API 服务运行正常（端口 8000）
 
-### 联调测试
-- [ ] 前端可访问后端 API
-- [ ] 后端可调用 MCP 服务
-- [ ] 用户登录/注册功能正常
-- [ ] 知识库上传和检索正常
-- [ ] 多智能体对话功能正常
+### 验证访问
+- [ ] 后端 API 可访问： http://localhost:8000/docs
+- [ ] MinIO Web 控制台可访问： http://localhost:9001 （账号：minioadmin）
+- [ ] Neo4j Web 控制台可访问： http://localhost:7474
+- [ ] 健康检查接口正常： `curl http://localhost:8000/api/v1/health`
+
+### 功能测试
+- [ ] 用户注册/登录功能正常
+- [ ] 知识库创建成功
+- [ ] 文档上传功能正常
+- [ ] 文档检索功能正常
+- [ ] AI 对话功能正常
+- [ ] 多智能体协作正常
+
+### 生产环境额外检查
+- [ ] 已修改 MinIO 默认密码
+- [ ] 已配置 HTTPS/SSL 证书
+- [ ] 防火墙已正确配置
+- [ ] 数据库已配置定期备份
+- [ ] 日志系统已配置
 
 ### LLM 模型切换
 
 系统支持多种 LLM 提供商，修改配置即可切换：
 
 ```env
-# 智谱 AI
+# 智谱 AI（推荐）
 LLM_PROVIDER=zhipu
 ZHIPU_API_KEY=your_key
 
@@ -1457,9 +1689,62 @@ ZHIPU_API_KEY=your_key
 LLM_PROVIDER=openai
 OPENAI_API_KEY=your_key
 
+# Claude
+LLM_PROVIDER=claude
+CLAUDE_API_KEY=your_key
+
+# DeepSeek
+LLM_PROVIDER=deepseek
+DEEPSEEK_API_KEY=your_key
+
 # 本地 Ollama
 LLM_PROVIDER=ollama
 OLLAMA_BASE_URL=http://localhost:11434
+```
+
+---
+
+## 🔧 常见问题排查
+
+### 数据库连接失败
+```bash
+# 检查 PostgreSQL 容器状态
+docker-compose ps db
+
+# 查看 PostgreSQL 日志
+docker-compose logs db
+
+# 测试数据库连接
+docker exec -it rag_db psql -U rag_user -d rag_db -c "SELECT 1;"
+```
+
+### 后端启动失败
+```bash
+# 查看后端日志
+docker-compose logs backend
+
+# 常见原因：
+# 1. .env 文件未配置或配置错误
+# 2. 数据库未启动或连接失败
+# 3. API Key 配置错误
+```
+
+### MinIO 无法访问
+```bash
+# 检查 MinIO 容器状态
+docker-compose ps minio
+
+# 验证 MinIO 健康状态
+docker exec -it rag_minio mc ready local
+```
+
+### API 认证问题
+```bash
+# 确认 SECRET_KEY 已配置
+grep SECRET_KEY rag_backend/.env
+
+# 重启后端服务
+docker-compose restart backend
 ```
 
 ---

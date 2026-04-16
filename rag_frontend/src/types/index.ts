@@ -104,6 +104,9 @@ export interface SessionMessage {
   role: 'user' | 'assistant'
   content: string
   sources?: Source[]
+  sender_name?: string
+  sender_avatar?: string
+  created_at?: string
 }
 
 export interface ChatRequestV2 {

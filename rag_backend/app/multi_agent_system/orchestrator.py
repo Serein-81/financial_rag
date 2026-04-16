@@ -24,7 +24,7 @@ from .agents.intent_router_agent import (
 from .agents.finance_specialist import FinanceSpecialist
 from .agents.tax_specialist import TaxSpecialist
 from .agents.legal_specialist import LegalSpecialist
-from .agents.reflection_specialist import ReflectionSpecialist
+from app.prompts.llm_functions import review_quality
 from .agents.report_generator import ReportGenerator, ReportType, ReportFormat
 from .message_bus import MessageBus, MessageType
 from .state import AuditState
@@ -130,7 +130,7 @@ class AgentOrchestrator:
         self.finance_specialist: Optional[FinanceSpecialist] = None
         self.tax_specialist: Optional[TaxSpecialist] = None
         self.legal_specialist: Optional[LegalSpecialist] = None
-        self.reflection_specialist: Optional[ReflectionSpecialist] = None
+
         self.output_agent: Optional[OutputAgent] = None
         
         self.rag_retriever: Optional[TenantIsolatedRAGRetriever] = None
@@ -594,11 +594,7 @@ class AgentOrchestrator:
             )
             
             if self.enable_reflection:
-                print("🔍 [编排器] 创建反思智能体...")
-                self.reflection_specialist = ReflectionSpecialist(
-                    llm_adapter=self.llm_adapter,
-                    tool_manager=self.tool_manager
-                )
+                print("🔍 [编排器] 启用质量审查函数...")
             
             print("📝 [编排器] 创建报告生成器...")
             self.report_generator = ReportGenerator(
@@ -1024,16 +1020,16 @@ class AgentOrchestrator:
                 
                 if context.enable_reflection:
                     yield json.dumps({"type": "stage", "stage": "reflection"}, ensure_ascii=False)
-                    reflection_result = await self.reflection_specialist.review(
-                        user_input=user_input,
-                        specialist_results=context.specialist_results,
-                        intent_result=intent_result
+                    specialist_result_str = json.dumps(specialist_result, ensure_ascii=False)
+                    reflection_result = await review_quality(
+                        user_question=user_input,
+                        ai_answer=specialist_result_str
                     )
                     context.reflection_result = reflection_result
                     yield json.dumps({
                         "type": "stage",
                         "stage": "reflection",
-                        "result": reflection_result.get("suggestions", [])
+                        "result": reflection_result.get("issues", [])
                     }, ensure_ascii=False)
                 
                 yield json.dumps({
@@ -1108,16 +1104,16 @@ class AgentOrchestrator:
                 
                 if context.enable_reflection:
                     yield json.dumps({"type": "stage", "stage": "reflection"}, ensure_ascii=False)
-                    reflection_result = await self.reflection_specialist.review(
-                        user_input=user_input,
-                        specialist_results=context.specialist_results,
-                        intent_result=intent_result
+                    specialist_results_str = json.dumps(specialist_results, ensure_ascii=False)
+                    reflection_result = await review_quality(
+                        user_question=user_input,
+                        ai_answer=specialist_results_str
                     )
                     context.reflection_result = reflection_result
                     yield json.dumps({
                         "type": "stage",
                         "stage": "reflection",
-                        "result": reflection_result.get("suggestions", [])
+                        "result": reflection_result.get("issues", [])
                     }, ensure_ascii=False)
                 
                 yield json.dumps({
@@ -1271,7 +1267,7 @@ class AgentOrchestrator:
 请给出准确、简洁的回答。"""
             
             response = await self.llm_adapter.agenerate([prompt])
-            return response if response else "抱歉，未能生成回答。"
+            return response.content if response and response.content else "抱歉，未能生成回答。"
             
         except (ValueError, KeyError) as e:
             print(f"⚠️ [编排器] RAG检索数据错误: {e}")
@@ -1799,27 +1795,28 @@ class AgentOrchestrator:
         user_input: str
     ) -> OrchestrationContext:
         """运行反思审核"""
-        if not self.reflection_specialist:
+        if not context.enable_reflection:
             return context
-        
+
         pass
-        
+
         try:
-            reflection_result = await self.reflection_specialist.review(
-                user_input=user_input,
-                specialist_results=context.specialist_results,
-                intent_result=context.intent_result
+            specialist_results_str = json.dumps(context.specialist_results, ensure_ascii=False)
+            reflection_result = await review_quality(
+                user_question=user_input,
+                ai_answer=specialist_results_str
             )
-            
+
             context.reflection_result = reflection_result
-            
-            if reflection_result.get("needs_revision"):
+
+            if not reflection_result.get("is_quality_acceptable", True):
                 pass
                 context.metadata["revision_suggestions"] = reflection_result.get(
-                    "suggestions", []
+                    "issues", []
                 )
-            
-            if reflection_result.get("confidence", 1.0) < 0.7:
+
+            overall_score = reflection_result.get("scores", {}).get("overall", 1.0)
+            if overall_score < 0.7:
                 context.needs_human_review = True
                 pass
             

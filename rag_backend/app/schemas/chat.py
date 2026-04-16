@@ -47,6 +47,8 @@ class ChatMessageSchema(BaseModel):
     content: str
     sources: Optional[Any] = None
     created_at: str
+    sender_name: Optional[str] = None
+    sender_avatar: Optional[str] = None
 
     class Config:
         from_attributes = True

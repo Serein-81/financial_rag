@@ -135,9 +135,9 @@ class OutputReviewResult(BaseModel):
 
 
 class OutputAgentPrompts:
-    """输出智能体提示词（从 app/prompts/agents/output_agent/ 目录加载）"""
+    """输出智能体提示词（从 app/prompts/agents/output/ 目录加载）"""
 
-    _prompt_dir = Path(__file__).parent.parent.parent / "prompts" / "agents" / "output_agent"
+    _prompt_dir = Path(__file__).parent.parent.parent / "prompts" / "agents" / "output"
 
     @classmethod
     def _load_prompt_file(cls, filename: str) -> str:
@@ -354,6 +354,50 @@ class OutputAgent:
         
         logger.debug(f"📥 [OutputAgent] 添加输入: {source_agent} ({source_type})")
         return True
+
+    def add_result(
+        self,
+        task_id: str,
+        source_agent: str,
+        source_type: str,
+        content: Any,
+        confidence: float = 1.0,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """
+        添加单个结果（add_input 的别名，保持向后兼容）
+        
+        Args:
+            task_id: 任务ID
+            source_agent: 来源智能体
+            source_type: 来源类型 (tool_result, llm_reasoning, etc.)
+            content: 内容
+            confidence: 置信度 0-1
+            metadata: 元数据
+            
+        Returns:
+            是否添加成功
+        """
+        return self.add_input(
+            task_id=task_id,
+            source_agent=source_agent,
+            source_type=source_type,
+            content=content,
+            confidence=confidence,
+            metadata=metadata
+        )
+
+    def add_results_batch(self, results: List[Dict[str, Any]]) -> int:
+        """
+        批量添加结果（add_inputs_batch 的别名，保持向后兼容）
+        
+        Args:
+            results: 结果列表
+            
+        Returns:
+            成功添加的数量
+        """
+        return self.add_inputs_batch(results)
 
     def add_inputs_batch(self, results: List[Dict[str, Any]]) -> int:
         """

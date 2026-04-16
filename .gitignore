@@ -22,14 +22,32 @@ rag_backend/postgres_data/
 # ❌ 增加：屏蔽本地上传的文档和对话记录
 rag_backend/app/storage/
 rag_backend/app/uploads/
+rag_backend/app/static/
+rag_backend/storage/
+rag_backend/uploads/
 # rag_backend/chat_history/
 
 # ==========================
 # 2. Python 编译产生的垃圾文件
 # ==========================
 rag_backend/__pycache__/
+rag_backend/**/*.pyc
+rag_backend/**/*.pyo
+rag_backend/**/*.pyd
+rag_backend/**/__pycache__/
 rag_backend/*.py[cod]
 rag_backend/*$py.class
+
+# Python 类型检查缓存
+rag_backend/.mypy_cache/
+rag_backend/mypy_cache/
+
+# Pytest 缓存和覆盖率
+rag_backend/.pytest_cache/
+rag_backend/.coverage
+rag_backend/htmlcov/
+rag_backend/coverage.xml
+rag_backend/*.cover
 
 # ========================
 # 本地存储卷与数据库数据
@@ -37,7 +55,16 @@ rag_backend/tests/
 rag_backend/mass_/
 rag_backend/migrations/
 rag_backend/logs/
-rag_backend/test_templates/  # 测试模板（空目录）
+rag_backend/scripts/       # 本地脚本目录
+
+# ========================
+# 开发文档（包含大量内部开发记录，不需要上传）
+docs/
+
+# ========================
+# 备份和测试输出文件
+rag_backend/backups/
+rag_backend/test_output_formatter.py
 
 # ========================
 # 忽略 MinIO 的本地持久化数据
@@ -69,7 +96,30 @@ rag_backend/*.json
 rag_backend/test_data_output.txt
 
 # ==========================
-# 6. 本地测试与调试脚本 (如果你不想公开它们)
+# 6. 临时文件和编辑器备份
+# ==========================
+rag_backend/*.tmp
+rag_backend/*.temp
+rag_backend/*~
+rag_backend/.#*
+rag_backend/#*#
+
+# ==========================
+# 7. Jupyter Notebook 相关
+# ==========================
+rag_backend/.ipynb_checkpoints/
+rag_backend/**/*.ipynb_checkpoints/
+
+# ==========================
+# 8. LangChain 和 LangGraph 缓存
+# ==========================
+rag_backend/.langchain_cache/
+rag_backend/langchain_cache/
+rag_backend/.langgraph_cache/
+rag_backend/langgraph_cache/
+
+# ==========================
+# 9. 本地测试与调试脚本 (如果你不想公开它们)
 # 如果这些脚本包含 API Key 或数据库密码，请务必忽略！
 # ==========================
 rag_backend/get_valid_token.py

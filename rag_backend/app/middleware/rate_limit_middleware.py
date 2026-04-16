@@ -85,6 +85,23 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         "/openapi.json",
         "/api/v1/auth/login",
         "/api/v1/auth/register",
+        "/api/v1/agent-discovery/summary",
+        "/api/v1/agent-discovery/tools",
+        "/api/v1/multi-agent/health",
+        "/api/v1/multi-agent/metrics",
+        "/api/v1/multi-agent/security-events",
+        "/api/v1/multi-agent/security-stats",
+        "/api/v1/tenant-settings/me",
+        "/api/v1/langsmith/status",
+        "/api/v1/langsmith/stats",
+        "/api/v1/observability/traces",
+        "/api/v1/observability/metrics",
+        "/api/v1/observability/logs",
+        "/api/v1/observability/health",
+        "/api/v1/security/tenants",
+        "/api/v1/security/permissions",
+        "/api/v1/security/cypher-validate",
+        "/api/v1/security/audit-logs",
     }
     
     def __init__(self, app, strategy: str = "sliding_window"):

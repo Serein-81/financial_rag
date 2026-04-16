@@ -1,0 +1,29 @@
+agent:
+  name: "policy"
+  display_name: "政策通知专家"
+  version: "1.0.0"
+  type: "specialist"
+  description: "政策理解和通知推送，智能匹配企业和政策，生成个性化通知"
+  
+  reasoning:
+    engine: "react"
+    max_iterations: 5
+    timeout: 60
+    
+  prompts:
+    system: "system.md"
+    matching_dir: "matching/"
+    
+  tools:
+    enabled: true
+    required: []
+    optional: []
+    
+  output:
+    format: "structured"
+    confidence_required: true
+    
+  metadata:
+    author: "AI Team"
+    created: "2024-01-01"
+    tags: ["policy", "notification", "matching"]

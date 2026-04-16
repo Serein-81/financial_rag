@@ -1,0 +1,38 @@
+agent:
+  name: "finance"
+  display_name: "财务专家"
+  version: "1.0.0"
+  type: "specialist"
+  description: "处理企业财务相关问题，包括投资分析、贷款计算、预算管理、财务报表分析等"
+  
+  reasoning:
+    engine: "react"
+    max_iterations: 10
+    timeout: 60
+    
+  prompts:
+    system: "system.md"
+    domains_dir: "domains/"
+    
+  tools:
+    enabled: true
+    required: []
+    optional: []
+    
+  domains:
+    - investment
+    - loan
+    - budget
+    - financial_statement
+    - cost_control
+    - cash_flow
+    - treasury
+    
+  output:
+    format: "structured"
+    confidence_required: true
+    
+  metadata:
+    author: "AI Team"
+    created: "2024-01-01"
+    tags: ["finance", "investment", "analysis"]

@@ -1,0 +1,275 @@
+# Agent通信协议
+# 定义Agent之间的通信规范
+
+## 1. 消息格式
+
+### 标准消息结构
+```json
+{
+  "message_id": "唯一标识符",
+  "type": "message|request|response|error|event",
+  "from": "发送方Agent",
+  "to": "接收方Agent",
+  "timestamp": "ISO8601时间戳",
+  "content": {
+    "action": "操作类型",
+    "data": {},
+    "metadata": {}
+  },
+  "correlation_id": "关联消息ID"
+}
+```
+
+### 消息类型
+
+#### Request（请求）
+```json
+{
+  "type": "request",
+  "content": {
+    "action": "analyze_tax",
+    "data": {
+      "document": "文档内容",
+      "context": "上下文"
+    }
+  }
+}
+```
+
+#### Response（响应）
+```json
+{
+  "type": "response",
+  "content": {
+    "status": "success|error",
+    "result": {},
+    "confidence": 0.95
+  },
+  "correlation_id": "原请求ID"
+}
+```
+
+#### Event（事件）
+```json
+{
+  "type": "event",
+  "content": {
+    "event_type": "task_completed",
+    "data": {}
+  }
+}
+```
+
+## 2. 通信模式
+
+### 点对点通信
+- 直接发送给指定Agent
+- 一对一消息传递
+- 用于需要特定Agent处理的任务
+
+### 发布-订阅模式
+- 发布消息到主题
+- 订阅相关主题的Agent接收
+- 用于广播和事件通知
+
+### 请求-响应模式
+- 发送请求并等待响应
+- 同步通信
+- 设置超时时间
+
+### 异步消息模式
+- 发送消息不等待响应
+- 通过回调或事件处理响应
+- 用于非阻塞操作
+
+## 3. 协调流程
+
+### 单专家协作
+```
+User → Intent Router → Specialist → Output → User
+```
+
+### 多专家并行协作
+```
+User → Intent Router 
+                  ↓
+        ┌────────┴────────┐
+        ↓         ↓       ↓
+    Specialist1 Specialist2 Specialist3
+        ↓         ↓       ↓
+        └────────┬────────┘
+                  ↓
+            Output Agent
+                  ↓
+               User
+```
+
+### 多专家串行协作
+```
+User → Intent Router → Specialist1 → Specialist2 → Output → User
+                                    ↓
+                            [结果作为输入传递]
+```
+
+## 4. 结果传递格式
+
+### 专家结果标准格式
+```json
+{
+  "specialist_name": "tax_specialist",
+  "status": "completed",
+  "result": {
+    "analysis": "分析内容",
+    "findings": ["发现1", "发现2"],
+    "recommendations": ["建议1", "建议2"],
+    "risks": ["风险1"]
+  },
+  "confidence": 0.92,
+  "metadata": {
+    "processing_time": 2.5,
+    "iterations": 3
+  }
+}
+```
+
+### 聚合结果格式
+```json
+{
+  "aggregated_results": [
+    {
+      "specialist": "tax_specialist",
+      "contribution": "税务分析"
+    },
+    {
+      "specialist": "finance_specialist",
+      "contribution": "财务分析"
+    }
+  ],
+  "integrated_findings": ["综合发现"],
+  "final_recommendations": ["最终建议"]
+}
+```
+
+## 5. 状态管理
+
+### Agent状态
+```json
+{
+  "agent_id": "tax_specialist",
+  "status": "idle|busy|error",
+  "current_task": "task_id",
+  "queue_length": 0,
+  "last_active": "ISO时间戳"
+}
+```
+
+### 任务状态
+```json
+{
+  "task_id": "唯一标识",
+  "status": "pending|processing|completed|failed",
+  "progress": 0.75,
+  "assigned_to": ["specialist1", "specialist2"],
+  "result": {}
+}
+```
+
+## 6. 错误处理协议
+
+### 错误消息格式
+```json
+{
+  "type": "error",
+  "error": {
+    "code": "SPECIALIST_UNAVAILABLE",
+    "message": "专家不可用",
+    "details": "税务专家当前忙碌",
+    "suggestion": "请稍后重试或选择其他专家"
+  },
+  "original_request": {}
+}
+```
+
+### 错误代码规范
+- `AGENT_NOT_FOUND`：Agent不存在
+- `AGENT_UNAVAILABLE`：Agent不可用
+- `TIMEOUT`：操作超时
+- `INVALID_REQUEST`：无效请求
+- `PROCESSING_ERROR`：处理错误
+- `UNAUTHORIZED`：未授权
+
+## 7. 超时设置
+
+### 默认超时时间
+| 操作类型 | 超时时间 |
+|---------|---------|
+| 简单查询 | 10秒 |
+| 意图识别 | 5秒 |
+| 专家分析 | 60秒 |
+| 报告生成 | 120秒 |
+| 复杂任务 | 300秒 |
+
+### 重试策略
+- 首次重试：1秒后
+- 二次重试：3秒后
+- 三次重试：10秒后
+- 超过3次：标记失败
+
+## 8. 安全规范
+
+### 认证
+- Agent间通信需要认证
+- 使用Token验证身份
+- 定期更新认证信息
+
+### 授权
+- 明确Agent权限范围
+- 限制敏感操作
+- 记录操作日志
+
+### 加密
+- 敏感数据传输加密
+- 使用HTTPS
+- 端到端加密
+
+## 9. 日志规范
+
+### 日志格式
+```json
+{
+  "timestamp": "ISO时间戳",
+  "level": "INFO|WARNING|ERROR",
+  "agent": "Agent名称",
+  "action": "操作类型",
+  "message": "日志消息",
+  "context": {},
+  "trace_id": "追踪ID"
+}
+```
+
+### 关键日志点
+- 任务开始
+- 任务完成
+- 错误发生
+- 状态变更
+- 结果传递
+
+## 10. 监控指标
+
+### 性能指标
+- 响应时间
+- 处理时间
+- 吞吐量
+- 队列长度
+
+### 质量指标
+- 成功率
+- 错误率
+- 重试率
+- 置信度分布
+
+### 系统指标
+- Agent可用性
+- 系统负载
+- 资源使用
+- 网络延迟

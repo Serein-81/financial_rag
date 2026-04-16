@@ -411,8 +411,15 @@ function goToProfile() {
         <!-- User Section -->
         <div class="p-3">
           <div v-if="!isSidebarCollapsed" class="flex items-center gap-2.5">
-            <div class="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-slate-700 font-medium text-sm flex-shrink-0">
-              {{ authStore.userName?.charAt(0)?.toUpperCase() || 'U' }}
+            <div class="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-slate-700 font-medium text-sm flex-shrink-0 overflow-hidden">
+              <img
+                v-if="authStore.avatarUrl"
+                :src="authStore.avatarUrl"
+                :alt="authStore.userName"
+                class="w-full h-full object-cover"
+                @error="$event.target.style.display = 'none'"
+              />
+              <span v-else>{{ authStore.userName?.charAt(0)?.toUpperCase() || 'U' }}</span>
             </div>
             <div class="flex-1 min-w-0">
               <p class="text-sm font-medium text-slate-900 truncate">{{ authStore.userName }}</p>
@@ -458,8 +465,15 @@ function goToProfile() {
           </div>
           <div v-else class="flex flex-col items-center gap-1.5">
             <div class="relative group">
-              <div class="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-slate-700 font-medium text-sm cursor-pointer">
-                {{ authStore.userName?.charAt(0)?.toUpperCase() || 'U' }}
+              <div class="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-slate-700 font-medium text-sm cursor-pointer overflow-hidden">
+                <img
+                  v-if="authStore.avatarUrl"
+                  :src="authStore.avatarUrl"
+                  :alt="authStore.userName"
+                  class="w-full h-full object-cover"
+                  @error="$event.target.style.display = 'none'"
+                />
+                <span v-else>{{ authStore.userName?.charAt(0)?.toUpperCase() || 'U' }}</span>
               </div>
               <div class="absolute left-full ml-2 px-2 py-1 bg-slate-900 text-white text-xs rounded-md opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
                 {{ authStore.userName }}

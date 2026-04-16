@@ -159,7 +159,7 @@ services:
     volumes:
       - .:/app
       - ./logs:/app/logs
-      - ../test_templates:/app/test_templates
+      - ./test_templates:/app/test_templates
     
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/"]

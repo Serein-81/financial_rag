@@ -13,6 +13,7 @@ from .message_bus import MessageBus
 from .rework_controller import ReworkController
 from .rag_retriever import TenantIsolatedRAGRetriever, TaxSpecificRAGEnhancer, RAGDocType
 from app.memory_system.memory_manager import MemoryManager
+from app.prompts.llm_functions import triage_document, review_quality
 from app.memory_system.episodic_memory import EpisodicMemory
 from app.memory_system.semantic_memory import SemanticMemory
 from app.services.agent_service import agent_service
@@ -65,7 +66,6 @@ class AgentCoordinator:
             from .agents.finance_specialist import FinanceSpecialist
             from .agents.tax_specialist import TaxSpecialist
             from .agents.legal_specialist import LegalSpecialist
-            from .agents.reflection_specialist import ReflectionSpecialist
             import asyncio
             
             specialist_provider = settings.get_llm_provider_for_agent("finance")
@@ -126,17 +126,11 @@ class AgentCoordinator:
                 tool_manager=legal_tool_manager
             )
             
-            # 初始化反思智能体
-            self.specialists["reflection"] = ReflectionSpecialist(
-                llm_adapter=llm_adapter,
-                tool_manager=common_tool_manager
-            )
-            
             print("🤖 [协调器] 专业智能体初始化完成")
             print("   ✅ 财务智能体 (Finance) - 含网络搜索功能")
             print("   ✅ 税务智能体 (Tax) - 含网络搜索功能")
             print("   ✅ 法务智能体 (Legal) - 含网络搜索功能")
-            print("   ✅ 反思智能体 (Reflection)")
+            print("   ✅ 质量审查 (使用 review_quality 函数)")
             print("   ☁️ MCP 工具已注册: 天气查询、位置查询、网络搜索")
             
         except (ValueError, KeyError) as e:
@@ -543,14 +537,12 @@ class AgentCoordinator:
         """
         print("🚪 [协调器] 开始门卫审查阶段")
         
-        if "triage" not in self.specialists:
-            print("⚠️ [协调器] 门卫智能体未初始化，跳过门卫审查")
+        if not self.current_state.get("documents"):
+            print("⚠️ [协调器] 没有文档，跳过门卫审查")
             self.current_state["triage_passed"] = True
             return True
         
         try:
-            triage_agent = self.specialists["triage"]
-            
             triage_results = []
             rejected_docs = []
             all_passed = True
@@ -562,11 +554,21 @@ class AgentCoordinator:
                     "file_type": doc.get("type", "unknown")
                 }
                 
-                # 执行门卫分类
-                triage_result = await triage_agent.triage(doc_text, doc_metadata)
+                triage_result = await triage_document(doc_text, doc_metadata)
                 triage_results.append(triage_result)
                 
-                if not triage_result.get("is_safe", True):
+                is_safe = triage_result.get("risk_level", "low") != "high"
+                is_tax_document = triage_result.get("document_type", "").startswith("tax_")
+                needs_human_review = triage_result.get("needs_human_review", False)
+                confidence = triage_result.get("confidence", 1.0)
+                findings = triage_result.get("findings", [])
+                
+                triage_result["is_safe"] = is_safe
+                triage_result["is_tax_document"] = is_tax_document
+                triage_result["overall_confidence"] = confidence
+                triage_result["review_reasons"] = [f.get("description", "") for f in findings if f.get("severity") in ("warning", "error")]
+                
+                if not is_safe:
                     print(f"🚫 [协调器] 文档被安全规则拦截: {doc_metadata['filename']}")
                     rejected_docs.append({
                         "doc": doc,
@@ -576,7 +578,7 @@ class AgentCoordinator:
                     all_passed = False
                     continue
                 
-                if not triage_result.get("is_tax_document", True):
+                if not is_tax_document:
                     print(f"⚠️ [协调器] 文档不是税务文档: {doc_metadata['filename']}")
                     rejected_docs.append({
                         "doc": doc,
@@ -586,16 +588,13 @@ class AgentCoordinator:
                     all_passed = False
                     continue
                 
-                if triage_result.get("needs_human_review", False):
+                if needs_human_review:
                     print(f"⏳ [协调器] 文档需要人工审核: {doc_metadata['filename']}")
                     all_passed = False
                     
                     self.current_state["needs_human_review"] = True
-                    self.current_state["review_trigger_reason"] = triage_result.get(
-                        "review_reasons", ["门卫审查不确定"]
-                    )[0] if triage_result.get("review_reasons") else "triage_uncertain"
+                    self.current_state["review_trigger_reason"] = triage_result.get("review_reasons", ["门卫审查不确定"])[0] if triage_result.get("review_reasons") else "triage_uncertain"
                     
-                    # 创建人工审核请求
                     from .human_review import (
                         create_review_request,
                         ReviewTrigger,
@@ -610,7 +609,7 @@ class AgentCoordinator:
                         trigger_reason=ReviewTrigger.TRIAGE_UNCERTAIN,
                         description=f"门卫审查不确定: {doc_metadata['filename']}",
                         content=triage_result,
-                        priority=ReviewPriority.HIGH if triage_result.get("overall_confidence", 1.0) < 0.5 else ReviewPriority.NORMAL,
+                        priority=ReviewPriority.HIGH if confidence < 0.5 else ReviewPriority.NORMAL,
                         original_document=doc_text,
                         anonymized_content=None,
                         pii_mapping=None
@@ -633,7 +632,6 @@ class AgentCoordinator:
             
             self.current_state["triage_passed"] = True
             
-            # 执行PII脱敏（仅对通过审查的文档）
             await self._anonymize_documents()
             
             print("✅ [协调器] 门卫审查阶段完成")
@@ -858,26 +856,32 @@ class AgentCoordinator:
         """反思检查阶段"""
         print("🤔 [协调器] 开始反思检查阶段")
         
-        # 获取反思智能体
-        reflection_agent = self.specialists.get("reflection")
-        if not reflection_agent:
-            print("⚠️ [协调器] 反思智能体未初始化，跳过反思阶段")
-            return
-        
-        # 执行反思检查
         try:
-            await reflection_agent.audit(
-                state=self.current_state,
-                documents=[]
+            specialist_results = self.current_state.get("specialist_results", [])
+            user_input = self.current_state.get("user_input", "")
+            
+            import json
+            specialist_results_str = json.dumps(specialist_results, ensure_ascii=False)
+            
+            review_result = await review_quality(
+                user_question=user_input,
+                ai_answer=specialist_results_str
             )
-            print("✅ [协调器] 反思检查阶段完成")
+            
+            self.current_state["reflection_result"] = review_result
+            
+            overall_score = review_result.get("scores", {}).get("overall", 0.7)
+            if overall_score < 0.7:
+                self.current_state["needs_human_review"] = True
+                self.current_state["review_trigger_reason"] = f"质量审查评分低: {overall_score:.2f}"
+            
+            print(f"✅ [协调器] 反思检查阶段完成，整体评分: {overall_score:.2f}")
         except (ValueError, KeyError) as e:
             print(f"❌ [协调器] 反思检查数据错误: {e}")
         except (OSError, IOError) as e:
             print(f"❌ [协调器] 反思检查IO错误: {e}")
         except Exception as e:
             print(f"❌ [协调器] 反思检查失败: {e}")
-            # 设置默认值，避免后续流程中断
             self.current_state['conflicts'] = []
             self.current_state['evidence_gaps'] = []
             self.current_state['confidence_scores'] = {'overall': 0.8}

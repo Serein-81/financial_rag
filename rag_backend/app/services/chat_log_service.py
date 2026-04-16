@@ -64,6 +64,42 @@ class ChatLogService:
             )
             return result.scalar_one_or_none() is True
 
+    async def is_same_tenant(self, user_id_1: str, user_id_2: str) -> bool:
+        """
+        检查两个用户是否属于同一个租户
+        
+        Args:
+            user_id_1: 用户1的ID
+            user_id_2: 用户2的ID
+            
+        Returns:
+            bool: 是否属于同一租户
+        """
+        if user_id_1 == user_id_2:
+            return True
+            
+        try:
+            user1_uuid = uuid.UUID(user_id_1)
+            user2_uuid = uuid.UUID(user_id_2)
+        except (ValueError, TypeError):
+            return False
+            
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(User.tenant_id).where(User.id == user1_uuid)
+            )
+            tenant1 = result.scalar_one_or_none()
+            
+            if not tenant1:
+                return False
+                
+            result = await session.execute(
+                select(User.tenant_id).where(User.id == user2_uuid)
+            )
+            tenant2 = result.scalar_one_or_none()
+            
+            return tenant1 == tenant2 and tenant1 is not None
+
     async def get_user_with_managed_tenants(self, user_id: str) -> Optional[User]:
         """获取用户对象（包含管理的租户列表）"""
         try:
@@ -129,28 +165,10 @@ class ChatLogService:
             分页后的会话列表
         """
         try:
-            is_admin = await self.is_tenant_admin(current_user_id)
-
             async with AsyncSessionLocal() as session:
                 base_query = select(ChatSession)
 
-                if is_admin and user_id:
-                    base_query = base_query.where(ChatSession.user_id == user_id)
-                elif is_admin:
-                    tenant_id = await self.get_tenant_id_by_user_id(current_user_id)
-                    if tenant_id:
-                        user_ids_result = await session.execute(
-                            select(User.id).where(User.tenant_id == tenant_id)
-                        )
-                        user_ids = list(user_ids_result.scalars().all())
-                        if user_ids:
-                            base_query = base_query.where(ChatSession.user_id.in_(user_ids))
-                        else:
-                            base_query = base_query.where(ChatSession.id == None)
-                    else:
-                        base_query = base_query.where(ChatSession.user_id == current_user_id)
-                else:
-                    base_query = base_query.where(ChatSession.user_id == current_user_id)
+                base_query = base_query.where(ChatSession.user_id == current_user_id)
 
                 if keyword:
                     base_query = base_query.where(ChatSession.title.ilike(f"%{keyword}%"))
@@ -291,8 +309,6 @@ class ChatLogService:
         except ValueError:
             return []
 
-        is_admin = await self.is_tenant_admin(current_user_id)
-
         async with AsyncSessionLocal() as session:
             session_query = select(ChatSession).where(ChatSession.id == session_uuid)
             session_result = await session.execute(session_query)
@@ -301,7 +317,7 @@ class ChatLogService:
             if not session_obj:
                 return []
 
-            if not is_admin and str(session_obj.user_id) != current_user_id:
+            if str(session_obj.user_id) != current_user_id:
                 return []
 
             messages_query = (
@@ -334,8 +350,6 @@ class ChatLogService:
         except ValueError:
             return {}
 
-        is_admin = await self.is_tenant_admin(current_user_id)
-
         async with AsyncSessionLocal() as session:
             session_query = select(ChatSession).where(ChatSession.id == session_uuid)
             session_result = await session.execute(session_query)
@@ -344,7 +358,7 @@ class ChatLogService:
             if not session_obj:
                 return {}
 
-            if not is_admin and str(session_obj.user_id) != current_user_id:
+            if str(session_obj.user_id) != current_user_id:
                 return {}
 
             messages_query = (

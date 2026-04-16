@@ -1,6 +1,8 @@
 """
 智能体提示词基类
 统一管理所有智能体的提示词加载
+
+注意：TriageSpecialist 和 ReflectionSpecialist 已迁移到 llm_functions 模块
 """
 
 import os
@@ -12,6 +14,49 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _normalize_agent_name(agent_name: str) -> str:
+    """
+    标准化agent名称到目录名
+    
+    映射规则：
+    - "FinanceSpecialist" -> "finance"
+    - "TaxSpecialist" -> "tax"
+    - "LegalSpecialist" -> "legal"
+    - "IntentRouterAgent" -> "intent_router"
+    - "ReportGenerator" -> "report"
+    - "PolicyNotificationAgent" -> "policy_notification"
+    - "ReActAgent" -> "react"
+    - 其他 -> 转小写
+    
+    提示词目录结构：
+    - agents/finance/       - 金融专家
+    - agents/tax/          - 税务专家
+    - agents/legal/         - 法律专家
+    - agents/intent_router/ - 意图路由
+    - agents/report/       - 报告生成
+    - agents/policy_notification/ - 政策通知
+    - agents/react/        - ReAct推理
+    - agents/output/       - 输出处理
+    - agents/plan/         - 计划制定
+    - agents/policy/       - 政策专家
+    """
+    name_mapping = {
+        "financespecialist": "finance",
+        "taxspecialist": "tax",
+        "legalspecialist": "legal",
+        "intentrouteragent": "intent_router",
+        "reportgenerator": "report",
+        "policynotificationagent": "policy_notification",
+        "reactagent": "react",
+        "planagent": "plan",
+        "outputagent": "output",
+        "policyspecialist": "policy",
+    }
+    
+    normalized = agent_name.lower().replace("_", "").replace("-", "")
+    return name_mapping.get(normalized, agent_name.lower())
+
+
 class BaseAgentPromptLoader(ABC):
     """
     智能体提示词加载器基类
@@ -20,6 +65,7 @@ class BaseAgentPromptLoader(ABC):
     1. 优先从外部文件加载提示词
     2. 降级到硬编码提示词
     3. 支持运行时热更新
+    4. 支持新的统一目录结构
     
     子类需要：
     1. 定义 PROMPT_FILENAME 类属性
@@ -27,7 +73,7 @@ class BaseAgentPromptLoader(ABC):
     """
     
     PROMPT_FILENAME: str = ""
-    PROMPT_DIR: Path = Path(__file__).parent.parent.parent / "prompts" / "system"
+    PROMPT_DIR: Path = Path(__file__).parent.parent.parent / "prompts" / "agents"
     
     _prompt_cache: Dict[str, str] = {}
     _use_cache: bool = True
@@ -44,21 +90,26 @@ class BaseAgentPromptLoader(ABC):
         """获取提示词文件名（可被子类覆盖）"""
         return self.PROMPT_FILENAME
     
+    def _get_agent_name(self) -> str:
+        """获取Agent名称（用于加载对应的提示词）"""
+        class_name = self.__class__.__name__
+        return _normalize_agent_name(class_name)
+    
     def _load_system_prompt(self) -> str:
         """
         加载系统提示词
         
-        优先级：
+        加载顺序（优先级从高到低）：
         1. 环境变量指定的路径
-        2. prompts/agents/{agent_name}/system.md（新结构）
-        3. prompts/system/{agent_name}_agent.md（旧结构，向后兼容）
+        2. 从统一加载器加载（app/prompts/loader.py）
+        3. prompts/agents/{agent_name}/system.md（新结构）
         4. 降级到 _get_fallback_prompt()
         """
         prompt_filename = self._get_prompt_filename()
         
         if not prompt_filename:
-            logger.debug(f"[{self.__class__.__name__}] 未指定提示词文件名，启用内置默认提示词")
-            return self._get_fallback_prompt()
+            logger.debug(f"[{self.__class__.__name__}] 未指定提示词文件名，尝试从统一加载器加载")
+            return self._load_from_unified_loader()
         
         env_path = os.environ.get(f"PROMPT_{self.__class__.__name__.upper()}")
         if env_path:
@@ -67,27 +118,35 @@ class BaseAgentPromptLoader(ABC):
             except FileNotFoundError:
                 logger.warning(f"⚠️ 环境变量路径不存在: {env_path}")
         
+        agent_name = self._get_agent_name()
+        logger.debug(f"[{self.__class__.__name__}] 映射后的Agent名称: {agent_name}")
+        
+        unified_prompt = self._load_from_unified_loader()
+        if unified_prompt:
+            logger.info(f"✅ 成功从统一加载器加载提示词: {agent_name}")
+            return unified_prompt
+        
         prompts_root = Path(__file__).parent.parent.parent / "prompts"
-        
-        agent_name = self.__class__.__name__.replace("Agent", "").lower()
-        normalized_name = _normalize_agent_name(agent_name)
-        
-        new_path = prompts_root / "agents" / normalized_name / "system.md"
+        new_path = prompts_root / "agents" / agent_name / "system.md"
         try:
             content = self._load_from_path(new_path)
             logger.info(f"✅ 成功加载提示词（新结构）: {new_path}")
             return content
         except FileNotFoundError:
-            pass
-        
-        old_path = prompts_root / "system" / f"{agent_name}_agent.md"
-        try:
-            content = self._load_from_path(old_path)
-            logger.debug(f"使用旧路径提示词（向后兼容）: {old_path}")
-            return content
-        except FileNotFoundError:
             logger.debug(f"[{self.__class__.__name__}] 提示词文件不存在，启用内置默认提示词")
             return self._get_fallback_prompt()
+    
+    def _load_from_unified_loader(self) -> str:
+        """从统一加载器加载提示词"""
+        try:
+            from app.prompts.loader import load_agent_prompt
+            agent_name = self._get_agent_name()
+            prompt = load_agent_prompt(agent_name)
+            if prompt:
+                return prompt
+        except Exception as e:
+            logger.debug(f"[{self.__class__.__name__}] 统一加载器加载失败: {e}")
+        return ""
     
     def _load_from_path(self, path: Path) -> str:
         """从指定路径加载提示词"""
@@ -152,116 +211,71 @@ class BaseAgentPromptLoader(ABC):
             template: 模板字符串
             
         Returns:
-            渲染后的提示词
+            渲染后的字符串
         """
         context = self.get_prompt_context()
         
-        for key, value in context.items():
-            placeholder = f"{{{key}}}"
-            if placeholder in template:
-                if isinstance(value, (list, dict)):
-                    import json
-                    template = template.replace(placeholder, json.dumps(value, ensure_ascii=False, indent=2))
-                else:
-                    template = template.replace(placeholder, str(value))
+        import re
         
-        return template
+        def replace_match(match):
+            var_path = match.group(1)
+            keys = var_path.split('.')
+            value = context
+            for key in keys:
+                if isinstance(value, dict):
+                    value = value.get(key, match.group(0))
+                else:
+                    return match.group(0)
+            return str(value) if value is not None else match.group(0)
+        
+        pattern = r'\{([^}]+)\}'
+        rendered = re.sub(pattern, replace_match, template)
+        
+        return rendered
     
     def reload_prompt(self):
-        """重新加载提示词（热更新）"""
-        prompts_root = Path(__file__).parent.parent.parent / "prompts"
-        agent_name = self.__class__.__name__.replace("Agent", "").lower()
-        normalized_name = _normalize_agent_name(agent_name)
-        cache_key = str(prompts_root / "agents" / normalized_name / "system.md")
-        
-        if cache_key in self._prompt_cache:
-            del self._prompt_cache[cache_key]
-        
+        """重新加载提示词"""
+        self._prompt_cache.clear()
         self._load_prompt()
-        logger.info(f"🔄 [{self.__class__.__name__}] 提示词已重新加载")
-    
-    @classmethod
-    def clear_cache(cls):
-        """清空所有缓存"""
-        cls._prompt_cache.clear()
-        logger.info("🗑️ 提示词缓存已清空")
-    
-    @classmethod
-    def set_cache_enabled(cls, enabled: bool):
-        """设置是否启用缓存"""
-        cls._use_cache = enabled
-
-
-def _normalize_agent_name(agent_name: str) -> str:
-    """
-    标准化agent名称到目录名
-    
-    映射规则：
-    - "finance" -> "finance_specialist"
-    - "tax" -> "tax_specialist"
-    - "legal" -> "legal_specialist"
-    - 其他 -> 保持原样
-    """
-    name_mapping = {
-        "finance": "finance_specialist",
-        "tax": "tax_specialist",
-        "legal": "legal_specialist",
-        "intent": "intent_router",
-        "reflection": "reflection_agent",
-        "report": "report_agent",
-        "output": "output_agent",
-        "triage": "triage_agent",
-    }
-    return name_mapping.get(agent_name, agent_name)
+        logger.info(f"✅ 提示词已重新加载: {self.__class__.__name__}")
 
 
 def load_agent_prompt(
     agent_name: str,
-    filename: Optional[str] = None,
+    filename: str = "system.md",
     context: Optional[Dict[str, Any]] = None
 ) -> str:
     """
-    通用提示词加载函数
+    加载Agent提示词的便捷函数
     
     Args:
-        agent_name: 智能体名称
-        filename: 提示词文件名（默认为 system.md）
+        agent_name: Agent名称（会进行标准化）
+        filename: 提示词文件名（默认system.md）
         context: 渲染上下文
         
     Returns:
         提示词内容
     """
+    from app.prompts.loader import load_agent_prompt as unified_load
+    
     normalized_name = _normalize_agent_name(agent_name)
+    prompt = unified_load(normalized_name)
     
-    if filename is None:
-        filename = "system.md"
-    
-    prompts_root = Path(__file__).parent.parent.parent / "prompts"
-    
-    new_prompt_path = prompts_root / "agents" / normalized_name / filename
-    
-    try:
-        with open(new_prompt_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        logger.info(f"✅ 成功加载提示词（新结构）: {new_prompt_path}")
-    except FileNotFoundError:
-        old_prompt_path = prompts_root / "system" / f"{agent_name}_agent.md"
-        try:
-            with open(old_prompt_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            logger.debug(f"使用旧路径提示词（向后兼容）: {old_prompt_path}")
-        except FileNotFoundError:
-            logger.debug(f"提示词文件不存在: 新路径 {new_prompt_path}, 旧路径 {old_prompt_path}")
-            return ""
-    
-    if context:
-        for key, value in context.items():
-            placeholder = f"{{{key}}}"
-            if placeholder in content:
-                if isinstance(value, (list, dict)):
-                    import json
-                    content = content.replace(placeholder, json.dumps(value, ensure_ascii=False, indent=2))
+    if context and prompt:
+        import re
+        
+        def replace_match(match):
+            var_path = match.group(1)
+            keys = var_path.split('.')
+            value = context
+            for key in keys:
+                if isinstance(value, dict):
+                    value = value.get(key, match.group(0))
                 else:
-                    content = content.replace(placeholder, str(value))
+                    return match.group(0)
+            return str(value) if value is not None else match.group(0)
+        
+        pattern = r'\{([^}]+)\}'
+        prompt = re.sub(pattern, replace_match, prompt)
     
-    return content
+    return prompt

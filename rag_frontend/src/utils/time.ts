@@ -79,12 +79,18 @@ export function formatChatTime(dateString: string | number | Date | null | undef
     if (str.includes('T') || str.includes('Z')) {
       date = new Date(str)
     } else {
-      const match = str.match(/(\d{4})[-/]?(\d{2})[-/]?(\d{2})[T\s]?(\d{2})?:?(\d{2})?:?(\d{2})?/)
+      const match = str.match(/(\d{4})[-/](\d{2})[-/](\d{2})[\s](\d{2}):(\d{2}):(\d{2})/)
       if (match) {
-        const [, year, month, day, hour = '0', minute = '0'] = match
+        const [, year, month, day, hour, minute] = match
         date = new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute))
       } else {
-        date = new Date(str)
+        const simpleMatch = str.match(/(\d{4})[-/](\d{2})[-/](\d{2})[\s](\d{2}):(\d{2})/)
+        if (simpleMatch) {
+          const [, year, month, day, hour, minute] = simpleMatch
+          date = new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute))
+        } else {
+          date = new Date(str)
+        }
       }
     }
   }
@@ -93,20 +99,18 @@ export function formatChatTime(dateString: string | number | Date | null | undef
     return ''
   }
   
-  const chinaTime = new Date(date.getTime() + 8 * 60 * 60 * 1000)
   const now = new Date()
-  const nowChina = new Date(now.getTime() + 8 * 60 * 60 * 1000)
-  const diffMs = nowChina.getTime() - chinaTime.getTime()
+  const diffMs = now.getTime() - date.getTime()
   const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
 
   if (diffDays === 0) {
-    return chinaTime.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+    return date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
   } else if (diffDays === 1) {
-    return '昨天 ' + chinaTime.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+    return '昨天 ' + date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
   } else if (diffDays < 7) {
     return diffDays + '天前'
   } else {
-    return chinaTime.toLocaleDateString('en-GB', { month: '2-digit', day: '2-digit' })
+    return date.toLocaleDateString('en-GB', { month: '2-digit', day: '2-digit' })
   }
 }
 

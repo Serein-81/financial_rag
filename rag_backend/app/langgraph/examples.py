@@ -16,7 +16,6 @@ from app.agent_framework.core.reflect_agent import ReflectAgent
 from app.multi_agent_system.agents.finance_specialist import FinanceSpecialist
 from app.multi_agent_system.agents.tax_specialist import TaxSpecialist
 from app.multi_agent_system.agents.legal_specialist import LegalSpecialist
-from app.multi_agent_system.agents.reflection_specialist import ReflectionSpecialist
 from app.multi_agent_system.agents.intent_router_agent import IntentRouterAgent
 
 from app.langgraph import (
@@ -67,11 +66,7 @@ def create_agents_registry(
             tool_manager=tool_manager,
             enable_rag=enable_rag
         ),
-        "reflection": ReflectionSpecialist(
-            llm_adapter=llm_adapter,
-            tool_manager=tool_manager,
-            confidence_threshold=0.7
-        ),
+        "reflection": None,  # 使用 review_quality 函数替代
         "rag_retriever": None,  # 稍后配置
         "aggregator": None,  # 稍后配置
         "direct_answer": None  # 稍后配置

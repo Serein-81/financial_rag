@@ -39,10 +39,12 @@ import {
   Settings,
   ExternalLink,
   ActivitySquare,
+  BarChart3,
 } from 'lucide-vue-next'
 import * as d3 from 'd3'
+import ObservabilityPanel from '@/components/ObservabilityPanel.vue'
 
-const activeTab = ref<'discovery' | 'monitor' | 'trace' | 'history' | 'langsmith'>('discovery')
+const activeTab = ref<'discovery' | 'monitor' | 'trace' | 'history' | 'langsmith' | 'observability'>('discovery')
 const isLoading = ref(false)
 const error = ref('')
 const lastRefresh = ref(new Date())
@@ -506,7 +508,8 @@ onMounted(() => {
               { id: 'monitor', label: '监控', icon: Monitor },
               { id: 'trace', label: '追踪', icon: Activity },
               { id: 'history', label: '历史', icon: History },
-              { id: 'langsmith', label: 'LangSmith', icon: ActivitySquare }
+              { id: 'langsmith', label: 'LangSmith', icon: ActivitySquare },
+              { id: 'observability', label: '可观测性', icon: BarChart3 }
             ]"
             :key="tab.id"
             @click="activeTab = tab.id as any; refresh()"
@@ -1364,6 +1367,10 @@ onMounted(() => {
               </div>
             </div>
           </div>
+        </div>
+
+        <div v-if="activeTab === 'observability'" class="space-y-6">
+          <ObservabilityPanel />
         </div>
 
         <div v-if="showLangSmithConfig" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">

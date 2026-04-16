@@ -353,8 +353,8 @@ class ReActAgent(BaseAgent):
                             delta_content = chunk["delta"]
                             response_text += delta_content
                             has_final_answer_marker = (
-                                "Final Answer:" in response_text or
-                                "final answer:" in response_text
+                                "Final Answer" in response_text or
+                                "final answer" in response_text
                             )
                             if has_final_answer_marker:
                                 should_stream_output = False
@@ -418,24 +418,23 @@ class ReActAgent(BaseAgent):
                         response_text += str_chunk
                         logger.debug(f"[Agent] ✓ Added str chunk: '{str_chunk[:30]}...', total: {len(response_text)}")
                 
-                logger.info(f"[Agent] ✓✓✓ 流式循环结束！总共处理 {chunk_count} 个 chunks, 最终 response_text 长度: {len(response_text)}")
-
-                # 🔧 注意：不在此处检查 Final Answer
+                #  注意：不在此处检查 Final Answer
                 # 原因：流式传输中途 response_text 不完整，提取会截断答案
                 # 例如收到 "Final Answer: 你\n" 时提取只得到"你"，后续"好！..."全部丢失
 
                 # 检查是否需要工具调用（可在流式中途判断，有完整 Action Input 或 XML 即可）
                 tool_call = self.tool_manager.parse_tool_call_from_text(response_text)
                 
-                # 🔧 调试日志：检查 LLM 响应中的工具调用格式
-                if self.current_iteration == 1 and len(response_text) > 50:
-                    has_action = "Action:" in response_text or "action:" in response_text
-                    has_action_input = "Action Input:" in response_text or "action input:" in response_text
-                    has_xml_invoke = "<invoke" in response_text and "</invoke>" in response_text
-                    logger.info(f"🔍 [迭代 {self.current_iteration}] LLM响应长度: {len(response_text)}, 包含Action: {has_action}, 包含Action Input: {has_action_input}, 包含XML: {has_xml_invoke}")
-                    if (has_action or has_xml_invoke) and not tool_call:
-                        logger.warning(f"⚠️ [迭代 {self.current_iteration}] 警告：LLM生成了工具调用但解析失败！")
-                        logger.info(f"🔍 [迭代 {self.current_iteration}] LLM响应片段:\n{response_text[-300:]}")
+                # 提取并记录 Thought 和 Action 信息
+                thought_match = re.search(r'##?\s*Thought\s*[\n:]?\s*(.+?)(?=\n##?\s*Action:|\n##?\s*Final Answer:|$)', response_text, re.DOTALL | re.IGNORECASE)
+                if thought_match:
+                    thought_text = thought_match.group(1).strip()[:200]
+                    self._log_action("🧠 思考过程", {"thought": thought_text})
+                
+                action_match = re.search(r'##?\s*Action\s*[\n:]?\s*(.+?)(?=\n##?\s*Action Input:|\n##?\s*Observation:|\n##?\s*Final Answer:|$)', response_text, re.DOTALL | re.IGNORECASE)
+                if action_match:
+                    action_text = action_match.group(1).strip()
+                    self._log_action("⚡ 行动计划", {"action": action_text})
                 
                 # 支持 ReAct 格式 (Action Input) 和 MiniMax XML 格式
                 has_react_format = "Action Input:" in response_text
@@ -491,7 +490,7 @@ class ReActAgent(BaseAgent):
                             "reasons": force_check["reasons"]
                         })
                         # 策略1：优先使用 LLM 响应中的 Final Answer
-                        if "Final Answer:" in response_text:
+                        if "Final Answer" in response_text or "final answer" in response_text:
                             final_answer = self._extract_final_answer(response_text)
                             if final_answer:
                                 cleaned_answer = self._prepare_answer_for_output(final_answer)
@@ -577,20 +576,28 @@ class ReActAgent(BaseAgent):
                     current_prompt = current_prompt + response_text + "\n" + observation
 
                     self.last_successful_tool_result = tool_result
+                    tool_result_preview = tool_result[:150] + "..." if len(tool_result) > 150 else tool_result
                     self._log_action("🔄 工具调用完成，进入下一轮推理", {
                         "next_iteration": self.current_iteration + 1,
-                        "tool_name": tool_call["tool_name"]
+                        "tool_name": tool_call["tool_name"],
+                        "result_preview": tool_result_preview
                     })
                     continue
 
                 # 🔧 流式响应完整接收后，统一检查 Final Answer
                 # 此时 response_text 是完整的，提取结果不会被截断
-                if "Final Answer:" in response_text:
+                if "Final Answer" in response_text or "final answer" in response_text:
                     final_answer = self._extract_final_answer(response_text)
                     if final_answer and len(final_answer) > 10:
                         # 检查是否包含重复内容（LLM 可能输出了重复的答案）
                         # 如果 Final Answer 前的内容和提取的内容高度相似，说明有重复
-                        before_final = response_text.split("Final Answer:")[0]
+                        # 🔧 修复：支持 Markdown 格式标题
+                        import re as re_module
+                        match = re_module.search(r'##?\s*Final Answer', response_text, re_module.IGNORECASE)
+                        if match:
+                            before_final = response_text[:match.start()]
+                        else:
+                            before_final = response_text.split("Final Answer")[0]
                         similarity = self._calculate_similarity(before_final, final_answer)
                         
                         # 计算已输出的内容和 Final Answer 前的重复部分
@@ -622,7 +629,11 @@ class ReActAgent(BaseAgent):
                                 for char in cleaned_answer:
                                     yield char
                         else:
-                            self._log_action("📤 提取 Final Answer", {"length": len(final_answer)})
+                            final_answer_preview = final_answer[:100] + "..." if len(final_answer) > 100 else final_answer
+                            self._log_action("📤 提取 Final Answer", {
+                                "length": len(final_answer),
+                                "preview": final_answer_preview
+                            })
                             cleaned_answer = output_formatter.clean_output(final_answer)
                             original_len = len(cleaned_answer)
                             cleaned_answer = self._prepare_answer_for_output(cleaned_answer)
@@ -653,7 +664,7 @@ class ReActAgent(BaseAgent):
                 # 当 LLM 给出完整答案但没有使用 ReAct 格式时，直接输出
                 # 检查是否有 Final Answer 标记，如果有则跳过
                 response_stripped = response_text.strip()
-                final_answer_indicators = ["Final Answer:", "final answer:"]
+                final_answer_indicators = ["Final Answer", "final answer", "Final answer"]
                 has_final_answer_indicator = any(kw in response_stripped for kw in final_answer_indicators)
                 
                 # 检查是否包含工具调用相关关键词（包括 XML 格式）
@@ -808,7 +819,6 @@ class ReActAgent(BaseAgent):
         Returns:
             完整的提示词
         """
-        # 🚨🚨🚨 测试日志 - 如果看到这条日志说明代码更新成功 🚨🚨🚨
         logger.info("🚨🚨🚨 [_build_react_prompt] 被调用！用户输入: {}".format(user_input[:50]))
         
         # 获取工具描述
@@ -817,12 +827,7 @@ class ReActAgent(BaseAgent):
             tools_description = "当前没有可用的工具，请直接回答问题。"
             logger.warning("⚠️ [Agent] 警告：没有可用工具！")
         
-        # 🔧 调试日志：查看工具描述长度
         logger.info(f"🔍 [Agent] 工具描述长度: {len(tools_description)} 字符")
-        logger.info(f"🔍 [Agent] 工具数量: {len(self.tool_manager.tools)} 个")
-        if len(tools_description) < 100:
-            logger.warning(f"⚠️ [Agent] 警告：工具描述过短，可能影响工具调用！")
-            logger.info(f"🔍 [Agent] 工具描述内容:\n{tools_description[:500]}")
         
         # 格式化历史记录
         history_section = ""
@@ -833,12 +838,23 @@ class ReActAgent(BaseAgent):
         # 判断是否为简单对话
         user_input_simple = self._is_simple_input(user_input)
         
-        # 构建上下文
+        # 从kwargs获取额外的context（来自RAG检索结果）
+        rag_context = kwargs.get("context", "")
+        
+        # 判断知识库是否有内容（仅用于信息展示，不影响工具调用决策）
+        kb_has_content = "true"
+        if not rag_context or rag_context.strip() in ["", "（无相关文档）", "无相关文档"]:
+            kb_has_content = "false"
+        
+        # 构建上下文 - 匹配模板变量名
         context = {
             "max_iterations": self.max_iterations,
-            "tools_description": tools_description,
+            "timeout": self.timeout,
+            "available_tools": tools_description,
+            "context": rag_context,
             "history_section": history_section,
             "user_input": user_input,
+            "knowledge_base_has_content": kb_has_content,
             "user_input_simple": user_input_simple
         }
         
@@ -878,7 +894,7 @@ class ReActAgent(BaseAgent):
             解析结果
         """
         # 检查是否包含最终答案
-        if "Final Answer:" in response:
+        if "Final Answer" in response or "final answer" in response:
             final_answer = self._extract_final_answer(response)
             if final_answer:
                 return {
@@ -911,12 +927,20 @@ class ReActAgent(BaseAgent):
         Returns:
             最终答案，如果没有找到则返回 None
         """
-        # 🔧 Bug4修复：添加 re.IGNORECASE 以支持大小写变体（如 "final answer:"）
-        pattern = r'Final Answer:\s*(.*?)(?=\nThought:|\nAction:|\nObservation:|$)'
-        match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
+        # 🔧 修复：支持 Markdown 格式标题（## Final Answer）和纯文本格式（Final Answer:）
+        # Markdown 格式：## Final Answer\n 或 ## Final Answer 
+        # 纯文本格式：Final Answer: 或 final answer:
+        patterns = [
+            r'##\s*Final Answer\s*\n(.*?)(?=\n##|\nThought:|\nAction:|\nObservation:|$)',
+            r'##\s*Final Answer\s*:(.*?)(?=\n##|\nThought:|\nAction:|\nObservation:|$)',
+            r'Final Answer:\s*(.*?)(?=\nThought:|\nAction:|\nObservation:|$)',
+            r'final answer:\s*(.*?)(?=\nthought:|\naction:|\nobservation:|$)',
+        ]
         
-        if match:
-            return match.group(1).strip()
+        for pattern in patterns:
+            match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
+            if match:
+                return match.group(1).strip()
         
         return None
     
@@ -1251,6 +1275,10 @@ class ReActAgent(BaseAgent):
         if not cleaned_answer:
             return ""
 
+        # 🔧 移除 [来自记忆] 等内部标记
+        cleaned_answer = re.sub(r'\[来自记忆\]\s*', '', cleaned_answer, flags=re.IGNORECASE)
+        cleaned_answer = re.sub(r'\[来源[：:][^\]]*\]\s*', '', cleaned_answer)
+        
         cleaned_answer = self._remove_duplicate_full_text(cleaned_answer)
         
         paragraphs = [
@@ -1490,9 +1518,19 @@ class ReActAgent(BaseAgent):
         
         # 添加 LLM 思考内容（提取思考中的关键信息）
         for idx, (response, _) in enumerate(self.last_responses):
-            # 提取 Final Answer 如果存在
-            final_answer_match = re.search(r'Final Answer:\s*(.+?)(?:\n|$)', response, re.DOTALL)
-            has_final = "Final Answer:" in response
+            # 提取 Final Answer 如果存在（支持 Markdown 和纯文本格式）
+            final_answer_patterns = [
+                r'##\s*Final Answer\s*\n(.+?)(?=\n##|\nThought:|\nAction:|\nObservation:|$)',
+                r'##\s*Final Answer\s*:(.+?)(?=\n##|\nThought:|\nAction:|\nObservation:|$)',
+                r'Final Answer:\s*(.+?)(?=\nThought:|\nAction:|\nObservation:|$)',
+            ]
+            final_answer_match = None
+            for pattern in final_answer_patterns:
+                final_answer_match = re.search(pattern, response, re.DOTALL | re.IGNORECASE)
+                if final_answer_match:
+                    break
+            
+            has_final = bool(final_answer_match) or "Final Answer" in response or "Final answer" in response
             
             # 提取 Thought 部分
             thought_match = re.search(r'Thought:\s*(.+?)(?:\n|$)', response, re.DOTALL)
@@ -1549,8 +1587,9 @@ class ReActAgent(BaseAgent):
                             logger.error(f"🔍 [OutputAgent] LLM 返回错误: {error_msg}")
                             return f"抱歉，处理过程中遇到问题：{error_msg}"
                     
-                    if "Final Answer:" in resp:
-                        logger.info("✅ [OutputAgent] 找到 'Final Answer:' 字样")
+                    # 🔧 修复：检查是否包含 Final Answer（支持 Markdown 格式）
+                    if "Final Answer" in resp or "final answer" in resp:
+                        logger.info("✅ [OutputAgent] 找到 'Final Answer' 字样")
                         answer = self._extract_final_answer(resp)
                         logger.info(f"🔍 [OutputAgent] 提取的 answer: {answer}, 长度: {len(answer) if answer else 0}")
                         

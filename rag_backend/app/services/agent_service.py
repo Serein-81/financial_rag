@@ -51,8 +51,8 @@ from app.agent_framework.tools import LangChainCompatLayer
 # 导入现有的工具
 from app.tools import get_all_tools
 
-# 导入提示词加载器（已从简单版升级到高级版）
-from app.services.prompt_service import load_agent_system_prompt
+# 导入统一提示词加载器
+from app.prompts.loader import AgentPromptLoader
 
 # 🆕 导入智能路由和统一检索
 from app.services.unified_retriever import unified_retriever
@@ -165,16 +165,13 @@ class EnterpriseAgentService:
         except Exception as e:
             print(f"[WARNING] MCP 工具注册失败: {e}")
         
-        # 5. 加载系统提示词并添加工具使用策略
-        system_prompt = load_agent_system_prompt()
-        tool_instruction = get_tool_system_instruction()
-        system_prompt = system_prompt + "\n\n" + tool_instruction
-        
-        # 6. 创建 ReAct Agent
+        # 5. 创建 ReAct Agent（使用结构化提示词系统）
+        # agent_name="react" 会让 Agent 从 app/prompts/agents/react/system.md 加载提示词
+        # 通过 PromptEngine 动态渲染变量和条件
         self.agent = ReActAgent(
             llm_adapter=self.llm_adapter,
             tool_manager=self.tool_manager,
-            system_prompt=system_prompt,
+            agent_name="react",
             max_iterations=10,
             timeout=300.0
         )
@@ -352,12 +349,45 @@ class EnterpriseAgentService:
             memory_context = ""
             print("[WARNING] [记忆系统] 缺少session_id或user_id，跳过记忆系统")
 
-        # 构建增强的用户输入（简化版，主要逻辑已在上下文构建器中）
-        enhanced_input = f"""用户问题：{user_input}
+        # 🆕 构建增强的用户输入 - 包含RAG上下文和记忆上下文
+        # 提示：RAG上下文优先级高于记忆上下文，因为来自知识库文档
+        # 注意：使用 XML 格式标记，OutputFormatter 会自动清理
+        
+        # 构建增强输入（知识库状态已通过模板条件渲染处理）
+        if kb_context and kb_context.strip() and kb_context != '（无相关文档）':
+            # 知识库有内容时的正常流程
+            enhanced_input = f"""用户问题：{user_input}
 
-{memory_context}
+<InternalContext>
+<KnowledgeBase>
+{kb_context}
+</KnowledgeBase>
 
-请基于以上上下文信息回答用户问题。"""
+<MemoryContext>
+{memory_context if memory_context else '（无相关记忆）'}
+</MemoryContext>
+
+<SystemInstructions>
+1. 请优先使用上述知识库文档回答问题
+2. 如果知识库没有相关信息，再参考记忆上下文
+3. 如需调用 search_enterprise_knowledge 工具，请务必传入知识库ID：{kb_id}
+4. 如果知识库和记忆都没有相关信息，请直接回答"我不知道"，不要编造答案
+</SystemInstructions>
+</InternalContext>"""
+        else:
+            # 知识库无内容时，仅提供用户问题和记忆上下文
+            # 关于工具使用的指令已在模板中通过条件渲染自动加载
+            enhanced_input = f"""用户问题：{user_input}
+
+<InternalContext>
+<MemoryContext>
+{memory_context if memory_context else '（无相关记忆）'}
+</MemoryContext>
+
+<SystemInstructions>
+请基于用户问题和记忆上下文回答
+</SystemInstructions>
+</InternalContext>"""
 
         # 不再使用手动历史记录，改用记忆系统的上下文
         formatted_history = []
@@ -509,17 +539,46 @@ class EnterpriseAgentService:
             memory_context = ""
             print("[WARNING] [记忆系统] 缺少session_id或user_id，跳过记忆系统")
         
-        # 构建增强的用户输入
-        enhanced_input = f"""用户问题：{user_input}
-
-【记忆上下文】
-{memory_context}
-
-【系统指令】：
-1. 如需调用 search_enterprise_knowledge 工具，请务必传入知识库ID：{kb_id}
-2. 请优先使用上述记忆上下文回答问题
-3. 记忆上下文包含了用户的历史对话和重要信息，请充分利用"""
+        # 🆕 构建增强的用户输入 - 包含RAG上下文和记忆上下文
+        # 提示：RAG上下文优先级高于记忆上下文，因为来自知识库文档
+        # 注意：使用 XML 格式标记，OutputFormatter 会自动清理
         
+        # 构建增强输入（知识库状态已通过模板条件渲染处理）
+        if kb_context and kb_context.strip() and kb_context != '（无相关文档）':
+            # 知识库有内容时的正常流程
+            enhanced_input = f"""用户问题：{user_input}
+
+<InternalContext>
+<KnowledgeBase>
+{kb_context}
+</KnowledgeBase>
+
+<MemoryContext>
+{memory_context if memory_context else '（无相关记忆）'}
+</MemoryContext>
+
+<SystemInstructions>
+1. 请优先使用上述知识库文档回答问题
+2. 如果知识库没有相关信息，再参考记忆上下文
+3. 如需调用 search_enterprise_knowledge 工具，请务必传入知识库ID：{kb_id}
+4. 如果知识库和记忆都没有相关信息，请直接回答"我不知道"，不要编造答案
+</SystemInstructions>
+</InternalContext>"""
+        else:
+            # 知识库无内容时，仅提供用户问题和记忆上下文
+            # 关于工具使用的指令已在模板中通过条件渲染自动加载
+            enhanced_input = f"""用户问题：{user_input}
+
+<InternalContext>
+<MemoryContext>
+{memory_context if memory_context else '（无相关记忆）'}
+</MemoryContext>
+
+<SystemInstructions>
+请基于用户问题和记忆上下文回答
+</SystemInstructions>
+</InternalContext>"""
+
         # 不再使用手动历史记录
         formatted_history = []
         
@@ -534,18 +593,29 @@ class EnterpriseAgentService:
                 session_id=session_id
             ) as trace:
                 # 调用自定义 Agent 的流式方法
+                # 注意：需要将 context 作为 kwargs 传递，让 ReAct Agent 的系统提示词能正确使用
                 async for chunk in self.agent.stream_run(
-                    user_input=enhanced_input,
+                    user_input=user_input,  # 只传原始问题，不要包含上下文的 enhanced_input
                     history=formatted_history,
-                    kb_id=kb_id
+                    kb_id=kb_id,
+                    context=enhanced_input  # 将上下文作为 kwargs 传递
                 ):
-                    full_response += chunk
-                    yield chunk
-                # 记录回答到监控
+                    # 对每个 chunk 进行实时清理，移除内部标记
+                    cleaned_chunk = output_formatter.clean_stream_chunk(chunk)
+                    full_response += cleaned_chunk
+                    # 输出清理后的内容
+                    if cleaned_chunk:
+                        yield cleaned_chunk
+                # 记录回答到监控（使用清理后的完整内容）
                 trace.set_result(full_response)
             
-            # 🧠 将完整的AI回答添加到记忆系统
+            # 🧠 将完整的AI回答添加到记忆系统（使用深度清理后的内容）
             if memory_manager and full_response:
+                # 对完整回答进行深度清理后再保存
+                cleaned_full_response = output_formatter.clean_stream_content(full_response)
+                if cleaned_full_response != full_response:
+                    print(f"[FORMAT] [OutputFormatter] 深度清理完成 | 原始: {len(full_response)} → 清理后: {len(cleaned_full_response)}")
+                    full_response = cleaned_full_response
                 await memory_manager.add_message("assistant", full_response)
                 print(f"[MEMORY] [记忆系统] 已保存AI回答")
             

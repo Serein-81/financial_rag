@@ -196,16 +196,19 @@ class OrchestratorAdapter:
         logger.info("[Adapter:Reflection] 质量审核")
         
         try:
-            reflection_result = await self.orchestrator.reflection_specialist.review(
-                query=state["user_query"],
-                specialist_responses=state["specialist_results"],
-                confidence_threshold=state["metadata"].get("confidence_threshold", 0.7)
+            from app.prompts.llm_functions import review_quality
+            import json
+            
+            specialist_results_str = json.dumps(state["specialist_results"], ensure_ascii=False)
+            reflection_result = await review_quality(
+                user_question=state["user_query"],
+                ai_answer=specialist_results_str
             )
             
             return {
                 **state,
                 "reflection_result": reflection_result,
-                "needs_human_review": reflection_result.needs_human_review
+                "needs_human_review": not reflection_result.get("is_quality_acceptable", True)
             }
         except Exception as e:
             logger.error(f"[Adapter:Reflection] 错误: {e}")

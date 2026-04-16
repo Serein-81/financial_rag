@@ -15,9 +15,13 @@ export * from './logs'
 export * from './memory'
 export * from './multi-agent'
 export * from './notifications'
+export * from './observability'  // 新增：可观测性 API
 export * from './policy'
 export * from './prompt'
 export * from './search'
+export * from './security'       // 新增：安全 API
+export * from './tenant-settings'
+export * from './workflow-monitor'
 export * from './session'
 export * from './tax-intelligence'
 export * from './tax-report'

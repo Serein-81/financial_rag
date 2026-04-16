@@ -54,12 +54,23 @@ class TaxIntelligenceService:
         self.tax_calculation_tool = TaxCalculationTool()
         self.policy_service = PolicyRetrievalService()
         self.human_review_queue = HumanReviewQueue()
-        self.report_generator = ReportGenerator()
         self.agent_tracer = AgentTracer()
         self.notification_service = AdminNotificationService()
         
         self._initialize_llm_components()
         self._initialize_langgraph_workflow()
+        
+        if self.tax_specialist is not None:
+            try:
+                self.report_generator = ReportGenerator(
+                    llm_adapter=self.llm_adapter,
+                    tool_manager=self.tool_manager
+                )
+            except Exception as e:
+                logger.warning(f"⚠️ ReportGenerator 初始化失败: {e}")
+                self.report_generator = None
+        else:
+            self.report_generator = None
         
         logger.info("✅ 税务智能服务初始化完成")
     
@@ -877,7 +888,7 @@ class TaxIntelligenceService:
                     "overall_risk_score": report.risk_score or 0,
                     "high_risk_count": 0,
                     "optimization_suggestions": [],
-                    "summary": f"税务报告分析完成，置信度: {report.confidence_score or 0:.2%}",
+                    "summary": f"税务报告分析完成，置信度: {float(report.confidence_score or 0):.2%}",
                     "created_at": report.created_at,
                     "completed_at": report.updated_at,
                     "processing_time": None

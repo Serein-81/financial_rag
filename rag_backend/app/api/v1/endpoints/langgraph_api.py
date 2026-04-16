@@ -120,7 +120,6 @@ def _create_agents_registry() -> Dict[str, Any]:
     from app.multi_agent_system.agents.finance_specialist import FinanceSpecialist
     from app.multi_agent_system.agents.tax_specialist import TaxSpecialist
     from app.multi_agent_system.agents.legal_specialist import LegalSpecialist
-    from app.multi_agent_system.agents.reflection_specialist import ReflectionSpecialist
     
     llm_adapter = OpenAIAdapter()
     tool_manager = ToolManager()
@@ -150,11 +149,7 @@ def _create_agents_registry() -> Dict[str, Any]:
             tool_manager=tool_manager,
             enable_rag=True
         ),
-        "reflection": ReflectionSpecialist(
-            llm_adapter=llm_adapter,
-            tool_manager=tool_manager,
-            confidence_threshold=0.7
-        ),
+        "reflection": None,  # 使用 review_quality 函数替代
         "rag_retriever": None,
         "aggregator": None,
         "direct_answer": None

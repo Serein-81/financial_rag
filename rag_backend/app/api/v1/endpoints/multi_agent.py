@@ -55,7 +55,6 @@ from app.multi_agent_system.agents import (
     FinanceSpecialist,
     TaxSpecialist,
     LegalSpecialist,
-    ReflectionSpecialist,
     ReportGenerator
 )
 from app.agent_framework.llm.base_adapter import BaseLLMAdapter
@@ -67,7 +66,6 @@ orchestrator: Optional[AgentOrchestrator] = None
 finance_specialist: Optional[FinanceSpecialist] = None
 tax_specialist: Optional[TaxSpecialist] = None
 legal_specialist: Optional[LegalSpecialist] = None
-reflection_specialist: Optional[ReflectionSpecialist] = None
 
 
 def get_orchestrator(tenant_id: str = None, user_id: str = None):
@@ -111,14 +109,6 @@ def get_legal_specialist():
     if legal_specialist is None:
         legal_specialist = LegalSpecialist()
     return legal_specialist
-
-
-def get_reflection_specialist():
-    """获取或创建反思专家实例"""
-    global reflection_specialist
-    if reflection_specialist is None:
-        reflection_specialist = ReflectionSpecialist()
-    return reflection_specialist
 
 
 @router.post("/query", response_model=MultiAgentResponse)
@@ -280,13 +270,6 @@ async def query_specialist(
             )
         elif specialist_type == SpecialistType.LEGAL:
             specialist = get_legal_specialist()
-            result = await specialist.run(
-                query=request.query,
-                context=request.context,
-                **request.parameters
-            )
-        elif specialist_type == SpecialistType.REFLECTION:
-            specialist = get_reflection_specialist()
             result = await specialist.run(
                 query=request.query,
                 context=request.context,
@@ -562,43 +545,6 @@ async def check_system_health():
         ))
         overall_healthy = False
     
-    try:
-        reflection = get_reflection_specialist()
-        agents_status.append(AgentHealthStatus(
-            agent_type=SpecialistType.REFLECTION,
-            is_available=True,
-            response_time=None,
-            last_heartbeat=datetime.now(),
-            status_message="正常运行"
-        ))
-    except (ValueError, KeyError) as e:
-        agents_status.append(AgentHealthStatus(
-            agent_type=SpecialistType.REFLECTION,
-            is_available=False,
-            response_time=None,
-            last_heartbeat=datetime.now(),
-            status_message=f"数据错误: {str(e)}"
-        ))
-        overall_healthy = False
-    except (OSError, IOError) as e:
-        agents_status.append(AgentHealthStatus(
-            agent_type=SpecialistType.REFLECTION,
-            is_available=False,
-            response_time=None,
-            last_heartbeat=datetime.now(),
-            status_message=f"IO错误: {str(e)}"
-        ))
-        overall_healthy = False
-    except Exception as e:
-        agents_status.append(AgentHealthStatus(
-            agent_type=SpecialistType.REFLECTION,
-            is_available=False,
-            response_time=None,
-            last_heartbeat=datetime.now(),
-            status_message=f"异常: {str(e)}"
-        ))
-        overall_healthy = False
-    
     orchestrator_healthy = orchestrator is not None
     
     return SystemHealthResponse(
@@ -739,7 +685,6 @@ async def get_agent_metrics():
         ("finance_specialist", "金融专家"),
         ("tax_specialist", "税务专家"),
         ("legal_specialist", "法律专家"),
-        ("reflection_specialist", "反思专家"),
     ]
 
     agent_metrics = []

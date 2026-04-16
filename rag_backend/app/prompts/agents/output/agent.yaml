@@ -1,0 +1,40 @@
+agent:
+  name: "output"
+  display_name: "输出合成专家"
+  version: "1.0.0"
+  type: "output"
+  description: "多专家结果合成、冲突检测与解决、输出质量审查"
+  
+  reasoning:
+    engine: "react"
+    max_iterations: 3
+    timeout: 30
+    
+  prompts:
+    system: "system.md"
+    strategies_dir: "strategies/"
+    review_dir: "review/"
+    
+  tools:
+    enabled: false
+    
+  synthesis:
+    strategies:
+      - concatenate
+      - merge
+      - hierarchical
+      - narrative
+    conflict_resolution:
+      - latest
+      - highest_confidence
+      - priority
+      - vote
+    
+  output:
+    format: "structured"
+    confidence_required: true
+    
+  metadata:
+    author: "AI Team"
+    created: "2024-01-01"
+    tags: ["synthesis", "output", "quality"]

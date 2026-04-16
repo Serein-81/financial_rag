@@ -1,0 +1,37 @@
+agent:
+  name: "legal"
+  display_name: "法务专家"
+  version: "1.0.0"
+  type: "specialist"
+  description: "处理企业法律相关问题，包括合同审查、知识产权、劳动法、公司治理等"
+  
+  reasoning:
+    engine: "react"
+    max_iterations: 10
+    timeout: 60
+    
+  prompts:
+    system: "system.md"
+    domains_dir: "domains/"
+    
+  tools:
+    enabled: true
+    required: []
+    optional: []
+    
+  domains:
+    - contract
+    - intellectual_property
+    - labor
+    - corporate
+    - compliance
+    - litigation
+    
+  output:
+    format: "structured"
+    confidence_required: true
+    
+  metadata:
+    author: "AI Team"
+    created: "2024-01-01"
+    tags: ["legal", "contract", "compliance"]

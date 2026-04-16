@@ -166,19 +166,20 @@ class UnifiedRetriever:
         
         # 2. RAG 上下文（知识库文档）
         if rag_results:
-            rag_context = "\n【知识库文档】\n"
+            rag_context = "\n<KnowledgeBase>\n"
             for idx, result in enumerate(rag_results[:5], 1):
                 rag_context += f"{idx}. {result.content[:200]}...\n"
                 rag_context += f"   来源: {result.source_file}\n\n"
+            rag_context += "</KnowledgeBase>\n"
             context_parts.append(rag_context)
         
-        # 3. 根据模式添加提示
+        # 3. 根据模式添加提示（使用隐蔽的 XML 标签，避免被误输出）
         if mode == RouteMode.HYBRID:
-            context_parts.insert(0, "【提示】以下内容包含知识库文档和个人对话记忆，请综合参考\n")
+            context_parts.insert(0, "<ContextSource type='hybrid'>以下内容包含知识库文档和个人对话记忆\n")
         elif mode == RouteMode.MEMORY_ONLY:
-            context_parts.insert(0, "【提示】以下内容来自个人对话记忆\n")
+            context_parts.insert(0, "<ContextSource type='memory'>以下内容来自个人对话记忆\n")
         elif mode == RouteMode.RAG_ONLY:
-            context_parts.insert(0, "【提示】以下内容来自知识库文档\n")
+            context_parts.insert(0, "<ContextSource type='rag'>以下内容来自知识库文档\n")
         
         return "\n".join(context_parts)
     

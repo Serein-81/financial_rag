@@ -1,0 +1,236 @@
+# RAG上下文配置
+# 为Agent提供RAG检索相关的上下文信息
+
+## 1. RAG系统概述
+
+### 什么是RAG
+RAG（Retrieval-Augmented Generation）是一种结合检索和生成的技术，通过检索相关知识来增强AI的回答质量。
+
+### RAG在系统中的作用
+- 提供实时准确的信息
+- 补充Agent的专业知识
+- 增强回答的可信度
+- 降低幻觉风险
+
+## 2. 知识库结构
+
+### 文档类型
+```yaml
+document_types:
+  - name: "政策法规"
+    description: "税收法规、政策文件"
+    sources:
+      - "国家税务总局"
+      - "财政部"
+      - "国务院"
+    
+  - name: "行业知识"
+    description: "行业标准和最佳实践"
+    sources:
+      - "行业协会"
+      - "专业机构"
+      
+  - name: "案例分析"
+    description: "真实案例和解决方案"
+    sources:
+      - "公开案例"
+      - "脱敏数据"
+```
+
+### 知识分类
+- **税务类**：增值税、企业所得税、个人所得税等
+- **财务类**：会计准则、财务报表分析等
+- **法律类**：合同法、劳动法、公司法等
+- **政策类**：扶持政策、补贴政策等
+
+## 3. 检索配置
+
+### 检索参数
+```yaml
+retrieval:
+  top_k: 5                    # 返回前5个结果
+  similarity_threshold: 0.7    # 相似度阈值
+  max_tokens: 2000           # 最大Token数
+  rerank: true               # 是否重排序
+```
+
+### 检索策略
+```yaml
+strategies:
+  - type: "keyword"
+    description: "关键词检索"
+    use_cases: ["精确查找", "术语查询"]
+    
+  - type: "semantic"
+    description: "语义检索"
+    use_cases: ["概念查询", "相似问题"]
+    
+  - type: "hybrid"
+    description: "混合检索"
+    use_cases: ["综合查询", "复杂问题"]
+```
+
+## 4. 上下文构建
+
+### 上下文窗口
+```yaml
+context_window:
+  max_length: 4000           # 最大上下文长度
+  include_metadata: true     # 包含元数据
+  include_source: true       # 包含来源
+  truncate: "smart"         # 智能截断
+```
+
+### 上下文格式
+```markdown
+## 相关知识
+
+### 来源：[文档标题]
+[检索到的内容片段]
+
+### 来源：[文档标题]
+[检索到的内容片段]
+
+---
+**参考来源**：共检索到 {count} 个相关文档
+```
+
+## 5. 引用标注
+
+### 引用格式
+```markdown
+根据《企业所得税法》第X条规定[^1]，
+企业发生的[^1]符合条件的支出，可以税前扣除。
+
+[^1]: 《中华人民共和国企业所得税法》第八条，国家税务总局
+```
+
+### 引用编号
+```yaml
+citation_format:
+  style: "superscript"       # 上标样式
+  format: "[序号]"           # [1] 样式
+  include_source: true       # 包含来源
+  include_date: false         # 包含日期
+```
+
+## 6. 检索优化
+
+### 查询优化
+- 提取关键实体
+- 扩展查询同义词
+- 添加领域限定词
+- 使用专业术语
+
+### 结果优化
+```yaml
+result_optimization:
+  deduplicate: true          # 去重
+  rank_by: "relevance"       # 按相关性排序
+  diversity: 0.3            # 多样性权重
+  freshness: 0.2            # 时效性权重
+```
+
+## 7. 质量控制
+
+### 质量评估标准
+```yaml
+quality_criteria:
+  relevance:
+    min_score: 0.6
+    description: "内容相关性"
+    
+  accuracy:
+    min_score: 0.8
+    description: "信息准确性"
+    
+  freshness:
+    max_age_days: 365
+    description: "信息时效性"
+```
+
+### 过滤规则
+```yaml
+filters:
+  - type: "date"
+    condition: "within_1_year"
+    action: "prioritize"
+    
+  - type: "source"
+    condition: "authoritative"
+    action: "boost"
+    
+  - type: "content"
+    condition: "complete"
+    action: "prefer"
+```
+
+## 8. 使用指南
+
+### Agent使用RAG的时机
+1. **知识查询**：回答需要事实性信息时
+2. **政策解读**：需要最新政策依据时
+3. **案例参考**：需要参考类似案例时
+4. **术语解释**：需要专业定义时
+
+### RAG输出格式示例
+```json
+{
+  "retrieval_results": [
+    {
+      "content": "检索到的内容",
+      "source": "文档来源",
+      "source_url": "文档链接",
+      "relevance_score": 0.92,
+      "metadata": {
+        "publish_date": "2024-01-01",
+        "document_type": "法规"
+      }
+    }
+  ],
+  "context_for_agent": "构建好的上下文"
+}
+```
+
+## 9. 错误处理
+
+### 检索失败处理
+```yaml
+retrieval_failure:
+  fallback_strategy: "use_cache"
+  cache_ttl: 3600
+  alert_threshold: 3
+  log_level: "warning"
+```
+
+### 无结果处理
+```yaml
+no_results:
+  response: "未找到相关信息，建议您换个查询方式或咨询专业人士"
+  alternative: "尝试使用更通用的关键词"
+  escalate: true
+```
+
+## 10. 性能监控
+
+### 监控指标
+```yaml
+metrics:
+  retrieval_time:
+    target: "< 500ms"
+    alert: "> 1000ms"
+    
+  hit_rate:
+    target: "> 80%"
+    alert: "< 60%"
+    
+  quality_score:
+    target: "> 0.75"
+    alert: "< 0.6"
+```
+
+### 优化建议
+- 定期更新知识库
+- 优化检索算法
+- 清理过时内容
+- 增强数据质量
