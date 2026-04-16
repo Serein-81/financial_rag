@@ -48,7 +48,8 @@ rag_backend/.coverage
 rag_backend/htmlcov/
 rag_backend/coverage.xml
 rag_backend/*.cover
-
+**/__pycache__/
+*.pyc
 # ========================
 # 本地存储卷与数据库数据
 rag_backend/tests/
@@ -56,11 +57,14 @@ rag_backend/mass_/
 rag_backend/migrations/
 rag_backend/logs/
 rag_backend/scripts/       # 本地脚本目录
-
+rag_backend/backups/
+rag_backend/sql/
+rag_backend/项目开发中遇到的问题和解决方案.md
+rag_backend/FRONTEND_IMPROVEMENTS.md
 # ========================
 # 开发文档（包含大量内部开发记录，不需要上传）
 docs/
-
+test_templates/
 # ========================
 # 备份和测试输出文件
 rag_backend/backups/
