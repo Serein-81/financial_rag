@@ -9,7 +9,6 @@ Agent 模板集成测试（独立版本）
 
 import sys
 import os
-from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -77,7 +76,7 @@ def test_react_simple_greeting():
     
     result = engine.render("react_agent", context)
     
-    print(f"\n📋 渲染结果片段：")
+    print("\n📋 渲染结果片段：")
     print("-" * 70)
     print(result[:600] + "..." if len(result) > 600 else result)
     print("-" * 70)

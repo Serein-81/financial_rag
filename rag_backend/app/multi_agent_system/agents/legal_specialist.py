@@ -6,8 +6,7 @@
 import re
 import json
 import logging
-from typing import Dict, List, Any, Optional, AsyncGenerator
-from datetime import datetime
+from typing import Dict, List, Any, Optional
 from enum import Enum
 from dataclasses import dataclass
 
@@ -467,7 +466,7 @@ class LegalSpecialist(BaseSpecialistAgent):
         prompt_parts = [
             f"用户问题：{user_input}\n",
             f"识别法律领域：{domain.value}",
-            f"\n提取的法律实体："
+            "\n提取的法律实体："
         ]
         
         if entities.parties:
@@ -654,7 +653,7 @@ class LegalSpecialist(BaseSpecialistAgent):
                         id=f"LEG_DATE_{len(findings) + 1}",
                         agent_name="legal",
                         category="日期审查",
-                        description=f"发现合同日期信息",
+                        description="发现合同日期信息",
                         risk_level=RiskLevel.INFO,
                         risk_score=10.0,
                         confidence=0.8,

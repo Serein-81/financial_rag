@@ -1,7 +1,6 @@
 from logging.config import fileConfig
 import os
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 from alembic import context
 
 config = context.config
@@ -18,10 +17,6 @@ def get_url():
 config.set_main_option("sqlalchemy.url", get_url())
 
 from app.db.base import Base
-from app.models.policy import Policy
-from app.models.policy_relation import PolicyRelation
-from app.models.enterprise_policy_match import EnterprisePolicyMatch
-from app.models.user_financial_data import UserFinancialData
 
 target_metadata = Base.metadata
 

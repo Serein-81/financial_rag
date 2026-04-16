@@ -1,11 +1,7 @@
 """
 测试智能Excel列名识别功能
 """
-import pandas as pd
-import openpyxl
 from openpyxl import Workbook
-from openpyxl.styles import Font, Alignment, PatternFill
-from difflib import SequenceMatcher
 
 # 导入列名映射系统
 import sys
@@ -14,7 +10,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'rag_backend'))
 
 from app.api.v1.endpoints.user_financial_data import (
     COLUMN_MAPPING, 
-    normalize_column_name, 
     calculate_similarity,
     auto_detect_columns
 )
@@ -119,16 +114,16 @@ def test_column_detection():
                 print(f"  {status_icon} {field:30s} {required_text:8s}   {status_text}")
         
         print()
-        print(f"识别统计:")
+        print("识别统计:")
         print(f"  - 总字段数: {len(detected)}")
         print(f"  - 已识别: {detected_count} ({detected_count/len(detected)*100:.1f}%)")
         print(f"  - 必需字段: {required_total}")
         print(f"  - 已识别必需字段: {required_detected} ({required_detected/required_total*100:.1f}%)")
         
         if required_detected == required_total:
-            print(f"  ✓ 可以成功导入此格式")
+            print("  ✓ 可以成功导入此格式")
         else:
-            print(f"  ✗ 缺少必需字段，无法导入")
+            print("  ✗ 缺少必需字段，无法导入")
 
 def test_similarity_calculation():
     """测试相似度计算"""

@@ -5,7 +5,6 @@
 用户注册功能测试脚本
 """
 
-import asyncio
 import sys
 import os
 
@@ -37,7 +36,7 @@ def test_user_register_validation():
             phone="12345678901",  # 无效手机号
             password="123456"
         )
-        print(f"  ❌ 应该拒绝无效手机号")
+        print("  ❌ 应该拒绝无效手机号")
     except Exception as e:
         print(f"  ✅ 正确拒绝无效手机号: {e}")
     
@@ -48,7 +47,7 @@ def test_user_register_validation():
             phone="13800138000",
             password="123"  # 密码太短
         )
-        print(f"  ❌ 应该拒绝短密码")
+        print("  ❌ 应该拒绝短密码")
     except Exception as e:
         print(f"  ✅ 正确拒绝短密码: {e}")
 

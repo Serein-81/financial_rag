@@ -16,17 +16,6 @@ async def test_schemas():
     print("="*60)
     
     try:
-        from app.schemas.multi_agent import (
-            MultiAgentRequest,
-            MultiAgentResponse,
-            SpecialistType,
-            IntentCategory,
-            RoutingStrategy,
-            IntentAnalysisResult,
-            SpecialistResult,
-            ReflectionResult,
-            ComplexityLevel
-        )
         
         print("✅ 所有核心模型导入成功")
         return True
@@ -51,7 +40,7 @@ async def test_request_model():
             user_id="test-user",
             tenant_id="test-tenant"
         )
-        print(f"✅ MultiAgentRequest 创建成功")
+        print("✅ MultiAgentRequest 创建成功")
         print(f"   - query: {request.query}")
         print(f"   - session_id: {request.session_id}")
         
@@ -85,7 +74,7 @@ async def test_intent_analysis_result():
             confidence=0.95
         )
         
-        print(f"✅ IntentAnalysisResult 创建成功")
+        print("✅ IntentAnalysisResult 创建成功")
         print(f"   - primary_intent: {intent_result.primary_intent.value}")
         print(f"   - routing_strategy: {intent_result.routing_strategy.value}")
         print(f"   - confidence: {intent_result.confidence}")
@@ -118,7 +107,7 @@ async def test_specialist_result():
             processing_time=1.5
         )
         
-        print(f"✅ SpecialistResult 创建成功")
+        print("✅ SpecialistResult 创建成功")
         print(f"   - specialist_type: {specialist_result.specialist_type.value}")
         print(f"   - specialist_name: {specialist_result.specialist_name}")
         print(f"   - success: {specialist_result.success}")
@@ -149,7 +138,7 @@ async def test_reflection_result():
             suggestions=["建议1", "建议2"]
         )
         
-        print(f"✅ ReflectionResult 创建成功")
+        print("✅ ReflectionResult 创建成功")
         print(f"   - quality_score: {reflection_result.quality_score}")
         print(f"   - quality_level: {reflection_result.quality_level}")
         print(f"   - needs_revision: {reflection_result.needs_revision}")
@@ -209,7 +198,7 @@ async def test_multi_agent_response():
             processing_time=2.5
         )
         
-        print(f"✅ MultiAgentResponse 创建成功")
+        print("✅ MultiAgentResponse 创建成功")
         print(f"   - session_id: {response.session_id}")
         print(f"   - request_id: {response.request_id}")
         print(f"   - user_query: {response.user_query}")

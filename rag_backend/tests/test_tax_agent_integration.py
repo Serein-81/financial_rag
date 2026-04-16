@@ -9,7 +9,6 @@ import asyncio
 import sys
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, Any, List
 import uuid
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -17,13 +16,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 from app.multi_agent_system.tax_logic_validator import TaxLogicValidator
 from app.multi_agent_system.agents.tax_specialist import (
     TaxSpecialist,
-    TaxAnalysisResult,
-    TaxType,
     RiskLevelStr,
-    TaxIssueCategory,
-    VATDetail,
-    VATTransaction,
-    TaxIssue
+    TaxIssueCategory
 )
 
 
@@ -174,7 +168,7 @@ class TaxAgentIntegrationTester:
                 f"建议数: {len(result.get('recommendations', []))}"
             )
             
-            print(f"\n   异常检测详情:")
+            print("\n   异常检测详情:")
             print(f"   - 总异常数: {result.get('total_anomalies', 0)}")
             print(f"   - 高置信度异常: {result.get('high_confidence_anomalies', 0)}")
             print(f"   - 风险级别: {result.get('risk_level', 'unknown')}")

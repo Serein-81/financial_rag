@@ -7,25 +7,18 @@
 支持分级权限控制和多维度查询
 """
 
-import asyncio
 import inspect
-import traceback
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any, Union
-from sqlalchemy import select, func, and_, or_, desc, asc
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Dict, List, Optional, Any
+from sqlalchemy import select, func, and_, desc, asc
 from sqlalchemy.orm import selectinload
 
 from app.db.session import AsyncSessionLocal
 from app.models.system_log import SystemLog, UserActionLog, LogLevel, LogCategory
 from app.models.user import User
-from app.core.config import settings
 
 import logging
-import json
-import time
 import uuid
-from functools import wraps
 
 try:
     import psutil
@@ -33,7 +26,7 @@ try:
 except ImportError:
     PSUTIL_AVAILABLE = False
 
-from app.utils.time_utils import now_beijing, format_iso, get_date_range
+from app.utils.time_utils import now_beijing, format_iso
 
 
 class LogService:

@@ -6,8 +6,7 @@
 import re
 import json
 import logging
-from typing import Dict, List, Any, Optional, AsyncGenerator
-from datetime import datetime
+from typing import Dict, List, Any, Optional
 from enum import Enum
 from dataclasses import dataclass
 
@@ -411,7 +410,7 @@ class TaxSpecialist(BaseSpecialistAgent):
         """构建税务分析提示词"""
         prompt_parts = [
             f"用户问题：{user_input}\n",
-            f"提取的税务实体："
+            "提取的税务实体："
         ]
         
         if entities.tax_type:

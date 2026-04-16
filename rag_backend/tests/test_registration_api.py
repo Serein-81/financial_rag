@@ -5,7 +5,6 @@
 
 import asyncio
 import httpx
-import json
 import sys
 from pathlib import Path
 
@@ -50,7 +49,7 @@ async def test_sms_and_registration():
             return False
         
         # 2. 测试普通用户注册
-        print(f"\n2. 测试普通用户注册...")
+        print("\n2. 测试普通用户注册...")
         
         user_data = {
             "email": "test_p0_user@example.com",
@@ -67,7 +66,7 @@ async def test_sms_and_registration():
             
             if register_response.status_code == 200:
                 user_info = register_response.json()
-                print(f"✅ 普通用户注册成功!")
+                print("✅ 普通用户注册成功!")
                 print(f"  - 用户ID: {user_info.get('id')}")
                 print(f"  - 邮箱: {user_info.get('email')}")
                 print(f"  - 租户ID: {user_info.get('tenant_id')}")
@@ -91,7 +90,7 @@ async def test_sms_and_registration():
             return False
         
         # 3. 测试企业管理员注册
-        print(f"\n3. 测试企业管理员注册...")
+        print("\n3. 测试企业管理员注册...")
         
         # 使用不同的手机号避免重复
         admin_phone = "13800138001"
@@ -106,7 +105,7 @@ async def test_sms_and_registration():
             if admin_sms_response.status_code == 200:
                 admin_sms_data = admin_sms_response.json()
                 admin_sms_code = admin_sms_data.get('debug_code', TEST_SMS_CODE)
-                print(f"✅ 管理员短信发送成功")
+                print("✅ 管理员短信发送成功")
             else:
                 print(f"❌ 管理员短信发送失败: {admin_sms_response.status_code}")
                 return False
@@ -134,7 +133,7 @@ async def test_sms_and_registration():
             
             if admin_register_response.status_code == 200:
                 admin_info = admin_register_response.json()
-                print(f"✅ 企业管理员注册成功!")
+                print("✅ 企业管理员注册成功!")
                 print(f"  - 用户ID: {admin_info.get('id')}")
                 print(f"  - 邮箱: {admin_info.get('email')}")
                 print(f"  - 租户ID: {admin_info.get('tenant_id')}")
@@ -159,7 +158,7 @@ async def test_sms_and_registration():
             return False
         
         # 4. 测试登录功能
-        print(f"\n4. 测试用户登录...")
+        print("\n4. 测试用户登录...")
         
         login_data = {
             "email": "test_p0_user@example.com",
@@ -174,7 +173,7 @@ async def test_sms_and_registration():
             
             if login_response.status_code == 200:
                 login_info = login_response.json()
-                print(f"✅ 用户登录成功!")
+                print("✅ 用户登录成功!")
                 print(f"  - Token类型: {login_info.get('token_type')}")
                 print(f"  - 用户名: {login_info.get('user_name')}")
                 print(f"  - 是否管理员: {login_info.get('is_admin')}")
@@ -183,7 +182,7 @@ async def test_sms_and_registration():
                 access_token = login_info.get('access_token')
                 
                 # 5. 测试获取用户信息
-                print(f"\n5. 测试获取用户信息...")
+                print("\n5. 测试获取用户信息...")
                 
                 headers = {"Authorization": f"Bearer {access_token}"}
                 me_response = await client.get(
@@ -193,7 +192,7 @@ async def test_sms_and_registration():
                 
                 if me_response.status_code == 200:
                     me_info = me_response.json()
-                    print(f"✅ 获取用户信息成功!")
+                    print("✅ 获取用户信息成功!")
                     print(f"  - 用户ID: {me_info.get('id')}")
                     print(f"  - 租户ID: {me_info.get('tenant_id')}")
                     print(f"  - 邮箱: {me_info.get('email')}")
@@ -225,7 +224,7 @@ async def main():
     
     success = await test_sms_and_registration()
     
-    print(f"\n" + "=" * 80)
+    print("\n" + "=" * 80)
     print("📋 API接口测试总结")
     print("=" * 80)
     

@@ -4,14 +4,13 @@
 """
 
 import pytest
-import asyncio
 from datetime import datetime
 from uuid import uuid4
 
 from app.services.policy_retrieval_service import PolicyRetrievalService
 from app.services.policy_notification_service import PolicyNotificationService
 from app.services.policy_scheduler import PolicyScheduler, SchedulerConfig, UpdateFrequency
-from app.services.policy_collector import PolicyCollector, PolicySource
+from app.services.policy_collector import PolicySource
 from app.models.policy import Policy, PolicyStatus, PolicyPriority
 
 

@@ -19,7 +19,6 @@ from copy import deepcopy
 from app.state.unified_state import (
     UnifiedState,
     IntentCategory,
-    SpecialistType,
     OrchestrationMode,
 )
 

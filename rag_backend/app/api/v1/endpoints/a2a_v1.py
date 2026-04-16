@@ -9,25 +9,15 @@ A2A 协议 v1 HTTP 端点
 4. 传输层健康检查
 """
 
-import asyncio
 import json
 import logging
 from typing import Optional, Dict, Any, AsyncGenerator, List
 from datetime import datetime
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Header, Request
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi import APIRouter, HTTPException, Header, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.a2a_protocol import (
-    Task,
-    TaskStatus,
-    Message,
-    TextPart,
-    DataPart,
-    TaskSubmitParams,
-    TaskGetParams,
-    TaskSendSubscribeParams,
-    TaskStatusUpdateEvent,
     get_transport_manager,
     TransportManager,
     TransportError

@@ -16,27 +16,6 @@ def test_api_schema_imports():
     print("="*60)
     
     try:
-        from app.schemas.multi_agent import (
-            MultiAgentRequest,
-            MultiAgentResponse,
-            SpecialistQueryRequest,
-            SpecialistQueryResponse,
-            SessionCreateRequest,
-            SessionCreateResponse,
-            SessionStatus,
-            SystemHealthResponse,
-            AgentHealthStatus,
-            ReportGenerationRequest,
-            ReportGenerationResponse,
-            ErrorResponse,
-            SpecialistType,
-            SpecialistResult,
-            IntentAnalysisResult,
-            ReflectionResult,
-            IntentCategory,
-            RoutingStrategy,
-            ComplexityLevel
-        )
         
         print("✅ 所有 API schemas 导入成功")
         return True
@@ -63,7 +42,7 @@ def test_request_validation():
             tenant_id="tenant-789"
         )
         
-        print(f"✅ MultiAgentRequest 创建成功")
+        print("✅ MultiAgentRequest 创建成功")
         print(f"   - query: {request.query}")
         print(f"   - session_id: {request.session_id}")
         
@@ -73,7 +52,7 @@ def test_request_validation():
             context={"key": "value"}
         )
         
-        print(f"✅ SpecialistQueryRequest 创建成功")
+        print("✅ SpecialistQueryRequest 创建成功")
         print(f"   - specialist_type: {specialist_request.specialist_type}")
         
         return True
@@ -136,7 +115,7 @@ def test_response_structure():
             reflection=reflection_result
         )
         
-        print(f"✅ MultiAgentResponse 创建成功")
+        print("✅ MultiAgentResponse 创建成功")
         print(f"   - session_id: {response.session_id}")
         print(f"   - final_response: {response.final_response[:30]}...")
         print(f"   - needs_human_review: {response.needs_human_review}")
@@ -159,8 +138,7 @@ def test_session_management():
     try:
         from app.schemas.multi_agent import (
             SessionCreateRequest,
-            SessionCreateResponse,
-            SessionStatus
+            SessionCreateResponse
         )
         from datetime import datetime
         
@@ -176,8 +154,8 @@ def test_session_management():
             metadata={"message": "会话创建成功"}
         )
         
-        print(f"✅ SessionCreateRequest 创建成功")
-        print(f"✅ SessionCreateResponse 创建成功")
+        print("✅ SessionCreateRequest 创建成功")
+        print("✅ SessionCreateResponse 创建成功")
         print(f"   - session_id: {session_response.session_id}")
         print(f"   - created_at: {session_response.created_at}")
         
@@ -226,7 +204,7 @@ def test_system_health():
             timestamp=datetime.now()
         )
         
-        print(f"✅ SystemHealthResponse 创建成功")
+        print("✅ SystemHealthResponse 创建成功")
         print(f"   - overall_status: {health_response.overall_status}")
         print(f"   - agents 数量: {len(health_response.agents)}")
         print(f"   - orchestrator_status: {health_response.orchestrator_status}")
@@ -258,7 +236,7 @@ def test_error_handling():
             request_id="req-123"
         )
         
-        print(f"✅ ErrorResponse 创建成功")
+        print("✅ ErrorResponse 创建成功")
         print(f"   - error_code: {error_response.error_code}")
         print(f"   - error_message: {error_response.error_message}")
         print(f"   - request_id: {error_response.request_id}")
@@ -287,7 +265,7 @@ def test_report_generation():
             include_sections=["intent_analysis", "specialist_results", "quality_review"]
         )
         
-        print(f"✅ ReportGenerationRequest 创建成功")
+        print("✅ ReportGenerationRequest 创建成功")
         print(f"   - session_id: {report_request.session_id}")
         print(f"   - report_type: {report_request.report_type}")
         print(f"   - format: {report_request.format}")

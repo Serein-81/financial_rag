@@ -6,7 +6,7 @@
 支持每个智能体独立配置不同的大语言模型
 """
 
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 from pydantic import BaseModel, Field
 from enum import Enum
 

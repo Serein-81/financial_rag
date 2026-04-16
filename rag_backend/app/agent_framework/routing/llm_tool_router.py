@@ -6,7 +6,7 @@ LLM 工具路由器
 
 import json
 import logging
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 from enum import Enum
 from app.services.tool_dependency_graph import tool_dependency_graph
@@ -184,7 +184,7 @@ class LLMToolRouter:
         context_str = ""
         if context:
             context_items = [f"- {k}: {v}" for k, v in context.items()]
-            context_str = f"\n上下文信息:\n" + "\n".join(context_items)
+            context_str = "\n上下文信息:\n" + "\n".join(context_items)
         
         prompt = f"""你是一个工具选择助手。根据用户输入，从可用工具中选择最合适的工具。
 

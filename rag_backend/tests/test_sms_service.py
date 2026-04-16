@@ -27,12 +27,12 @@ async def test_send_sms():
     print(f"结果: {result}")
     
     # 立即再次发送（应该被限制）
-    print(f"\n2️⃣ 立即再次发送（应该被限制）")
+    print("\n2️⃣ 立即再次发送（应该被限制）")
     result = await sms_service.send_verification_code(test_phone)
     print(f"结果: {result}")
     
     # 验证验证码
-    print(f"\n3️⃣ 验证验证码")
+    print("\n3️⃣ 验证验证码")
     # 从Redis获取验证码
     code_key = f"sms:code:{test_phone}"
     stored_code = redis_service.get(code_key)
@@ -46,7 +46,7 @@ async def test_send_sms():
         print("未找到存储的验证码")
     
     # 测试错误的验证码
-    print(f"\n4️⃣ 测试错误的验证码")
+    print("\n4️⃣ 测试错误的验证码")
     verify_result = sms_service.verify_code(test_phone, "000000")
     print(f"验证结果: {verify_result}")
 
@@ -58,7 +58,7 @@ async def test_frequency_limit():
     test_phone = "13900139000"
     
     # 发送第一次
-    print(f"\n发送第1次")
+    print("\n发送第1次")
     result = await sms_service.send_verification_code(test_phone)
     print(f"结果: {result['success']} - {result['message']}")
     
@@ -67,7 +67,7 @@ async def test_frequency_limit():
     redis_service.delete(code_key)
     
     # 尝试再次发送（应该被1小时限制）
-    print(f"\n发送第2次（应该被1小时限制）")
+    print("\n发送第2次（应该被1小时限制）")
     result = await sms_service.send_verification_code(test_phone)
     print(f"结果: {result['success']} - {result['message']}")
 
@@ -83,7 +83,7 @@ async def test_daily_limit():
     redis_service.set_with_expire(daily_key, "3", 86400)
     
     # 尝试再次发送（应该被每日限制）
-    print(f"\n尝试发送（已达每日上限）")
+    print("\n尝试发送（已达每日上限）")
     result = await sms_service.send_verification_code(test_phone)
     print(f"结果: {result['success']} - {result['message']}")
     

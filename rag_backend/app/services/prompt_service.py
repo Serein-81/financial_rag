@@ -66,7 +66,7 @@ class PromptEngine:
         self.skills_dir.mkdir(parents=True, exist_ok=True)
         
         if verbose:
-            print(f"📝 [PromptEngine] 初始化完成")
+            print("📝 [PromptEngine] 初始化完成")
             print(f"   ├─ 模板目录: {self.templates_dir}")
             print(f"   ├─ Skills 目录: {self.skills_dir}")
             print(f"   └─ 根目录: {self.prompts_root}")

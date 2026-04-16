@@ -5,10 +5,9 @@
 如果审查不通过，可以选择重新生成或使用优化后的答案
 """
 
-import re
-from typing import List, Dict, AsyncGenerator, Optional, Any
+from typing import List, Dict, AsyncGenerator
 from .react_agent import ReActAgent
-from .output_agent import OutputAgent, OutputReviewResult
+from .output_agent import OutputAgent
 
 
 class ReviewedReActAgent(ReActAgent):
@@ -138,7 +137,7 @@ class ReviewedReActAgent(ReActAgent):
             
             review_result = await self.output_agent.deep_review(cleaned_response, user_input)
             
-            self._log_action(f"📊 审查结果", {
+            self._log_action("📊 审查结果", {
                 "score": review_result.score,
                 "approved": review_result.is_approved,
                 "issues": review_result.issues

@@ -232,7 +232,7 @@ class PostgresCheckpointer(BaseCheckpointer):
         
         try:
             async with self.db_session_factory() as session:
-                from sqlalchemy import select, text
+                from sqlalchemy import text
                 
                 result = await session.execute(
                     text(f"SELECT checkpoint, updated_at FROM {self.table_name} WHERE thread_id = :thread_id"),

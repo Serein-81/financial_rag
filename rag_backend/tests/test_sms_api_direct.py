@@ -34,12 +34,12 @@ async def test_sms_api():
             
             if response.status_code == 200:
                 data = response.json()
-                print(f"✅ 短信发送成功!")
+                print("✅ 短信发送成功!")
                 print(f"响应数据: {json.dumps(data, indent=2, ensure_ascii=False)}")
                 
                 # 如果有debug_code，测试验证
                 if "debug_code" in data:
-                    print(f"\n2. 测试验证码验证...")
+                    print("\n2. 测试验证码验证...")
                     verify_response = await client.post(
                         f"{base_url}/api/v1/auth/sms/verify",
                         json={"phone": test_phone, "code": data["debug_code"]},
@@ -49,13 +49,13 @@ async def test_sms_api():
                     print(f"验证状态码: {verify_response.status_code}")
                     if verify_response.status_code == 200:
                         verify_data = verify_response.json()
-                        print(f"✅ 验证码验证成功!")
+                        print("✅ 验证码验证成功!")
                         print(f"验证响应: {json.dumps(verify_data, indent=2, ensure_ascii=False)}")
                     else:
                         print(f"❌ 验证码验证失败: {verify_response.text}")
                         
             else:
-                print(f"❌ 短信发送失败!")
+                print("❌ 短信发送失败!")
                 print(f"错误响应: {response.text}")
                 
         except Exception as e:

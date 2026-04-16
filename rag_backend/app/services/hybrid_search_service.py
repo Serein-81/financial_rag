@@ -7,7 +7,7 @@
 import time
 import logging
 import re
-from typing import List, Optional, Dict, Any, Tuple
+from typing import List, Optional, Dict, Any
 from sqlalchemy import text, select
 from app.db import AsyncSessionLocal
 from app.services.embedding_service import embedding_service
@@ -140,7 +140,7 @@ class HybridSearchService:
                         else:
                             logger.warning(f"⚠️ 向量格式错误，首元素类型: {type(syn_vector[0])}")
                     else:
-                        logger.warning(f"⚠️ 向量为空或格式错误")
+                        logger.warning("⚠️ 向量为空或格式错误")
 
             if self.enable_fulltext:
                 fulltext_results = await self._fulltext_search(

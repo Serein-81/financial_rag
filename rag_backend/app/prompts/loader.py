@@ -5,13 +5,10 @@
 支持配置缓存、热更新和变量替换
 """
 
-import os
-import re
 import yaml
 import logging
 from pathlib import Path
 from typing import Optional, Dict, List, Any
-from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +76,7 @@ class AgentPromptLoader:
         self.shared_dir = SHARED_DIR
         self._initialized = True
 
-        logger.info(f"AgentPromptLoader initialized")
+        logger.info("AgentPromptLoader initialized")
         logger.info(f"  - Prompts root: {self.prompts_root}")
         logger.info(f"  - Agents dir: {self.agents_dir}")
 

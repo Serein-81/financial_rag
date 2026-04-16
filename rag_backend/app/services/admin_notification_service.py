@@ -13,7 +13,6 @@ from enum import Enum
 from app.services.group_chat_service import group_chat_ws_manager
 from app.db.session import get_db_context
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
@@ -610,7 +609,7 @@ class AdminNotificationService:
         )
         
         behavior_names = [b.value for b in detected_behaviors]
-        title = f"⚠️ 高风险操作需要审批"
+        title = "⚠️ 高风险操作需要审批"
         message = f"用户 {user_id} 触发了高风险操作: {', '.join(behavior_names)}"
         
         await self.notify_admins(
@@ -644,7 +643,7 @@ class AdminNotificationService:
             "approval_id": hitl_request["approval_id"],
             "risk_level": risk_level.value,
             "detected_behaviors": behavior_names,
-            "message": f"操作已挂起，等待管理员审批"
+            "message": "操作已挂起，等待管理员审批"
         }
 
 

@@ -12,7 +12,6 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from app.memory_system.semantic_memory import SemanticMemory
 from app.memory_system.base_memory import MemoryItem
-from app.services.embedding_service import embedding_service
 
 
 async def test_semantic_memory_persistence():

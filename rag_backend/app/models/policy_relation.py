@@ -1,6 +1,5 @@
 # app/models/policy_relation.py
 import uuid
-from datetime import datetime
 from sqlalchemy import Column, String, DateTime, ForeignKey, Enum as SQLEnum, Index
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func

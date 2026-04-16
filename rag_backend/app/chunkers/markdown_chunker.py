@@ -1,5 +1,4 @@
 # app/chunkers/markdown_chunker.py
-import re
 from typing import List, Dict, Tuple
 from .base_chunker import ChunkStrategy, ChunkResult
 

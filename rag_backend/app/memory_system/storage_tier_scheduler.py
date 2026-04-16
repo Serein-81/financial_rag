@@ -12,9 +12,8 @@
 - 完全兼容现有的遗忘机制
 """
 
-import asyncio
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Optional
 from datetime import datetime, timedelta
 
 import redis.asyncio as redis

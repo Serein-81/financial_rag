@@ -5,7 +5,7 @@
 
 from typing import Dict, Any, Optional, List
 import re
-from decimal import Decimal, InvalidOperation
+from decimal import InvalidOperation
 from datetime import datetime
 
 

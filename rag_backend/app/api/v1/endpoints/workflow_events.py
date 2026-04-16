@@ -8,7 +8,6 @@ import asyncio
 import logging
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
-from typing import Optional
 
 from app.services.workflow_event_service import workflow_event_service, WorkflowEventType
 from app.api.deps import get_current_user, CurrentUser

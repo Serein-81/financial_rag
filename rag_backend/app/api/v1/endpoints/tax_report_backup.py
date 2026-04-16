@@ -1,8 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
 from typing import Optional
-import json
 import logging
 import io
 import asyncio
@@ -11,10 +9,9 @@ from pathlib import Path
 from datetime import datetime
 import uuid
 
-from app.api.deps import get_current_user, get_db, CurrentUser, PaginatedParams
-from app.models.tax_report import TaxReport, TaxReportDocument
+from app.api.deps import get_current_user, get_db, CurrentUser
+from app.models.tax_report import TaxReport
 from app.schemas.tax_report import (
-    TaxReportCreate,
     TaxReportResponse,
     TaxReportStatusResponse,
     TaxReportListResponse,
@@ -174,7 +171,7 @@ async def _process_tax_report_async(
             logger.warning(f"⚠️ 后台验证失败: {str(e)}")
             validation_result_dict = None
         
-        from sqlalchemy import update, text
+        from sqlalchemy import update
         from app.db.session import AsyncSessionLocal
         
         async with AsyncSessionLocal() as db:

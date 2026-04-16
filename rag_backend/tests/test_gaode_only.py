@@ -41,13 +41,13 @@ async def test_gaode_detailed():
                 if data.get("status") == "1":
                     if data.get("geocodes"):
                         geocode = data["geocodes"][0]
-                        print(f"   ✅ 地理编码成功!")
+                        print("   ✅ 地理编码成功!")
                         print(f"      地址: {geocode.get('formatted_address', '未知')}")
                         print(f"      坐标: {geocode.get('location', '未知')}")
                         print(f"      行政区: {geocode.get('district', '未知')}")
                         return True
                     else:
-                        print(f"   ⚠️ 地理编码无结果")
+                        print("   ⚠️ 地理编码无结果")
                         return False
                 else:
                     error_info = data.get("info", "未知错误")

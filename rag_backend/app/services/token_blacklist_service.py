@@ -6,7 +6,6 @@ JWT Token 黑名单服务
 用于管理已撤销的 JWT Token，支持登出功能和 Token 撤销
 """
 
-import uuid
 import time
 from typing import Optional, Dict, Any
 from redis import Redis

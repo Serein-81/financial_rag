@@ -1,5 +1,4 @@
 # app/chunkers/chunk_factory.py
-from typing import Optional
 from .base_chunker import ChunkStrategy
 from .markdown_chunker import MarkdownChunkStrategy
 from .plain_text_chunker import PlainTextChunkStrategy

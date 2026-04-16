@@ -10,7 +10,6 @@ from typing import Optional, List
 from .registry import AgentRegistry, agent_registry
 from .wrapper import (
     AgentWrapper,
-    AgentWrapperConfig,
     wrap_tax_specialist,
     wrap_finance_specialist,
     wrap_legal_specialist,

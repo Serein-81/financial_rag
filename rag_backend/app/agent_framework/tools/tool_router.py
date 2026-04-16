@@ -10,7 +10,6 @@ Agent 根据工具类型决定何时使用本地工具，何时使用 MCP 工具
 
 from enum import Enum
 from typing import Dict, List, Optional
-import os
 
 
 class ToolCategory(Enum):

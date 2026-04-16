@@ -6,12 +6,10 @@ Embedding 适配器抽象基类
 定义统一的接口规范，所有具体适配器必须实现 encode 和 encode_queries 方法
 """
 
-import time
 import asyncio
 import logging
 from abc import ABC, abstractmethod
 from typing import List, Tuple
-import numpy as np
 
 
 class BaseEmbeddingAdapter(ABC):

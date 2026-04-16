@@ -7,18 +7,13 @@
 @deprecated 请使用 OutputAgent.synthesize() 替代
 """
 
-import uuid
 import logging
 from typing import Dict, List, Any, Optional, AsyncGenerator
-from datetime import datetime
-from dataclasses import dataclass, field
-from enum import Enum
 
 from app.agent_framework.core.output_agent import (
     OutputAgent,
     SynthesisStrategy,
     ConflictResolution,
-    SynthesisInput,
     SynthesisResult,
     ConflictInfo,
 )

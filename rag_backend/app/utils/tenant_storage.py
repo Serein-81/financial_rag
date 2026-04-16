@@ -3,7 +3,6 @@
 处理 MinIO 的租户隔离
 """
 
-from typing import Optional
 import logging
 
 logger = logging.getLogger(__name__)
@@ -177,22 +176,3 @@ def get_tenant_path(tenant_id: str, path: str = "") -> str:
         return f"{base_path}/{path}"
     
     return base_path
-
-
-def validate_tenant_access(tenant_id: str, file_path: str) -> bool:
-    """
-    验证租户是否有权限访问指定文件路径
-    
-    Args:
-        tenant_id: 租户ID
-        file_path: 文件路径
-        
-    Returns:
-        True if access is allowed, False otherwise
-    """
-    if not tenant_id or not file_path:
-        return False
-    
-    # 检查文件路径是否以租户ID开头
-    expected_prefix = f"{tenant_id}/"
-    return file_path.startswith(expected_prefix) or file_path == tenant_id

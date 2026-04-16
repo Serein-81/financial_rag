@@ -1,8 +1,9 @@
 import time
 import asyncio
+import logging
 from typing import List, Optional, Dict, Any, Callable
 from datetime import datetime
-from sqlalchemy import text, func, select
+from sqlalchemy import text, select
 from app.db import AsyncSessionLocal
 from app.services.embedding_service import embedding_service
 from app.services.tavily_service import tavily_service
@@ -10,6 +11,9 @@ from app.schemas.chat import SearchResultItem
 from app.schemas.search import WebSearchResult, HybridSearchResponse
 from app.models.search_log import SearchLog
 from app.models.knowledge_base import KnowledgeBase
+
+
+logger = logging.getLogger(__name__)
 
 
 class SearchService:

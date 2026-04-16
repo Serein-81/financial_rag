@@ -12,7 +12,6 @@ import asyncio
 import logging
 import os
 import pytest
-from typing import List, Dict, Any
 
 # 检查是否在 CI 环境
 is_ci = os.getenv("CI") == "true"
@@ -156,8 +155,6 @@ async def test_graph_builder():
     try:
         from app.knowledge_graph.entity_extractor import EntityExtractor
         from app.knowledge_graph.relation_extractor import RelationExtractor
-        from app.services.graph_builder import GraphBuilder
-        from app.knowledge_graph.neo4j_manager import Neo4jManager
 
         print("\n" + "="*60)
         print("测试 7: 检查新增方法")

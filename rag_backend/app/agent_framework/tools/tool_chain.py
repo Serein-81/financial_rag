@@ -4,10 +4,9 @@
 工具链管理器 - 支持预定义工作流和智能Agent的混合架构
 """
 
-from typing import List, Dict, Any, Optional, Callable, Union
+from typing import List, Dict, Any, Optional, Callable
 import re
 import json
-import asyncio
 from dataclasses import dataclass
 from enum import Enum
 from .tool_manager import ToolManager

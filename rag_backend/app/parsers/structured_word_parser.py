@@ -3,7 +3,6 @@ import io
 import asyncio
 from typing import List, Dict, Any
 from docx import Document as DocxDocument
-from docx.shared import Pt
 from .base_parser import FileParserStrategy
 
 

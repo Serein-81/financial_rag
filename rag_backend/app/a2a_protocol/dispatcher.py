@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from .agent_card import AgentCard
 from .client import A2AClient
 from .registry import AgentRegistry, AgentType
-from .models import Task, TaskStatus, Message, TextPart, TaskSubmitParams
+from .models import Message, TextPart, TaskSubmitParams
 
 logger = logging.getLogger(__name__)
 

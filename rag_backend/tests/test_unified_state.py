@@ -6,7 +6,6 @@
 
 import pytest
 from datetime import datetime
-from typing import Dict, Any
 
 from app.state.unified_state import (
     UnifiedState,
@@ -24,7 +23,6 @@ from app.state.state_factory import StateFactory
 from app.state.state_validator import (
     StateValidator,
     ValidationResult,
-    ValidationError,
 )
 from app.state.state_manager import StateManager, StateCache
 

@@ -18,13 +18,11 @@ app.add_middleware(RateLimitMiddleware)
 import asyncio
 import logging
 import time
-import uuid
-from typing import Dict, Optional, Tuple
-from datetime import datetime, timedelta
+from typing import Dict, Tuple
 from collections import defaultdict, deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
-from fastapi import Request, HTTPException, status
+from fastapi import Request, status
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse, Response
 from app.core.config import settings

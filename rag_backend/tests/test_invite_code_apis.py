@@ -4,7 +4,6 @@
 """
 
 import requests
-import json
 from typing import Optional
 
 # API基础URL
@@ -40,7 +39,7 @@ class InviteCodeAPITester:
             if response.status_code == 200:
                 data = response.json()
                 self.admin_token = data["access_token"]
-                print(f"✅ 管理员登录成功")
+                print("✅ 管理员登录成功")
                 print(f"   Token: {self.admin_token[:20]}...")
                 return True
             else:
@@ -65,7 +64,7 @@ class InviteCodeAPITester:
             if response.status_code == 200:
                 data = response.json()
                 self.user_token = data["access_token"]
-                print(f"✅ 普通用户登录成功")
+                print("✅ 普通用户登录成功")
                 print(f"   Token: {self.user_token[:20]}...")
                 return True
             else:
@@ -90,7 +89,7 @@ class InviteCodeAPITester:
 
             if response.status_code == 200:
                 user = response.json()
-                print(f"✅ 当前用户信息:")
+                print("✅ 当前用户信息:")
                 print(f"   邮箱: {user.get('email')}")
                 print(f"   姓名: {user.get('full_name') or user.get('nickname')}")
                 print(f"   是否管理员: {user.get('is_admin')}")
@@ -125,7 +124,7 @@ class InviteCodeAPITester:
                 data = response.json()
                 if data.get("success"):
                     invite_code = data["invite_code"]["code"]
-                    print(f"✅ 邀请码创建成功")
+                    print("✅ 邀请码创建成功")
                     print(f"   邀请码: {invite_code}")
                     print(f"   最大使用次数: {data['invite_code']['max_uses']}")
                     print(f"   过期时间: {data['invite_code']['expires_at']}")
@@ -153,7 +152,7 @@ class InviteCodeAPITester:
             if response.status_code == 200:
                 data = response.json()
                 if data.get("valid"):
-                    print(f"✅ 邀请码有效")
+                    print("✅ 邀请码有效")
                     print(f"   企业名称: {data.get('company_name')}")
                     print(f"   剩余使用次数: {data.get('remaining_uses')}")
                     print(f"   过期时间: {data.get('expires_at')}")
@@ -185,7 +184,7 @@ class InviteCodeAPITester:
             if response.status_code == 200:
                 data = response.json()
                 if data.get("success"):
-                    print(f"✅ 成功加入企业")
+                    print("✅ 成功加入企业")
                     print(f"   企业名称: {data.get('company_name')}")
                     print(f"   租户ID: {data.get('tenant_id')}")
                     return True

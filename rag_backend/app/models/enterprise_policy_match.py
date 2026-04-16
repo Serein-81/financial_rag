@@ -1,6 +1,5 @@
 # app/models/enterprise_policy_match.py
 import uuid
-from datetime import datetime
 from sqlalchemy import Column, String, DateTime, ForeignKey, Float, Enum as SQLEnum, Index
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.sql import func

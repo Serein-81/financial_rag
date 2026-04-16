@@ -4,13 +4,8 @@ API Endpoints Integration Tests
 """
 
 import pytest
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
 from httpx import AsyncClient
-from typing import Dict, Any, List
-from datetime import datetime
-import json
 
 from app.main import app
 

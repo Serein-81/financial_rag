@@ -5,13 +5,12 @@
 """
 
 import logging
-from typing import Dict, Any, Optional
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Optional
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from app.langgraph.circuit_breaker_integration import (
     get_circuit_breaker_manager,
-    initialize_circuit_breaker_manager,
-    LangGraphCircuitBreakerManager
+    initialize_circuit_breaker_manager
 )
 from app.multi_agent_system.async_task_scheduler import (
     CircuitBreakerConfig,

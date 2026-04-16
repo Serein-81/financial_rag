@@ -11,10 +11,9 @@ Token 预算管理器
 """
 
 import tiktoken
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Any, Tuple
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-from collections import defaultdict
+from datetime import datetime
 import logging
 
 logger = logging.getLogger(__name__)
@@ -100,7 +99,7 @@ class TokenBudgetManager:
             logger.warning(f"未找到模型 {model} 的编码器，使用 cl100k_base")
             self._encoder = tiktoken.get_encoding("cl100k_base")
         
-        logger.info(f"✅ Token 预算管理器初始化完成")
+        logger.info("✅ Token 预算管理器初始化完成")
         logger.info(f"   模型: {model}")
         logger.info(f"   总预算: {total_budget} tokens")
         logger.info(f"   可用预算: {self.total_budget.available_for_user} tokens")

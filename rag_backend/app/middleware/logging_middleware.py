@@ -8,7 +8,6 @@
 
 import time
 import uuid
-import json
 import traceback
 from typing import Callable
 from fastapi import Request, Response

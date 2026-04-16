@@ -1,12 +1,12 @@
 """
 邀请码 API 端点（异步版本）
 """
-from typing import List, Optional
+from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select
 
-from app.api.deps import get_db, get_current_user, get_current_admin_user
+from app.api.deps import get_db, get_current_admin_user
 from app.models.user import User
 from app.models.invite_code import InviteCode
 from app.schemas.invite_code import (

@@ -107,9 +107,9 @@ class RESTAPIDataConnector(BaseDataConnector):
                         response_body=response.text
                     )
                 return True
-        except httpx.TimeoutException as e:
+        except httpx.TimeoutException:
             raise ExternalAPIException(
-                message=f"REST API连接超时",
+                message="REST API连接超时",
                 api_name="REST_API",
                 endpoint=self.base_url
             )

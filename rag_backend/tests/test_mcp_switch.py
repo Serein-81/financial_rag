@@ -4,7 +4,6 @@ MCP 客户端模式切换测试
 测试本地/云端模式切换功能
 """
 
-import os
 import asyncio
 import sys
 from pathlib import Path
@@ -38,7 +37,7 @@ async def test_current_mode():
         print("\n🧪 测试工具调用:")
         result = await mcp_factory.call_tool("calculate_tax_vat", taxable_amount=100000, tax_rate=0.13)
 
-        print(f"\n   调用结果:")
+        print("\n   调用结果:")
         print(f"   - 成功: {result.success}")
         if result.success:
             print(f"   - 数据: {result.data}")

@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List, Optional, Any, Literal, Callable, Union
+from typing import List, Optional, Any, Literal
 from datetime import datetime
 
 # 用户搜索时的请求体

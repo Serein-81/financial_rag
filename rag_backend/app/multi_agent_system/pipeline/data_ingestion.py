@@ -8,8 +8,6 @@
 4. OCR支持: 支持图片和扫描件识别
 """
 
-import asyncio
-from typing import List, Dict, Any
 from pathlib import Path
 
 from app.parsers import (

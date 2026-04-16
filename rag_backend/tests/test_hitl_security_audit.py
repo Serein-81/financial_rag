@@ -11,7 +11,6 @@ HITL、安全审计、操作日志功能测试
 import sys
 from pathlib import Path
 from datetime import datetime
-from typing import List, Dict, Any
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -415,7 +414,6 @@ def test_hitl_approval_schemas():
     try:
         from app.schemas.multi_agent import (
             HITLApproval,
-            HITLApprovalCreate,
             HITLApprovalReview,
             ApprovalStatus,
             PermissionLevel

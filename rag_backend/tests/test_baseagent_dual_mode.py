@@ -46,7 +46,7 @@ def test_static_mode():
         max_iterations=1
     )
     
-    print(f"\n✅ Agent 创建成功")
+    print("\n✅ Agent 创建成功")
     print(f"   - 提示词模式: {'模板' if agent.use_template else '静态'}")
     print(f"   - 系统提示词: {agent.system_prompt[:50]}...")
     print(f"   - 模板名称: {agent.template_name}")
@@ -75,7 +75,7 @@ def test_template_mode():
         max_iterations=1
     )
     
-    print(f"\n✅ Agent 创建成功")
+    print("\n✅ Agent 创建成功")
     print(f"   - 提示词模式: {'模板 [' + agent.template_name + ']' if agent.use_template else '静态'}")
     print(f"   - 系统提示词: {agent.system_prompt}")
     print(f"   - 模板名称: {agent.template_name}")
@@ -91,7 +91,7 @@ def test_template_mode():
     }
     
     rendered = agent._render_system_prompt(context)
-    print(f"\n✅ 渲染结果 (前200字符):")
+    print("\n✅ 渲染结果 (前200字符):")
     print("-" * 60)
     print(rendered[:200])
     print("...")
@@ -124,13 +124,13 @@ def test_mode_comparison():
         max_iterations=1
     )
     
-    print(f"\n📊 模式对比:")
-    print(f"   静态模式:")
+    print("\n📊 模式对比:")
+    print("   静态模式:")
     print(f"      - use_template: {static_agent.use_template}")
     print(f"      - system_prompt: '{static_agent.system_prompt}'")
     print(f"      - template_name: {static_agent.template_name}")
     
-    print(f"\n   模板模式:")
+    print("\n   模板模式:")
     print(f"      - use_template: {template_agent.use_template}")
     print(f"      - system_prompt: '{template_agent.system_prompt}'")
     print(f"      - template_name: '{template_agent.template_name}'")

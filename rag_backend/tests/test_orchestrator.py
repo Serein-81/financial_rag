@@ -1,9 +1,7 @@
 """
 测试编排器数据缺失场景
 """
-import sys
 import re
-import json
 
 def test_requires_enterprise_data():
     """测试 _requires_enterprise_data 逻辑"""

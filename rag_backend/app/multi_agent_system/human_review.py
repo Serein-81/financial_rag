@@ -4,7 +4,7 @@
 提供人工审核队列和状态管理功能
 """
 
-from typing import TypedDict, List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum

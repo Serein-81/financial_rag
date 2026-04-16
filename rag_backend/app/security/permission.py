@@ -11,7 +11,7 @@
 5. 权限继承
 """
 
-from typing import List, Optional, Dict, Any, Set, Callable
+from typing import List, Optional, Dict, Any, Set
 from dataclasses import dataclass, field
 from enum import Enum
 import threading

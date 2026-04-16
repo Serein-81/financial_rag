@@ -6,17 +6,13 @@
 
 import pytest
 from datetime import datetime
-from typing import Dict, Any
 
 from app.observability.tracing import (
     TracingManager,
     TracingConfig,
     SpanContext,
-    trace_async,
     trace_sync,
     create_span,
-    init_tracing,
-    get_tracer,
 )
 from app.observability.metrics import (
     MetricsCollector,

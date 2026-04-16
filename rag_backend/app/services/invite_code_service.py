@@ -8,8 +8,7 @@ import string
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import and_, or_, desc, select, func, delete
-from sqlalchemy.orm import selectinload
+from sqlalchemy import and_, desc, select, func, delete
 from fastapi import HTTPException
 
 from app.models.invite_code import InviteCode, InviteCodeUsage

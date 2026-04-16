@@ -71,7 +71,7 @@ class DeepSeekAdapter(BaseLLMAdapter):
         """
         super().__init__(model_name=model_name, api_key=api_key, base_url=base_url, **kwargs)
         self.client = None
-        logger.info(f"✅ DeepSeek 适配器初始化完成")
+        logger.info("✅ DeepSeek 适配器初始化完成")
         logger.info(f"   - 模型: {self.model_name}")
         logger.info(f"   - Base URL: {self.base_url}")
         logger.info(f"   - API Key: {self.api_key[:12]}...{self.api_key[-4:]}")
@@ -229,7 +229,7 @@ class DeepSeekAdapter(BaseLLMAdapter):
             response = await client.post(url, json=request_body)
             response.raise_for_status()
 
-            logger.info(f"[DeepSeek] 收到响应，准备解析...")
+            logger.info("[DeepSeek] 收到响应，准备解析...")
 
             result = response.json()
 

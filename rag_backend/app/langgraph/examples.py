@@ -9,10 +9,8 @@ import uuid
 from typing import Dict, Any
 
 from app.agent_framework.llm.openai_adapter import OpenAIAdapter
-from app.agent_framework.llm.zhipu_adapter import ZhipuAIAdapter
 from app.agent_framework.tools.tool_manager import ToolManager
 from app.agent_framework.core.react_agent import ReActAgent
-from app.agent_framework.core.reflect_agent import ReflectAgent
 from app.multi_agent_system.agents.finance_specialist import FinanceSpecialist
 from app.multi_agent_system.agents.tax_specialist import TaxSpecialist
 from app.multi_agent_system.agents.legal_specialist import LegalSpecialist
@@ -20,8 +18,7 @@ from app.multi_agent_system.agents.intent_router_agent import IntentRouterAgent
 
 from app.langgraph import (
     MultiAgentWorkflowBuilder,
-    SimpleAgentWorkflow,
-    AgentState
+    SimpleAgentWorkflow
 )
 
 
@@ -195,7 +192,7 @@ async def example_streaming_workflow():
         if state.get("reflection_result"):
             print(f"[节点] 反思完成: 质量={state['reflection_result'].get('quality_level')}")
         if state.get("final_answer"):
-            print(f"\n[完成] 最终答案已生成")
+            print("\n[完成] 最终答案已生成")
     
     print("-" * 40)
     print("=" * 60)

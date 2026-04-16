@@ -11,18 +11,15 @@ PolicyNotificationAgent 功能测试
 import pytest
 import asyncio
 import logging
-from typing import Dict, Any
 
 from app.multi_agent_system.agents.policy_notification_agent import (
     PolicyNotificationAgent,
     EnterpriseProfile,
     PolicyUnderstanding,
     MatchScore,
-    NotificationContent,
     create_policy_notification_agent
 )
 from app.services.policy_notification_agent_service import (
-    PolicyNotificationAgentService,
     create_agent_service,
     get_agent_service
 )
@@ -132,7 +129,7 @@ class TestPolicyNotificationAgent:
             assert understanding.summary != ""
             assert understanding.impact_level in ["high", "medium", "low"]
             
-            print(f"✅ 政策理解成功")
+            print("✅ 政策理解成功")
             print(f"   摘要: {understanding.summary[:50]}...")
             print(f"   影响级别: {understanding.impact_level}")
             print(f"   置信度: {understanding.confidence}")
@@ -179,7 +176,7 @@ class TestPolicyNotificationAgent:
             assert isinstance(reasons, list)
             assert understanding is not None
             
-            print(f"✅ 企业匹配成功")
+            print("✅ 企业匹配成功")
             print(f"   总分: {match_score.total_score:.2f}")
             print(f"   语义分: {match_score.semantic_score:.2f}")
             print(f"   行业分: {match_score.industry_score:.2f}")
@@ -237,7 +234,7 @@ class TestPolicyNotificationAgent:
             assert notification.content != ""
             assert notification.urgency_level in ["high", "medium", "low"]
             
-            print(f"✅ 通知生成成功")
+            print("✅ 通知生成成功")
             print(f"   标题: {notification.title}")
             print(f"   紧迫度: {notification.urgency_level}")
             print(f"   行动号召: {notification.call_to_action}")
@@ -284,7 +281,7 @@ class TestPolicyNotificationAgent:
             assert sorted_policies is not None
             assert len(sorted_policies) == 3
             
-            print(f"✅ 优先级排序成功")
+            print("✅ 优先级排序成功")
             print(f"   排序后顺序: {[p['policy_id'] for p in sorted_policies]}")
             
         except Exception as e:
@@ -301,7 +298,7 @@ class TestPolicyNotificationAgentService:
             
             assert service is not None
             assert service.use_llm is True
-            print(f"✅ Service 初始化成功（LLM 模式）")
+            print("✅ Service 初始化成功（LLM 模式）")
             
         except Exception as e:
             pytest.skip(f"LLM 不可用: {e}")
@@ -354,7 +351,7 @@ class TestPolicyNotificationAgentService:
         assert "use_llm" in result
         assert result["use_llm"] is False  # 降级模式
         
-        print(f"✅ 匹配成功（降级模式）")
+        print("✅ 匹配成功（降级模式）")
         print(f"   匹配分数: {result['match_score']:.2f}")
         print(f"   使用 LLM: {result['use_llm']}")
 
@@ -393,7 +390,7 @@ class TestPolicyNotificationAgentService:
         assert "use_llm" in notification
         assert notification["use_llm"] is False
         
-        print(f"✅ 通知生成成功（降级模式）")
+        print("✅ 通知生成成功（降级模式）")
         print(f"   标题: {notification['title']}")
 
     def test_prioritize_policies_with_fallback(self):
@@ -420,7 +417,7 @@ class TestPolicyNotificationAgentService:
         assert len(sorted_policies) == 3
         assert sorted_policies[0]["priority"] in ["high", "critical"]
         
-        print(f"✅ 优先级排序成功（降级模式）")
+        print("✅ 优先级排序成功（降级模式）")
         print(f"   最高优先级: {sorted_policies[0]['title']}")
 
 

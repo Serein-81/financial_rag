@@ -71,7 +71,7 @@ class QwenAdapter(BaseLLMAdapter):
         """
         super().__init__(model_name=model_name, api_key=api_key, base_url=base_url, **kwargs)
         self.client = None
-        logger.info(f"✅ Qwen 适配器初始化完成")
+        logger.info("✅ Qwen 适配器初始化完成")
         logger.info(f"   - 模型: {self.model_name}")
         logger.info(f"   - Base URL: {self.base_url}")
         logger.info(f"   - API Key: {self.api_key[:12]}...{self.api_key[-4:]}")

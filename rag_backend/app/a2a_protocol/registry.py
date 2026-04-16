@@ -14,8 +14,7 @@ from datetime import datetime
 from enum import Enum
 import asyncio
 
-from .agent_card import AgentCard, AgentSkill
-from .models import Task, TaskStatus, TaskSubmitParams, Message
+from .agent_card import AgentCard
 
 logger = logging.getLogger(__name__)
 

@@ -12,11 +12,9 @@ Agent 工具集中管理
 3. 将工具添加到 get_all_tools() 函数的返回列表中
 """
 
-import httpx
 import re
 from langchain_core.tools import tool
 from app.services.search_service import search_service
-from app.core.config import settings
 
 try:
     from app.mcp.financial_tools import create_financial_tools
@@ -209,7 +207,7 @@ async def list_knowledge_documents(kb_id: str) -> str:
                     Document.kb_id == kb_id,
                     or_(
                         Document.visibility == "public",
-                        Document.visibility == None
+                        Document.visibility is None
                     )
                 )
                 .order_by(Document.created_at.desc())

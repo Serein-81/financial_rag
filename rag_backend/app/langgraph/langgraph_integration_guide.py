@@ -12,8 +12,8 @@ import os
 import logging
 from typing import Optional
 from dataclasses import dataclass
-from app.langgraph.persistences import RedisCheckpointer, PostgresCheckpointer, get_checkpointer
-from app.langgraph.monitoring import LangSmithMonitor, setup_langsmith
+from app.langgraph.persistences import RedisCheckpointer, PostgresCheckpointer
+from app.langgraph.monitoring import LangSmithMonitor
 
 logger = logging.getLogger(__name__)
 

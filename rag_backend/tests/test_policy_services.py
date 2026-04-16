@@ -4,10 +4,8 @@
 """
 
 import pytest
-import asyncio
 from datetime import datetime
 from uuid import uuid4
-from typing import List, Dict, Any
 
 pytest.importorskip("pgvector", reason="pgvector required for model imports")
 

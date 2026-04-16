@@ -18,7 +18,6 @@ from app.schemas.financial_health import (
     AnomalyDetectionRule,
     TrendAnalysisRequest,
     TrendAnalysisResult,
-    TrendPoint,
     AlertSubscriptionRequest,
 )
 from app.agent_framework.tools.financial_data_tools import FinancialDataQueryTool

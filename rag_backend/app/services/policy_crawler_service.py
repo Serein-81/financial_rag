@@ -20,8 +20,8 @@ import json
 import asyncio
 import httpx
 from datetime import datetime
-from typing import List, Dict, Optional, Any
-from dataclasses import dataclass, asdict
+from typing import List, Optional
+from dataclasses import dataclass
 from enum import Enum
 
 logger = logging.getLogger(__name__)

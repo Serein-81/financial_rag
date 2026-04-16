@@ -10,7 +10,7 @@
 
 import re
 import json
-from typing import Dict, List, Any, Optional, Union
+from typing import Dict, List, Any, Optional
 from enum import Enum
 from pydantic import BaseModel, Field
 from pathlib import Path
@@ -677,10 +677,10 @@ class IntentRouterAgent(BaseAgent):
             should_use_rule = False
             if detected_intent in generic_intents and rule_confidence >= 0.8:
                 should_use_rule = True
-                print(f"⚠️ [意图路由智能体] LLM返回通用意图，使用规则匹配补充")
+                print("⚠️ [意图路由智能体] LLM返回通用意图，使用规则匹配补充")
             elif confidence < self.confidence_threshold and rule_confidence > confidence:
                 should_use_rule = True
-                print(f"⚠️ [意图路由智能体] 置信度低于阈值，使用规则匹配补充")
+                print("⚠️ [意图路由智能体] 置信度低于阈值，使用规则匹配补充")
             
             if should_use_rule:
                 result = rule_result
@@ -724,7 +724,7 @@ class IntentRouterAgent(BaseAgent):
         
         simple_response = self._is_simple_greeting(user_input)
         if simple_response:
-            print(f"✅ [意图路由智能体] 简单问题，直接返回")
+            print("✅ [意图路由智能体] 简单问题，直接返回")
             return IntentRoutingResult(
                 is_simple=True,
                 simple_response=simple_response,
@@ -770,7 +770,7 @@ class IntentRouterAgent(BaseAgent):
             needs_report_generation=intent_result_dict.get("needs_report_generation", False)
         )
         
-        print(f"✅ [意图路由智能体] 分析完成")
+        print("✅ [意图路由智能体] 分析完成")
         print(f"   意图: {intent_result.intent.value}")
         print(f"   复杂度: {intent_result.complexity.value}")
         print(f"   路由: {intent_result.routing_strategy.value}")

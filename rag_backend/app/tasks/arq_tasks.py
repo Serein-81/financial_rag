@@ -13,17 +13,15 @@ ARQ 任务定义
 注意：ARQ 是可选依赖，如果未安装则跳过相关功能
 """
 
-import asyncio
 import json
 import logging
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, Optional
 from datetime import datetime
 from dataclasses import dataclass, field
 from enum import Enum
 
 # ARQ 依赖为可选
 try:
-    from arq import cron
     from arq.connections import RedisSettings
     from arq.worker import Worker
     ARQ_AVAILABLE = True
@@ -195,7 +193,6 @@ class AROrchestratorTask(ARAbstractTask):
             任务结果
         """
         task_id = kwargs.get("task_id", "orchestrator")
-        state = kwargs.get("state", {})
         
         async def _execute():
             # 模拟编排器执行
@@ -242,7 +239,6 @@ class ARSpecialistTask(ARAbstractTask):
         """
         task_id = kwargs.get("task_id", "specialist")
         specialist_type = kwargs.get("specialist_type", "finance")
-        query = kwargs.get("query", "")
         
         async def _execute():
             logger.info(
@@ -342,8 +338,6 @@ class ARGeneratorTask(ARAbstractTask):
             任务结果
         """
         task_id = kwargs.get("task_id", "generator")
-        query = kwargs.get("query", "")
-        context = kwargs.get("context", {})
         
         async def _execute():
             logger.info(f"[Generator] 生成响应: task_id={task_id}")
@@ -351,7 +345,6 @@ class ARGeneratorTask(ARAbstractTask):
             # TODO: 实际的生成逻辑
             result = {
                 "status": "completed",
-                "query": query,
                 "response": "生成的响应内容"
             }
             
@@ -389,7 +382,6 @@ class ARReflectionTask(ARAbstractTask):
             任务结果
         """
         task_id = kwargs.get("task_id", "reflection")
-        response = kwargs.get("response", "")
         
         async def _execute():
             logger.info(f"[Reflection] 执行反思: task_id={task_id}")

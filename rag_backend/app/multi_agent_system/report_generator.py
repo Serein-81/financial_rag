@@ -3,7 +3,7 @@
 报告生成器 - Phase 7
 从 AuditState 生成结构化审查报告
 """
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any
 from datetime import datetime
 from dataclasses import dataclass, field, asdict
 import json
@@ -144,7 +144,7 @@ class ReportGenerator:
         # 8. 提取法律依据
         report.legal_references = self._extract_legal_references(all_findings)
         
-        print(f"[报告生成器] 报告生成完成")
+        print("[报告生成器] 报告生成完成")
         print(f"  - 总发现数: {report.total_findings}")
         print(f"  - 风险分数: {report.overall_risk_score:.1f}")
         print(f"  - 高风险: {report.high_risk_count}, 中风险: {report.medium_risk_count}, 低风险: {report.low_risk_count}")

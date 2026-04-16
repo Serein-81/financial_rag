@@ -7,6 +7,7 @@ import uuid
 import logging
 from typing import Dict, Any, List, Optional
 from datetime import datetime
+from fastapi import HTTPException
 from app.schemas.tax_intelligence import (
     TaxAnalysisRequest,
     TaxAnalysisResult,
@@ -26,7 +27,7 @@ from app.services.policy_retrieval_service import PolicyRetrievalService
 from app.multi_agent_system.human_review import HumanReviewQueue, ReviewTrigger, ReviewPriority
 from app.multi_agent_system.agents.report_generator import ReportGenerator
 from app.services.agent_tracer import AgentTracer
-from app.services.admin_notification_service import AdminNotificationService, RiskLevel, RiskCategory, HighRiskBehavior
+from app.services.admin_notification_service import AdminNotificationService
 from app.multi_agent_system.agents.tax_specialist import TaxSpecialist
 from app.agent_framework.llm.factory import LLMAdapterFactory
 from app.agent_framework.tools.tool_manager import ToolManager

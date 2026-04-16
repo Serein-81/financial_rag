@@ -4,8 +4,7 @@ OCR 文档识别服务
 支持 PDF、图片等文档的文字识别
 """
 
-from typing import List, Dict, Any, Optional
-import os
+from typing import List, Dict, Any
 import io
 from pathlib import Path
 

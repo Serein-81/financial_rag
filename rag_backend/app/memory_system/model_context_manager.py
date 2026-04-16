@@ -9,7 +9,6 @@
 """
 
 import json
-import os
 import logging
 from typing import Dict, Optional
 from pathlib import Path
@@ -112,8 +111,8 @@ class ModelContextManager:
             local_success = self._load_from_cache()
             if not local_success:
                 logger.warning(
-                    f"[ModelContextManager] API 和本地缓存都不可用，"
-                    f"使用默认配置"
+                    "[ModelContextManager] API 和本地缓存都不可用，"
+                    "使用默认配置"
                 )
                 self._use_default_limits()
         

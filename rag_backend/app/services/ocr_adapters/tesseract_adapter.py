@@ -120,7 +120,6 @@ class TesseractAdapter(BaseOCRAdapter):
         """提取结构化内容"""
         import asyncio
         from pypdf import PdfReader
-        import fitz
         
         def _sync_extract():
             text_content = []

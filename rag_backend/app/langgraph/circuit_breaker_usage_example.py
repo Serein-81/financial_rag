@@ -6,14 +6,12 @@ LangGraph 熔断器使用示例
 
 import asyncio
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any
 from app.langgraph.circuit_breaker_integration import (
     LangGraphCircuitBreakerManager,
-    CircuitBreakerNode,
     WorkflowRecoveryManager,
     CircuitBreakerMiddleware,
     get_circuit_breaker_manager,
-    initialize_circuit_breaker_manager,
     CircuitBreakerConfig
 )
 from app.multi_agent_system.async_task_scheduler import TaskState
@@ -219,7 +217,7 @@ async def example_4_circuit_breaker_middleware():
     print(f"\n📊 调用统计: {stats}")
     
     all_breakers = manager.get_all_stats()
-    print(f"🔧 熔断器状态:")
+    print("🔧 熔断器状态:")
     for name, breaker_stat in all_breakers.items():
         print(f"   {name}: {breaker_stat['state']}")
 

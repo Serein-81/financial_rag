@@ -40,7 +40,7 @@ def test_financial_health_monitor():
             print(f"   ❌ 未获取到 token: {login_result}")
             return False
         
-        print(f"   ✅ 登录成功")
+        print("   ✅ 登录成功")
         
     except requests.exceptions.ConnectionError:
         print(f"   ❌ 无法连接到后端服务 {BASE_URL}")
@@ -81,14 +81,14 @@ def test_financial_health_monitor():
         print(f"   响应头: {dict(response.headers)}")
         
         if response.status_code == 200:
-            print(f"   ✅ API 调用成功!")
+            print("   ✅ API 调用成功!")
             result = response.json()
-            print(f"\n   响应数据:")
+            print("\n   响应数据:")
             print(json.dumps(result, indent=2, ensure_ascii=False))
             return True
         else:
-            print(f"   ❌ API 调用失败!")
-            print(f"\n   错误响应:")
+            print("   ❌ API 调用失败!")
+            print("\n   错误响应:")
             try:
                 error_data = response.json()
                 print(json.dumps(error_data, indent=2, ensure_ascii=False))
@@ -97,10 +97,10 @@ def test_financial_health_monitor():
             return False
             
     except requests.exceptions.Timeout:
-        print(f"   ❌ 请求超时 (30秒)")
+        print("   ❌ 请求超时 (30秒)")
         return False
     except requests.exceptions.ConnectionError:
-        print(f"   ❌ 无法连接到后端服务")
+        print("   ❌ 无法连接到后端服务")
         return False
     except Exception as e:
         print(f"   ❌ 请求失败: {e}")

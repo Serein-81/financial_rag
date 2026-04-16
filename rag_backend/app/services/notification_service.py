@@ -3,21 +3,17 @@
 负责企业匹配、个性化推送、追踪确认
 """
 
-import re
-import json
 import logging
 from typing import Dict, List, Any, Optional
-from datetime import datetime, timedelta
-from enum import Enum
-from dataclasses import dataclass
+from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.models.policy import Policy, PolicyStatus, PolicyPriority
+from app.models.policy import Policy
 from app.models.enterprise_policy_match import EnterprisePolicyMatch, NotificationStatus, MatchStatus
 from app.db.session import SessionLocal
-from sqlalchemy import select, update, and_
+from sqlalchemy import select, and_
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
@@ -116,7 +112,7 @@ class NotificationService:
         if not getattr(NotificationService, '_initialized', False):
             NotificationService._initialized = True
             print("📋 [Notification Service] 初始化完成")
-            print(f"   - 职责: 企业匹配、个性化推送、追踪确认")
+            print("   - 职责: 企业匹配、个性化推送、追踪确认")
             print(f"   - 匹配权重: {self.match_weights}")
             print(f"   - 通知渠道: {len(self.notification_channels)} 个")
     

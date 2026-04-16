@@ -4,7 +4,7 @@
 用于存储需要人工审核的请求
 """
 
-from sqlalchemy import Column, String, Text, Integer, Boolean, DateTime, ForeignKey, Index
+from sqlalchemy import Column, String, Text, Integer, DateTime, ForeignKey, Index
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.sql import func
 import uuid

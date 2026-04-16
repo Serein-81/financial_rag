@@ -50,7 +50,7 @@ async def test_local_transport():
         tenant_id="test_tenant"
     )
     
-    print(f"[PASS] 本地传输测试通过")
+    print("[PASS] 本地传输测试通过")
     print(f"   Response: {result}")
     
     stats = transport.get_statistics()
@@ -114,7 +114,7 @@ async def test_transport_manager():
         tenant_id="test_tenant"
     )
     
-    print(f"[PASS] 传输管理器测试通过")
+    print("[PASS] 传输管理器测试通过")
     print(f"   Response: {result}")
     
     stats = transport.get_statistics()

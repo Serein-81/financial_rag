@@ -16,13 +16,11 @@ import asyncio
 import sys
 import os
 import time
-from pathlib import Path
 
 # 添加项目根目录到 Python 路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.services.structured_document_service import structured_document_service
-from app.services.file_service import file_service
 from app.services.chunk_service import chunk_service
 
 
@@ -77,7 +75,7 @@ API 网关负责：
             test_content, "test_document.pdf", "application/pdf"
         )
         
-        print(f"✅ PDF解析成功")
+        print("✅ PDF解析成功")
         print(f"  - 文档标题: {structured_doc.title}")
         print(f"  - 文档类型: {structured_doc.doc_type.value}")
         print(f"  - 章节数量: {len(structured_doc.sections)}")
@@ -152,7 +150,7 @@ async def test_word_structured_parsing():
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
         
-        print(f"✅ Word解析成功")
+        print("✅ Word解析成功")
         print(f"  - 文档标题: {structured_doc.title}")
         print(f"  - 文档类型: {structured_doc.doc_type.value}")
         print(f"  - 章节数量: {len(structured_doc.sections)}")
@@ -249,7 +247,7 @@ async def test_performance_comparison():
         print(f"  - 结构化切块带标题路径: {structured_with_path}/{len(structured_chunks)} ({structured_with_path/len(structured_chunks)*100:.1f}%)")
         
         # 4. 性能总结
-        print(f"\n⚡ 性能总结:")
+        print("\n⚡ 性能总结:")
         print(f"  - 时间差异: {abs(structured_time - traditional_time):.4f}s")
         print(f"  - 质量提升: {(structured_with_path/len(structured_chunks) - traditional_with_path/len(traditional_chunks))*100:.1f}%")
         

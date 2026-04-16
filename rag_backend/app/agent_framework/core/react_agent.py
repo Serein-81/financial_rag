@@ -8,11 +8,8 @@ ReAct Agent 实现
 
 from typing import List, Dict, AsyncGenerator, Optional, Any, TYPE_CHECKING
 import re
-import json
 import hashlib
 import time
-import asyncio
-import logging
 import numpy as np
 from difflib import SequenceMatcher
 from .base_agent import BaseAgent
@@ -22,13 +19,7 @@ from app.utils.logging_config import get_logger
 logger = get_logger(__name__)
 
 if TYPE_CHECKING:
-    from app.agent_framework.core.output_agent import (
-        OutputAgent,
-        SynthesisStrategy,
-        SynthesisInput,
-        ConflictResolution,
-        SynthesisResult
-    )
+    pass
 
 
 class ReActAgent(BaseAgent):
@@ -390,7 +381,7 @@ class ReActAgent(BaseAgent):
                                 
                                 if tool_call_detected:
                                     should_stream_output = False
-                                    logger.info(f"[Agent] 检测到完整工具调用，停止流式输出")
+                                    logger.info("[Agent] 检测到完整工具调用，停止流式输出")
                             elif has_final_answer_marker:
                                 logger.info("[Agent] 检测到 Final Answer 标记，等待完整答案后输出")
                             elif len(response_text) > MIN_BUFFER_FOR_STREAM and should_stream_output:
@@ -711,7 +702,7 @@ class ReActAgent(BaseAgent):
                     self._log_action("🛑 流式执行检测到循环", {"reason": loop_check["reason"]})
                     
                     if not response_text or len(response_text.strip()) < 10:
-                        logger.warning(f"[Agent] 响应为空，可能存在 LLM 问题")
+                        logger.warning("[Agent] 响应为空，可能存在 LLM 问题")
                         if "[错误]" in response_text:
                             error_match = re.search(r'\[错误\]\s*(.+?)\n', response_text, re.DOTALL)
                             if error_match:

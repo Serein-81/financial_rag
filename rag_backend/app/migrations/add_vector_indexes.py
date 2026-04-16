@@ -129,10 +129,10 @@ def create_hnsw_index(db):
     custom = input("使用自定义参数? (y/N): ").strip().lower()
     if custom == 'y':
         try:
-            m_input = input(f"  m (连接数, 默认 16): ").strip()
+            m_input = input("  m (连接数, 默认 16): ").strip()
             if m_input:
                 m = int(m_input)
-            ef_input = input(f"  ef_construction (探索因子, 默认 64): ").strip()
+            ef_input = input("  ef_construction (探索因子, 默认 64): ").strip()
             if ef_input:
                 ef_construction = int(ef_input)
         except ValueError:
@@ -153,7 +153,7 @@ def create_hnsw_index(db):
         db.commit()
         print("  ✅ HNSW 索引创建成功")
 
-        sql = f"""
+        sql = """
         ALTER INDEX idx_semantic_memories_embedding_hnsw
         ALTER COLUMN embedding SET STATISTICS 500;
         """
@@ -201,7 +201,7 @@ def create_ivfflat_index(db, row_count: int = 0):
     custom = input("使用自定义 lists? (y/N, 默认 100): ").strip().lower()
     if custom == 'y':
         try:
-            lists_input = input(f"  lists (倒排列表数): ").strip()
+            lists_input = input("  lists (倒排列表数): ").strip()
             if lists_input:
                 lists = int(lists_input)
         except ValueError:
@@ -324,7 +324,7 @@ def show_index_stats(db):
         """))
         row = result.fetchone()
 
-        print(f"\n  表统计:")
+        print("\n  表统计:")
         print(f"    总大小: {row[0]}")
         print(f"    表大小: {row[1]}")
         print(f"    索引大小: {row[2]}")

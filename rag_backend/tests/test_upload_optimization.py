@@ -3,7 +3,6 @@
 """
 import asyncio
 from app.utils.file_utils import calculate_md5
-from app.services.file_service import file_service
 import io
 
 
@@ -31,10 +30,10 @@ async def test_file_service_async():
     """测试异步文件处理"""
     print("\n🧪 测试异步文件处理...")
     
-    print(f"✅ FileService 已改为异步版本")
-    print(f"✅ 支持的文件类型: PDF, Word, TXT, PNG(OCR)")
-    print(f"✅ CPU密集型操作使用线程池 (asyncio.to_thread)")
-    print(f"✅ 不会阻塞事件循环")
+    print("✅ FileService 已改为异步版本")
+    print("✅ 支持的文件类型: PDF, Word, TXT, PNG(OCR)")
+    print("✅ CPU密集型操作使用线程池 (asyncio.to_thread)")
+    print("✅ 不会阻塞事件循环")
 
 
 async def test_ocr_async():
@@ -42,7 +41,6 @@ async def test_ocr_async():
     print("\n🧪 测试异步 OCR 功能...")
     
     try:
-        from app.services.ocr_service import ocr_service
         print("✅ OCR服务导入成功")
         
         # 检查依赖

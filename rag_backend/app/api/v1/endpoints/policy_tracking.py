@@ -6,7 +6,7 @@
 import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, Path
 from typing import Optional, List
-from datetime import datetime, date, timedelta
+from datetime import datetime, timedelta
 
 from app.api.deps import get_current_user, CurrentUser
 from app.schemas.policy_tracking import (
@@ -16,8 +16,6 @@ from app.schemas.policy_tracking import (
     PolicyQueryRequest,
     PolicyQueryResponse,
     PolicyUpdate,
-    NotificationChannel,
-    NotificationFrequency,
     SubscriptionStatus,
 )
 from app.services.policy_tracking_service import PolicyTrackingService

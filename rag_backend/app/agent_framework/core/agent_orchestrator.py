@@ -16,7 +16,7 @@
 """
 
 from enum import Enum
-from typing import List, Dict, Optional, Any, AsyncGenerator, Tuple
+from typing import List, Dict, Optional, Any, AsyncGenerator
 from pydantic import BaseModel
 import re
 
@@ -333,7 +333,7 @@ class AgentOrchestrator:
                 should_regen, reason = self.output_agent.should_regenerate(review_result, 1)
                 
                 if should_regen and hasattr(agent, 'stream_run'):
-                    print(f"📝 [调度器] 根据反馈重新生成...")
+                    print("📝 [调度器] 根据反馈重新生成...")
                     regenerated = await self.output_agent.regenerate_with_hint(
                         full_output, user_input, review_result.suggestion
                     )

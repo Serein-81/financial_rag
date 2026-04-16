@@ -7,6 +7,7 @@ import uuid
 import logging
 from typing import Dict, Any, List, Optional
 from datetime import datetime
+from fastapi import HTTPException
 from app.schemas.contract_review import (
     ContractType,
     RiskLevel,
@@ -15,7 +16,6 @@ from app.schemas.contract_review import (
     ContractClause,
     RiskAssessment,
     ClauseComparison,
-    ModificationSuggestion,
     ContractAnalysisRequest,
     ContractAnalysisResponse,
     DeepClauseAnalysisRequest,
@@ -966,7 +966,7 @@ class ContractReviewService:
             logger.info(f"📋 获取合同审核历史: user={user_id}, page={page}, page_size={page_size}")
 
             from app.db.session import AsyncSessionLocal
-            from app.models.contract_review import ContractReviewReport, RiskLevel
+            from app.models.contract_review import ContractReviewReport
             from sqlalchemy import select, func, desc
 
             async with AsyncSessionLocal() as db:

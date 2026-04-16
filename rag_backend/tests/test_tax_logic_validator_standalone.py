@@ -7,10 +7,8 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import time
 import math
-from typing import List, Dict, Any, Optional
-from collections import defaultdict
+from typing import List, Dict, Optional
 
 
 class StandaloneTaxLogicValidator:
@@ -144,7 +142,7 @@ class StandaloneTaxLogicValidator:
                 "industry": industry,
                 "severity": "medium",
                 "confidence": 0.65,
-                "description": f"税负率偏离行业均值"
+                "description": "税负率偏离行业均值"
             })
         return anomalies
 

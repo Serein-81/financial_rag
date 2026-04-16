@@ -8,22 +8,16 @@ Mock Test Configuration for FastAPI Testing
 
 import pytest
 import asyncio
-from typing import AsyncGenerator, Generator
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 from datetime import datetime
 import uuid
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx import AsyncClient, ASGITransport
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.api.deps import get_db, get_current_user, get_current_tenant
+from app.api.deps import get_db, get_current_user
 from app.models.user import User
-from app.models.tenant import Tenant
-from app.services.redis_service import RedisService
 
 
 class MockAsyncSession:

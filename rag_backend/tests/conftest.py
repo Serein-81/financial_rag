@@ -3,6 +3,35 @@ Pytest 配置文件
 用于配置 pytest-asyncio 等测试插件
 """
 import pytest
+import os
+
+
+@pytest.fixture(scope="session", autouse=True)
+def setup_test_env():
+    """设置测试环境变量"""
+    test_env_vars = {
+        "POSTGRES_USER": "test_user",
+        "POSTGRES_PASSWORD": "test_password",
+        "POSTGRES_SERVER": "localhost",
+        "POSTGRES_PORT": "5432",
+        "POSTGRES_DB": "test_db",
+        "SECRET_KEY": "test_secret_key_for_testing_only",
+    }
+    
+    # 保存原始环境变量
+    original_env = {}
+    for key, value in test_env_vars.items():
+        original_env[key] = os.environ.get(key)
+        os.environ[key] = value
+    
+    yield
+    
+    # 恢复原始环境变量
+    for key, original_value in original_env.items():
+        if original_value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = original_value
 
 
 def pytest_configure(config):

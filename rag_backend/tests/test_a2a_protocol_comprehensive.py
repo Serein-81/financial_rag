@@ -6,7 +6,6 @@ Agent-to-Agent Protocol Communication Tests
 import pytest
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
-from typing import Dict, Any, List, Optional
 from datetime import datetime
 
 from app.a2a_protocol.client import A2AClient
@@ -15,8 +14,7 @@ from app.a2a_protocol.models import (
     A2AMessage,
     AgentCard,
     Task,
-    TaskStatus,
-    MessageType
+    TaskStatus
 )
 from app.a2a_protocol.registry import AgentRegistry
 from app.a2a_protocol.dispatcher import Dispatcher

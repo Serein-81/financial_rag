@@ -100,7 +100,7 @@ async def update_env_file(api_key):
         for line in lines:
             if line.startswith('GAODE_API_KEY='):
                 updated_lines.append(f'GAODE_API_KEY={api_key}')
-                print(f"✅ 已更新.env文件中的GAODE_API_KEY")
+                print("✅ 已更新.env文件中的GAODE_API_KEY")
             else:
                 updated_lines.append(line)
         

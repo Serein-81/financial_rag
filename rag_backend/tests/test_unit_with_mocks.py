@@ -7,19 +7,12 @@ Unit Tests with Mock Database Dependencies
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime
-import uuid
+from unittest.mock import AsyncMock, MagicMock
 
-from fastapi.testclient import TestClient
-from app.main import app
-from app.api.deps import get_db, get_current_user, get_current_tenant
+from app.api.deps import get_db
 from tests.conftest_mock import (
-    MockAsyncSession,
     MockRedisService,
-    MockUser,
     MockTenant,
-    MockLLMAdapter,
     create_mock_user,
     create_mock_tenant
 )
@@ -193,7 +186,6 @@ class TestDependencyOverride:
     
     def test_override_db_dependency(self, app_with_mock_db, mock_db_session, mock_user):
         """测试数据库依赖覆盖"""
-        from app.api.deps import get_db
         
         override_get_db = app_with_mock_db.dependency_overrides.get(get_db)
         assert override_get_db is not None
@@ -218,7 +210,6 @@ class TestMultiAgentMocking:
     @pytest.mark.asyncio
     async def test_mock_session_manager(self, mock_db_session):
         """测试Mock会话管理"""
-        from tests.conftest_mock import MockRedisService
         
         redis_mock = MockRedisService()
         
@@ -241,7 +232,6 @@ class TestMultiAgentMocking:
     @pytest.mark.asyncio
     async def test_mock_agent_coordinator(self, mock_llm_adapter, mock_db_session):
         """测试Mock智能体协调器"""
-        from tests.conftest_mock import MockRedisService
         
         coordinator = {
             "llm": mock_llm_adapter,

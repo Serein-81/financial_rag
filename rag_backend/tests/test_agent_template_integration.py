@@ -7,23 +7,17 @@ Agent 模板集成测试
 测试 Agent 使用新模板文件的实际运行效果
 """
 
-import asyncio
 import sys
 import os
-from pathlib import Path
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from typing import Dict, List, Any
 
 from app.agent_framework.core.react_agent import ReActAgent
 from app.agent_framework.core.plan_agent import PlanAgent
 from app.agent_framework.llm.base_adapter import BaseLLMAdapter
-from app.agent_framework.tools.tool_manager import ToolManager
-from app.agent_framework.prompts.prompt_engine import PromptEngine
 
 
 class MockLLMAdapter(BaseLLMAdapter):
@@ -445,7 +439,7 @@ class TestAgentDualMode:
             max_iterations=5
         )
         
-        print(f"\n📋 Agent 默认配置:")
+        print("\n📋 Agent 默认配置:")
         print(f"   - 模板名称: {agent.template_name}")
         print(f"   - 使用模板: {agent.use_template}")
         

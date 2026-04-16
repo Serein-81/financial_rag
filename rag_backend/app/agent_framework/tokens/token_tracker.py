@@ -6,7 +6,7 @@ Token 计数器
 """
 
 import tiktoken
-from typing import List, Dict, Optional, Union
+from typing import List, Dict, Union
 import logging
 
 logger = logging.getLogger(__name__)

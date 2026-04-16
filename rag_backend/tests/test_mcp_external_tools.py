@@ -20,7 +20,6 @@ async def test_mcp_tools_via_proxy():
     print("=" * 60)
 
     try:
-        from app.agent_framework.llm.factory import LLMAdapterFactory
         from app.agent_framework.tools.tool_manager import ToolManager
         from app.agent_framework.tools.agent_tool_registry import initialize_tool_manager
         from app.mcp.mcp_tool_proxy import get_mcp_proxy, get_all_mcp_tools_as_langchain_tools
@@ -179,7 +178,7 @@ async def test_receptionist_agent_tools():
             timeout=30.0
         )
 
-        print(f"\n  ✅ 接待智能体初始化成功")
+        print("\n  ✅ 接待智能体初始化成功")
         print(f"     工具管理器工具数量: {len(receptionist.tool_manager.tools)}")
 
         return True

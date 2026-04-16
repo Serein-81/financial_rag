@@ -2,8 +2,6 @@ import asyncio
 import requests
 from sqlalchemy import text
 from app.db.session import engine
-from app.models.user import User
-from sqlalchemy.ext.asyncio import AsyncSession
 
 async def test_api():
     async with engine.begin() as conn:

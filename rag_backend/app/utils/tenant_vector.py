@@ -2,7 +2,7 @@
 向量库租户隔离工具
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 
 def get_vector_filter(tenant_id: str) -> Dict:

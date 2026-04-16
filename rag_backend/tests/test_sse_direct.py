@@ -23,7 +23,7 @@ async def test_sse_connection():
         "tenant_id": tenant_id
     }
 
-    print(f"🔍 测试 SSE 连接")
+    print("🔍 测试 SSE 连接")
     print(f"URL: {url}")
     print(f"参数: {params}")
     print()

@@ -8,8 +8,7 @@
 
 from sqlalchemy import Column, String, DateTime, Text, Boolean, Integer, JSON, Index, ARRAY
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import relationship
-from sqlalchemy import ForeignKey, func
+from sqlalchemy import func
 import uuid
 from app.db.base import Base
 

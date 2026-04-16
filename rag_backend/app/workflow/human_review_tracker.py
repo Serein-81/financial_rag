@@ -127,7 +127,6 @@ class HumanReviewTracker:
             ReviewTrackingRecord: 审核追踪记录
         """
         try:
-            from app.models.review_request import ReviewRequest
             
             sla_hours = self.SLA_HOURS.get(priority, 24)
             sla_deadline = datetime.utcnow() + timedelta(hours=sla_hours)
@@ -331,7 +330,7 @@ class HumanReviewTracker:
         """
         try:
             from app.models.review_request import ReviewRequest
-            from app.workflow.workflow_monitor import WorkflowMonitor, WorkflowStatus
+            from app.workflow.workflow_monitor import WorkflowMonitor
             
             review_request = self.db.query(ReviewRequest).filter(
                 ReviewRequest.id == review_request_id

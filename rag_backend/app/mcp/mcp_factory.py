@@ -10,7 +10,7 @@ MCP 客户端工厂 - 支持本地/云端切换
 import os
 import httpx
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
 from enum import Enum
 
@@ -292,7 +292,7 @@ class MCPClientFactory:
     def print_mode_info(self) -> None:
         """打印当前模式信息"""
         mode = self.get_mode()
-        print(f"\n🔧 MCP 配置信息:")
+        print("\n🔧 MCP 配置信息:")
         print(f"   模式: {mode.value.upper()}")
         if mode == MCPMode.LOCAL:
             print(f"   本地地址: {os.getenv('MCP_LOCAL_URL', 'http://127.0.0.1:8001')}")

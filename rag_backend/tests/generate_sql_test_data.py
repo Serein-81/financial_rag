@@ -3,10 +3,8 @@
 主要关注财务健康相关的5个表
 """
 import psycopg2
-from psycopg2.extras import execute_values
-from datetime import datetime, timedelta
+from datetime import datetime
 import uuid
-import random
 
 DATABASE_CONFIG = {
     "host": "localhost",

@@ -3,7 +3,7 @@
 """
 
 from typing import List
-from .state import AuditState, Conflict
+from .state import AuditState
 
 
 class ReworkController:
@@ -81,7 +81,7 @@ class ReworkController:
             
             print(f"🔄 [重做控制器] 需要重做，原因: {', '.join(reasons)}")
         else:
-            print(f"🔄 [重做控制器] 无需重做")
+            print("🔄 [重做控制器] 无需重做")
         
         return need_rework
     

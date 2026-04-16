@@ -20,7 +20,7 @@ async def test_tenant_isolation():
     tenant_a = str(uuid.uuid4())
     tenant_b = str(uuid.uuid4())
     
-    print(f"\n📋 测试租户:")
+    print("\n📋 测试租户:")
     print(f"  租户 A: {tenant_a}")
     print(f"  租户 B: {tenant_b}")
     
@@ -89,7 +89,7 @@ async def test_tenant_isolation():
             if current_tenant == tenant_a:
                 print(f"  ✅ Session variable 设置成功: {current_tenant}")
             else:
-                print(f"  ❌ Session variable 设置失败")
+                print("  ❌ Session variable 设置失败")
             
             await session.commit()
             

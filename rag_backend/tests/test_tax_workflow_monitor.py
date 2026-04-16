@@ -24,14 +24,14 @@ async def test_tax_workflow_monitor():
     print("="*60)
     
     try:
-        from app.workflow import NodeType, ReviewPriority
+        from app.workflow import NodeType
         from app.workflow.tax_workflow_monitor import TaxWorkflowMonitor
         from app.db.session import AsyncSessionLocal
         
         async with AsyncSessionLocal() as db:
             monitor = TaxWorkflowMonitor(db)
             
-            print(f"✓ TaxWorkflowMonitor 初始化成功")
+            print("✓ TaxWorkflowMonitor 初始化成功")
             
             test_state = {
                 "analysis_id": str(uuid4()),
@@ -49,7 +49,7 @@ async def test_tax_workflow_monitor():
                 total_nodes=8
             )
             
-            print(f"✓ 工作流追踪启动成功")
+            print("✓ 工作流追踪启动成功")
             print(f"  - workflow_trace_id: {workflow_trace_id}")
             
             node_execution_id = monitor.start_node(
@@ -58,7 +58,7 @@ async def test_tax_workflow_monitor():
                 input_data={"fiscal_year": test_state["fiscal_year"]}
             )
             
-            print(f"✓ 节点追踪启动成功")
+            print("✓ 节点追踪启动成功")
             print(f"  - node_execution_id: {node_execution_id}")
             
             monitor.complete_node(
@@ -67,10 +67,10 @@ async def test_tax_workflow_monitor():
                 execution_time_ms=150.5
             )
             
-            print(f"✓ 节点追踪完成")
+            print("✓ 节点追踪完成")
             
             summary = monitor.get_execution_summary()
-            print(f"✓ 获取执行摘要成功")
+            print("✓ 获取执行摘要成功")
             print(f"  - status: {summary.get('status')}")
             print(f"  - completed_nodes: {summary.get('completed_nodes')}")
             
@@ -79,7 +79,7 @@ async def test_tax_workflow_monitor():
                 output_data={"analysis_id": test_state["analysis_id"]}
             )
             
-            print(f"✓ 工作流追踪完成")
+            print("✓ 工作流追踪完成")
             
             return True
         
@@ -128,7 +128,7 @@ async def test_node_tracking():
             
             result = await sample_node(test_state)
             
-            print(f"✓ 节点追踪装饰器测试成功")
+            print("✓ 节点追踪装饰器测试成功")
             print(f"  - result: {result}")
             
             monitor.complete_workflow(status="completed")
@@ -185,7 +185,7 @@ async def test_human_review_tracking():
                 priority=ReviewPriority.HIGH
             )
             
-            print(f"✓ 人工审核追踪创建成功")
+            print("✓ 人工审核追踪创建成功")
             print(f"  - tracking_id: {tracking_id}")
             
             await monitor.record_review_action(
@@ -195,7 +195,7 @@ async def test_human_review_tracking():
                 comments="审核通过，数据核实无误"
             )
             
-            print(f"✓ 审核动作记录成功")
+            print("✓ 审核动作记录成功")
             
             monitor.complete_workflow(status="completed")
             
@@ -249,14 +249,14 @@ async def test_error_tracking():
                 }
             )
             
-            print(f"✓ 错误追踪记录成功")
+            print("✓ 错误追踪记录成功")
             
             monitor.complete_workflow(
                 status="failed",
                 error_message=str(test_error)
             )
             
-            print(f"✓ 工作流失败状态记录成功")
+            print("✓ 工作流失败状态记录成功")
             
             return True
         
@@ -274,11 +274,9 @@ async def test_integration_with_tax_workflow():
     print("="*60)
     
     try:
-        from app.langgraph.tax_workflow import TaxSubmissionWorkflow
-        from app.workflow.tax_workflow_monitor import TaxWorkflowMonitor
         
-        print(f"✓ TaxSubmissionWorkflow 导入成功")
-        print(f"✓ TaxWorkflowMonitor 导入成功")
+        print("✓ TaxSubmissionWorkflow 导入成功")
+        print("✓ TaxWorkflowMonitor 导入成功")
         
         return True
         

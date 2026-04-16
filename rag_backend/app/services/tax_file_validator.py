@@ -5,7 +5,7 @@
 
 import re
 import logging
-from typing import Tuple, Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)

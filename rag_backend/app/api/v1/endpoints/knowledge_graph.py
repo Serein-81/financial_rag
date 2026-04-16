@@ -2,7 +2,7 @@
 知识图谱 API 端点
 """
 import logging
-from typing import List, Optional
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -20,7 +20,6 @@ from app.services.hybrid_retriever import HybridRetriever
 from app.knowledge_graph.entity_extractor import EntityExtractor
 from app.knowledge_graph.relation_extractor import RelationExtractor
 from app.knowledge_graph.neo4j_manager import Neo4jManager
-from app.agent_framework.llm.factory import LLMAdapterFactory
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)

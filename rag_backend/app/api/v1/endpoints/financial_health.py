@@ -7,14 +7,12 @@ import logging
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from typing import Optional, List
+from typing import Optional
 from io import BytesIO
 
 from app.api.deps import get_current_user, CurrentUser
 from app.schemas.financial_health import (
     FinancialHealthMonitorRequest,
-    FinancialHealthMonitorResponse,
-    AnomalyQueryRequest,
     AnomalyQueryResponse,
     AnomalyActionRequest,
     AnomalyActionResponse,

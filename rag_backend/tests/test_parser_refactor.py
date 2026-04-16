@@ -94,7 +94,7 @@ async def test_text_parser():
     
     try:
         result = await parser.parse(file_bytes)
-        print(f"✅ UTF-8 解析成功:")
+        print("✅ UTF-8 解析成功:")
         print(f"   {result}")
     except Exception as e:
         print(f"❌ UTF-8 解析失败: {e}")
@@ -103,7 +103,7 @@ async def test_text_parser():
     file_bytes_gbk = test_content.encode('gbk')
     try:
         result = await parser.parse(file_bytes_gbk)
-        print(f"✅ GBK 解析成功:")
+        print("✅ GBK 解析成功:")
         print(f"   {result}")
     except Exception as e:
         print(f"❌ GBK 解析失败: {e}")

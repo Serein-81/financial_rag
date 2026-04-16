@@ -17,11 +17,7 @@ project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
 from app.memory_system.user_memory_extractor import (
-    UserMemoryExtractor,
-    ExtractedFact,
-    ExtractedPreference,
-    ExtractedCorrection,
-    UserMemoryExtractionResult
+    UserMemoryExtractor
 )
 from app.memory_system.semantic_memory import SemanticMemory
 from app.memory_system.memory_manager import MemoryManager
@@ -62,7 +58,7 @@ async def test_user_memory_extractor():
         result = await extractor.extract(SAMPLE_CONVERSATION)
         
         # 验证结果
-        print(f"\n📊 提取结果摘要:")
+        print("\n📊 提取结果摘要:")
         print(f"   - 事实数量: {len(result.facts)}")
         print(f"   - 偏好数量: {len(result.preferences)}")
         print(f"   - 纠正数量: {len(result.corrections)}")
@@ -71,21 +67,21 @@ async def test_user_memory_extractor():
         
         # 打印提取的事实
         if result.facts:
-            print(f"\n📌 提取的事实:")
+            print("\n📌 提取的事实:")
             for i, fact in enumerate(result.facts, 1):
                 print(f"   {i}. {fact.content}")
                 print(f"      类别: {fact.category} | 置信度: {fact.confidence:.2f}")
         
         # 打印提取的偏好
         if result.preferences:
-            print(f"\n⭐ 提取的偏好:")
+            print("\n⭐ 提取的偏好:")
             for i, pref in enumerate(result.preferences, 1):
                 print(f"   {i}. {pref.content}")
                 print(f"      类别: {pref.category} | 置信度: {pref.confidence:.2f}")
         
         # 打印提取的纠正
         if result.corrections:
-            print(f"\n🔧 提取的纠正:")
+            print("\n🔧 提取的纠正:")
             for i, corr in enumerate(result.corrections, 1):
                 print(f"   {i}. 原文: {corr.original}")
                 print(f"      纠正: {corr.corrected}")
@@ -205,7 +201,7 @@ async def test_memory_manager_integration():
         
         if user_memory_context:
             print(f"   上下文长度: {len(user_memory_context)} 字符")
-            print(f"\n📄 用户记忆上下文内容:")
+            print("\n📄 用户记忆上下文内容:")
             print("-" * 60)
             print(user_memory_context)
             print("-" * 60)

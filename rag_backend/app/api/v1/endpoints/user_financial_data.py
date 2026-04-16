@@ -3,22 +3,16 @@
 提供财务数据的CRUD操作和税务查询功能
 """
 
-import json
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional
 from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, or_, func
-from sqlalchemy.orm import selectinload
+from sqlalchemy import select, and_, func
 import logging
 import io
 
 import pandas as pd
-import openpyxl
-from openpyxl import Workbook
-from openpyxl.styles import Font, Alignment, PatternFill
-from openpyxl.utils.dataframe import dataframe_to_rows
 from fastapi.responses import StreamingResponse
 from difflib import SequenceMatcher
 
@@ -305,9 +299,7 @@ from app.schemas.user_financial_data import (
     TaxQueryResponse,
     TaxCalculationResult,
     FinancialDataStatistics,
-    PeriodTypeEnum,
     ExcelUploadResponse,
-    ExcelValidationResult,
     DataSourceEnum
 )
 
@@ -1132,7 +1124,7 @@ async def upload_financial_data_excel_intelligent(
             raise HTTPException(
                 status_code=400,
                 detail={
-                    "message": f"Excel中缺少必需列，无法自动识别",
+                    "message": "Excel中缺少必需列，无法自动识别",
                     "missing_columns": missing_required,
                     "detected_columns": {k: v['excel_column'] for k, v in detected_info.items()},
                     "hint": "请确保Excel包含以下列：总收入、应税销售额、免税销售额、总支出、可抵扣支出、不可抵扣支出、进项税额、销项税额、增值税率、应纳税所得额、企业所得税率、财务年度"
@@ -1651,7 +1643,6 @@ async def upload_financial_data_excel(
                             f"{data['fiscal_year']}年的{data['period_type']}数据已存在"
                         )
                 else:
-                    from datetime import datetime as dt
                     from dateutil.parser import parse as parse_date
 
                     period_start_dt = parse_date(data['period_start']).date()

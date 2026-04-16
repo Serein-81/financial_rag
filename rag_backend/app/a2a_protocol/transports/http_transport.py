@@ -16,7 +16,7 @@ import logging
 from typing import Optional, Dict, Any, AsyncGenerator, List
 from datetime import datetime
 
-from .base import TransportConfig, TransportType, AgentTransport, TransportError
+from .base import TransportConfig, AgentTransport, TransportError
 
 logger = logging.getLogger(__name__)
 

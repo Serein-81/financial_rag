@@ -8,11 +8,9 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 from uuid import UUID
 
-from app.models.policy import Policy
 from app.models.enterprise_policy_match import EnterprisePolicyMatch, NotificationStatus, MatchStatus
 from app.db.session import SessionLocal
-from sqlalchemy import select, and_, update
-from sqlalchemy.orm import Session
+from sqlalchemy import select, and_
 from app.services.policy_event_service import policy_event_service
 
 logger = logging.getLogger(__name__)

@@ -7,7 +7,7 @@
 """
 
 import time
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 from sqlalchemy import select, func
 from app.db.session import AsyncSessionLocal
 from app.models.tool_trace import ToolCallTrace

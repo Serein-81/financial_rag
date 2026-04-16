@@ -15,9 +15,9 @@ LangChain 版本的 Agent 服务
 from langchain_community.chat_models import ChatZhipuAI
 from langchain.agents import create_agent
 from app.core.config import settings
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage
 from app.prompts.loader import AgentPromptLoader
-from app.tools import get_all_tools, get_tools_info
+from app.tools import get_all_tools
 
 
 class EnterpriseAgentService:

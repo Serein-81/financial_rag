@@ -16,7 +16,6 @@ from app.services.chat_log_service import chat_log_service
 from app.utils.time_utils import now_beijing
 from app.schemas.chat_log import (
     ChatLogSessionListResponse,
-    ChatLogMessageItem,
     ChatLogSessionStatistics,
     ChatLogUserStatistics,
     ChatLogTenantStatistics,

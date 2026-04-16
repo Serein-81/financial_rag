@@ -15,8 +15,6 @@ import time
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from app.agent_framework.core import create_agent, AgentFactory
-from app.agent_framework.llm import create_llm_adapter
-from app.agent_framework.tools.tool_manager import ToolManager
 
 
 async def test_react_mode():

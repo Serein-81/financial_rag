@@ -7,7 +7,7 @@
 """
 
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings

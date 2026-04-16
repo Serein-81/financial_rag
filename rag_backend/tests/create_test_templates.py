@@ -2,11 +2,8 @@
 创建多种格式的测试Excel模板
 用于测试智能列名识别功能
 """
-import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
-from openpyxl.utils.dataframe import dataframe_to_rows
-from datetime import datetime
 import os
 
 def create_styled_excel(filename: str, sheet_name: str, headers: list, data: list):

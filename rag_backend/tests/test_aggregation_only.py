@@ -27,12 +27,12 @@ async def test_query_with_aggregation():
             print(f"Records: {len(result.data) if result.data else 0}")
             
             if result.context_info:
-                print(f"\n[Context Info]")
+                print("\n[Context Info]")
                 print(f"  Total count: {result.context_info.get('total_count', 'N/A')}")
                 print(f"  Returned count: {result.context_info.get('returned_count', 'N/A')}")
             
             if result.summary:
-                print(f"\n[Summary]")
+                print("\n[Summary]")
                 print(f"  Total Revenue: {result.summary.total_revenue:,.2f}")
                 print(f"  Total Expenses: {result.summary.total_expenses:,.2f}")
                 print(f"  Net Profit: {result.summary.total_profit:,.2f}")

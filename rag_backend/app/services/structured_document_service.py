@@ -1,7 +1,7 @@
 # app/services/structured_document_service.py
-from typing import List, Optional, Union
+from typing import List
 from ..models.structured_document import (
-    StructuredDocument, DocumentSection, DocumentBlock, 
+    StructuredDocument, DocumentBlock, 
     DocumentMetadata, DocumentType, BlockType
 )
 from ..parsers.parser_factory import FileParserFactory

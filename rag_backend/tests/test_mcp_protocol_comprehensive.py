@@ -5,10 +5,7 @@ Model Context Protocol Tool Tests
 
 import pytest
 import asyncio
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
-from typing import Dict, Any, List, Optional
-from datetime import datetime
 
 from app.mcp.client_manager import MCPClientManager
 from app.mcp.mcp_factory import MCPFactory, MCPProvider

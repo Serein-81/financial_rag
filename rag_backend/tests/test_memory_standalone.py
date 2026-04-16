@@ -5,7 +5,7 @@
 import asyncio
 from datetime import datetime
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional
+from typing import List, Dict
 import uuid
 import math
 
@@ -71,18 +71,18 @@ async def test_memory_item():
         importance=0.8
     )
     
-    print(f"\n✨ 记忆项创建:")
+    print("\n✨ 记忆项创建:")
     print(f"  ID: {item.id[:8]}...")
     print(f"  内容: {item.content}")
     print(f"  重要性: {item.importance}")
     print(f"  衰减因子: {item.decay_factor}")
     
-    print(f"\n🔄 测试记忆衰减（艾宾浩斯曲线）:")
+    print("\n🔄 测试记忆衰减（艾宾浩斯曲线）:")
     for hours in [1, 6, 12, 24, 48]:
         item.decay(hours)
         print(f"  {hours:2d} 小时后: {item.decay_factor:.4f}")
     
-    print(f"\n👆 访问记忆:")
+    print("\n👆 访问记忆:")
     item.access()
     print(f"  访问次数: {item.access_count}")
     print(f"  衰减因子: {item.decay_factor:.4f} (访问后增强)")
@@ -98,7 +98,7 @@ async def test_working_memory():
     
     wm = WorkingMemory(capacity=5)
     
-    print(f"\n📝 添加 7 条记忆到容量为 5 的工作记忆:")
+    print("\n📝 添加 7 条记忆到容量为 5 的工作记忆:")
     conversations = [
         ("user", "你好"),
         ("assistant", "你好！有什么可以帮你的？"),
@@ -113,13 +113,13 @@ async def test_working_memory():
         item = MemoryItem(content=content, role=role)
         await wm.add(item)
     
-    print(f"\n🔍 检索工作记忆:")
+    print("\n🔍 检索工作记忆:")
     memories = await wm.retrieve()
     print(f"  当前数量: {len(memories)}/{wm.capacity}")
     for i, m in enumerate(memories, 1):
         print(f"  {i}. {m.role:10s}: {m.content[:40]}...")
     
-    print(f"\n📋 上下文窗口:")
+    print("\n📋 上下文窗口:")
     context = wm.get_context_window()
     for ctx in context:
         print(f"  {ctx['role']:10s}: {ctx['content'][:40]}...")

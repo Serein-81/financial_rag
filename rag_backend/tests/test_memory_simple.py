@@ -25,7 +25,7 @@ async def test_memory_item():
         importance=0.8
     )
     
-    print(f"\n记忆项创建成功:")
+    print("\n记忆项创建成功:")
     print(f"  ID: {item.id[:8]}...")
     print(f"  内容: {item.content}")
     print(f"  角色: {item.role}")
@@ -34,13 +34,13 @@ async def test_memory_item():
     print(f"  衰减因子: {item.decay_factor}")
     
     # 测试访问
-    print(f"\n访问记忆...")
+    print("\n访问记忆...")
     item.access()
     print(f"  访问次数: {item.access_count}")
     print(f"  衰减因子: {item.decay_factor}")
     
     # 测试衰减
-    print(f"\n测试记忆衰减:")
+    print("\n测试记忆衰减:")
     for hours in [1, 6, 12, 24]:
         item.decay(hours)
         print(f"  {hours:2d} 小时后: 衰减因子 = {item.decay_factor:.4f}")
@@ -57,7 +57,7 @@ async def test_working_memory():
     wm = WorkingMemory(capacity=5)
     
     # 添加记忆
-    print(f"\n添加 7 条记忆到容量为 5 的工作记忆:")
+    print("\n添加 7 条记忆到容量为 5 的工作记忆:")
     for i in range(7):
         item = MemoryItem(
             content=f"消息 {i+1}",
@@ -68,7 +68,7 @@ async def test_working_memory():
     # 检索记忆
     memories = await wm.retrieve()
     print(f"\n当前工作记忆数量: {len(memories)}/{wm.capacity}")
-    print(f"内容:")
+    print("内容:")
     for m in memories:
         print(f"  - {m.role}: {m.content}")
     
@@ -84,7 +84,7 @@ async def test_working_memory():
     
     # 统计信息
     stats = wm.get_statistics()
-    print(f"\n统计信息:")
+    print("\n统计信息:")
     print(f"  总数: {stats['total']}")
     print(f"  平均重要性: {stats['avg_importance']:.2f}")
     print(f"  平均衰减: {stats['avg_decay']:.2f}")

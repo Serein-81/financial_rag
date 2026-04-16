@@ -10,16 +10,12 @@
 这是对 PolicyAgent 和 NotificationAgent 的真正整合
 """
 
-import re
 import json
 import logging
 from typing import Dict, List, Any, Optional
-from datetime import datetime
-from enum import Enum
 from pydantic import BaseModel, Field
 
-from app.agent_framework.core.base_agent import BaseAgent
-from app.agent_framework.llm.base_adapter import BaseLLMAdapter, LLMResponse
+from app.agent_framework.llm.base_adapter import BaseLLMAdapter
 from app.agent_framework.tools.tool_manager import ToolManager
 
 logger = logging.getLogger(__name__)
@@ -133,9 +129,9 @@ class PolicyNotificationAgent:
         if not getattr(PolicyNotificationAgent, '_initialized', False):
             PolicyNotificationAgent._initialized = True
             print("🤖 [Policy Notification Agent] 初始化完成 ✨")
-            print(f"   - 能力: 语义理解 + 智能匹配 + 个性化生成")
+            print("   - 能力: 语义理解 + 智能匹配 + 个性化生成")
             print(f"   - 匹配权重: {self.match_weights}")
-            print(f"   - LLM 支持: ✅ 已启用")
+            print("   - LLM 支持: ✅ 已启用")
     
     async def understand_policy(
         self,

@@ -10,7 +10,6 @@
 import asyncio
 import sys
 import os
-import random
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -33,7 +32,7 @@ async def init_resource_manager():
         
         rm_module._resource_manager_instance = resource_manager
         
-        print(f"[OK] ResourceManager 初始化成功")
+        print("[OK] ResourceManager 初始化成功")
         return True
     except Exception as e:
         print(f"[WARNING] ResourceManager 初始化失败: {e}")
@@ -49,7 +48,7 @@ async def cleanup_resource_manager():
             rm_module._resource_manager_instance = None
             
             await resource_manager.close()
-            print(f"[OK] ResourceManager 清理完成")
+            print("[OK] ResourceManager 清理完成")
         except Exception as e:
             print(f"[WARNING] ResourceManager 清理失败: {e}")
         finally:

@@ -7,7 +7,6 @@
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, Field
-from enum import Enum
 
 from app.models.system_log import LogLevel, LogCategory
 

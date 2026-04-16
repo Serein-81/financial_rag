@@ -5,7 +5,7 @@ robots.txt 合规检查器
 
 import httpx
 import logging
-from typing import Dict, List, Optional, Set
+from typing import Dict, Optional
 from urllib.parse import urlparse
 from datetime import datetime, timedelta
 import re

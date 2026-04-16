@@ -8,11 +8,8 @@ Agent 抽象基类
 """
 
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, AsyncGenerator, Optional
-from pathlib import Path
-import asyncio
+from typing import List, Dict, Any, AsyncGenerator
 import time
-import json
 from ..tools.tool_manager import ToolManager
 from ..llm.base_adapter import BaseLLMAdapter
 from app.services.agent_tracer import agent_tracer

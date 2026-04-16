@@ -4,20 +4,17 @@
 """
 
 import re
-import json
 import logging
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 from enum import Enum
-from dataclasses import dataclass
 from uuid import UUID
 
 from pydantic import BaseModel, Field
 
 from app.models.policy import Policy, PolicyStatus, PolicyPriority
-from app.models.policy_relation import PolicyRelation, RelationType
 from app.db.session import SessionLocal
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
@@ -125,7 +122,7 @@ class PolicyETLService:
         if not getattr(PolicyETLService, '_initialized', False):
             PolicyETLService._initialized = True
             print("📋 [Policy ETL Service] 初始化完成")
-            print(f"   - 职责: 政策采集、解析、影响分析")
+            print("   - 职责: 政策采集、解析、影响分析")
             print(f"   - 实体模式: {len(self.entity_patterns)} 种")
             print(f"   - 范围关键词: {len(self.scope_keywords)} 个")
             print(f"   - 影响关键词: {len(self.impact_keywords)} 个")

@@ -18,13 +18,9 @@ async def test_schemas():
     try:
         from app.schemas.multi_agent import (
             MultiAgentRequest,
-            MultiAgentResponse,
             SpecialistType,
             IntentCategory,
-            RoutingStrategy,
-            IntentAnalysisResult,
-            SpecialistResult,
-            ReflectionResult
+            RoutingStrategy
         )
         
         request = MultiAgentRequest(
@@ -33,7 +29,7 @@ async def test_schemas():
             user_id="test-user",
             tenant_id="test-tenant"
         )
-        print(f"✅ MultiAgentRequest 创建成功")
+        print("✅ MultiAgentRequest 创建成功")
         print(f"   - query: {request.query}")
         print(f"   - session_id: {request.session_id}")
         
@@ -83,7 +79,6 @@ async def test_orchestrator_context():
     print("="*60)
     
     try:
-        import sys
         from importlib import util
         
         spec = util.spec_from_file_location(
@@ -123,7 +118,6 @@ async def test_agents_import():
     print("="*60)
     
     try:
-        import sys
         from importlib import util
         
         spec = util.spec_from_file_location(
@@ -150,7 +144,6 @@ async def test_specialist_base():
     print("="*60)
     
     try:
-        import sys
         from importlib import util
         
         spec = util.spec_from_file_location(
@@ -199,7 +192,7 @@ async def test_intent_classification():
             confidence=0.95
         )
         
-        print(f"✅ IntentAnalysisResult 创建成功")
+        print("✅ IntentAnalysisResult 创建成功")
         print(f"   - primary_intent: {intent_result.primary_intent}")
         print(f"   - routing_strategy: {intent_result.routing_strategy}")
         print(f"   - requires_specialists: {intent_result.requires_specialists}")
@@ -233,7 +226,7 @@ async def test_specialist_result():
             processing_time=1.5
         )
         
-        print(f"✅ SpecialistResult 创建成功")
+        print("✅ SpecialistResult 创建成功")
         print(f"   - specialist_type: {specialist_result.specialist_type}")
         print(f"   - success: {specialist_result.success}")
         print(f"   - response: {specialist_result.response[:30]}...")

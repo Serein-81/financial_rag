@@ -5,10 +5,10 @@ Agent 工具注册器
 """
 
 import logging
-from typing import List, Optional
+from typing import List
 
 from app.agent_framework.tools.tool_manager import ToolManager
-from app.agent_framework.tools.tool_router import TOOL_ROUTING_CONFIG, ToolCategory, get_mcp_tools
+from app.agent_framework.tools.tool_router import TOOL_ROUTING_CONFIG, get_mcp_tools
 
 logger = logging.getLogger(__name__)
 

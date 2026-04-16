@@ -5,11 +5,9 @@
 
 import asyncio
 import hashlib
-import time
-import json
 from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from collections import OrderedDict
 import logging
 import numpy as np
@@ -272,7 +270,7 @@ class ResultCache:
                 return (best_match.result, best_similarity)
             
             self._total_misses += 1
-            logger.debug(f"❌ [缓存] 语义未命中")
+            logger.debug("❌ [缓存] 语义未命中")
             return None
     
     async def _remove_entry(self, cache_key: str):
@@ -357,7 +355,7 @@ class ResultCache:
         if self._cleanup_task is None:
             self._running = True
             self._cleanup_task = asyncio.create_task(self._cleanup_loop())
-            logger.info(f"🧹 [缓存] 清理任务已启动")
+            logger.info("🧹 [缓存] 清理任务已启动")
     
     async def stop_cleanup_task(self):
         """停止清理任务"""
@@ -369,7 +367,7 @@ class ResultCache:
             except asyncio.CancelledError:
                 pass
             self._cleanup_task = None
-            logger.info(f"🛑 [缓存] 清理任务已停止")
+            logger.info("🛑 [缓存] 清理任务已停止")
     
     async def _cleanup_loop(self):
         """清理过期条目"""

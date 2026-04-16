@@ -7,14 +7,12 @@ LLM 适配器抽象基类
 """
 
 import os
-import time
 import random
 import logging
 from abc import ABC, abstractmethod
 from typing import AsyncGenerator, Dict, Any, Optional, List
 
 from .errors import ErrorClassifier, LLMErrorCode, ERROR_PREFIX
-from .token_utils import total_token_count_from_response
 from .notifications import append_length_notification
 
 logger = logging.getLogger(__name__)

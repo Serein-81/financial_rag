@@ -10,7 +10,7 @@ import sys
 import os
 import json
 from datetime import datetime
-from typing import Dict, Any, List
+from typing import Any
 
 # 添加项目根目录到路径
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -290,7 +290,7 @@ class APITester:
         with open("api_test_report.json", "w", encoding="utf-8") as f:
             json.dump(report, f, ensure_ascii=False, indent=2)
         
-        print(f"\n📄 详细报告已保存到: api_test_report.json")
+        print("\n📄 详细报告已保存到: api_test_report.json")
         
         if self.passed_tests == self.total_tests:
             print("\n🎉 所有API配置测试通过！系统已准备就绪。")

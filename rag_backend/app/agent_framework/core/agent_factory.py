@@ -12,7 +12,7 @@ from typing import Optional
 from app.core.config import settings
 from ..llm.factory import create_llm_adapter
 from ..llm.base_adapter import BaseLLMAdapter
-from ..llm.agent_llm_config import AgentLLMConfig, AgentType, TenantLLMConfig
+from ..llm.agent_llm_config import AgentLLMConfig
 from ..llm.agent_adapter_factory import AgentLLMAdapterFactory
 from ..tools.tool_manager import ToolManager
 from .base_agent import BaseAgent

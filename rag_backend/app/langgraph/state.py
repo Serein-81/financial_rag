@@ -4,7 +4,7 @@ LangGraph 状态定义
 定义多智能体工作流的状态结构和类型
 """
 
-from typing import TypedDict, List, Dict, Any, Optional, Literal, Annotated
+from typing import TypedDict, List, Dict, Any, Optional, Literal
 from enum import Enum
 from datetime import datetime
 from pydantic import BaseModel, Field

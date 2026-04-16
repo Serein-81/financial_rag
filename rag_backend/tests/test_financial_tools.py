@@ -42,7 +42,7 @@ async def test_financial_tools():
             result = await service.query_financial_data(params)
             
             if result.success:
-                print(f"[OK] 查询成功!")
+                print("[OK] 查询成功!")
                 if result.summary:
                     print(f"   - 数据记录数: {result.summary.total_records}")
                     print(f"   - 总收入: {result.summary.total_revenue:,.2f}")
@@ -50,12 +50,12 @@ async def test_financial_tools():
                     print(f"   - 净利润: {result.summary.total_profit:,.2f}")
                     print(f"   - 平均利润率: {result.summary.avg_profit_margin:.2f}%")
                 else:
-                    print(f"   - 暂无汇总数据")
+                    print("   - 暂无汇总数据")
             else:
                 print(f"[FAIL] 查询失败: {result.error}")
             
             # 测试2: 带聚合的查询
-            print(f"\n[2] 测试聚合查询...")
+            print("\n[2] 测试聚合查询...")
             params_agg = FinancialQueryParams(
                 tenant_id=test_tenant_id,
                 fiscal_year=2024,
@@ -65,7 +65,7 @@ async def test_financial_tools():
             result_agg = await service.query_financial_data(params_agg)
             
             if result_agg.success:
-                print(f"[OK] 聚合查询成功!")
+                print("[OK] 聚合查询成功!")
                 if result_agg.summary:
                     print(f"   - 包含样本记录数: {len(result_agg.summary.sample_records)}")
                     print(f"   - 上下文优化信息: {result_agg.context_info}")
@@ -73,7 +73,7 @@ async def test_financial_tools():
                 print(f"[FAIL] 聚合查询失败: {result_agg.error}")
             
             # 测试3: 查询趋势数据
-            print(f"\n[3] 测试 get_financial_trend...")
+            print("\n[3] 测试 get_financial_trend...")
             try:
                 trend_result = await service.get_financial_trend(
                     tenant_id=test_tenant_id,
@@ -82,16 +82,16 @@ async def test_financial_tools():
                 )
                 
                 if trend_result.success:
-                    print(f"[OK] 趋势查询成功!")
+                    print("[OK] 趋势查询成功!")
                     print(f"   - 返回记录数: {len(trend_result.data) if trend_result.data else 0}")
                 else:
-                    print(f"[WARN] 趋势查询未返回数据（可能数据库中无趋势数据）")
+                    print("[WARN] 趋势查询未返回数据（可能数据库中无趋势数据）")
                     print(f"   - 原因: {trend_result.error}")
             except Exception as e:
                 print(f"[WARN] 趋势查询遇到问题: {str(e)}")
             
             # 测试4: 关键词搜索
-            print(f"\n[4] 测试 search_financial_data...")
+            print("\n[4] 测试 search_financial_data...")
             search_result = await service.search_financial_data(
                 tenant_id=test_tenant_id,
                 query="2024",
@@ -99,27 +99,27 @@ async def test_financial_tools():
             )
             
             if search_result.success:
-                print(f"[OK] 搜索成功!")
+                print("[OK] 搜索成功!")
                 print(f"   - 返回记录数: {len(search_result.data) if search_result.data else 0}")
             else:
-                print(f"[WARN] 搜索未返回数据（可能数据库中无匹配数据）")
+                print("[WARN] 搜索未返回数据（可能数据库中无匹配数据）")
                 print(f"   - 错误信息: {search_result.error}")
             
             # 测试5: 获取概览
-            print(f"\n[5] 测试 get_financial_overview...")
+            print("\n[5] 测试 get_financial_overview...")
             overview_result = await service.get_financial_overview(
                 tenant_id=test_tenant_id,
                 years=[2024]
             )
             
             if overview_result.success:
-                print(f"[OK] 概览查询成功!")
+                print("[OK] 概览查询成功!")
                 if overview_result.summary:
                     print(f"   - 总收入: {overview_result.summary.total_revenue:,.2f}")
                     print(f"   - 总支出: {overview_result.summary.total_expenses:,.2f}")
                     print(f"   - 净利润: {overview_result.summary.total_profit:,.2f}")
             else:
-                print(f"[WARN] 概览查询未返回数据")
+                print("[WARN] 概览查询未返回数据")
                 print(f"   - 错误信息: {overview_result.error}")
             
             print("\n" + "=" * 60)
@@ -169,16 +169,16 @@ async def test_direct_tool_call():
                         "aggregate": True,
                     })
                     
-                    print(f"[OK] 工具调用成功!")
+                    print("[OK] 工具调用成功!")
                     print(f"   - 状态: {result.get('status')}")
                     if result.get('data'):
                         print(f"   - 返回数据条数: {len(result.get('data', []))}")
                     else:
-                        print(f"   - 暂无数据（数据库中可能没有该租户的财务数据）")
+                        print("   - 暂无数据（数据库中可能没有该租户的财务数据）")
                         
                 except Exception as e:
                     print(f"[WARN] 工具调用遇到问题: {str(e)}")
-                    print(f"   (这可能是正常的，如果数据库中还没有测试数据)")
+                    print("   (这可能是正常的，如果数据库中还没有测试数据)")
                     
     except Exception as e:
         print(f"[WARN] 测试过程中遇到问题: {str(e)}")

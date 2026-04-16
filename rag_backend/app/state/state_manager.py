@@ -11,7 +11,6 @@
 """
 
 import logging
-import json
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timedelta
 from dataclasses import dataclass
@@ -20,7 +19,7 @@ from contextlib import asynccontextmanager
 
 from app.state.unified_state import UnifiedState
 from app.state.state_factory import StateFactory
-from app.state.state_validator import StateValidator, ValidationResult
+from app.state.state_validator import StateValidator
 
 logger = logging.getLogger(__name__)
 

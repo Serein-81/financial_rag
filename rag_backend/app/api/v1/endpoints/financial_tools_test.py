@@ -4,7 +4,7 @@
 提供简单的接口测试财务智能体的数据库访问功能
 """
 
-from fastapi import APIRouter, HTTPException, Query, Depends
+from fastapi import APIRouter, HTTPException, Query
 from typing import Optional
 from pydantic import BaseModel, Field
 from app.services.financial_data_service import (

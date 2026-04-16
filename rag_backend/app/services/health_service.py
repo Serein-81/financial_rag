@@ -13,10 +13,9 @@ import asyncio
 import logging
 import time
 from typing import Dict, Any, List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime
 from dataclasses import dataclass, field
 from enum import Enum
-from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -244,7 +243,7 @@ class HealthService:
             
         except asyncio.TimeoutError:
             latency = (time.time() - start_time) * 1000
-            logger.warning(f"⏱️ LLM服务健康检查超时")
+            logger.warning("⏱️ LLM服务健康检查超时")
             
             return ComponentHealth(
                 name="llm_service",
@@ -311,7 +310,7 @@ class HealthService:
             
         except asyncio.TimeoutError:
             latency = (time.time() - start_time) * 1000
-            logger.warning(f"⏱️ 存储服务健康检查超时")
+            logger.warning("⏱️ 存储服务健康检查超时")
             
             return ComponentHealth(
                 name="storage",
@@ -378,7 +377,7 @@ class HealthService:
             
         except asyncio.TimeoutError:
             latency = (time.time() - start_time) * 1000
-            logger.warning(f"⏱️ 向量存储健康检查超时")
+            logger.warning("⏱️ 向量存储健康检查超时")
             
             return ComponentHealth(
                 name="vector_store",
@@ -446,7 +445,7 @@ class HealthService:
             
         except asyncio.TimeoutError:
             latency = (time.time() - start_time) * 1000
-            logger.warning(f"⏱️ MCP服务健康检查超时")
+            logger.warning("⏱️ MCP服务健康检查超时")
             
             return ComponentHealth(
                 name="mcp_services",

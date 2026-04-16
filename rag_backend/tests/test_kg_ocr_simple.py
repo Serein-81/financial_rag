@@ -3,7 +3,6 @@
 注意：此测试需要 Neo4j 和 OCR 服务，仅在本地环境手动运行
 """
 import os
-import pytest
 
 # 检查是否在 CI 环境
 is_ci = os.getenv("CI") == "true"
@@ -48,7 +47,7 @@ def find_path(graph, start, end, path=[]):
     return paths
 
 paths = find_path(graph, "Python", "机器学习")
-print(f"从 'Python' 到 '机器学习' 的路径：")
+print("从 'Python' 到 '机器学习' 的路径：")
 for i, path in enumerate(paths, 1):
     print(f"  路径{i}: {' -> '.join(path)}")
 

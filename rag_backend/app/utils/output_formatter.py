@@ -5,7 +5,6 @@
 """
 
 import re
-from typing import Optional
 
 
 class OutputFormatter:

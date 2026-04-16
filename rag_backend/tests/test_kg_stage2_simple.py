@@ -77,7 +77,7 @@ async def test_schemas():
         extract_entities=True,
         extract_relations=True
     )
-    print(f"  ✅ GraphBuildRequest:")
+    print("  ✅ GraphBuildRequest:")
     print(f"     文本: {build_req.text[:30]}...")
     print(f"     用户: {build_req.user_id}")
     print(f"     会话: {build_req.session_id}")
@@ -88,7 +88,7 @@ async def test_schemas():
         success=True,
         message="成功创建 1 个实体和 1 个关系"
     )
-    print(f"  ✅ GraphBuildResponse:")
+    print("  ✅ GraphBuildResponse:")
     print(f"     成功: {build_resp.success}")
     print(f"     消息: {build_resp.message}")
     print(f"     实体数: {len(build_resp.entities)}")
@@ -104,7 +104,7 @@ async def test_schemas():
         graph_weight=0.3,
         use_graph=True
     )
-    print(f"  ✅ HybridSearchRequest:")
+    print("  ✅ HybridSearchRequest:")
     print(f"     查询: {search_req.query}")
     print(f"     Top K: {search_req.top_k}")
     print(f"     向量权重: {search_req.vector_weight}")
@@ -116,7 +116,7 @@ async def test_schemas():
         source="hybrid",
         metadata={"memory_id": 123, "entity": "张三"}
     )
-    print(f"  ✅ SearchResult:")
+    print("  ✅ SearchResult:")
     print(f"     内容: {search_result.content}")
     print(f"     分数: {search_result.score}")
     print(f"     来源: {search_result.source}")
@@ -127,7 +127,7 @@ async def test_schemas():
         graph_results_count=2,
         total_count=5
     )
-    print(f"  ✅ HybridSearchResponse:")
+    print("  ✅ HybridSearchResponse:")
     print(f"     总结果数: {search_resp.total_count}")
     print(f"     向量结果: {search_resp.vector_results_count}")
     print(f"     图结果: {search_resp.graph_results_count}")
@@ -139,7 +139,7 @@ async def test_schemas():
         max_depth=2,
         limit=10
     )
-    print(f"  ✅ EntityQueryRequest:")
+    print("  ✅ EntityQueryRequest:")
     print(f"     实体: {query_req.entity_name}")
     print(f"     最大深度: {query_req.max_depth}")
     print(f"     限制: {query_req.limit}")
@@ -150,7 +150,7 @@ async def test_schemas():
         distance=1,
         relation_path=["工作于"]
     )
-    print(f"  ✅ RelatedEntity:")
+    print("  ✅ RelatedEntity:")
     print(f"     名称: {related.name}")
     print(f"     类型: {related.type}")
     print(f"     距离: {related.distance}")
@@ -160,7 +160,7 @@ async def test_schemas():
         related_entities=[related],
         total_count=1
     )
-    print(f"  ✅ EntityQueryResponse:")
+    print("  ✅ EntityQueryResponse:")
     print(f"     中心实体: {query_resp.entity.name}")
     print(f"     相关实体数: {query_resp.total_count}")
     
@@ -172,7 +172,7 @@ async def test_schemas():
         entity_types={"PERSON": 5, "ORGANIZATION": 3, "LOCATION": 2},
         relation_types={"工作于": 8, "位于": 5, "认识": 2}
     )
-    print(f"  ✅ GraphStatsResponse:")
+    print("  ✅ GraphStatsResponse:")
     print(f"     实体总数: {stats.total_entities}")
     print(f"     关系总数: {stats.total_relations}")
     print(f"     实体类型: {stats.entity_types}")
@@ -186,7 +186,7 @@ async def test_schemas():
         type="PERSON",
         properties={"age": 30}
     )
-    print(f"  ✅ GraphNode:")
+    print("  ✅ GraphNode:")
     print(f"     ID: {node.id}")
     print(f"     标签: {node.label}")
     print(f"     类型: {node.type}")
@@ -198,7 +198,7 @@ async def test_schemas():
         type="工作于",
         properties={"weight": 0.9}
     )
-    print(f"  ✅ GraphEdge:")
+    print("  ✅ GraphEdge:")
     print(f"     ID: {edge.id}")
     print(f"     源: {edge.source}")
     print(f"     目标: {edge.target}")
@@ -209,7 +209,7 @@ async def test_schemas():
         edges=[edge],
         center_node="node_001"
     )
-    print(f"  ✅ GraphVisualizationResponse:")
+    print("  ✅ GraphVisualizationResponse:")
     print(f"     节点数: {len(viz_resp.nodes)}")
     print(f"     边数: {len(viz_resp.edges)}")
     print(f"     中心节点: {viz_resp.center_node}")
@@ -225,22 +225,17 @@ async def test_imports():
     
     try:
         print("\n1. 测试 schemas 导入")
-        from app.schemas import knowledge_graph
         print("  ✅ app.schemas.knowledge_graph")
         
         print("\n2. 测试 services 导入")
-        from app.services import graph_builder
         print("  ✅ app.services.graph_builder")
         
-        from app.services import hybrid_retriever
         print("  ✅ app.services.hybrid_retriever")
         
         print("\n3. 测试 API 端点导入")
-        from app.api.v1.endpoints import knowledge_graph as kg_api
         print("  ✅ app.api.v1.endpoints.knowledge_graph")
         
         print("\n4. 测试 Neo4j 管理器导入")
-        from app.knowledge_graph import neo4j_manager
         print("  ✅ app.knowledge_graph.neo4j_manager")
         
         return True

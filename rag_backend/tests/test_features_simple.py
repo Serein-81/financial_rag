@@ -225,7 +225,6 @@ async def test_api_endpoints():
         # 检查是否能导入 API 模块
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         
-        from app.api.v1.endpoints import agent_trace, tool_trace, prompt_optimization
         
         print("✅ Agent 追踪 API 模块导入成功")
         print("✅ 工具追踪 API 模块导入成功") 

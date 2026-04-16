@@ -5,7 +5,6 @@
 
 import asyncio
 import httpx
-import json
 import sys
 from pathlib import Path
 
@@ -48,7 +47,7 @@ async def test_p1_enterprise_management():
             
             if admin_register_response.status_code == 200:
                 admin_info = admin_register_response.json()
-                print(f"✅ 企业管理员注册成功!")
+                print("✅ 企业管理员注册成功!")
                 print(f"  - 管理员ID: {admin_info.get('id')}")
                 print(f"  - 企业租户ID: {admin_info.get('tenant_id')}")
                 print(f"  - 公司名称: {admin_info.get('company_name')}")
@@ -63,7 +62,7 @@ async def test_p1_enterprise_management():
             return False
         
         # 2. 管理员登录获取Token
-        print(f"\n2. 管理员登录...")
+        print("\n2. 管理员登录...")
         
         try:
             login_response = await client.post(
@@ -74,7 +73,7 @@ async def test_p1_enterprise_management():
             if login_response.status_code == 200:
                 login_data = login_response.json()
                 admin_token = login_data.get('access_token')
-                print(f"✅ 管理员登录成功")
+                print("✅ 管理员登录成功")
                 print(f"  - Token类型: {login_data.get('token_type')}")
                 print(f"  - 是否管理员: {login_data.get('is_admin')}")
             else:
@@ -86,7 +85,7 @@ async def test_p1_enterprise_management():
             return False
         
         # 3. 创建邀请码
-        print(f"\n3. 创建邀请码...")
+        print("\n3. 创建邀请码...")
         
         try:
             headers = {"Authorization": f"Bearer {admin_token}"}
@@ -106,7 +105,7 @@ async def test_p1_enterprise_management():
             if invite_response.status_code == 200:
                 invite_info = invite_response.json()
                 invite_code = invite_info.get('code')
-                print(f"✅ 邀请码创建成功!")
+                print("✅ 邀请码创建成功!")
                 print(f"  - 邀请码: {invite_code}")
                 print(f"  - 最大使用次数: {invite_info.get('max_uses')}")
                 print(f"  - 剩余次数: {invite_info.get('remaining_uses')}")
@@ -121,7 +120,7 @@ async def test_p1_enterprise_management():
             return False
         
         # 4. 验证邀请码
-        print(f"\n4. 验证邀请码...")
+        print("\n4. 验证邀请码...")
         
         try:
             validate_response = await client.post(
@@ -131,7 +130,7 @@ async def test_p1_enterprise_management():
             
             if validate_response.status_code == 200:
                 validate_info = validate_response.json()
-                print(f"✅ 邀请码验证成功!")
+                print("✅ 邀请码验证成功!")
                 print(f"  - 有效性: {validate_info.get('valid')}")
                 print(f"  - 企业名称: {validate_info.get('company_name')}")
                 print(f"  - 创建者: {validate_info.get('creator_name')}")
@@ -145,7 +144,7 @@ async def test_p1_enterprise_management():
             return False
         
         # 5. 使用邀请码注册普通用户
-        print(f"\n5. 使用邀请码注册普通用户...")
+        print("\n5. 使用邀请码注册普通用户...")
         
         try:
             user_data = {
@@ -161,14 +160,14 @@ async def test_p1_enterprise_management():
             
             if user_register_response.status_code == 200:
                 user_info = user_register_response.json()
-                print(f"✅ 企业员工注册成功!")
+                print("✅ 企业员工注册成功!")
                 print(f"  - 用户ID: {user_info.get('id')}")
                 print(f"  - 租户ID: {user_info.get('tenant_id')}")
                 print(f"  - 是否管理员: {user_info.get('is_admin')}")
                 
                 # 验证租户ID是否与管理员相同
                 if user_info.get('tenant_id') == admin_tenant_id:
-                    print(f"✅ 租户ID匹配，用户成功加入企业!")
+                    print("✅ 租户ID匹配，用户成功加入企业!")
                 else:
                     print(f"❌ 租户ID不匹配: 用户={user_info.get('tenant_id')}, 管理员={admin_tenant_id}")
                     return False
@@ -182,7 +181,7 @@ async def test_p1_enterprise_management():
             return False
         
         # 6. 管理员查看企业用户列表
-        print(f"\n6. 管理员查看企业用户列表...")
+        print("\n6. 管理员查看企业用户列表...")
         
         try:
             users_response = await client.get(
@@ -192,7 +191,7 @@ async def test_p1_enterprise_management():
             
             if users_response.status_code == 200:
                 users_data = users_response.json()
-                print(f"✅ 企业用户列表获取成功!")
+                print("✅ 企业用户列表获取成功!")
                 print(f"  - 用户总数: {len(users_data)}")
                 
                 for user in users_data:
@@ -208,7 +207,7 @@ async def test_p1_enterprise_management():
             return False
         
         # 7. 查看邀请码统计
-        print(f"\n7. 查看邀请码统计...")
+        print("\n7. 查看邀请码统计...")
         
         try:
             stats_response = await client.get(
@@ -218,7 +217,7 @@ async def test_p1_enterprise_management():
             
             if stats_response.status_code == 200:
                 stats_data = stats_response.json()
-                print(f"✅ 邀请码统计获取成功!")
+                print("✅ 邀请码统计获取成功!")
                 print(f"  - 总邀请码数: {stats_data.get('total_codes')}")
                 print(f"  - 活跃邀请码: {stats_data.get('active_codes')}")
                 print(f"  - 总使用次数: {stats_data.get('total_uses')}")
@@ -232,7 +231,7 @@ async def test_p1_enterprise_management():
             return False
         
         # 8. 查看企业信息
-        print(f"\n8. 查看企业信息...")
+        print("\n8. 查看企业信息...")
         
         try:
             info_response = await client.get(
@@ -242,7 +241,7 @@ async def test_p1_enterprise_management():
             
             if info_response.status_code == 200:
                 info_data = info_response.json()
-                print(f"✅ 企业信息获取成功!")
+                print("✅ 企业信息获取成功!")
                 print(f"  - 企业名称: {info_data.get('company_name')}")
                 print(f"  - 租户ID: {info_data.get('tenant_id')}")
                 print(f"  - 管理员: {info_data.get('admin_name')}")
@@ -271,7 +270,7 @@ async def main():
     
     success = await test_p1_enterprise_management()
     
-    print(f"\n" + "=" * 80)
+    print("\n" + "=" * 80)
     print("📋 P1企业用户管理功能测试总结")
     print("=" * 80)
     

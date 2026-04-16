@@ -1,12 +1,11 @@
 """分析功能权限控制依赖"""
 from functools import wraps
-from fastapi import Depends, HTTPException
+from fastapi import HTTPException
 from enum import Enum
 from typing import Callable, List, Optional
 import logging
 
 from app.models.user import User
-from app.api.deps import get_current_user
 
 logger = logging.getLogger(__name__)
 

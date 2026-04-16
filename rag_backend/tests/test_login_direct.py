@@ -43,7 +43,7 @@ async def test_login():
             print(f"注册异常: {e}")
         
         # 2. 测试登录
-        print(f"\n2. 测试登录...")
+        print("\n2. 测试登录...")
         
         login_data = {
             "email": "test_login@example.com",
@@ -60,11 +60,11 @@ async def test_login():
             
             if login_response.status_code == 200:
                 login_result = login_response.json()
-                print(f"✅ 登录成功!")
+                print("✅ 登录成功!")
                 print(f"响应数据: {json.dumps(login_result, indent=2, ensure_ascii=False)}")
                 
                 # 3. 测试获取用户信息
-                print(f"\n3. 测试获取用户信息...")
+                print("\n3. 测试获取用户信息...")
                 
                 token = login_result.get('access_token')
                 headers = {"Authorization": f"Bearer {token}"}
@@ -76,14 +76,14 @@ async def test_login():
                 
                 if me_response.status_code == 200:
                     me_data = me_response.json()
-                    print(f"✅ 获取用户信息成功!")
+                    print("✅ 获取用户信息成功!")
                     print(f"用户信息: {json.dumps(me_data, indent=2, ensure_ascii=False)}")
                 else:
                     print(f"❌ 获取用户信息失败: {me_response.status_code}")
                     print(f"错误: {me_response.text}")
                     
             else:
-                print(f"❌ 登录失败!")
+                print("❌ 登录失败!")
                 print(f"错误响应: {login_response.text}")
                 
         except Exception as e:

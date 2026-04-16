@@ -9,15 +9,12 @@
 """
 
 import pytest
-from datetime import datetime
-from typing import Dict, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.langgraph.hybrid.blackboard_manager import (
     BlackboardManager,
     BlackboardEntry,
     EntryType,
-    EntryPriority,
 )
 from app.langgraph.hybrid.expert_consultation_node import (
     ExpertConsultationNode,
@@ -25,10 +22,9 @@ from app.langgraph.hybrid.expert_consultation_node import (
 )
 from app.langgraph.hybrid.summarizer_node import (
     SummarizerNode,
-    CompressionResult,
 )
 from app.langgraph.hybrid.hybrid_graph import HybridGraphBuilder
-from app.state.unified_state import UnifiedState, SpecialistType, IntentCategory
+from app.state.unified_state import UnifiedState, IntentCategory
 
 
 class TestBlackboardManager:

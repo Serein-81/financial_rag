@@ -9,7 +9,7 @@ import os
 
 sys.path.insert(0, os.path.abspath('rag_backend'))
 
-from app.utils.logging_config import setup_logging, get_logger, LogFormat, get_app_logger, STDIOAwareLogger
+from app.utils.logging_config import setup_logging, get_logger, LogFormat, get_app_logger
 
 def test_basic_logging():
     """测试基础日志功能"""

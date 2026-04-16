@@ -13,7 +13,7 @@ from datetime import datetime
 
 from .models import (
     Task, TaskStatus, Message, TaskSubmitParams,
-    TaskStatusUpdateEvent, TaskArtifactUpdateEvent
+    TaskStatusUpdateEvent
 )
 from .agent_card import AgentCard
 

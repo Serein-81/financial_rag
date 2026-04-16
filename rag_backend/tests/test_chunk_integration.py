@@ -21,7 +21,6 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.services.chunk_service import chunk_service
 from app.chunkers.base_chunker import ChunkResult
 from app.db.session import AsyncSessionLocal
-from app.models.chunk import DocumentChunk
 from sqlalchemy import text
 
 

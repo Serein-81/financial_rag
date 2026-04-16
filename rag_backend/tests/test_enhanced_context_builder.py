@@ -10,9 +10,8 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from app.memory_system.context_builder import EnhancedContextBuilder, ContextConfig, ContextPacket
+from app.memory_system.context_builder import EnhancedContextBuilder, ContextConfig
 from app.memory_system.memory_manager import MemoryManager
-from datetime import datetime
 
 
 async def test_context_builder():

@@ -4,10 +4,9 @@
 """
 
 import logging
-from fastapi import APIRouter, Depends, HTTPException, Query, Path
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from typing import Optional, List
-from datetime import datetime
+from typing import Optional
 from io import BytesIO
 
 from app.api.deps import get_current_user, CurrentUser
@@ -21,9 +20,6 @@ from app.schemas.contract_review import (
     ContractType,
     ClauseType,
     RiskLevel,
-    ReviewStatus,
-    ContractClause,
-    RiskAssessment,
 )
 from app.services.contract_review_service import ContractReviewService
 from app.services.pdf_export_service import pdf_export_service

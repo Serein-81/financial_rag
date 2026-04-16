@@ -3,7 +3,6 @@ from app.agent_framework.llm import (
     BaseLLMAdapter, 
     create_llm_adapter, 
     LLMResponse,
-    LLMError,
     ErrorClassifier,
     get_length_notification,
     num_tokens_from_string
@@ -83,7 +82,7 @@ class LLMService:
         """
         self.adapter = adapter or create_llm_adapter()
         
-        logger.info(f"LLM 服务初始化完成")
+        logger.info("LLM 服务初始化完成")
         logger.info(f"   - 提供商: {settings.LLM_PROVIDER}")
         logger.info(f"   - 适配器: {self.adapter.__class__.__name__}")
         logger.info(f"   - 模型: {self.adapter.model_name}")
@@ -133,11 +132,6 @@ class LLMService:
     def _handle_error(self, error: Exception, provider: str) -> str:
         """处理 LLM 调用错误"""
         llm_error = ErrorClassifier.create_llm_error(error)
-        error_info = {
-            "code": llm_error.code.value,
-            "message": str(error),
-            "retryable": llm_error.retryable
-        }
         
         logger.error(f"[LLM Error] 提供商: {provider} | 错误码: {llm_error.code.value} | 可重试: {llm_error.retryable}")
         logger.error(f"   错误详情: {str(error)[:200]}")

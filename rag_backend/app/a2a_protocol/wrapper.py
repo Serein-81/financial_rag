@@ -6,12 +6,12 @@ Agent Wrapper
 """
 
 import logging
-from typing import Optional, Dict, Any, List, Callable
+from typing import Dict, Any, List, Callable
 from dataclasses import dataclass
 
-from .agent_card import AgentCard, AgentCardBuilder, AgentSkill
+from .agent_card import AgentCard, AgentCardBuilder
 from .server import A2AServer
-from .models import Task, Message, TextPart
+from .models import Task, TextPart
 from .registry import AgentRegistry
 
 logger = logging.getLogger(__name__)

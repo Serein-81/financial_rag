@@ -80,13 +80,13 @@ async def test_basic_trace():
     # 4. 查询追踪
     trace_data = await agent_tracer.get_trace_with_steps(trace_id)
     
-    print(f"\n📊 追踪摘要:")
+    print("\n📊 追踪摘要:")
     print(f"   - 总步骤: {trace_data['total_iterations']}")
     print(f"   - 工具调用: {trace_data['tool_calls_count']}")
     print(f"   - 总耗时: {trace_data['total_time']:.2f}s")
     print(f"   - 状态: {trace_data['status']}")
     
-    print(f"\n📝 步骤详情:")
+    print("\n📝 步骤详情:")
     for step in trace_data['steps']:
         icon = {"thought": "💭", "action": "🔧", "observation": "👁️", "final_answer": "✅"}.get(step['step_type'], "📝")
         print(f"   {icon} Step {step['step_number']} ({step['step_type']}): {step['content'][:50]}...")

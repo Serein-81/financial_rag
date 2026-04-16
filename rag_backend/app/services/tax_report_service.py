@@ -4,9 +4,8 @@
 负责税务报告的核心业务逻辑处理
 """
 
-import asyncio
 import uuid
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, Optional
 from datetime import datetime
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,7 +13,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import AsyncSessionLocal
 from app.models.tax_report import TaxReport
 from app.services.minio_service import minio_service
-from app.services.file_service import file_service
 from app.services.pii_anonymizer import pii_anonymizer
 from app.multi_agent_system.coordinator import AgentCoordinator
 
@@ -100,7 +98,7 @@ class TaxReportService:
                         "message": f"已存在同名报告：{existing.original_filename}"
                     }
                 
-                print(f"✅ [重复检测] 未发现重复文件")
+                print("✅ [重复检测] 未发现重复文件")
                 return None
                 
             except Exception as e:
@@ -137,7 +135,6 @@ class TaxReportService:
         async with AsyncSessionLocal() as db:
             try:
                 import uuid
-                from datetime import datetime
                 
                 # 确保 tenant_id 是字符串（处理 asyncpg UUID 类型）
                 if not isinstance(tenant_id, str):
@@ -184,7 +181,6 @@ class TaxReportService:
                 
                 # 保存到数据库
                 from app.models.tax_report import TaxReport
-                from sqlalchemy.dialects.postgresql import UUID
                 
                 # 从验证结果中提取置信度和关键指标
                 confidence_score = None
@@ -1160,13 +1156,13 @@ class TaxReportService:
                     json.dumps(status_data)
                 )
             except (OSError, IOError):
-                print(f"⚠️ [税务报告服务] Redis连接失败，跳过状态发布")
+                print("⚠️ [税务报告服务] Redis连接失败，跳过状态发布")
             except (ValueError, KeyError) as e:
                 print(f"⚠️ [税务报告服务] Redis数据错误，跳过状态发布: {e}")
             except RuntimeError as e:
                 print(f"⚠️ [税务报告服务] Redis运行时错误，跳过状态发布: {str(e)}")
             except Exception:
-                print(f"⚠️ [税务报告服务] Redis发布失败，跳过状态发布")
+                print("⚠️ [税务报告服务] Redis发布失败，跳过状态发布")
             
         except (ValueError, KeyError) as e:
             print(f"⚠️ [税务报告服务] 更新状态数据错误: {str(e)}")

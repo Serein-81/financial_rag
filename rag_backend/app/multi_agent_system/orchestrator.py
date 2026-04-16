@@ -8,7 +8,6 @@ import json
 import uuid
 import traceback
 import logging
-import time
 import re
 from typing import Dict, List, Any, Optional, AsyncGenerator
 from datetime import datetime
@@ -16,7 +15,6 @@ from dataclasses import dataclass, field
 
 from .agents.intent_router_agent import (
     IntentRouterAgent, 
-    IntentRoutingResult,
     IntentAnalysisResult, 
     IntentCategory, 
     RoutingStrategy
@@ -25,12 +23,9 @@ from .agents.finance_specialist import FinanceSpecialist
 from .agents.tax_specialist import TaxSpecialist
 from .agents.legal_specialist import LegalSpecialist
 from app.prompts.llm_functions import review_quality
-from .agents.report_generator import ReportGenerator, ReportType, ReportFormat
-from .message_bus import MessageBus, MessageType
-from .state import AuditState
+from .agents.report_generator import ReportGenerator
+from .message_bus import MessageBus
 from .rag_retriever import TenantIsolatedRAGRetriever
-from .agent_capability_registry import AgentCapabilityRegistry, get_capability_registry
-from .capability_loader import load_and_register_capabilities
 from app.agent_framework.llm.factory import LLMAdapterFactory
 from app.agent_framework.tools.tool_manager import ToolManager
 from app.agent_framework.core.output_agent import output_agent
@@ -209,7 +204,7 @@ class AgentOrchestrator:
                     trace_id=trace_id,
                     step_number=step_number,
                     step_type="final_answer",
-                    content=f"直接返回简单响应"
+                    content="直接返回简单响应"
                 )
                 await agent_tracer.end_trace(
                     trace_id=trace_id,
@@ -239,11 +234,10 @@ class AgentOrchestrator:
             
             if hasattr(intent_result, 'needs_report_generation') and intent_result.needs_report_generation:
                 context.enable_report_generation = True
-                print(f"📄 [编排器] 检测到用户要求生成报告")
+                print("📄 [编排器] 检测到用户要求生成报告")
             
             from app.services.admin_notification_service import (
-                admin_notification_service,
-                RiskLevel
+                admin_notification_service
             )
             
             risk_check_result = await admin_notification_service.handle_high_risk_operation(
@@ -545,9 +539,7 @@ class AgentOrchestrator:
         
         try:
             from app.agent_framework.tools.agent_tool_registry import (
-                initialize_tool_manager,
-                get_receptionist_tools_config,
-                get_specialist_tools_config
+                initialize_tool_manager
             )
             
             default_provider = settings.get_llm_provider_for_agent("receptionist")
@@ -896,7 +888,7 @@ class AgentOrchestrator:
             
             if hasattr(intent_result, 'needs_report_generation') and intent_result.needs_report_generation:
                 context.enable_report_generation = True
-                print(f"📄 [编排器] 检测到用户要求生成报告")
+                print("📄 [编排器] 检测到用户要求生成报告")
             
             yield json.dumps({
                 "type": "stage",
@@ -909,8 +901,7 @@ class AgentOrchestrator:
             }, ensure_ascii=False)
             
             from app.services.admin_notification_service import (
-                admin_notification_service,
-                RiskLevel
+                admin_notification_service
             )
             
             risk_check_result = await admin_notification_service.handle_high_risk_operation(
@@ -1311,7 +1302,7 @@ class AgentOrchestrator:
         rag_context = None
         if self.enable_rag and self.rag_retriever:
             try:
-                print(f"📚 [编排器] 正在检索企业相关数据...")
+                print("📚 [编排器] 正在检索企业相关数据...")
                 rag_retrieval_context = await self.rag_retriever.retrieve(
                     query=user_input,
                     tenant_id=self.tenant_id,
@@ -1339,7 +1330,7 @@ class AgentOrchestrator:
                         "specialist_type": specialist_name
                     }
                 else:
-                    print(f"📚 [编排器] 未检索到相关数据")
+                    print("📚 [编排器] 未检索到相关数据")
                     rag_context = {
                         "documents": [],
                         "summary": "未找到企业相关数据",
@@ -1364,13 +1355,13 @@ class AgentOrchestrator:
         has_data = rag_context and rag_context.get("has_data", len(rag_context.get("documents", [])) > 0)
         requires_enterprise_data = self._requires_enterprise_data(user_input, intent_result)
         
-        print(f"🔍 [编排器] 数据可用性检查:")
+        print("🔍 [编排器] 数据可用性检查:")
         print(f"   - requires_enterprise_data: {requires_enterprise_data}")
         print(f"   - has_data: {has_data}")
         print(f"   - rag_context: {rag_context}")
         
         if requires_enterprise_data and not has_data:
-            print(f"📭 [编排器] 检测到需要企业数据但无可用数据，跳过专家调用")
+            print("📭 [编排器] 检测到需要企业数据但无可用数据，跳过专家调用")
             return {
                 "status": "no_data",
                 "specialist": specialist_name,
@@ -2127,12 +2118,12 @@ class AgentOrchestrator:
                     }
                     specialist_display = specialist_name_map.get(specialist_type, "专家")
                     
-                    logger.info(f"📤 [输出智能体] 正在美化无数据响应...")
+                    logger.info("📤 [输出智能体] 正在美化无数据响应...")
                     formatted = await self.output_agent.synthesize_and_format(
                         {specialist_display: formatted_no_data},
                         user_query
                     )
-                    logger.info(f"📤 [输出智能体] 无数据响应美化完成")
+                    logger.info("📤 [输出智能体] 无数据响应美化完成")
                     return formatted
                 except Exception as e:
                     logger.warning(f"⚠️ [输出智能体] 美化无数据响应失败: {e}")
@@ -2155,12 +2146,12 @@ class AgentOrchestrator:
 
             if self.output_agent:
                 try:
-                    logger.info(f"📤 [输出智能体] 开始整合专家结果...")
+                    logger.info("📤 [输出智能体] 开始整合专家结果...")
                     formatted = await self.output_agent.synthesize_and_format(
                         specialist_results,
                         user_query
                     )
-                    logger.info(f"📤 [输出智能体] 整合完成")
+                    logger.info("📤 [输出智能体] 整合完成")
                     return formatted
                 except Exception as e:
                     logger.warning(f"⚠️ [输出智能体] 整合失败: {e}")
@@ -2219,7 +2210,7 @@ class AgentOrchestrator:
                     specialist_results_for_synthesis,
                     user_query
                 )
-                logger.info(f"📤 [输出智能体-多专家] 整合完成")
+                logger.info("📤 [输出智能体-多专家] 整合完成")
                 return formatted_output
             except Exception as e:
                 logger.warning(f"⚠️ [输出智能体-多专家] 整合失败: {e}")
@@ -2279,7 +2270,7 @@ class AgentOrchestrator:
         
         report_sections = []
         
-        report_sections.append(f"# 多智能体分析报告\n")
+        report_sections.append("# 多智能体分析报告\n")
         report_sections.append(f"**会话ID**: {session_id}\n")
         report_sections.append(f"**生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
         report_sections.append(f"**报告类型**: {report_type}\n")
@@ -2344,7 +2335,7 @@ class AgentOrchestrator:
             report_sections.append("暂无回复内容\n")
         
         report_sections.append("\n---\n")
-        report_sections.append(f"*本报告由多智能体系统自动生成*\n")
+        report_sections.append("*本报告由多智能体系统自动生成*\n")
         
         report_content = "".join(report_sections)
         

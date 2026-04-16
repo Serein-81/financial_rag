@@ -59,7 +59,7 @@ async def test_redis_connection():
             await redis_client.aclose()
             return True
         else:
-            print(f"❌ Redis读写测试失败")
+            print("❌ Redis读写测试失败")
             await redis_client.aclose()
             return False
         

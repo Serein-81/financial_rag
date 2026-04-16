@@ -30,7 +30,7 @@ async def test_query_optimization():
         print(f"  {i}. {v}")
     
     # 测试意图检测
-    print(f"\n查询意图检测:")
+    print("\n查询意图检测:")
     intent = await query_optimizer.detect_query_intent(query)
     print(f"  类型: {intent['type']}")
     print(f"  建议 top_k: {intent['suggested_top_k']}")
@@ -39,7 +39,7 @@ async def test_query_optimization():
     # 测试总结类查询
     summary_query = "总结一下这篇文档的主要内容"
     intent2 = await query_optimizer.detect_query_intent(summary_query)
-    print(f"\n总结类查询意图:")
+    print("\n总结类查询意图:")
     print(f"  查询: {summary_query}")
     print(f"  类型: {intent2['type']}")
     print(f"  建议 top_k: {intent2['suggested_top_k']}")
@@ -67,22 +67,22 @@ async def test_search_comparison():
                 top_k=5
             )
             
-            print(f"\n基础搜索:")
+            print("\n基础搜索:")
             print(f"  结果数: {comparison['basic']['count']}")
             print(f"  耗时: {comparison['basic']['time']}s")
             
-            print(f"\n增强搜索:")
+            print("\n增强搜索:")
             print(f"  结果数: {comparison['enhanced']['count']}")
             print(f"  耗时: {comparison['enhanced']['time']}s")
             
-            print(f"\n对比:")
+            print("\n对比:")
             print(f"  时间增加: {comparison['comparison']['time_diff']}s ({comparison['comparison']['time_increase_pct']}%)")
             print(f"  结果重叠: {comparison['comparison']['result_overlap']}")
             print(f"  增强独有: {comparison['comparison']['unique_to_enhanced']}")
             
             # 显示前3个结果
             if comparison['enhanced']['results']:
-                print(f"\n增强搜索 Top 3 结果:")
+                print("\n增强搜索 Top 3 结果:")
                 for i, r in enumerate(comparison['enhanced']['results'][:3], 1):
                     print(f"  {i}. [分数: {r['score']}] {r['content'][:100]}...")
         
@@ -122,7 +122,7 @@ async def test_mmr_reranking():
             'score': 0.8 - i * 0.1  # 模拟递减的分数
         })
     
-    print(f"\n原始排序 (按分数):")
+    print("\n原始排序 (按分数):")
     for i, r in enumerate(results, 1):
         print(f"  {i}. [分数: {r['score']}] {r['content']}")
     
@@ -134,7 +134,7 @@ async def test_mmr_reranking():
         top_k=5
     )
     
-    print(f"\nMMR 重排序后:")
+    print("\nMMR 重排序后:")
     for i, r in enumerate(reranked, 1):
         print(f"  {i}. [分数: {r['score']}] {r['content']}")
 

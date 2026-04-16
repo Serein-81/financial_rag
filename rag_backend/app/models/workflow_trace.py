@@ -8,12 +8,11 @@
 - WorkflowNodeExecution: 节点级别的追踪
 """
 
-from sqlalchemy import Column, String, Text, Integer, Float, Boolean, JSON, ForeignKey, DateTime, Index, Enum
+from sqlalchemy import Column, String, Text, Integer, Float, JSON, ForeignKey, DateTime, Index
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import uuid
-from datetime import datetime
 from enum import Enum as PyEnum
 
 from app.db.base import Base

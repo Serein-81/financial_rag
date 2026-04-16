@@ -13,8 +13,7 @@
 import re
 import json
 import logging
-from typing import Dict, List, Any, Optional, AsyncGenerator
-from datetime import datetime
+from typing import Dict, List, Any, Optional
 from enum import Enum
 from dataclasses import dataclass
 
@@ -318,7 +317,7 @@ class FinanceSpecialist(BaseSpecialistAgent):
             )
             
             if result.get("status") == "success":
-                logger.info(f"✅ [FinanceSpecialist] 成功通过 MCP 工具获取用户财务数据")
+                logger.info("✅ [FinanceSpecialist] 成功通过 MCP 工具获取用户财务数据")
                 return result
             
             logger.warning(f"⚠️ [FinanceSpecialist] 未能获取用户财务数据: {result.get('message', '未知错误')}")
@@ -573,7 +572,7 @@ class FinanceSpecialist(BaseSpecialistAgent):
                 financial_context["user_financial_data"] = user_financial_data
             
             prompt = self._build_finance_prompt(user_input, entities, domain, financial_context)
-            logger.debug(f"🔍 [FinanceSpecialist] 调用 LLM...")
+            logger.debug("🔍 [FinanceSpecialist] 调用 LLM...")
             
             full_prompt = f"{self.system_prompt}\n\n{prompt}" if self.system_prompt else prompt
             llm_response = await self.llm_adapter.generate(

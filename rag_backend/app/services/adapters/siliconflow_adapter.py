@@ -58,7 +58,7 @@ class SiliconFlowEmbeddingAdapter(BaseEmbeddingAdapter):
         # 只在首次初始化时打印详细信息
         if not getattr(SiliconFlowEmbeddingAdapter, '_initialized', False):
             SiliconFlowEmbeddingAdapter._initialized = True
-            print(f"✅ 硅基流动 Embedding 适配器初始化完成")
+            print("✅ 硅基流动 Embedding 适配器初始化完成")
             print(f"   - 模型: {self.model_name}")
             print(f"   - Base URL: {self.base_url}")
             print(f"   - 最大长度: {self.max_length}")
@@ -81,7 +81,7 @@ class SiliconFlowEmbeddingAdapter(BaseEmbeddingAdapter):
         text = self.truncate_text(text, self.max_length)
         
         if not text or len(text.strip()) == 0:
-            self.logger.warning(f"文本为空，跳过编码")
+            self.logger.warning("文本为空，跳过编码")
             return [0.0] * 1024
         
         payload = {

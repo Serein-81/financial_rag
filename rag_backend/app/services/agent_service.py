@@ -52,7 +52,6 @@ from app.agent_framework.tools import LangChainCompatLayer
 from app.tools import get_all_tools
 
 # 导入统一提示词加载器
-from app.prompts.loader import AgentPromptLoader
 
 # 🆕 导入智能路由和统一检索
 from app.services.unified_retriever import unified_retriever
@@ -123,7 +122,6 @@ class EnterpriseAgentService:
         self.tool_manager = ToolManager()
         
         # 3. 注册本地工具
-        from app.tools import get_tool_system_instruction
         langchain_tools = get_all_tools()
         compat_layer = LangChainCompatLayer(self.tool_manager)
         compat_layer.register_langchain_tools(langchain_tools)
@@ -418,14 +416,14 @@ class EnterpriseAgentService:
             # 🧠 将AI回答添加到记忆系统
             if memory_manager and result:
                 await memory_manager.add_message("assistant", result)
-                print(f"[MEMORY] [记忆系统] 已保存AI回答")
+                print("[MEMORY] [记忆系统] 已保存AI回答")
 
             print(f"[OK] [自定义框架] 处理完成，回答长度: {len(result)}")
             return result
 
         except LLMServiceException as e:
             print(f"[ERROR] [自定义框架] LLM服务异常: {e}")
-            return f"抱歉，AI服务暂时不可用，请稍后再试。"
+            return "抱歉，AI服务暂时不可用，请稍后再试。"
         except ValidationException as e:
             print(f"[ERROR] [自定义框架] 输入验证失败: {e}")
             return f"抱歉，输入参数验证失败：{str(e)}"
@@ -617,9 +615,9 @@ class EnterpriseAgentService:
                     print(f"[FORMAT] [OutputFormatter] 深度清理完成 | 原始: {len(full_response)} → 清理后: {len(cleaned_full_response)}")
                     full_response = cleaned_full_response
                 await memory_manager.add_message("assistant", full_response)
-                print(f"[MEMORY] [记忆系统] 已保存AI回答")
+                print("[MEMORY] [记忆系统] 已保存AI回答")
             
-            print(f"[OK] [自定义框架] 流式处理完成")
+            print("[OK] [自定义框架] 流式处理完成")
             
         except LLMServiceException as e:
             print(f"[ERROR] [自定义框架] 流式处理LLM服务异常: {e}")
@@ -788,8 +786,6 @@ def create_agent_service_dependency():
             ...
         ```
     """
-    from typing import Annotated
-    from fastapi import Depends
     
     async def _get_agent_service() -> EnterpriseAgentService:
         return get_agent_service()

@@ -7,17 +7,15 @@
 支持企业管理员权限控制
 """
 
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
 from datetime import datetime
-from sqlalchemy import select, and_
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.tenant_settings import TenantSettings
-from app.models.user import User
 from app.schemas.tenant_settings import (
     TenantSettingsCreate,
-    TenantSettingsUpdate,
-    TenantSettingsResponse
+    TenantSettingsUpdate
 )
 from app.db.session import AsyncSessionLocal
 

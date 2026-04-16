@@ -1,6 +1,5 @@
 """指代消解器 - 将代词替换为具体实体"""
 import logging
-from typing import Optional
 from app.services.llm_service import llm_service
 from app.core.config import settings
 

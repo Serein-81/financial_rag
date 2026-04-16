@@ -371,7 +371,7 @@ class RelationExtractor:
                     relation['description'] = description
 
         if callback:
-            callback(f"✅ 所有关系描述生成完成")
+            callback("✅ 所有关系描述生成完成")
 
         return relations
 

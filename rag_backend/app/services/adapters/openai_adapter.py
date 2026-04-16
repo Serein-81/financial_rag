@@ -57,7 +57,7 @@ class OpenAIEmbeddingAdapter(BaseEmbeddingAdapter):
         # 只在首次初始化时打印详细信息
         if not getattr(OpenAIEmbeddingAdapter, '_initialized', False):
             OpenAIEmbeddingAdapter._initialized = True
-            print(f"✅ OpenAI Embedding 适配器初始化完成")
+            print("✅ OpenAI Embedding 适配器初始化完成")
             print(f"   - 模型: {self.model_name}")
             print(f"   - Base URL: {self.base_url}")
             print(f"   - API Key: {api_key[:8]}...{api_key[-4:]}")

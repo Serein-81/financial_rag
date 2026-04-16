@@ -14,7 +14,7 @@ import asyncio
 import logging
 import time
 from typing import Callable, Optional, Dict, Any, List
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from functools import wraps
@@ -180,8 +180,8 @@ class CircuitBreaker:
         if self.on_state_change:
             try:
                 await self.on_state_change(old_state, new_state)
-            except Exception as e:
-                logger.error(f"[CircuitBreaker] 状态变化回调异常: {e}")
+            except Exception:
+                logger.error(f"[CircuitBreaker] 状态变化回调异常")
     
     async def _record_success(self):
         """记录成功"""
@@ -240,8 +240,8 @@ class CircuitBreaker:
                 if self.on_rejected:
                     try:
                         await self.on_rejected(self._state)
-                    except Exception as e:
-                        logger.error(f"[CircuitBreaker] 拒绝回调异常: {e}")
+                    except Exception:
+                        logger.error("[CircuitBreaker] 拒绝回调异常")
                 
                 raise CircuitBreakerOpenError(
                     f"Circuit breaker '{self.name}' is {self._state.value}"
@@ -256,7 +256,7 @@ class CircuitBreaker:
             await self._record_success()
             return result
             
-        except Exception as e:
+        except Exception:
             await self._record_failure()
             raise
     

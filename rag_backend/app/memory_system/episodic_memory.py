@@ -15,7 +15,7 @@ import math
 import uuid
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
-from sqlalchemy import select, update, func, text
+from sqlalchemy import select, update, func
 from .base_memory import BaseMemory, MemoryItem
 from app.db import AsyncSessionLocal
 from app.models.chat import ChatMessage, ChatSession
@@ -167,7 +167,7 @@ class EpisodicMemory(BaseMemory):
         if item.embedding is None or len(item.embedding) == 0:
             try:
                 item.embedding = await embedding_service.get_embedding(item.content.strip())
-                print(f"🔮 [情景记忆] 生成向量嵌入")
+                print("🔮 [情景记忆] 生成向量嵌入")
             except (ValueError, KeyError) as e:
                 print(f"⚠️ [情景记忆] 向量生成数据错误: {e}")
                 item.embedding = None

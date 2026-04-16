@@ -121,7 +121,7 @@ class EnhancedSearchService:
                 try:
                     hypo_doc = await query_optimizer.generate_hypothetical_document(query)
                     queries.append(hypo_doc)
-                    logger.info(f"📄 HyDE: 添加假设文档")
+                    logger.info("📄 HyDE: 添加假设文档")
                 except (ValueError, KeyError) as e:
                     logger.warning(f"⚠️ HyDE数据错误: {e}")
                 except (OSError, IOError) as e:
@@ -513,7 +513,7 @@ class EnhancedSearchService:
                 try:
                     hypo_doc = await query_optimizer.generate_hypothetical_document(query)
                     queries.append(hypo_doc)
-                    logger.info(f"📄 HyDE: 添加假设文档")
+                    logger.info("📄 HyDE: 添加假设文档")
                 except (ValueError, KeyError) as e:
                     logger.warning(f"⚠️ HyDE数据错误: {e}")
                 except (OSError, IOError) as e:
@@ -560,7 +560,7 @@ class EnhancedSearchService:
                 
                 try:
                     if len(unique_results) <= top_k:
-                        logger.info(f"⏭️ 跳过MMR")
+                        logger.info("⏭️ 跳过MMR")
                         unique_results = unique_results[:top_k]
                     else:
                         results_to_rerank = unique_results[:top_k * 2]

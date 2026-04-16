@@ -309,7 +309,7 @@ async def get_tax_statistics(
     
     返回税务工作流的统计数据
     """
-    logger.info(f"获取税务工作流统计数据")
+    logger.info("获取税务工作流统计数据")
     
     stats = monitor.get_statistics(
         workflow_type="tax",
@@ -405,7 +405,7 @@ async def get_policy_statistics(
     
     返回政策推送工作流的统计数据
     """
-    logger.info(f"获取政策推送工作流统计数据")
+    logger.info("获取政策推送工作流统计数据")
     
     stats = monitor.get_statistics(
         workflow_type="policy",

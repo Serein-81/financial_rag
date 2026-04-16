@@ -44,7 +44,7 @@ async def test_simple_cases():
             print(f"❌ 错误: {str(e)}")
     
     # 显示统计
-    print(f"\n📊 执行统计:")
+    print("\n📊 执行统计:")
     stats = hybrid_agent_service.get_execution_statistics()
     for key, value in stats.items():
         if key.endswith('_executions') or key.endswith('_percentage'):

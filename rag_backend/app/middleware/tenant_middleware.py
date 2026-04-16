@@ -308,7 +308,7 @@ class TenantContextMiddleware(BaseHTTPMiddleware):
                 else:
                     logger.warning(f"Database returned empty tenant_id for user_id: {user_id}")
         
-        logger.warning(f"No Authorization header found or invalid format")
+        logger.warning("No Authorization header found or invalid format")
         return None
     
     def _extract_token(self, request: Request) -> str:

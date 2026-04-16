@@ -1,14 +1,12 @@
 import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from app.mcp.client_manager import (
     MCPClientManager,
     MCPToolInfo,
-    MCPConnectionError,
     MCPTimeoutError,
-    MCPToolCallError,
     TIMEOUT_MAP,
 )
 from app.mcp.langchain_adapter import MCPToolAdapter

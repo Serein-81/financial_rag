@@ -5,11 +5,9 @@
 """
 
 import json
-import asyncio
 from typing import Optional, List, Dict, Any
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from starlette.responses import StreamingResponse
-from starlette.concurrency import iterate_in_threadpool
 from app.schemas.chat import ChatRequest
 from app.services.streaming_service import streaming_service
 from app.services.search_service import search_service

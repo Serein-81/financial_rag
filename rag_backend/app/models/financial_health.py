@@ -4,9 +4,8 @@
 """
 
 import uuid
-from sqlalchemy import Column, String, DateTime, Integer, Float, BigInteger, ForeignKey, Text, Boolean, Enum as SQLEnum
+from sqlalchemy import Column, String, DateTime, Float, ForeignKey, Text, Boolean, Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import UUID, JSONB
-from sqlalchemy.orm import relationship
 from app.db.base import Base
 import enum
 

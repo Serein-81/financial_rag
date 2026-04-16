@@ -1,7 +1,7 @@
 """群聊服务层"""
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
-from sqlalchemy import select, and_, or_, cast, String
+from sqlalchemy import select, and_, cast, String
 from sqlalchemy.ext.asyncio import AsyncSession
 import json
 import logging
@@ -9,8 +9,6 @@ import logging
 from app.models.group_chat import ChatGroup, GroupMember, GroupInvitation, GroupMessage
 from app.models.group_chat import GroupMemberStatus, GroupRole, MessageReadReceipt
 from app.models.user import User
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID
-import uuid
 from app.services.redis_service import RedisService
 
 logger = logging.getLogger(__name__)
@@ -618,16 +616,16 @@ class GroupChatService:
                     else:
                         self.redis.client.hdel(key, user_id)
                 except (ValueError, KeyError):
-                    logger.warning(f"获取在线成员: 数据错误")
+                    logger.warning("获取在线成员: 数据错误")
                     continue
                 except (OSError, IOError):
-                    logger.warning(f"获取在线成员: Redis连接错误")
+                    logger.warning("获取在线成员: Redis连接错误")
                     continue
                 except RuntimeError as e:
                     logger.warning(f"获取在线成员: 运行时错误, {e}")
                     continue
                 except Exception:
-                    logger.warning(f"获取在线成员: 未知错误")
+                    logger.warning("获取在线成员: 未知错误")
                     continue
         except (ValueError, KeyError) as e:
             logger.error(f"获取在线成员失败: data error {e}")
@@ -658,16 +656,16 @@ class GroupChatService:
                     else:
                         self.redis.client.hdel(key, user_id)
                 except (ValueError, KeyError):
-                    logger.warning(f"获取在线成员详情: 数据错误")
+                    logger.warning("获取在线成员详情: 数据错误")
                     continue
                 except (OSError, IOError):
-                    logger.warning(f"获取在线成员详情: Redis连接错误")
+                    logger.warning("获取在线成员详情: Redis连接错误")
                     continue
                 except RuntimeError as e:
                     logger.warning(f"获取在线成员详情: 运行时错误, {e}")
                     continue
                 except Exception:
-                    logger.warning(f"获取在线成员详情: 未知错误")
+                    logger.warning("获取在线成员详情: 未知错误")
                     continue
         except (ValueError, KeyError) as e:
             logger.error(f"获取在线成员详情失败: data error {e}")
@@ -833,16 +831,16 @@ class GroupChatService:
                         self.redis.client.hdel(key, user_id)
                         removed_count += 1
                 except (ValueError, KeyError):
-                    logger.warning(f"清理过期成员: 数据错误")
+                    logger.warning("清理过期成员: 数据错误")
                     continue
                 except (OSError, IOError):
-                    logger.warning(f"清理过期成员: Redis连接错误")
+                    logger.warning("清理过期成员: Redis连接错误")
                     continue
                 except RuntimeError as e:
                     logger.warning(f"清理过期成员: 运行时错误, {e}")
                     continue
                 except Exception:
-                    logger.warning(f"清理过期成员: 未知错误")
+                    logger.warning("清理过期成员: 未知错误")
                     continue
         except (ValueError, KeyError) as e:
             logger.error(f"清理过期在线成员失败: data error {e}")

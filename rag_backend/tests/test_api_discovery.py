@@ -20,14 +20,14 @@ async def test_api_endpoints():
         print(f"    工具分布: {agent.get_tool_count_summary()}")
 
         if agent.tools:
-            print(f"    工具列表:")
+            print("    工具列表:")
             for tool in agent.tools[:5]:
                 print(f"      - {tool.name} ({tool.location.value}, {tool.category})")
             if len(agent.tools) > 5:
                 print(f"      ... 还有 {len(agent.tools) - 5} 个工具")
 
     summary = agent_discovery_registry.get_summary()
-    print(f"\n注册摘要:")
+    print("\n注册摘要:")
     print(f"  - 总 Agent 数: {summary['total_agents']}")
     print(f"  - 总工具数: {summary['total_tools']}")
     print(f"  - 工具分布: {summary['tool_breakdown']}")

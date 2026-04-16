@@ -32,7 +32,7 @@ async def test_mcp_proxy():
 
         print("\n📡 初始化 MCP 代理...")
         proxy = await get_mcp_proxy()
-        print(f"  ✅ MCP 代理已连接")
+        print("  ✅ MCP 代理已连接")
         print(f"     服务器地址: {proxy.base_url}")
 
         return True, mcp_tools, proxy

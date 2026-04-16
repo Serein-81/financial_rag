@@ -23,7 +23,6 @@ from app.schemas.multi_agent import (
     AgentHealthStatus,
     ReportGenerationRequest,
     ReportGenerationResponse,
-    ErrorResponse,
     SpecialistType,
     SpecialistResult,
     IntentAnalysisResult,
@@ -45,8 +44,7 @@ from app.schemas.multi_agent import (
     SecurityStats,
     SecurityEventType,
     SecurityEventSeverity,
-    SessionContext,
-    PendingQuestion
+    SessionContext
 )
 from app.api import deps
 from app.models.user import User
@@ -54,10 +52,8 @@ from app.multi_agent_system import AgentOrchestrator, OrchestrationContext
 from app.multi_agent_system.agents import (
     FinanceSpecialist,
     TaxSpecialist,
-    LegalSpecialist,
-    ReportGenerator
+    LegalSpecialist
 )
-from app.agent_framework.llm.base_adapter import BaseLLMAdapter
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -161,7 +157,7 @@ async def process_multi_agent_query(
         
         processing_time = time.time() - start_time
 
-        from app.services.operation_log_service import operation_logger, log_user_query
+        from app.services.operation_log_service import log_user_query
         log_user_query(
             user_id=str(current_user.id),
             query=request.query,
@@ -568,7 +564,6 @@ async def generate_report(
     """
     try:
         from datetime import datetime
-        import json
         
         report_id = str(uuid.uuid4())
         
@@ -618,7 +613,6 @@ async def get_monitor_health():
     复用 MonitorService 和系统组件状态
     从 A2A Registry 获取实时 Agent 注册状态
     """
-    from datetime import datetime
     from app.services.monitor_service import monitor_service
     from app.a2a_protocol import agent_registry
 

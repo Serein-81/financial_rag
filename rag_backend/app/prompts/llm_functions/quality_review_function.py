@@ -175,7 +175,7 @@ class QualityReviewFunction:
             return result
 
         except json.JSONDecodeError:
-            logger.warning(f"⚠️ [QualityReview] JSON解析失败")
+            logger.warning("⚠️ [QualityReview] JSON解析失败")
             return self._parse_fallback(response)
 
     def _parse_fallback(self, response: str) -> Dict[str, Any]:

@@ -18,7 +18,6 @@ Create Date: 2025-01-15
 """
 
 from alembic import op
-import sqlalchemy as sa
 from typing import Sequence, Union
 
 revision: str = '007_add_autovacuum_optimization'

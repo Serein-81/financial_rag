@@ -4,7 +4,6 @@ PaddleOCR适配器
 """
 from typing import Any, Dict, List, Tuple
 import logging
-import os
 import io
 from PIL import Image
 from .base_ocr import BaseOCRAdapter

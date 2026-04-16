@@ -4,8 +4,6 @@
 
 import sys
 from datetime import datetime
-from typing import Any, Dict
-from dataclasses import dataclass, field
 from enum import Enum
 
 
@@ -45,7 +43,7 @@ def test_session_create_request():
             user_query="测试查询：分析公司财务状况"
         )
         
-        print(f"✅ SessionCreateRequest 创建成功")
+        print("✅ SessionCreateRequest 创建成功")
         print(f"   - user_id: {request.user_id}")
         print(f"   - tenant_id: {request.tenant_id}")
         print(f"   - message: {getattr(request, 'message', 'N/A')}")
@@ -74,7 +72,7 @@ def test_session_create_response():
             metadata={"user_id": "user-test-123"}
         )
         
-        print(f"✅ SessionCreateResponse 创建成功")
+        print("✅ SessionCreateResponse 创建成功")
         print(f"   - session_id: {response.session_id}")
         print(f"   - created_at: {response.created_at}")
         
@@ -102,16 +100,16 @@ def test_session_model_structure():
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         
-        print(f"✅ MultiAgentSession 模型存在")
+        print("✅ MultiAgentSession 模型存在")
         print(f"   - 表名: {module.MultiAgentSession.__tablename__}")
         
-        print(f"✅ MultiAgentSpecialistResult 模型存在")
+        print("✅ MultiAgentSpecialistResult 模型存在")
         print(f"   - 表名: {module.MultiAgentSpecialistResult.__tablename__}")
         
-        print(f"✅ MultiAgentIntentAnalysis 模型存在")
+        print("✅ MultiAgentIntentAnalysis 模型存在")
         print(f"   - 表名: {module.MultiAgentIntentAnalysis.__tablename__}")
         
-        print(f"✅ MultiAgentReflectionRecord 模型存在")
+        print("✅ MultiAgentReflectionRecord 模型存在")
         print(f"   - 表名: {module.MultiAgentReflectionRecord.__tablename__}")
         
         return True
@@ -136,13 +134,13 @@ def test_report_model_structure():
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         
-        print(f"✅ MultiAgentReport 模型存在")
+        print("✅ MultiAgentReport 模型存在")
         print(f"   - 表名: {module.MultiAgentReport.__tablename__}")
         
-        print(f"✅ MultiAgentReportVersion 模型存在")
+        print("✅ MultiAgentReportVersion 模型存在")
         print(f"   - 表名: {module.MultiAgentReportVersion.__tablename__}")
         
-        print(f"✅ MultiAgentReportAccessLog 模型存在")
+        print("✅ MultiAgentReportAccessLog 模型存在")
         print(f"   - 表名: {module.MultiAgentReportAccessLog.__tablename__}")
         
         return True
@@ -168,15 +166,15 @@ def test_session_manager_structure():
         
         try:
             spec.loader.exec_module(module)
-            print(f"✅ session_manager.py 文件存在")
+            print("✅ session_manager.py 文件存在")
         except ImportError as ie:
             if "pgvector" in str(ie):
-                print(f"✅ session_manager.py 文件存在（pgvector依赖导致部分导入失败）")
+                print("✅ session_manager.py 文件存在（pgvector依赖导致部分导入失败）")
             else:
                 raise
         
-        print(f"✅ MultiAgentSessionManager 类定义存在")
-        print(f"✅ MultiAgentReportManager 类定义存在")
+        print("✅ MultiAgentSessionManager 类定义存在")
+        print("✅ MultiAgentReportManager 类定义存在")
         
         return True
     except Exception as e:
@@ -202,7 +200,7 @@ def test_report_generation_request():
             metadata={"author": "system", "version": "1.0"}
         )
         
-        print(f"✅ ReportGenerationRequest 创建成功")
+        print("✅ ReportGenerationRequest 创建成功")
         print(f"   - session_id: {request.session_id}")
         print(f"   - report_type: {request.report_type}")
         print(f"   - format: {request.format}")
@@ -239,7 +237,7 @@ def test_session_lifecycle():
             metadata={"user_id": create_request.user_id}
         )
         
-        print(f"✅ 会话创建成功")
+        print("✅ 会话创建成功")
         print(f"   - session_id: {create_response.session_id}")
         print(f"   - created_at: {create_response.created_at}")
         
@@ -260,7 +258,7 @@ def test_specialist_types():
     try:
         from app.schemas.multi_agent import SpecialistType
         
-        print(f"✅ SpecialistType 枚举存在")
+        print("✅ SpecialistType 枚举存在")
         print(f"   - FINANCE: {SpecialistType.FINANCE.value}")
         print(f"   - TAX: {SpecialistType.TAX.value}")
         print(f"   - LEGAL: {SpecialistType.LEGAL.value}")
@@ -282,13 +280,13 @@ def test_intent_category():
     try:
         from app.schemas.multi_agent import IntentCategory, RoutingStrategy
         
-        print(f"✅ IntentCategory 枚举存在")
+        print("✅ IntentCategory 枚举存在")
         print(f"   - FINANCIAL_INQUIRY: {IntentCategory.FINANCIAL_INQUIRY.value}")
         print(f"   - COMPLEX_ANALYSIS: {IntentCategory.COMPLEX_ANALYSIS.value}")
         print(f"   - RISK_ASSESSMENT: {IntentCategory.RISK_ASSESSMENT.value}")
         print(f"   - COMPLIANCE_CHECK: {IntentCategory.COMPLIANCE_CHECK.value}")
         
-        print(f"✅ RoutingStrategy 枚举存在")
+        print("✅ RoutingStrategy 枚举存在")
         print(f"   - SINGLE_SPECIALIST: {RoutingStrategy.SINGLE_SPECIALIST.value}")
         print(f"   - MULTI_SPECIALIST_PARALLEL: {RoutingStrategy.MULTI_SPECIALIST_PARALLEL.value}")
         print(f"   - MULTI_SPECIALIST_SEQUENTIAL: {RoutingStrategy.MULTI_SPECIALIST_SEQUENTIAL.value}")
@@ -315,7 +313,7 @@ def test_error_response():
             details={"timeout": 30}
         )
         
-        print(f"✅ ErrorResponse 创建成功")
+        print("✅ ErrorResponse 创建成功")
         print(f"   - error_code: {error.error_code}")
         print(f"   - error_message: {error.error_message}")
         print(f"   - request_id: {error.request_id}")

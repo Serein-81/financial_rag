@@ -1,9 +1,8 @@
 # app/core/security.py
 import uuid
 from datetime import datetime, timedelta
-from typing import Any, Union, Optional
+from typing import Any, Union
 from jose import jwt
-from jose.exceptions import JWTError
 from passlib.context import CryptContext
 from passlib.exc import UnknownHashError, InvalidHashError
 from app.core.config import settings
@@ -135,7 +134,7 @@ def revoke_token(token: str) -> bool:
         remaining_seconds = max(int(exp - now), 0)
         
         if remaining_seconds <= 0:
-            print(f"[JWT WARN] Token 已过期，无需撤销", flush=True)
+            print("[JWT WARN] Token 已过期，无需撤销", flush=True)
             return True
         
         return token_blacklist_service.add_to_blacklist(jti, remaining_seconds)

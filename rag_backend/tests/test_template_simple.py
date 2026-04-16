@@ -214,7 +214,7 @@ def test_reflection_template():
     
     result = engine.render("reflection", context, load_skills=False)
     
-    print(f"\n📋 模板渲染结果：")
+    print("\n📋 模板渲染结果：")
     print("-" * 60)
     print(f"✅ 渲染成功，长度: {len(result)} 字符")
     
@@ -257,7 +257,7 @@ def test_finance_template():
     
     result = engine.render("finance_specialist", context, load_skills=False)
     
-    print(f"\n📋 模板渲染结果：")
+    print("\n📋 模板渲染结果：")
     print("-" * 60)
     print(f"✅ 渲染成功，长度: {len(result)} 字符")
     
@@ -298,7 +298,7 @@ def test_tax_template():
     
     result = engine.render("tax_specialist", context, load_skills=False)
     
-    print(f"\n📋 模板渲染结果：")
+    print("\n📋 模板渲染结果：")
     print("-" * 60)
     print(f"✅ 渲染成功，长度: {len(result)} 字符")
     

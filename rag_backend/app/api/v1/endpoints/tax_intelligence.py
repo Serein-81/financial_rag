@@ -7,21 +7,17 @@ import logging
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy.ext.asyncio import AsyncSession
 from io import BytesIO
 
-from app.api.deps import get_current_user, get_db, CurrentUser
+from app.api.deps import get_current_user, CurrentUser
 from app.schemas.tax_intelligence import (
     TaxAnalysisRequest,
-    TaxAnalysisResult,
-    TaxIntelligenceAnalysisResponse,
     TaxCalculationRequest,
     TaxCalculationResponse,
     PolicyQueryRequest,
     PolicyQueryResponse,
     PolicySubscriptionRequest,
     PolicySubscriptionResponse,
-    TaxIntelligenceStatus,
 )
 from app.services.tax_intelligence_service import TaxIntelligenceService
 from app.services.pdf_export_service import pdf_export_service

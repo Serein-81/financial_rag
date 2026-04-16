@@ -214,7 +214,7 @@ def test_loop_rendering():
         ("第 1 轮" in result or "1" in result, "反思轮次"),
     ]
     
-    print(f"\n🔍 循环渲染检查：")
+    print("\n🔍 循环渲染检查：")
     all_passed = True
     for passed, name in checks:
         status = "✅" if passed else "❌"

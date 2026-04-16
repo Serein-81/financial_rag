@@ -7,7 +7,7 @@
 权限控制：管理员拥有所有权限，普通用户只能查看
 """
 
-from typing import Optional, List
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 

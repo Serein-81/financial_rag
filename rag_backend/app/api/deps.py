@@ -3,7 +3,7 @@ API 依赖注入
 提供通用的依赖项，如数据库会话、当前用户、租户上下文等
 """
 
-from typing import Generator, Optional
+from typing import Optional
 from fastapi import Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import AsyncSessionLocal
@@ -371,7 +371,6 @@ get_current_admin_user = require_admin_user
 # 类型别名
 CurrentUser = User
 
-from typing import Annotated
 
 class PaginatedParams:
     """分页参数"""

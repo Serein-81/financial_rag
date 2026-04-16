@@ -10,17 +10,15 @@
 - 与LangSmith的无缝对接
 """
 
-import time
 import uuid
 import logging
-from typing import Optional, Dict, Any, List, Callable
-from contextlib import contextmanager, asynccontextmanager
-from dataclasses import dataclass, field, asdict
+from typing import Optional, Dict, Any, List
+from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 
 from sqlalchemy.orm import Session
-from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
 
@@ -694,7 +692,7 @@ class WorkflowMonitor:
         """
         try:
             from app.models.workflow_trace import WorkflowTrace
-            from sqlalchemy import and_, desc
+            from sqlalchemy import desc
             
             query = self.db.query(WorkflowTrace).filter(
                 WorkflowTrace.status.in_(["running", "waiting_human_review"])
@@ -856,7 +854,7 @@ def node_context(
         """
         try:
             from app.models.workflow_trace import WorkflowTrace
-            from sqlalchemy import and_, desc
+            from sqlalchemy import desc
 
             query = self.db.query(WorkflowTrace).filter(
                 WorkflowTrace.status.in_(["running", "waiting_human_review"])

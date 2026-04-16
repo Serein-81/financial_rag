@@ -13,7 +13,7 @@
 4. 向后兼容现有状态定义
 """
 
-from typing import TypedDict, List, Dict, Any, Optional, Literal, Annotated, ForwardRef
+from typing import TypedDict, List, Dict, Any, Optional, Literal
 from datetime import datetime
 from enum import Enum
 from pydantic import BaseModel, Field

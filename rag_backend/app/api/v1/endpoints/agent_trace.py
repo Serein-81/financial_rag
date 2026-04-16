@@ -7,7 +7,6 @@ Agent 追踪 API 接口
 """
 
 from fastapi import APIRouter, Depends, HTTPException
-from typing import List
 from app.api import deps
 from app.models.user import User
 from app.services.agent_tracer import agent_tracer

@@ -102,7 +102,7 @@ async def test_smart_consolidation():
     stats = manager.get_topic_frequency_stats()
     print(f"\n总话题数: {stats['total_topics']}")
     print(f"高频话题: {', '.join(stats['high_frequency_topics'])}")
-    print(f"\nTop 10 话题:")
+    print("\nTop 10 话题:")
     for topic_info in stats['top_topics']:
         print(f"  - {topic_info['keyword']}: {topic_info['frequency']}次")
     

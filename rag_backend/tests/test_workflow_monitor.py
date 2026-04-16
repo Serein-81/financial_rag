@@ -19,7 +19,7 @@ async def test_workflow_monitoring():
     print("="*60)
     
     try:
-        from app.workflow import WorkflowMonitor, WorkflowConfig, NodeType
+        from app.workflow import WorkflowConfig
         
         workflow_id = uuid4()
         config = WorkflowConfig(
@@ -31,7 +31,7 @@ async def test_workflow_monitoring():
             metadata={"test": True}
         )
         
-        print(f"✓ 工作流配置创建成功")
+        print("✓ 工作流配置创建成功")
         print(f"  - workflow_type: {config.workflow_type}")
         print(f"  - workflow_id: {workflow_id}")
         
@@ -51,7 +51,7 @@ async def test_agent_workflow_integration():
     print("="*60)
     
     try:
-        from app.workflow import AgentWorkflowIntegrator, WorkflowContext
+        from app.workflow import WorkflowContext
         
         workflow_trace_id = uuid4()
         node_execution_id = uuid4()
@@ -64,7 +64,7 @@ async def test_agent_workflow_integration():
             execution_order=0
         )
         
-        print(f"✓ 工作流上下文创建成功")
+        print("✓ 工作流上下文创建成功")
         print(f"  - workflow_trace_id: {workflow_trace_id}")
         print(f"  - node_execution_id: {node_execution_id}")
         print(f"  - node_name: {context.node_name}")
@@ -86,9 +86,9 @@ async def test_human_review_tracker():
     print("="*60)
     
     try:
-        from app.workflow import HumanReviewTracker, ReviewAction, ReviewPriority
+        from app.workflow import ReviewAction, ReviewPriority
         
-        print(f"✓ 人工审核追踪器导入成功")
+        print("✓ 人工审核追踪器导入成功")
         print(f"  - ReviewAction: {list(ReviewAction)}")
         print(f"  - ReviewPriority: {list(ReviewPriority)}")
         
@@ -113,7 +113,7 @@ async def test_database_connection():
         
         async with AsyncSessionLocal() as session:
             result = await session.execute(text("SELECT 1"))
-            print(f"✓ 数据库连接成功")
+            print("✓ 数据库连接成功")
             
             result = await session.execute(
                 text("""

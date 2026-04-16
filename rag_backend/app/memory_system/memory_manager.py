@@ -132,7 +132,7 @@ class MemoryManager:
         print(f"   工作记忆: {self.working_memory.capacity} 条")
         print(f"   情景记忆: {self.episodic_memory.capacity} 条")
         print(f"   语义记忆: {self.semantic_memory.capacity} 条")
-        print(f"   🆕 智能巩固: 关键词识别 + 频率统计")
+        print("   🆕 智能巩固: 关键词识别 + 频率统计")
         print("=" * 60)
 
     
@@ -241,7 +241,7 @@ class MemoryManager:
         if has_intent:
             importance = max(importance, 0.9)
             boost_reasons.append("用户明确意图")
-            print(f"🎯 [智能巩固] 检测到用户意图关键词")
+            print("🎯 [智能巩固] 检测到用户意图关键词")
         
         # 🔍 方案一：重要话题关键词检测
         detected_categories = []
@@ -671,7 +671,7 @@ class MemoryManager:
         Returns:
             匹配的记忆项列表
         """
-        print(f"🔍 [记忆搜索] 开始搜索当前对话")
+        print("🔍 [记忆搜索] 开始搜索当前对话")
         print(f"   关键词: {keywords}")
         print(f"   角色: {role}")
         print(f"   重要性: >={importance_min}")
@@ -811,7 +811,7 @@ class MemoryManager:
             result = await extractor.extract(messages)
             
             if result.is_empty():
-                print(f"ℹ️ [用户记忆提取] 未提取到任何记忆")
+                print("ℹ️ [用户记忆提取] 未提取到任何记忆")
                 return True
             
             # 保存提取结果到语义记忆

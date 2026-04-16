@@ -14,7 +14,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 from enum import Enum
 
-from sqlalchemy import select, text, and_, or_
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
@@ -279,7 +279,7 @@ class VectorSearchService:
         
         if filters.custom_filters:
             for key, value in filters.custom_filters.items():
-                clauses.append(f"(metadata::jsonb->>:filter_key) = :filter_value")
+                clauses.append("(metadata::jsonb->>:filter_key) = :filter_value")
                 params["filter_key"] = key
                 params["filter_value"] = str(value)
         
@@ -401,7 +401,7 @@ class VectorSearchService:
         try:
             await self.db.execute(text(sql))
             await self.db.commit()
-            logger.info(f"[VectorSearch] HNSW 索引创建成功")
+            logger.info("[VectorSearch] HNSW 索引创建成功")
             return True
         except (ValueError, KeyError) as e:
             logger.error(f"[VectorSearch] HNSW 索引创建数据错误: {e}")
@@ -436,7 +436,7 @@ class VectorSearchService:
         try:
             await self.db.execute(text(sql))
             await self.db.commit()
-            logger.info(f"[VectorSearch] IVFFlat 索引创建成功")
+            logger.info("[VectorSearch] IVFFlat 索引创建成功")
             return True
         except (ValueError, KeyError) as e:
             logger.error(f"[VectorSearch] IVFFlat 索引创建数据错误: {e}")
@@ -504,7 +504,7 @@ class VectorSearchService:
             await self.db.execute(text(analyze_sql))
             
             await self.db.commit()
-            logger.info(f"[VectorSearch] 索引优化完成")
+            logger.info("[VectorSearch] 索引优化完成")
             return True
         except (ValueError, KeyError) as e:
             logger.error(f"[VectorSearch] 索引优化数据错误: {e}")

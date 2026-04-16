@@ -26,7 +26,7 @@ from enum import Enum
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
-    from app.utils.output_formatter import OutputFormatter
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -1362,7 +1362,7 @@ class OutputAgent:
         status_emoji = status_emoji_map.get(compliance_status, "⚠️")
         status_text = status_text_map.get(compliance_status, "待确认")
         
-        sections.append(f"\n### 📊 合规性评估\n")
+        sections.append("\n### 📊 合规性评估\n")
         sections.append("| 评估维度 | 结果 |")
         sections.append("|---------|------|")
         sections.append(f"| {risk_emoji} 风险等级 | {'高风险' if len(risk_points) > 2 else ('中风险' if len(risk_points) > 0 else '低风险')} |")
@@ -1373,24 +1373,24 @@ class OutputAgent:
         
         deductions = content.get("deductions") or content.get("analysis", {}).get("deductions", [])
         if deductions:
-            sections.append(f"\n### 💵 可扣除项目\n")
+            sections.append("\n### 💵 可扣除项目\n")
             for item in deductions[:5]:
                 sections.append(f"- {item}")
         
         exemptions = content.get("exemptions") or content.get("analysis", {}).get("exemptions", [])
         if exemptions:
-            sections.append(f"\n### 🆓 免税项目\n")
+            sections.append("\n### 🆓 免税项目\n")
             for item in exemptions[:5]:
                 sections.append(f"- {item}")
         
         if risk_points:
-            sections.append(f"\n### ⚠️ 风险提示\n")
+            sections.append("\n### ⚠️ 风险提示\n")
             for point in risk_points:
                 sections.append(f"- {point}")
         
         recommendations = content.get("recommendations", [])
         if recommendations:
-            sections.append(f"\n### 💡 专业建议\n")
+            sections.append("\n### 💡 专业建议\n")
             for rec in recommendations[:3]:
                 sections.append(f"- {rec}")
         

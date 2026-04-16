@@ -3,7 +3,7 @@ OCR引擎抽象接口
 定义统一的OCR处理标准
 """
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Tuple
 
 
 class BaseOCRAdapter(ABC):

@@ -5,8 +5,6 @@ Memory System Tests
 
 import pytest
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
-from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 
 from app.memory_system.semantic_memory import SemanticMemory

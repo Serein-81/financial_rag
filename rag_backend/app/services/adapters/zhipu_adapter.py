@@ -58,7 +58,7 @@ class ZhipuEmbeddingAdapter(BaseEmbeddingAdapter):
         # 只在首次初始化时打印详细信息
         if not getattr(ZhipuEmbeddingAdapter, '_initialized', False):
             ZhipuEmbeddingAdapter._initialized = True
-            print(f"✅ 智谱 AI Embedding 适配器初始化完成")
+            print("✅ 智谱 AI Embedding 适配器初始化完成")
             print(f"   - 模型: {self.model_name}")
             print(f"   - 最大长度: {self.max_length}")
             print(f"   - API Key: {api_key[:8]}...{api_key[-4:]}")

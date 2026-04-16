@@ -5,7 +5,6 @@
 
 import asyncio
 import logging
-from typing import Dict, Any
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -51,7 +50,7 @@ async def test_sync():
                     profile["enterprise_id"],
                     profile
                 )
-                print(f"✅ 同步完成")
+                print("✅ 同步完成")
             except Exception as e:
                 print(f"❌ 同步失败: {e}")
                 import traceback

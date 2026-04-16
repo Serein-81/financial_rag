@@ -4,8 +4,6 @@ services:
     container_name: rag_db
     restart: always
     environment:
-
-      # Docker 会自动从 .env 中读取这些变量
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
@@ -18,8 +16,12 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    # 限制 PG 最大内存，防止缓冲池吃光系统内存
+    deploy:
+      resources:
+        limits:
+          memory: 1G
 
-  # Redis 服务 - 支持缓存和会话管理
   redis:
     image: redis:7-alpine
     container_name: rag_redis
@@ -34,8 +36,12 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    # Redis 内存
+    deploy:
+      resources:
+        limits:
+          memory: 512M
 
-  # Neo4j 图数据库
   neo4j:
     image: neo4j:5.15-community
     container_name: rag_neo4j
@@ -47,31 +53,45 @@ services:
       - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD}
       - NEO4J_PLUGINS=["apoc"]
       - NEO4J_dbms_security_procedures_unrestricted=apoc.*
-      - NEO4J_dbms_memory_heap_max__size=512M
+      - NEO4J_dbms_memory_heap_max__size=512M # 这个你原来写得非常好，限制了 Java 堆内存！
     volumes:
       - ./neo4j_data:/data
+    # Neo4j 的真实健康探测，确保图谱引擎真正 Ready
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:7474 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    # 限制容器总内存（配合堆内存设置，防止堆外内存泄露）
+    deploy:
+      resources:
+        limits:
+          memory: 1G
 
-  # MinIO 对象存储服务
   minio:
     image: quay.io/minio/minio:latest
     container_name: rag_minio
     restart: always
     ports:
-      - "9000:9000"  # 后端代码上传图片调用的 API 端口
-      - "9001:9001"  # 你用浏览器访问 Web 控制台的端口
+      - "9000:9000"
+      - "9001:9001"
     environment:
-      MINIO_ROOT_USER: minioadmin    # Web 登录账号
-      MINIO_ROOT_PASSWORD: minioadmin # Web 登录密码
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
     volumes:
-      - ./minio_data:/data           # 图片持久化存放在项目下的 minio_data 文件夹
+      - ./minio_data:/data
     command: server /data --console-address ":9001"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 30s
       timeout: 10s
       retries: 3
+    # 限制 MinIO 内存
+    deploy:
+      resources:
+        limits:
+          memory: 512M
 
-  # 后端服务 - 包含新增的高级特性
   backend:
     build: 
       context: .
@@ -81,70 +101,62 @@ services:
     ports:
       - "8000:8000"
     environment:
-      # 数据库配置
+      # --- 数据库配置 ---
       POSTGRES_SERVER: db
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_PORT: ${POSTGRES_PORT}
       
-      # Redis 配置
+      # --- Redis 配置 ---
       REDIS_HOST: redis
       REDIS_PORT: ${REDIS_PORT}
       REDIS_DB: ${REDIS_DB}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       
-      # MinIO 配置
+      # --- MinIO 配置 ---
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
       MINIO_SECURE: ${MINIO_SECURE}
       MINIO_AVATAR_BUCKET: ${MINIO_AVATAR_BUCKET}
       
-      # API 密钥
+      # --- API 密钥 ---
       ZHIPU_API_KEY: ${ZHIPU_API_KEY}
       QWEATHER_API_KEY: ${QWEATHER_API_KEY}
       GAODE_API_KEY: ${GAODE_API_KEY}
       TAVILY_API_KEY: ${TAVILY_API_KEY}
       
-      # 安全配置
+      # --- 安全配置 ---
       SECRET_KEY: ${SECRET_KEY}
       ALGORITHM: ${ALGORITHM}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES}
       
-      # 高级特性配置
+      # --- 高级特性配置 ---
       ENABLE_AGENT_TRACING: ${ENABLE_AGENT_TRACING:-true}
       ENABLE_TOOL_TRACING: ${ENABLE_TOOL_TRACING:-true}
       ENABLE_PROMPT_OPTIMIZATION: ${ENABLE_PROMPT_OPTIMIZATION:-true}
       TRACE_DATA_RETENTION_DAYS: ${TRACE_DATA_RETENTION_DAYS:-30}
       
-      # 知识图谱配置
+      # --- 知识图谱配置 ---
       ENABLE_KNOWLEDGE_GRAPH: ${ENABLE_KNOWLEDGE_GRAPH:-false}
       ENABLE_ENTITY_EXTRACTION: ${ENABLE_ENTITY_EXTRACTION:-false}
       ENABLE_RELATION_EXTRACTION: ${ENABLE_RELATION_EXTRACTION:-false}
-      
-      # Neo4j 配置
       NEO4J_URI: bolt://neo4j:7687
       NEO4J_USER: neo4j
       NEO4J_PASSWORD: ${NEO4J_PASSWORD}
+      NEO4J_DATABASE: neo4j
       
-      # MinerU OCR 配置
+      # --- OCR 配置 ---
       MINERU_APISERVER: ${MINERU_APISERVER:-}
       MINERU_OUTPUT_DIR: ${MINERU_OUTPUT_DIR:-/tmp/mineru_output}
       MINERU_BACKEND: ${MINERU_BACKEND:-pipeline}
       MINERU_SERVER_URL: ${MINERU_SERVER_URL:-}
       MINERU_DELETE_OUTPUT: ${MINERU_DELETE_OUTPUT:-1}
-      
-      # PaddleOCR 配置
       PADDLEOCR_API_URL: ${PADDLEOCR_API_URL:-}
       PADDLEOCR_ALGORITHM: ${PADDLEOCR_ALGORITHM:-PaddleOCR-VL}
       PADDLEOCR_ACCESS_TOKEN: ${PADDLEOCR_ACCESS_TOKEN:-}
-      
-      # OCR引擎选择 (可选: mineru, paddleocr, tesseract)
       OCR_ENGINE: ${OCR_ENGINE:-}
-      
-      # Neo4j数据库
-      NEO4J_DATABASE: neo4j
     
     depends_on:
       db:
@@ -153,8 +165,9 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      #强制要求 neo4j 必须健康通过后，才启动 Backend
       neo4j:
-        condition: service_started
+        condition: service_healthy
     
     volumes:
       - .:/app
@@ -166,6 +179,19 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+    # 给包含 OCR 和大模型调用的 Backend 设置内存上限
+    deploy:
+      resources:
+        limits:
+          memory: 2G # 即使发生死循环，最多也只能吃 2GB 内存
+          
+    # 日志防爆系统
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m" # 单个日志文件最大 20MB
+        max-file: "3"   # 最多保留 3 个滚动文件
 
 volumes:
   postgres_data:

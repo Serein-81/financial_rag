@@ -13,11 +13,11 @@
 import logging
 import json
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 from datetime import datetime
 from dataclasses import dataclass, field
 
-from app.observability.tracing import get_tracer, SpanContext
+from app.observability.tracing import get_tracer
 
 logger = logging.getLogger(__name__)
 

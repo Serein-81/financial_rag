@@ -227,8 +227,6 @@ async def hybrid_search_stream(request: SearchWithCallbackRequest):
     
     通过 SSE 实时推送搜索进度
     """
-    import asyncio
-    import json
     
     async def event_generator():
         async def callback(data: dict):

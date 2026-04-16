@@ -8,7 +8,7 @@ HuggingFace 适配器
 
 import json
 import logging
-from typing import AsyncGenerator, Dict, Any, Optional, List
+from typing import AsyncGenerator, Dict, Any, Optional
 
 import httpx
 

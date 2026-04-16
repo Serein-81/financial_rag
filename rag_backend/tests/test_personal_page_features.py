@@ -95,7 +95,7 @@ class TestPersonalPageFeatures:
             assert response.status_code == 200, f"登录失败: {response.text}"
             data = response.json()
             self.access_token = data["access_token"]
-            print(f"✅ 用户登录成功")
+            print("✅ 用户登录成功")
             print(f"   Token: {self.access_token[:20]}...")
     
     async def test_login_admin(self):
@@ -112,7 +112,7 @@ class TestPersonalPageFeatures:
             assert response.status_code == 200, f"管理员登录失败: {response.text}"
             data = response.json()
             self.admin_token = data["access_token"]
-            print(f"✅ 管理员登录成功")
+            print("✅ 管理员登录成功")
     
     async def test_get_current_user(self):
         """测试获取当前用户信息"""
@@ -124,7 +124,7 @@ class TestPersonalPageFeatures:
             )
             assert response.status_code == 200, f"获取用户信息失败: {response.text}"
             data = response.json()
-            print(f"✅ 获取用户信息成功")
+            print("✅ 获取用户信息成功")
             print(f"   邮箱: {data['email']}")
             print(f"   昵称: {data.get('nickname')}")
             print(f"   是否管理员: {data['is_admin']}")
@@ -139,7 +139,7 @@ class TestPersonalPageFeatures:
             )
             assert response.status_code == 200, f"获取企业信息失败: {response.text}"
             data = response.json()
-            print(f"✅ 获取企业信息成功")
+            print("✅ 获取企业信息成功")
             print(f"   租户ID: {data['tenant_id']}")
             print(f"   是否个人租户: {data['is_personal']}")
             print(f"   是否企业成员: {data['is_enterprise_member']}")
@@ -159,7 +159,7 @@ class TestPersonalPageFeatures:
             )
             assert response.status_code == 200, f"更新个人信息失败: {response.text}"
             data = response.json()
-            print(f"✅ 更新个人信息成功")
+            print("✅ 更新个人信息成功")
             print(f"   真实姓名: {data['full_name']}")
             print(f"   昵称: {data['nickname']}")
             print(f"   个人简介: {data['bio']}")
@@ -177,8 +177,8 @@ class TestPersonalPageFeatures:
                     "new_password": "newpassword123"
                 }
             )
-            assert response.status_code == 400, f"应该返回400错误"
-            print(f"✅ 旧密码错误检测正常")
+            assert response.status_code == 400, "应该返回400错误"
+            print("✅ 旧密码错误检测正常")
             
             # 测试新密码与旧密码相同
             response = await client.post(
@@ -189,8 +189,8 @@ class TestPersonalPageFeatures:
                     "new_password": "password123"
                 }
             )
-            assert response.status_code == 400, f"应该返回400错误"
-            print(f"✅ 新旧密码相同检测正常")
+            assert response.status_code == 400, "应该返回400错误"
+            print("✅ 新旧密码相同检测正常")
             
             # 正确修改密码
             response = await client.post(
@@ -203,7 +203,7 @@ class TestPersonalPageFeatures:
             )
             assert response.status_code == 200, f"修改密码失败: {response.text}"
             data = response.json()
-            print(f"✅ 修改密码成功")
+            print("✅ 修改密码成功")
             print(f"   消息: {data['message']}")
     
     async def test_update_phone(self):
@@ -218,8 +218,8 @@ class TestPersonalPageFeatures:
                     "phone": "12345"
                 }
             )
-            assert response.status_code == 422, f"应该返回422验证错误"
-            print(f"✅ 无效手机号格式检测正常")
+            assert response.status_code == 422, "应该返回422验证错误"
+            print("✅ 无效手机号格式检测正常")
             
             # 正确更新手机号
             response = await client.post(
@@ -231,7 +231,7 @@ class TestPersonalPageFeatures:
             )
             assert response.status_code == 200, f"更新手机号失败: {response.text}"
             data = response.json()
-            print(f"✅ 更新手机号成功")
+            print("✅ 更新手机号成功")
             print(f"   新手机号: {data['phone']}")
     
     async def test_create_invite_code(self):
@@ -250,7 +250,7 @@ class TestPersonalPageFeatures:
             assert response.status_code == 200, f"创建邀请码失败: {response.text}"
             data = response.json()
             self.invite_code = data["invite_code"]["code"]
-            print(f"✅ 创建邀请码成功")
+            print("✅ 创建邀请码成功")
             print(f"   邀请码: {self.invite_code}")
             print(f"   最大使用次数: {data['invite_code']['max_uses']}")
     
@@ -266,7 +266,7 @@ class TestPersonalPageFeatures:
             )
             assert response.status_code == 200, f"验证邀请码失败: {response.text}"
             data = response.json()
-            print(f"✅ 验证邀请码成功")
+            print("✅ 验证邀请码成功")
             print(f"   有效: {data['valid']}")
             print(f"   企业名称: {data.get('company_name')}")
             print(f"   剩余使用次数: {data['remaining_uses']}")
@@ -284,7 +284,7 @@ class TestPersonalPageFeatures:
                 }
             )
             assert response.status_code == 200, f"加入企业失败: {response.text}"
-            print(f"✅ 加入企业成功")
+            print("✅ 加入企业成功")
             
             # 获取新的邀请码用于更换
             response = await client.post(
@@ -307,8 +307,8 @@ class TestPersonalPageFeatures:
                     "confirm_leave": False
                 }
             )
-            assert response.status_code == 400, f"应该返回400错误"
-            print(f"✅ 确认标志检测正常")
+            assert response.status_code == 400, "应该返回400错误"
+            print("✅ 确认标志检测正常")
             
             # 确认后更换企业
             response = await client.post(
@@ -321,7 +321,7 @@ class TestPersonalPageFeatures:
             )
             assert response.status_code == 200, f"更换企业失败: {response.text}"
             data = response.json()
-            print(f"✅ 更换企业成功")
+            print("✅ 更换企业成功")
             print(f"   消息: {data['message']}")
             print(f"   新租户ID: {data['new_tenant_id']}")
     
@@ -335,8 +335,8 @@ class TestPersonalPageFeatures:
                 headers=await self.get_headers(),
                 params={"confirm": False}
             )
-            assert response.status_code == 400, f"应该返回400错误"
-            print(f"✅ 确认标志检测正常")
+            assert response.status_code == 400, "应该返回400错误"
+            print("✅ 确认标志检测正常")
             
             # 确认后退出企业
             response = await client.post(
@@ -346,7 +346,7 @@ class TestPersonalPageFeatures:
             )
             assert response.status_code == 200, f"退出企业失败: {response.text}"
             data = response.json()
-            print(f"✅ 退出企业成功")
+            print("✅ 退出企业成功")
             print(f"   消息: {data['message']}")
             print(f"   新租户ID: {data['new_tenant_id']}")
             
@@ -356,8 +356,8 @@ class TestPersonalPageFeatures:
                 headers=await self.get_headers()
             )
             data = response.json()
-            assert data["is_personal"], f"应该已经是个人租户"
-            print(f"✅ 验证：已成功切换到个人租户")
+            assert data["is_personal"], "应该已经是个人租户"
+            print("✅ 验证：已成功切换到个人租户")
     
     async def test_enterprise_admin_cannot_change_invite_code(self):
         """测试管理员不能使用邀请码相关功能"""
@@ -371,8 +371,8 @@ class TestPersonalPageFeatures:
                     "invite_code": self.invite_code
                 }
             )
-            assert response.status_code == 400, f"管理员不能使用邀请码"
-            print(f"✅ 管理员不能使用邀请码")
+            assert response.status_code == 400, "管理员不能使用邀请码"
+            print("✅ 管理员不能使用邀请码")
             
             # 管理员不能退出企业
             response = await client.post(
@@ -380,8 +380,8 @@ class TestPersonalPageFeatures:
                 headers=await self.get_admin_headers(),
                 params={"confirm": True}
             )
-            assert response.status_code == 400, f"管理员不能退出企业"
-            print(f"✅ 管理员不能退出企业")
+            assert response.status_code == 400, "管理员不能退出企业"
+            print("✅ 管理员不能退出企业")
     
     async def run_all_tests(self):
         """运行所有测试"""
@@ -421,7 +421,7 @@ class TestPersonalPageFeatures:
                     )
                     assert response.status_code == 200, f"加入企业失败: {response.text}"
                     data = response.json()
-                    print(f"✅ 加入企业成功")
+                    print("✅ 加入企业成功")
                     print(f"   消息: {data['message']}")
                     print(f"   企业名称: {data['company_name']}")
                     print(f"   租户ID: {data['tenant_id']}")

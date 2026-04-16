@@ -5,24 +5,16 @@ A2A 协议 HTTP 端点
 提供任务提交、查询、流式推送等功能
 """
 
-import asyncio
 import logging
 from typing import Optional, Dict, Any
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Response, Header, Request
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from app.a2a_protocol import (
     AgentRegistry,
     HybridDispatcher,
-    DispatchStrategy,
-    Task,
-    TaskStatus,
-    Message,
-    TaskSubmitParams,
-    TaskStatusUpdateEvent
+    TaskSubmitParams
 )
-from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/a2a", tags=["a2a"])

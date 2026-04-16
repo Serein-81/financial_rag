@@ -121,7 +121,7 @@ async def test_memory_integration():
         print("-" * 40)
         
         stats = await memory_manager.get_memory_statistics()
-        print(f"记忆统计:")
+        print("记忆统计:")
         print(f"  工作记忆: {stats['working_memory'].get('size', 0)} 条")
         print(f"  情景记忆: {stats['episodic_memory'].get('size', 0)} 条")
         print(f"  语义记忆: {stats['semantic_memory'].get('size', 0)} 条")
@@ -143,7 +143,7 @@ async def test_memory_integration():
         print("-" * 40)
         
         agent_info = agent_service.get_agent_info()
-        print(f"Agent信息:")
+        print("Agent信息:")
         for key, value in agent_info.items():
             print(f"  {key}: {value}")
         

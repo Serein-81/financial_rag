@@ -5,7 +5,6 @@
 
 from typing import List, Dict, Any, Tuple
 from collections import defaultdict
-import hashlib
 
 from .state import Finding, Conflict, RiskLevel
 

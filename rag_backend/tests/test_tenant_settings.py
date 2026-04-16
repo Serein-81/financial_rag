@@ -36,7 +36,7 @@ async def test_tenant_settings():
                 response = await client.get("/api/v1/tenant-settings/public/test_tenant")
                 print(f"响应状态: {response.status_code}")
                 if response.status_code == 200:
-                    print(f"✅ 成功获取公开信息")
+                    print("✅ 成功获取公开信息")
                     print(f"   响应: {json.dumps(response.json(), indent=2, ensure_ascii=False)}")
                 else:
                     print(f"❌ 失败: {response.text}")

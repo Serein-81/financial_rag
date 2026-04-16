@@ -46,7 +46,7 @@ class SimpleMemoryManager:
         if has_intent:
             importance = max(importance, 0.9)
             boost_reasons.append("用户明确意图")
-            print(f"  🎯 检测到用户意图关键词")
+            print("  🎯 检测到用户意图关键词")
         
         # 方案一：重要话题关键词检测
         detected_categories = []
@@ -214,7 +214,7 @@ def test_smart_consolidation():
     print(f"总话题数: {stats['total_topics']}")
     print(f"高频话题: {', '.join(stats['high_frequency_topics']) if stats['high_frequency_topics'] else '无'}")
     
-    print(f"\nTop 10 话题:")
+    print("\nTop 10 话题:")
     for topic, freq in stats['top_topics']:
         print(f"  - {topic}: {freq}次")
     

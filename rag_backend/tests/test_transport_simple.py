@@ -5,7 +5,6 @@ A2A Transport Layer 轻量级测试
 
 import asyncio
 import sys
-from datetime import datetime
 
 sys.path.insert(0, "d:/Python/Codebase/My_rag/rag_backend")
 
@@ -16,7 +15,7 @@ async def test_transport_base():
     print("[TEST 1] 传输层基础测试")
     print("="*60)
     
-    from app.a2a_protocol.transports.base import TransportConfig, TransportType, AgentTransport, TransportError
+    from app.a2a_protocol.transports.base import TransportConfig, TransportType, AgentTransport
     
     config = TransportConfig(
         transport_type=TransportType.LOCAL,
@@ -38,7 +37,7 @@ async def test_transport_base():
             yield {"event": "test"}
     
     transport = TestTransport(config)
-    print(f"[PASS] AgentTransport subclass created")
+    print("[PASS] AgentTransport subclass created")
     print(f"   Metadata: {transport.get_metadata()}")
     
     return True
@@ -95,7 +94,7 @@ async def test_local_transport():
         tenant_id="test_tenant"
     )
     
-    print(f"[PASS] 本地传输测试通过")
+    print("[PASS] 本地传输测试通过")
     print(f"   Response: {result}")
     print(f"   Stats: {transport.get_statistics()}")
     print(f"   Local agents: {transport.get_local_agents()}")
@@ -122,7 +121,7 @@ async def test_http_transport():
     transport = HttpAgentTransport(config)
     await transport.connect()
     
-    print(f"[PASS] HTTP 传输连接成功")
+    print("[PASS] HTTP 传输连接成功")
     print(f"   Connected: {transport.is_connected}")
     print(f"   Stats: {transport.get_statistics()}")
     
@@ -175,7 +174,7 @@ async def test_transport_manager():
         tenant_id="test"
     )
     
-    print(f"[PASS] 传输管理器测试通过")
+    print("[PASS] 传输管理器测试通过")
     print(f"   Response: {result}")
     print(f"   Stats: {manager.get_statistics()}")
     print(f"   Agent location: {manager.get_agent_location('assistant')}")
@@ -226,7 +225,7 @@ async def test_multitenant():
     for tenant_id in tenants:
         result = await manager.send_message(
             to_agent="tenant_agent",
-            message={"content": f"Hello", "tenant_id": tenant_id},
+            message={"content": "Hello", "tenant_id": tenant_id},
             tenant_id=tenant_id
         )
         results.append((tenant_id, result))

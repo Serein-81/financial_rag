@@ -10,12 +10,12 @@ from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, desc, func
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, field_validator
 
 from app.db.session import get_db
 from app.models.user import User
 from app.api.deps import get_current_user
-from app.models.scheduled_task import ScheduledTask, TaskExecutionLog, TaskNotification
+from app.models.scheduled_task import ScheduledTask, TaskExecutionLog
 from app.services.task_scheduler import task_scheduler
 
 logger = logging.getLogger(__name__)

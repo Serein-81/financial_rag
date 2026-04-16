@@ -205,6 +205,8 @@ pytest==8.0.0
 pytest-asyncio==0.23.5
 pytest-cov==4.1.0
 
+ruff==0.1.0
+mypy==1.7.0
 # MCP 远程连接支持
 # 注意: mcp>=1.0.0 需要 pyjwt>=2.10.1，可能与 zhipuai (需要<2.9.0) 冲突
 # 如有冲突，可考虑使用虚拟环境隔离或升级 zhipuai

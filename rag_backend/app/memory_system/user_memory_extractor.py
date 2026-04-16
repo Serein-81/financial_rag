@@ -16,7 +16,7 @@
 import json
 import re
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict
 from pathlib import Path
 from dataclasses import dataclass
 

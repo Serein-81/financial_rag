@@ -17,8 +17,6 @@ async for chunk in streaming_service.stream_with_progress(query, context):
 
 import asyncio
 import logging
-import time
-import json
 import uuid
 from typing import AsyncGenerator, Dict, List, Optional, Any, Tuple
 from datetime import datetime, timedelta
@@ -302,10 +300,10 @@ class StreamingService:
                 f"总块: {chunk_index}"
             )
             
-        except (ValueError, KeyError) as e:
+        except (ValueError, KeyError) as _:
             progress.state = StreamState.FAILED
             progress.error_count += 1
-        except (OSError, IOError) as e:
+        except (OSError, IOError) as _:
             progress.state = StreamState.FAILED
             progress.error_count += 1
         except Exception as e:

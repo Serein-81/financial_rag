@@ -13,7 +13,6 @@ import os
 import logging
 from functools import wraps
 from typing import Optional, Dict, Any, Callable
-from datetime import datetime
 
 try:
     import psutil
@@ -346,7 +345,7 @@ def _get_memory_usage() -> int:
     try:
         process = psutil.Process(os.getpid())
         return int(process.memory_info().rss / 1024)  # 转换为KB
-    except:
+    except Exception:
         return 0
 
 

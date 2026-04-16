@@ -11,7 +11,7 @@ import asyncio
 import logging
 import traceback
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, Any, List, Optional, Callable
 from datetime import datetime, timedelta, timezone
 from enum import Enum
@@ -516,7 +516,6 @@ class TaskScheduler:
     
     def _convert_to_dataclass(self, db_task) -> ScheduledTask:
         """将数据库模型转换为调度器数据类"""
-        from app.models.scheduled_task import ScheduledTask as DBTaskModel
         
         task_type = TaskType(db_task.task_type) if isinstance(db_task.task_type, str) else db_task.task_type
         frequency = TaskFrequency(db_task.frequency) if isinstance(db_task.frequency, str) else db_task.frequency

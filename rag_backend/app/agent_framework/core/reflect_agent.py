@@ -20,8 +20,7 @@ Reflect Agent - 反思-改进模式
 - 支持 {original_task}, {current_answer}, {reflection_round} 等变量
 """
 
-from typing import Dict, List, Any, Optional
-import json
+from typing import Dict, List, Optional
 import logging
 
 from .base_agent import BaseAgent
@@ -78,7 +77,7 @@ class ReflectAgent(BaseAgent):
         self.max_reflections = max_reflections
         
         logger.info("✅ Reflect Agent 初始化完成")
-        logger.info(f"   - 模式: Reflect-Refine")
+        logger.info("   - 模式: Reflect-Refine")
         logger.info(f"   - 模板: {self.template_name}")
         logger.info(f"   - 最大迭代: {max_iterations}")
         logger.info(f"   - 最大反思: {max_reflections}")

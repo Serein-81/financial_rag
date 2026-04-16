@@ -3,7 +3,7 @@
 用于财务异常检测和预警系统
 """
 
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Optional
 from datetime import datetime, date
 from pydantic import BaseModel, Field
 from enum import Enum

@@ -13,7 +13,7 @@ from sqlalchemy import select, and_, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime
 
-from app.models.prompt_optimization import PromptABTest, PromptTemplate, PromptExecution
+from app.models.prompt_optimization import PromptABTest, PromptExecution
 
 
 class PromptABTestManager:

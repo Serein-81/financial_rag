@@ -4,7 +4,7 @@ import os
 os.chdir('/app')
 sys.path.insert(0, '/app')
 
-from app.multi_agent_system.agents.finance_specialist import FinanceSpecialist, FinancialDomain
+from app.multi_agent_system.agents.finance_specialist import FinancialDomain
 
 text = "分析公司财务报表"
 print(f"Input: {text}", file=sys.stderr)

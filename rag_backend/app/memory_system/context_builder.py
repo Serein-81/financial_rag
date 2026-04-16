@@ -345,7 +345,7 @@ class EnhancedContextBuilder:
                     source_type="user_memory",
                     priority=1
                 ))
-                print(f"👤 [上下文构建] 添加用户记忆上下文")
+                print("👤 [上下文构建] 添加用户记忆上下文")
         except (ValueError, KeyError) as e:
             print(f"⚠️ [上下文构建] 获取用户记忆上下文数据错误: {e}")
         except (OSError, IOError) as e:
@@ -435,7 +435,7 @@ class EnhancedContextBuilder:
                 selected.append(packet)
                 current_tokens += packet.token_count
             else:
-                print(f"⚠️ [信息选择] 工作记忆超出预算，保留部分当前对话")
+                print("⚠️ [信息选择] 工作记忆超出预算，保留部分当前对话")
 
         for score, packet in scored_packets:
             if current_tokens + packet.token_count <= available_tokens:
@@ -758,7 +758,7 @@ class EnhancedContextBuilder:
             if self._query_for_cached_embedding != query:
                 self._query_embedding_cache = await embedding_service.get_embedding(query)
                 self._query_for_cached_embedding = query
-                print(f"📦 [向量缓存] 新查询向量已缓存")
+                print("📦 [向量缓存] 新查询向量已缓存")
             
             query_embedding = self._query_embedding_cache
             vector_score = self._calculate_cosine_similarity(content_embedding, query_embedding)
@@ -921,8 +921,6 @@ class EnhancedContextBuilder:
         Returns:
             去重后的信息包列表
         """
-        import re
-        from difflib import SequenceMatcher
         
         # 第一步：精确去重（保持原有逻辑）
         seen_content = {}  # (source_type, content) -> packet
@@ -1051,7 +1049,7 @@ class EnhancedContextBuilder:
                         # 替换为更好的
                         unique_packets.remove(existing_packet)
                         unique_packets.append(packet)
-                        print(f"🧠 [语义去重] 合并相似内容")
+                        print("🧠 [语义去重] 合并相似内容")
                         print(f"   移除: {existing_packet.content[:50]}...")
                         print(f"   保留: {packet.content[:50]}...")
                         print(f"   相似度: {similarity:.2f}")

@@ -6,7 +6,7 @@
 import logging
 from typing import Dict, Any, Optional, List
 from datetime import datetime
-from app.agent_framework.tools.base import ToolBase, registry
+from app.agent_framework.tools.base import ToolBase
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +78,7 @@ class FinancialDataQueryTool(ToolBase):
                     logger.warning(f"⚠️ [财务数据查询] 未找到财务数据: user_id={user_id}, tenant_id={tenant_id}, 查询年份={query_years}")
                     return {
                         "status": "error",
-                        "message": f"未找到任何可用年度的财务数据，请先录入财务数据",
+                        "message": "未找到任何可用年度的财务数据，请先录入财务数据",
                         "fiscal_year": fiscal_year,
                         "user_id": user_id,
                         "required_action": "请先录入财务数据"
@@ -154,7 +154,7 @@ class FinancialDataQueryTool(ToolBase):
         except ProgrammingError as e:
             error_str = str(e)
             if "does not exist" in error_str or "UndefinedTableError" in error_str:
-                logger.warning(f"⚠️ 财务数据表不存在，跳过查询")
+                logger.warning("⚠️ 财务数据表不存在，跳过查询")
                 return {
                     "status": "unavailable",
                     "message": "财务数据功能暂时不可用，请先配置数据库表",

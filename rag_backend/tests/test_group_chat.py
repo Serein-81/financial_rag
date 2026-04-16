@@ -1,6 +1,5 @@
 """群聊功能单元测试"""
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
 from enum import Enum
 from datetime import datetime
 from typing import Optional

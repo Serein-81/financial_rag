@@ -4,9 +4,8 @@ MCP 服务器 HTTP 客户端测试
 """
 
 import httpx
-import json
 import asyncio
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 MCP_SERVER_URL = "http://8.148.226.49:8080"
 MCP_API_KEY = "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0"

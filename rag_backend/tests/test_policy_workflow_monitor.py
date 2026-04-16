@@ -26,7 +26,6 @@ from app.workflow.policy_workflow_monitor import (
     PolicyMatchLevel,
     NotificationChannel,
 )
-from app.workflow.human_review_tracker import ReviewAction, ReviewPriority
 
 
 async def test_policy_workflow_monitor():
@@ -42,7 +41,7 @@ async def test_policy_workflow_monitor():
             policy_id = str(uuid4())
             tenant_id = "tenant_001"
             
-            print(f"✓ PolicyWorkflowMonitor 初始化成功")
+            print("✓ PolicyWorkflowMonitor 初始化成功")
             print(f"  - policy_id: {policy_id}")
             print(f"  - tenant_id: {tenant_id}")
             
@@ -52,7 +51,7 @@ async def test_policy_workflow_monitor():
                 total_nodes=8
             )
             
-            print(f"✓ 工作流追踪启动成功")
+            print("✓ 工作流追踪启动成功")
             print(f"  - workflow_trace_id: {workflow_trace_id}")
             
             return True
@@ -88,14 +87,14 @@ async def test_policy_monitoring():
                 collection_count=1,
                 is_update=False
             )
-            print(f"✓ 政策采集记录成功")
+            print("✓ 政策采集记录成功")
             
             monitor.record_policy_parsing(
                 policy_id=policy_id,
                 parsed_fields=["industries", "regions", "tax_types", "priority"],
                 extraction_success=True
             )
-            print(f"✓ 政策解析记录成功")
+            print("✓ 政策解析记录成功")
             
             enterprise_id = str(uuid4())
             monitor.record_enterprise_matching(
@@ -112,7 +111,7 @@ async def test_policy_monitoring():
                     "适用地区: 广东省"
                 ]
             )
-            print(f"✓ 企业匹配记录成功 (分数: 0.85)")
+            print("✓ 企业匹配记录成功 (分数: 0.85)")
             
             monitor.record_match_scoring(
                 policy_id=policy_id,
@@ -123,7 +122,7 @@ async def test_policy_monitoring():
                 scale_score=0.1,
                 final_score=0.85
             )
-            print(f"✓ 匹配评分记录成功")
+            print("✓ 匹配评分记录成功")
             
             monitor.record_notification_preparation(
                 policy_id=policy_id,
@@ -138,7 +137,7 @@ async def test_policy_monitoring():
                 },
                 priority="high"
             )
-            print(f"✓ 通知准备记录成功")
+            print("✓ 通知准备记录成功")
             
             monitor.record_notification_sending(
                 policy_id=policy_id,
@@ -147,14 +146,14 @@ async def test_policy_monitoring():
                 sent=True,
                 sent_at=datetime.now()
             )
-            print(f"✓ 通知发送记录成功")
+            print("✓ 通知发送记录成功")
             
             monitor.complete_workflow(
                 status="completed",
                 matched_count=1,
                 notified_count=1
             )
-            print(f"✓ 工作流完成记录成功")
+            print("✓ 工作流完成记录成功")
             
             return True
             
@@ -192,7 +191,7 @@ async def test_subscription_management():
                 channels=["email", "webhook"],
                 success=True
             )
-            print(f"✓ 订阅创建记录成功")
+            print("✓ 订阅创建记录成功")
             
             monitor.record_subscription_management(
                 subscription_id=subscription_id,
@@ -202,10 +201,10 @@ async def test_subscription_management():
                 channels=["email", "webhook", "sse"],
                 success=True
             )
-            print(f"✓ 订阅更新记录成功")
+            print("✓ 订阅更新记录成功")
             
             monitor.complete_workflow(status="completed")
-            print(f"✓ 订阅管理工作流完成")
+            print("✓ 订阅管理工作流完成")
             
             return True
             
@@ -245,7 +244,7 @@ async def test_policy_update_detection():
             print(f"✓ 政策更新检测记录成功 (影响: {len(affected_enterprises)} 个企业)")
             
             monitor.complete_workflow(status="completed")
-            print(f"✓ 政策更新检测工作流完成")
+            print("✓ 政策更新检测工作流完成")
             
             return True
             

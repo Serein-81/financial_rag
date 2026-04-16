@@ -11,7 +11,7 @@
 """
 
 import os
-from typing import List, Dict, AsyncGenerator, Optional
+from typing import List, Dict, AsyncGenerator
 from app.core.config import settings
 
 # 导入自定义 Agent 框架
@@ -19,8 +19,7 @@ from app.agent_framework import ReActAgent, ZhipuAdapter
 from app.agent_framework.tools import (
     ToolManager, 
     LangChainCompatLayer,
-    HybridToolManager,
-    ExecutionMode
+    HybridToolManager
 )
 
 # 导入现有的工具
@@ -201,7 +200,7 @@ class HybridEnterpriseAgentService:
                 execution_mode = result.get("execution_mode", "unknown")
                 execution_time = result.get("execution_time", 0)
                 
-                print(f"✅ [混合框架] 处理完成")
+                print("✅ [混合框架] 处理完成")
                 print(f"   执行模式: {execution_mode}")
                 print(f"   执行时间: {execution_time}s")
                 print(f"   回答长度: {len(output)}")
@@ -243,7 +242,7 @@ class HybridEnterpriseAgentService:
             ):
                 yield chunk
             
-            print(f"✅ [混合框架] 流式处理完成")
+            print("✅ [混合框架] 流式处理完成")
         
         except Exception as e:
             print(f"❌ [混合框架] 流式处理失败: {str(e)}")

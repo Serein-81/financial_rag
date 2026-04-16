@@ -4,16 +4,14 @@ from uuid import UUID
 from typing import List, Optional
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, Request, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, Form
 from fastapi.responses import StreamingResponse
-from fastapi.responses import JSONResponse
 from sqlalchemy import select, or_, and_, func as sqlalchemy_func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import (
     get_db_with_tenant_context,
     get_current_user_from_token,
-    get_current_tenant,
     validate_read_access,
     validate_write_access,
     validate_delete_access
@@ -28,7 +26,6 @@ from app.middleware.tenant_middleware import set_tenant_context_for_db
 
 # 引入核心服务
 from app.services.file_service import file_service
-from app.services.chunk_service import chunk_service
 from app.services.embedding_service import embedding_service
 from app.services.minio_service import minio_service
 from app.services.structured_document_service import structured_document_service
@@ -290,7 +287,7 @@ async def process_document_task(doc_id: UUID, tenant_id: str):
             except Exception as e:
                 raise HTTPException(status_code=500, detail=f"结构化文档解析失败: {str(e)}")
 
-            print(f"✂️ 正在进行智能切分...")
+            print("✂️ 正在进行智能切分...")
             
             # 🌟 使用结构化切块
             chunk_results = await structured_document_service.chunk_structured_document(
@@ -854,7 +851,7 @@ async def upload_document_to_kb(
                 status_code=400, 
                 detail=f"Unsupported file type: {file.content_type}. Supported types: {', '.join(supported_types)}"
             )
-        print(f"✅ 文件类型支持")
+        print("✅ 文件类型支持")
 
         # 🔐 文档可见性逻辑（提前确定，用于重复检查）
         # - 私人知识库：强制私人（只有上传者可见）
@@ -869,7 +866,7 @@ async def upload_document_to_kb(
         print(f"📋 文档可见性: {document_visibility}")
 
         # 计算文件哈希用于查重
-        print(f"🔢 计算文件哈希...")
+        print("🔢 计算文件哈希...")
         file_hash = calculate_md5(file.file)
         print(f"✅ 文件哈希: {file_hash}")
 
@@ -887,15 +884,15 @@ async def upload_document_to_kb(
         if kb.visibility == "private":
             # 私人知识库：检查整个租户内的重复
             duplicate_conditions.append(Document.tenant_id == tenant_id)
-            error_msg = f"File already exists in knowledge base: {{{{filename}}}}"
+            error_msg = "File already exists in knowledge base: {{filename}}"
         elif document_visibility == "public":
             # 企业知识库 + 公开文档：检查所有公开的有没有重复
             duplicate_conditions.append(Document.visibility == "public")
-            error_msg = f"Public file already exists in this knowledge base: {{{{filename}}}}"
+            error_msg = "Public file already exists in this knowledge base: {{filename}}"
         else:
             # 企业知识库 + 私人文档：检查同一用户有没有重复
             duplicate_conditions.append(Document.user_id == current_user.id)
-            error_msg = f"You have already uploaded this file: {{{{filename}}}}"
+            error_msg = "You have already uploaded this file: {{filename}}"
         
         print(f"🔍 检查重复文件，条件: {duplicate_conditions}")
         stmt = select(Document).where(*duplicate_conditions)
@@ -908,10 +905,10 @@ async def upload_document_to_kb(
                 status_code=400,
                 detail=actual_error_msg
             )
-        print(f"✅ 不是重复文件")
+        print("✅ 不是重复文件")
 
         # 读取文件字节并计算大小
-        print(f"📖 读取文件内容...")
+        print("📖 读取文件内容...")
         file_bytes = await file.read()
         file_size = len(file_bytes)
         print(f"✅ 文件大小: {file_size} bytes")

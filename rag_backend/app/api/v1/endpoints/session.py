@@ -1,12 +1,10 @@
 # app/api/v1/endpoints/session.py
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, delete
-from sqlalchemy.orm import defer
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.api import deps
 from app.models.user import User
 from app.models.chat import ChatSession, ChatMessage
-from app.db import AsyncSessionLocal
 from app.schemas.chat import ChatMessageSchema, ChatSessionSchema
 from app.utils.time_utils import format_datetime
 from uuid import UUID

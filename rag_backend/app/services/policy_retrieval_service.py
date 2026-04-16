@@ -12,8 +12,6 @@ import uuid
 from app.models.policy import Policy, PolicyStatus, PolicyPriority
 from app.db.session import SessionLocal
 from sqlalchemy import select, and_, or_, desc
-from sqlalchemy.orm import Session
-import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -294,7 +292,7 @@ class PolicyRetrievalService:
         logger.info(f"🔍 检查是否需要增强: notification_service={self.notification_service is not None}, enterprise_profile={enterprise_profile}")
         
         if self.notification_service and enterprise_profile:
-            logger.info(f"✅ 开始使用NotificationService增强匹配结果")
+            logger.info("✅ 开始使用NotificationService增强匹配结果")
             results = await self._enhance_with_notification_service(
                 results,
                 enterprise_profile
@@ -324,7 +322,7 @@ class PolicyRetrievalService:
             List[Dict]: 增强后的匹配结果
         """
         try:
-            from app.services.notification_service import NotificationService, EnterpriseProfile
+            from app.services.notification_service import EnterpriseProfile
             
             ep = EnterpriseProfile(
                 enterprise_id=enterprise_profile.get("enterprise_id", str(uuid.uuid4())),
@@ -407,7 +405,6 @@ class PolicyRetrievalService:
         try:
             from app.services.tenant_settings_service import tenant_settings_service
             from app.schemas.tenant_settings import TenantSettingsUpdate
-            from datetime import datetime
             
             logger.info(f"🔄 开始同步企业画像: tenant_id={tenant_id}")
             logger.debug(f"📋 企业画像数据: {enterprise_profile}")
@@ -451,7 +448,7 @@ class PolicyRetrievalService:
                           f"tax_types={enterprise_profile.get('tax_types')}")
             else:
                 logger.error(f"❌ 租户设置不存在，无法同步: tenant_id={tenant_id}")
-                logger.error(f"❌ 可能的原因：1) 租户设置未初始化 2) tenant_id不匹配")
+                logger.error("❌ 可能的原因：1) 租户设置未初始化 2) tenant_id不匹配")
                 logger.error(f"❌ 请检查 tenant_settings 表中是否存在 tenant_id={tenant_id} 的记录")
                 
         except Exception as e:

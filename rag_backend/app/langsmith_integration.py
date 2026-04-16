@@ -11,7 +11,7 @@ LangSmith 集成模块
 import os
 import time
 import logging
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 from functools import wraps
 from contextlib import contextmanager
 
@@ -573,7 +573,7 @@ if __name__ == "__main__":
     
     # 检查配置
     config = get_langsmith_config()
-    print(f"[LangSmith] 配置状态:")
+    print("[LangSmith] 配置状态:")
     print(f"  启用: {config['enabled']}")
     print(f"  项目: {config['project']}")
     print(f"  API Key: {'***' + config['api_key'][-4:] if config['api_key'] else '未设置'}")

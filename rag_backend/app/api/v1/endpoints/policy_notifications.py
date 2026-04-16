@@ -30,7 +30,7 @@ async def stream_policy_notifications(
     Returns:
         StreamingResponse: SSE 流
     """
-    logger.info(f"🔍 [DEBUG] 收到 SSE 请求")
+    logger.info("🔍 [DEBUG] 收到 SSE 请求")
     logger.info(f"🔍 [DEBUG] URL: {request.url}")
     logger.info(f"🔍 [DEBUG] Query params: {dict(request.query_params)}")
     logger.info(f"🔍 [DEBUG] User: {user}, user.tenant_id: {user.tenant_id if user else 'N/A'}")
@@ -45,7 +45,7 @@ async def stream_policy_notifications(
         logger.info(f"🔍 [DEBUG] 从 user 对象获取的 tenant_id: {enterprise_id}")
 
     if not enterprise_id:
-        logger.error(f"❌ [AUTH] Missing tenant_id")
+        logger.error("❌ [AUTH] Missing tenant_id")
         logger.error(f"   query_params.get('tenant_id'): {request.query_params.get('tenant_id')}")
         logger.error(f"   user.tenant_id: {user.tenant_id if user else 'N/A'}")
         raise HTTPException(

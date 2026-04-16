@@ -7,13 +7,12 @@
 import asyncio
 import uuid
 import logging
-from typing import Dict, List, Any, Optional, Callable, Set
+from typing import Dict, List, Any, Optional, Callable
 from datetime import datetime
 from dataclasses import dataclass, field
 from enum import Enum
 from collections import defaultdict
 from functools import wraps
-import time
 
 logger = logging.getLogger(__name__)
 
@@ -658,7 +657,7 @@ class AsyncTaskScheduler:
                 if task_id in self._cancel_events:
                     self._cancel_events[task_id].set()
             
-            logger.info(f"🛑 [AsyncTaskScheduler] 取消所有任务")
+            logger.info("🛑 [AsyncTaskScheduler] 取消所有任务")
     
     async def get_task_result(self, task_id: str) -> Optional[TaskResult]:
         """获取任务结果"""

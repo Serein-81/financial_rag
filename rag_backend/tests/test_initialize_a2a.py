@@ -28,7 +28,7 @@ async def test_initialize():
             print(f"    工具分布: {agent.get_tool_count_summary()}")
 
         summary = agent_discovery_registry.get_summary()
-        print(f"\n注册摘要:")
+        print("\n注册摘要:")
         print(f"  - 总 Agent 数: {summary['total_agents']}")
         print(f"  - 总工具数: {summary['total_tools']}")
         print(f"  - 工具分布: {summary['tool_breakdown']}")

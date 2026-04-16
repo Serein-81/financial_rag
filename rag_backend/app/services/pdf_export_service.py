@@ -3,8 +3,7 @@ PDF 导出服务
 提供税务报告、财务分析、合同审核等业务的 PDF 导出功能
 """
 
-import io
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 from datetime import datetime
 from fpdf import FPDF
 

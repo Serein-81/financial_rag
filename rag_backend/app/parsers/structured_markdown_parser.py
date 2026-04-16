@@ -1,7 +1,6 @@
 # app/parsers/structured_markdown_parser.py
-import re
 import asyncio
-from typing import List, Dict, Any
+from typing import List
 
 
 class StructuredMarkdownParser:

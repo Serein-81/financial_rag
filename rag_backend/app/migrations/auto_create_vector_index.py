@@ -123,7 +123,7 @@ def auto_create_vector_index():
                     logger.info(f"\n数据量 < 100k，向量维度 <= {hnsw_max_dims}，使用 HNSW 索引")
                     index_type = "hnsw"
                 else:
-                    logger.info(f"\n数据量 >= 100k，使用 IVFFlat 索引")
+                    logger.info("\n数据量 >= 100k，使用 IVFFlat 索引")
                     index_type = "ivfflat"
                 
                 if index_type == "hnsw":

@@ -1154,7 +1154,7 @@ class ReportGenerator(BaseAgent):
         context = kwargs.get("context", {})
         report_type = kwargs.get("report_type", ReportType.COMPREHENSIVE)
         
-        yield f"# 正在生成报告...\n\n"
+        yield "# 正在生成报告...\n\n"
         
         analysis_results = []
         for sr in specialist_results:

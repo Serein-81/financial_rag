@@ -7,27 +7,18 @@ API Endpoints Tests with Mock Dependencies
 """
 
 import pytest
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 from datetime import datetime
-import uuid
-import json
 
 from fastapi.testclient import TestClient
-from httpx import AsyncClient, ASGITransport
 
 from app.main import app
-from app.api.deps import get_db, get_current_user, get_current_tenant
+from app.api.deps import get_db, get_current_user
 from tests.conftest_mock import (
     MockAsyncSession,
     MockRedisService,
-    MockUser,
-    MockTenant,
-    MockLLMAdapter,
     create_mock_user,
-    create_mock_tenant,
-    authenticated_client,
-    authenticated_async_client
+    create_mock_tenant
 )
 
 

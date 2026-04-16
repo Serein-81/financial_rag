@@ -6,7 +6,7 @@ LangGraph 工作流熔断器集成示例
 
 import asyncio
 import logging
-from typing import Dict, Any, Literal
+from typing import Literal
 from app.langgraph.state import AgentState
 from app.langgraph.circuit_breaker_integration import (
     get_circuit_breaker_manager,
@@ -306,19 +306,19 @@ async def example_production_usage():
             else:
                 state = await workflow.aggregate_results(state)
             
-            print(f"\n✅ 工作流完成")
+            print("\n✅ 工作流完成")
             print(f"   财务结果: {state.get('finance_result')}")
             print(f"   税务结果: {state.get('tax_result')}")
             print(f"   ERP数据: {state.get('erp_data')}")
             
             if state.get("has_errors"):
-                print(f"   ⚠️ 存在错误")
+                print("   ⚠️ 存在错误")
             
         except Exception as e:
             print(f"❌ 工作流执行异常: {e}")
         
         stats = workflow.circuit_breaker_manager.get_all_stats()
-        print(f"\n📊 当前熔断器状态:")
+        print("\n📊 当前熔断器状态:")
         for name, breaker_stat in stats.items():
             print(f"   {name}: {breaker_stat['state']} "
                   f"(失败: {breaker_stat['failure_count']}, "

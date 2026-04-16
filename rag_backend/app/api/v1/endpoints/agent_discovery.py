@@ -9,15 +9,13 @@ Agent 发现与追踪 API 接口
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from typing import Optional, List, Literal
+from typing import Optional, List
 from app.api import deps
 from app.models.user import User
 from app.services.agent_registry import (
     agent_discovery_registry,
     AgentType,
-    ToolLocation,
-    AgentInfo,
-    ToolInfo
+    ToolLocation
 )
 from app.services.agent_tracer import agent_tracer
 

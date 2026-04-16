@@ -6,7 +6,7 @@ Agent 追踪数据模型
 用于记录 Agent 的执行过程，包括每一步的思考、行动和观察
 """
 
-from sqlalchemy import Column, String, Text, Integer, Float, Boolean, JSON, ForeignKey, DateTime, func
+from sqlalchemy import Column, String, Text, Integer, Float, JSON, ForeignKey, DateTime, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 import uuid

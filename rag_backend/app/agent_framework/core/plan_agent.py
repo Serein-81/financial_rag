@@ -15,7 +15,7 @@ Plan Agent - 计划-执行模式
 - 对执行顺序有要求的任务
 """
 
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Optional
 import json
 import logging
 
@@ -64,7 +64,7 @@ class PlanAgent(BaseAgent):
         self.max_steps = max_steps
         
         logger.info("✅ Plan Agent 初始化完成")
-        logger.info(f"   - 模式: Plan-Execute")
+        logger.info("   - 模式: Plan-Execute")
         logger.info(f"   - 最大步骤: {max_iterations}")
         logger.info(f"   - 计划最大步数: {max_steps}")
     

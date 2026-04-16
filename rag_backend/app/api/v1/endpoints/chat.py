@@ -345,7 +345,7 @@ async def chat_with_agent_stream(
         print(f"🔍 [KB检查] 查询结果: {kb}, visibility={kb.visibility if kb else None}")
 
         if not kb:
-            print(f"🔍 [KB检查] KB不存在")
+            print("🔍 [KB检查] KB不存在")
             raise HTTPException(status_code=404, detail="知识库不存在")
 
         # 权限检查：企业级KB允许同租户所有用户访问，私人KB只有创建者可访问

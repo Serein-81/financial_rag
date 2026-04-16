@@ -39,14 +39,14 @@ async def test_tenant_id_assignment():
             LIMIT 10
         """)).fetchall()
         
-        print(f"📊 最近10个用户的租户ID情况:")
+        print("📊 最近10个用户的租户ID情况:")
         for row in result:
             tenant_id, email, is_admin, company_name, created_at = row
             user_type = "企业管理员" if is_admin else "普通用户"
             print(f"  - {email} ({user_type}): {tenant_id}")
         
         # 2. 统计租户ID格式
-        print(f"\n2. 统计租户ID格式...")
+        print("\n2. 统计租户ID格式...")
         
         format_stats = db.execute(text("""
             SELECT 
@@ -82,7 +82,7 @@ async def test_tenant_id_assignment():
             print(f"  - {format_type}: {count} 个用户")
         
         # 3. 验证数据库约束
-        print(f"\n3. 验证数据库约束...")
+        print("\n3. 验证数据库约束...")
         
         null_tenant_count = db.execute(text("""
             SELECT COUNT(*) as count
@@ -96,13 +96,13 @@ async def test_tenant_id_assignment():
             WHERE tenant_id = 'default_tenant'
         """)).fetchone().count
         
-        print(f"🔍 约束检查结果:")
+        print("🔍 约束检查结果:")
         print(f"  - NULL租户ID: {null_tenant_count} 个用户")
         print(f"  - 默认租户ID: {default_tenant_count} 个用户")
         print(f"  - 总用户数: {total_users} 个")
         
         # 4. 评估修复状态
-        print(f"\n4. P0修复状态评估...")
+        print("\n4. P0修复状态评估...")
         
         if problem_count == 0:
             print("✅ P0问题已完全修复！")
@@ -114,7 +114,7 @@ async def test_tenant_id_assignment():
             print("  - 建议重新运行修复脚本")
         
         # 5. 检查租户隔离
-        print(f"\n5. 检查租户隔离情况...")
+        print("\n5. 检查租户隔离情况...")
         
         tenant_isolation = db.execute(text("""
             SELECT 
@@ -147,7 +147,7 @@ async def test_tenant_id_assignment():
 def test_generate_tenant_id():
     """测试租户ID生成函数"""
     
-    print(f"\n" + "=" * 80)
+    print("\n" + "=" * 80)
     print("🧪 测试租户ID生成函数")
     print("=" * 80)
     
@@ -198,7 +198,7 @@ async def main():
         success2 = False
     
     # 总结
-    print(f"\n" + "=" * 80)
+    print("\n" + "=" * 80)
     print("📋 P0修复验证总结")
     print("=" * 80)
     

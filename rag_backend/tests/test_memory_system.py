@@ -66,7 +66,7 @@ async def test_episodic_memory():
         capacity=10
     )
     
-    print(f"\n情景记忆初始化完成")
+    print("\n情景记忆初始化完成")
     print(f"  Session ID: {em.session_id}")
     print(f"  User ID: {em.user_id}")
     print(f"  容量: {em.capacity}")
@@ -121,7 +121,7 @@ async def test_semantic_memory():
     
     # 获取知识摘要
     summary = sm.get_knowledge_summary()
-    print(f"\n知识摘要:")
+    print("\n知识摘要:")
     print(f"  总知识数: {summary['total_knowledge']}")
     print(f"  知识类别: {summary['categories']}")
     
@@ -171,7 +171,7 @@ async def test_memory_manager():
     
     # 获取统计信息
     stats = await mm.get_memory_statistics()
-    print(f"\n记忆统计:")
+    print("\n记忆统计:")
     print(f"  总记忆数: {stats['total_memories']}")
     print(f"  工作记忆: {stats['working_memory']['total']}")
     print(f"  情景记忆: {stats['episodic_memory']['total']}")
@@ -192,7 +192,7 @@ async def test_memory_decay():
         access_count=5
     )
     
-    print(f"\n初始状态:")
+    print("\n初始状态:")
     print(f"  重要性: {item.importance}")
     print(f"  访问次数: {item.access_count}")
     print(f"  衰减因子: {item.decay_factor}")
@@ -200,13 +200,13 @@ async def test_memory_decay():
     # 模拟时间流逝
     time_deltas = [1, 6, 12, 24, 48, 72]  # 小时
     
-    print(f"\n衰减过程:")
+    print("\n衰减过程:")
     for hours in time_deltas:
         item.decay(hours)
         print(f"  {hours:3d} 小时后: 衰减因子 = {item.decay_factor:.4f}")
     
     # 访问记忆
-    print(f"\n访问记忆后:")
+    print("\n访问记忆后:")
     item.access()
     print(f"  访问次数: {item.access_count}")
     print(f"  衰减因子: {item.decay_factor:.4f}")
@@ -235,14 +235,14 @@ async def test_relevance_score():
     # 计算相关性分数
     score = item.get_relevance_score(query_embedding)
     
-    print(f"\n记忆项:")
+    print("\n记忆项:")
     print(f"  内容: {item.content}")
     print(f"  重要性: {item.importance}")
     print(f"  访问次数: {item.access_count}")
     print(f"  衰减因子: {item.decay_factor}")
     
     print(f"\n相关性分数: {score:.4f}")
-    print(f"  (综合考虑: 语义相似度 40% + 衰减因子 30% + 重要性 20% + 访问频率 10%)")
+    print("  (综合考虑: 语义相似度 40% + 衰减因子 30% + 重要性 20% + 访问频率 10%)")
     
     print("\n✅ 相关性评分测试通过")
 

@@ -1,7 +1,7 @@
 import asyncio
 import httpx
 from sqlalchemy import text
-from app.db.session import engine, AsyncSessionLocal
+from app.db.session import AsyncSessionLocal
 from app.core.security import create_access_token
 from datetime import timedelta
 
@@ -37,7 +37,7 @@ async def main():
     # 测试API调用 - 不跟随重定向
     async with httpx.AsyncClient(base_url="http://localhost:8000", timeout=30.0, follow_redirects=False) as client:
         headers = {"Authorization": f"Bearer {token}"}
-        print(f"\n测试 GET /api/v1/invite-codes (NO redirect)")
+        print("\n测试 GET /api/v1/invite-codes (NO redirect)")
         try:
             response = await client.get("/api/v1/invite-codes", headers=headers)
             print(f"Status: {response.status_code}")

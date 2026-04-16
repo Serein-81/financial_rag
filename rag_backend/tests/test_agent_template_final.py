@@ -8,7 +8,6 @@ Agent 模板集成测试（完全独立版本）
 """
 
 import sys
-import os
 import re
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -27,7 +26,7 @@ class SimplePromptEngine:
         
         self.templates_dir.mkdir(parents=True, exist_ok=True)
         
-        print(f"📝 [SimplePromptEngine] 初始化完成")
+        print("📝 [SimplePromptEngine] 初始化完成")
         print(f"   └─ 模板目录: {self.templates_dir}")
     
     def render(
@@ -233,7 +232,7 @@ def test_react_simple_greeting():
     
     result = engine.render("react_agent", context)
     
-    print(f"\n📋 渲染结果片段：")
+    print("\n📋 渲染结果片段：")
     print("-" * 70)
     print(result[:600] + "..." if len(result) > 600 else result)
     print("-" * 70)

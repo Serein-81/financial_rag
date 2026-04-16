@@ -43,8 +43,8 @@ def generate_insert_sql(table_name, columns):
             print(f"    {col},")
         else:
             print(f"    {col}")
-    print(f") VALUES")
-    print(f"(")
+    print(") VALUES")
+    print("(")
     
     for i, col in enumerate(columns):
         col_name = col[0]
@@ -84,7 +84,7 @@ def generate_insert_sql(table_name, columns):
             print(f"    {example:>40},  -- {col_name}")
         else:
             print(f"    {example:>40}   -- {col_name}")
-    print(f");")
+    print(");")
 
 def main():
     """主函数"""
@@ -102,7 +102,7 @@ def main():
         ]
         
         print(f"{'='*80}")
-        print(f"财务模块表结构分析")
+        print("财务模块表结构分析")
         print(f"{'='*80}")
         
         for table_name in tables:
@@ -113,7 +113,7 @@ def main():
             columns = get_table_columns(cursor, table_name)
             
             print(f"\n总列数: {len(columns)}")
-            print(f"\n列信息:")
+            print("\n列信息:")
             print(f"{'-'*80}")
             
             for col in columns:

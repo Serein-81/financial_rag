@@ -6,11 +6,10 @@
 import httpx
 import logging
 import asyncio
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional
 from datetime import datetime
 from urllib.parse import urlparse
 from dataclasses import dataclass
-import json
 
 from .robots_checker import robots_checker
 from .rate_limiter import rate_limiter

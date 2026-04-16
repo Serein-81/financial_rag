@@ -3,8 +3,6 @@
 报告导出器 - Phase 7
 支持多种格式输出（JSON、Markdown、HTML）
 """
-from typing import Dict, Any
-import json
 from pathlib import Path
 
 from .agents.report_generator import AuditReport

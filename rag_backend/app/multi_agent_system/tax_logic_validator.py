@@ -424,7 +424,7 @@ class TaxLogicValidator:
                     errors.append(TaxLogicError(
                         error_id=str(uuid.uuid4()),
                         error_type=TaxLogicErrorType.TAX_CALCULATION_ERROR,
-                        description=f"企业所得税计算错误",
+                        description="企业所得税计算错误",
                         severity="high",
                         field_name="corporate_tax_amount",
                         actual_value=corporate_tax,
@@ -503,7 +503,6 @@ class TaxLogicValidator:
             高级异常检测报告
         """
         import statistics
-        import math
 
         anomalies = []
         confidence_scores = []
@@ -693,7 +692,6 @@ class TaxLogicValidator:
     ) -> List[Dict[str, Any]]:
         """基于Z-score的异常检测"""
         import uuid
-        import statistics
 
         anomalies = []
 

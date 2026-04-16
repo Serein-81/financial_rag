@@ -5,7 +5,6 @@
 """
 
 import logging
-from typing import Dict, Any, List
 from datetime import datetime
 import uuid
 
@@ -17,7 +16,6 @@ from .state import (
     FinancialData,
     TaxCalculationItem,
     RiskItem,
-    PolicyBenefit,
     HumanReviewRequest,
     update_submission_status,
     add_risk_item
@@ -189,7 +187,6 @@ async def calculate_taxes_node(state: TaxSubmissionState) -> TaxSubmissionState:
     
     try:
         from app.agent_framework.tools.tool_manager import ToolManager
-        from app.agent_framework.tools.hybrid_manager import ExecutionMode
         
         tool_manager = ToolManager()
         

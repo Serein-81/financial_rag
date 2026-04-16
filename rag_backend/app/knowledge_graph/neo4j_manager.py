@@ -32,7 +32,7 @@ class Neo4jManager:
     def _connect(self):
         """建立连接"""
         if not NEO4J_AVAILABLE:
-            print(f"[WARNING] Neo4j 模块未安装，跳过连接")
+            print("[WARNING] Neo4j 模块未安装，跳过连接")
             self.driver = None
             return
         try:

@@ -26,7 +26,6 @@ if settings.ENABLE_KNOWLEDGE_GRAPH:
     from app.knowledge_graph.entity_extractor import EntityExtractor
     from app.knowledge_graph.relation_extractor import RelationExtractor
     from app.knowledge_graph.neo4j_manager import Neo4jManager
-    from app.agent_framework.llm.factory import LLMAdapterFactory
 
 
 def _is_valid_uuid(val: str) -> bool:
@@ -78,7 +77,7 @@ class SemanticMemory(BaseMemory):
                     relation_extractor,
                     neo4j_manager
                 )
-                print(f"🕸️ [语义记忆] 知识图谱已启用")
+                print("🕸️ [语义记忆] 知识图谱已启用")
             except Exception as e:
                 print(f"⚠️ [语义记忆] 知识图谱初始化失败: {e}")
                 self.graph_builder = None

@@ -1,9 +1,7 @@
 # app/models/policy.py
 import uuid
-from datetime import datetime
-from typing import List, Optional
-from sqlalchemy import Column, String, Text, DateTime, Integer, Float, Enum as SQLEnum, Index, LargeBinary, JSON
-from sqlalchemy.dialects.postgresql import UUID, ARRAY, JSONB
+from sqlalchemy import Column, String, Text, DateTime, Integer, Enum as SQLEnum, Index, LargeBinary, JSON
+from sqlalchemy.dialects.postgresql import UUID, ARRAY
 from sqlalchemy.sql import func
 from app.db.base import Base
 import enum

@@ -24,7 +24,7 @@ async def test_graph_builder_initialization():
     
     from app.core.config import settings
     
-    print(f"\n配置检查:")
+    print("\n配置检查:")
     print(f"  ENABLE_KNOWLEDGE_GRAPH: {settings.ENABLE_KNOWLEDGE_GRAPH}")
     print(f"  ENABLE_ENTITY_EXTRACTION: {settings.ENABLE_ENTITY_EXTRACTION}")
     print(f"  ENABLE_RELATION_EXTRACTION: {settings.ENABLE_RELATION_EXTRACTION}")
@@ -59,7 +59,7 @@ async def test_graph_builder_initialization():
         
         # 获取图统计
         stats = graph_builder.get_stats()
-        print(f"\n当前图统计:")
+        print("\n当前图统计:")
         for key, value in stats.items():
             print(f"  {key}: {value}")
         
@@ -85,7 +85,7 @@ async def test_semantic_memory_initialization():
         # 创建实例
         semantic_memory = SemanticMemory(user_id="test_user", capacity=100)
         
-        print(f"\n✅ 成功创建语义记忆实例")
+        print("\n✅ 成功创建语义记忆实例")
         print(f"  用户ID: {semantic_memory.user_id}")
         print(f"  容量: {semantic_memory.capacity}")
         
@@ -210,7 +210,7 @@ async def test_api_endpoints():
             print(f"\n⚠️ 缺少路由: {missing}")
             return False
         else:
-            print(f"\n✅ 所有预期路由都存在")
+            print("\n✅ 所有预期路由都存在")
             return True
         
     except Exception as e:

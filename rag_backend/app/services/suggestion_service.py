@@ -8,12 +8,9 @@
 4. 智能排序 - 按相关度排序建议
 """
 
-import asyncio
 import logging
-import json
 import hashlib
-from typing import List, Optional, Dict, Any, Tuple
-from datetime import datetime, timedelta
+from typing import List, Optional, Dict, Any
 from dataclasses import dataclass, field
 from enum import Enum
 import re

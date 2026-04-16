@@ -4,8 +4,7 @@
 """
 import logging
 from typing import List, Dict, Any, Optional, Tuple
-from sqlalchemy.orm import Session
-from sqlalchemy import func, select  # 💡 引入 select 用于异步查询
+from sqlalchemy import select  # 💡 引入 select 用于异步查询
 
 from app.knowledge_graph.neo4j_manager import Neo4jManager
 from app.models.semantic_memory import SemanticMemory

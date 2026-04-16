@@ -1,11 +1,9 @@
 """测试新的 Agent 模板"""
 
 import sys
-import os
 import re
 import json
 from pathlib import Path
-from typing import Dict, Any, List
 
 class SimplePromptEngine:
     """简化的 PromptEngine，支持 Jinja2 风格的模板语法"""
@@ -209,12 +207,12 @@ def test_react_template():
 
     result = engine.render("react_agent", context)
 
-    print(f"\n📋 渲染结果：")
+    print("\n📋 渲染结果：")
     print("-" * 60)
     print(result)
     print("-" * 60)
 
-    print(f"\n🔍 变量替换检查：")
+    print("\n🔍 变量替换检查：")
     checks = [
         ("{max_iterations}" not in result, "max_iterations (10)"),
         ("{tools_description}" not in result, "tools_description"),
@@ -245,12 +243,12 @@ def test_plan_template_planning_phase():
 
     result = engine.render("plan_agent", context)
 
-    print(f"\n📋 渲染结果：")
+    print("\n📋 渲染结果：")
     print("-" * 60)
     print(result[:1000])  # 只打印前1000字符
     print("-" * 60)
 
-    print(f"\n🔍 变量替换检查：")
+    print("\n🔍 变量替换检查：")
     checks = [
         ("{phase}" not in result, "phase"),
         ("{task}" not in result, "task"),
@@ -314,12 +312,12 @@ def test_plan_template_execution_phase():
 
     result = engine.render("plan_agent", context)
 
-    print(f"\n📋 渲染结果：")
+    print("\n📋 渲染结果：")
     print("-" * 60)
     print(result[:1200])  # 只打印前1200字符
     print("-" * 60)
 
-    print(f"\n🔍 变量替换检查：")
+    print("\n🔍 变量替换检查：")
     checks = [
         ("{phase}" not in result, "phase"),
         ("{task}" not in result, "task"),
@@ -369,12 +367,12 @@ def test_plan_template_completion_phase():
 
     result = engine.render("plan_agent", context)
 
-    print(f"\n📋 渲染结果：")
+    print("\n📋 渲染结果：")
     print("-" * 60)
     print(result[:1000])  # 只打印前1000字符
     print("-" * 60)
 
-    print(f"\n🔍 变量替换检查：")
+    print("\n🔍 变量替换检查：")
     checks = [
         ("{phase}" not in result, "phase"),
         ("{task}" not in result, "task"),
@@ -407,12 +405,12 @@ def test_react_template_complex():
 
     result = engine.render("react_agent", context)
 
-    print(f"\n📋 渲染结果：")
+    print("\n📋 渲染结果：")
     print("-" * 60)
     print(result)
     print("-" * 60)
 
-    print(f"\n🔍 变量替换检查：")
+    print("\n🔍 变量替换检查：")
     checks = [
         ("{max_iterations}" not in result, "max_iterations"),
         ("{tools_description}" not in result, "tools_description"),

@@ -8,24 +8,15 @@
 """
 
 from datetime import datetime, timedelta
-from typing import Optional, List
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_current_user
 from app.models.user import User
 from app.models.system_log import LogLevel, LogCategory
 from app.services.log_service import log_service
-from app.schemas.log import (
-    SystemLogResponse, 
-    UserActionLogResponse, 
-    LogStatisticsResponse,
-    LogQueryParams,
-    LogsListResponse,
-    UserActionLogsListResponse
-)
-from app.utils.log_decorators import log_user_action, log_function_call
+from app.utils.log_decorators import log_user_action
 
 import csv
 import io

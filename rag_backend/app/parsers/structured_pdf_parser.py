@@ -1,9 +1,9 @@
 # app/parsers/structured_pdf_parser.py
 import io
 import asyncio
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any
 import fitz  # PyMuPDF
-from collections import defaultdict, Counter
+from collections import Counter
 from .base_parser import FileParserStrategy
 
 
@@ -202,7 +202,7 @@ class StructuredPDFParser(FileParserStrategy):
                     markdown_table = self._format_table_as_markdown(table_data)
                     tables.append(markdown_table)
         
-        except Exception as e:
+        except Exception:
             # 表格提取失败不影响整体解析
             pass
         

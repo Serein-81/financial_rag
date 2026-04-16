@@ -5,21 +5,19 @@ LangGraph StateGraph 构建器
 """
 
 import logging
-from typing import Dict, Any, Optional, List, Callable
+from typing import Dict, Any, Optional, Callable
 from langgraph.graph import StateGraph, END, START
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.errors import GraphRecursionError
 
 from .state import AgentState, create_initial_state
-from ..schemas.multi_agent import IntentCategory, SpecialistType, SpecialistResult
+from ..schemas.multi_agent import SpecialistType, SpecialistResult
 from .nodes import AgentNodeFactory, create_retry_node, create_human_review_node
 from .conditional import (
     route_by_intent,
     route_by_specialists,
     route_reflection_result,
-    create_parallel_routing,
-    create_iteration_check,
-    create_error_check
+    create_parallel_routing
 )
 
 logger = logging.getLogger(__name__)
@@ -60,7 +58,7 @@ class MultiAgentWorkflowBuilder:
         self.graph: Optional[StateGraph] = None
         self.compiled_graph: Optional[Any] = None
         
-        logger.info(f"[WorkflowBuilder] 初始化完成")
+        logger.info("[WorkflowBuilder] 初始化完成")
         logger.info(f"  - Checkpointer: {enable_checkpointer}")
         logger.info(f"  - Reflection: {enable_reflection}")
         logger.info(f"  - Max Iterations: {max_iterations}")
@@ -337,7 +335,7 @@ class MultiAgentWorkflowBuilder:
             **metadata
         )
         
-        logger.info(f"[Workflow] 开始执行工作流")
+        logger.info("[Workflow] 开始执行工作流")
         logger.info(f"  - Session: {session_id}")
         logger.info(f"  - Query: {user_query[:100]}...")
         
@@ -347,11 +345,11 @@ class MultiAgentWorkflowBuilder:
                 config=config or {}
             )
             
-            logger.info(f"[Workflow] 工作流执行完成")
+            logger.info("[Workflow] 工作流执行完成")
             return final_state
             
         except GraphRecursionError:
-            logger.warning(f"[Workflow] 达到最大递归深度")
+            logger.warning("[Workflow] 达到最大递归深度")
             return {
                 **initial_state,
                 "final_answer": "处理超时，请稍后重试。"
@@ -395,7 +393,7 @@ class MultiAgentWorkflowBuilder:
             **metadata
         )
         
-        logger.info(f"[Workflow] 开始流式执行")
+        logger.info("[Workflow] 开始流式执行")
         
         async for state in self.compiled_graph.astream(
             initial_state,

@@ -3,7 +3,7 @@
 """
 
 import uuid
-from typing import List, Dict, Any
+from typing import List, Dict
 from .state import Finding, Conflict
 
 

@@ -6,11 +6,10 @@
 """
 
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import List, Optional, Dict, Any
-from sqlalchemy import select, func, and_, or_, desc, asc
+from sqlalchemy import select, func, desc
 from sqlalchemy.orm import selectinload
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import AsyncSessionLocal
 from app.models.chat import ChatSession, ChatMessage
@@ -652,7 +651,7 @@ class ChatLogService:
                 "total_completion_tokens": total_completion_tokens,
                 "total_tokens": total_tokens,
             }
-        except Exception as e:
+        except Exception:
             return {
                 "id": str(session.id),
                 "user_id": str(session.user_id) if session.user_id else "",

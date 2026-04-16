@@ -109,7 +109,7 @@ async def test_graph_builder_integration():
     
     from app.core.config import settings
     
-    print(f"\n配置检查:")
+    print("\n配置检查:")
     print(f"  ENABLE_KNOWLEDGE_GRAPH: {settings.ENABLE_KNOWLEDGE_GRAPH}")
     print(f"  ENABLE_ENTITY_EXTRACTION: {settings.ENABLE_ENTITY_EXTRACTION}")
     print(f"  ENABLE_RELATION_EXTRACTION: {settings.ENABLE_RELATION_EXTRACTION}")
@@ -128,7 +128,7 @@ async def test_graph_builder_integration():
         
         # 获取图统计
         stats = semantic_memory.graph_builder.get_stats()
-        print(f"\n当前图统计:")
+        print("\n当前图统计:")
         for key, value in stats.items():
             print(f"  {key}: {value}")
         

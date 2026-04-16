@@ -4,7 +4,7 @@
 动态管理 Token 预算，支持组件级别的预算分配
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Callable, Any
 from enum import Enum
 import logging

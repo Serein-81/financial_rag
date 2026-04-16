@@ -43,7 +43,7 @@ async def test_working_memory_validation():
                 item = MemoryItem(content=content, role=role)
             
             await working_memory.add(item)
-            print(f"  ✅ 处理成功")
+            print("  ✅ 处理成功")
         except Exception as e:
             print(f"  ❌ 异常: {e}")
         print()
@@ -74,7 +74,7 @@ async def test_episodic_memory_validation():
             item = MemoryItem(content=content, role=role)
             # 注意：这里会因为数据库连接失败而跳过，但我们可以看到验证逻辑
             await episodic_memory.add(item)
-            print(f"  ✅ 验证通过")
+            print("  ✅ 验证通过")
         except Exception as e:
             print(f"  ⚠️  预期的数据库错误: {str(e)[:50]}...")
         print()
@@ -106,7 +106,7 @@ async def test_semantic_memory_validation():
             item = MemoryItem(content=content, role=role, importance=importance)
             # 注意：这里会因为数据库连接失败而跳过，但我们可以看到验证逻辑
             await semantic_memory.add(item)
-            print(f"  ✅ 验证通过")
+            print("  ✅ 验证通过")
         except Exception as e:
             print(f"  ⚠️  预期的数据库错误: {str(e)[:50]}...")
         print()

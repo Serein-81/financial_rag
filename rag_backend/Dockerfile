@@ -40,7 +40,8 @@ RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debia
     libtesseract5 \
     libgl1 \
     libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/*\
+    && apt-get clean  #  apt-get clean 彻底清空缓存，进一步瘦身镜像！
 
 # 【核心操作】直接把第一阶段编译好的纯净依赖库搬过来！
 COPY --from=builder /opt/venv /opt/venv
@@ -51,8 +52,12 @@ COPY . .
 # 将虚拟环境加入系统环境变量，激活 Python 环境
 ENV PATH="/opt/venv/bin:$PATH"
 
-# 赋予启动脚本执行权限
-RUN mkdir -p /app/logs && chmod +x /app/docker-entrypoint.sh
+# 安全降权！
+# 创建普通用户 appuser，把 /app 文件夹的所有权交给他，然后切换身份。
+RUN useradd -m -s /bin/bash appuser && \
+    chown -R appuser:appuser /app
+USER appuser
+# 从这行往下，容器就再也不是危险的 root 权限了！哪怕被黑客攻破，也无法破坏宿主机。
 
 # 暴露端口与健康检查
 EXPOSE 8000

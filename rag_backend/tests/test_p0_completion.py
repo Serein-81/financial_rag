@@ -13,11 +13,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from sqlalchemy import text, select
-from app.db.session import AsyncSessionLocal, engine
+from sqlalchemy import text
+from app.db.session import engine
 from app.middleware.tenant_middleware import get_current_tenant_id, tenant_context
 from app.services.tenant_security_service import tenant_security
-from app.api.deps import get_current_tenant
 from app.multi_agent_system.agents.reflection_specialist import ReflectionSpecialist
 from app.agent_framework.llm.factory import LLMAdapterFactory
 from app.agent_framework.tools.tool_manager import ToolManager
@@ -140,14 +139,6 @@ async def test_api_tenant_context():
         # 1. 检查依赖注入系统
         print("  2.1 检查依赖注入系统...")
         
-        from app.api.deps import (
-            get_db_with_tenant_context,
-            get_current_user_from_token,
-            get_current_tenant,
-            validate_read_access,
-            validate_write_access,
-            validate_delete_access
-        )
         
         print("    ✓ 依赖注入函数已导入")
         

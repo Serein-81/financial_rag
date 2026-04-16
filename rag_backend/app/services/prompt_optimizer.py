@@ -8,12 +8,11 @@ Prompt 优化服务
 
 from typing import List, Dict, Optional, Any
 from uuid import UUID
-from sqlalchemy import select, func, and_, desc
+from sqlalchemy import select, and_, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timedelta
 
 from app.models.prompt_optimization import PromptTemplate, PromptExecution
-from app.models.agent_trace import AgentTrace
 
 
 class PromptOptimizer:

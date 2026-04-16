@@ -56,7 +56,7 @@ def test_template_mode():
     
     result = engine.render("reflection", context, load_skills=False)
     
-    print(f"\n✅ 渲染结果 (前300字符):")
+    print("\n✅ 渲染结果 (前300字符):")
     print("-" * 60)
     print(result[:300])
     print("...")
@@ -90,7 +90,7 @@ def test_mixed_mode():
     # 混合使用：基础提示词 + 模板渲染
     result = f"{base_prompt}\n\n{template}"
     
-    print(f"\n✅ 混合模式结果 (前300字符):")
+    print("\n✅ 混合模式结果 (前300字符):")
     print("-" * 60)
     print(result[:300])
     print("...")

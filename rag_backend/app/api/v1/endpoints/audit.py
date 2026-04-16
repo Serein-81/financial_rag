@@ -18,8 +18,6 @@ from app.schemas.audit import (
     TaskDecompositionResponse
 )
 from app.models.audit_task import AuditTask
-from app.models.audit_result import AuditResult
-from app.models.agent_collaboration import AgentCollaboration
 from app.multi_agent_system import (
     AgentCoordinator,
     TaskDecomposer

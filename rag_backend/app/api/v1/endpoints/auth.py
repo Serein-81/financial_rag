@@ -813,7 +813,7 @@ async def change_invite_code(
         
         return {
             "success": True,
-            "message": f"成功离开原企业并加入新企业",
+            "message": "成功离开原企业并加入新企业",
             "old_tenant_id": old_tenant_id,
             "new_tenant_id": new_tenant_id,
             "company_name": validation_result.company_name

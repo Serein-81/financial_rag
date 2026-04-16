@@ -6,9 +6,9 @@ LangSmith 集成 API 端点
 
 import logging
 import time
-from typing import Optional, Dict, Any
+from typing import Optional, Dict
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from app.api import deps
 from app.models.user import User
@@ -85,7 +85,7 @@ def track_langsmith_event(event_type: str):
 
 def get_dashboard_url(project: str, endpoint: str = "https://smith.langchain.com") -> Dict[str, str]:
     """生成 LangSmith Dashboard URL"""
-    base_url = f"https://smith.langchain.com"
+    base_url = "https://smith.langchain.com"
     return {
         "dashboard_url": f"{base_url}/",
         "project_url": f"{base_url}/projects/{project}/about",

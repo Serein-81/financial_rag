@@ -5,7 +5,7 @@ A2A 协议中的 Agent 能力描述卡片
 用于 Agent 发现和能力匹配
 """
 
-from typing import List, Optional, Dict, Any, Literal
+from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 from .models import AgentCapabilities, Security
 

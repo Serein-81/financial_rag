@@ -11,15 +11,11 @@ from datetime import datetime
 from .state import AuditState, create_initial_state, Finding, Conflict, Report
 from .message_bus import MessageBus
 from .rework_controller import ReworkController
-from .rag_retriever import TenantIsolatedRAGRetriever, TaxSpecificRAGEnhancer, RAGDocType
+from .rag_retriever import TenantIsolatedRAGRetriever, TaxSpecificRAGEnhancer
 from app.memory_system.memory_manager import MemoryManager
 from app.prompts.llm_functions import triage_document, review_quality
 from app.memory_system.episodic_memory import EpisodicMemory
 from app.memory_system.semantic_memory import SemanticMemory
-from app.services.agent_service import agent_service
-from app.db.session import AsyncSessionLocal
-from app.models.audit_task import AuditTask
-from app.models.audit_result import AuditResult
 from app.core.config import settings
 
 
@@ -385,7 +381,7 @@ class AgentCoordinator:
             triage_passed = await self._triage_phase()
             
             if not triage_passed:
-                print(f"⚠️ [协调器] 门卫审查未通过，等待人工审核")
+                print("⚠️ [协调器] 门卫审查未通过，等待人工审核")
                 return {
                     **self.current_state,
                     "status": "pending_review",
@@ -394,7 +390,7 @@ class AgentCoordinator:
             
             # 检查人工审核是否已完成且通过
             if self.current_state.get("needs_human_review") and not self.current_state.get("human_review_completed"):
-                print(f"⏳ [协调器] 等待人工审核完成")
+                print("⏳ [协调器] 等待人工审核完成")
                 return {
                     **self.current_state,
                     "status": "pending_review",
@@ -419,12 +415,12 @@ class AgentCoordinator:
                 
                 # 3.3 检查是否需要重做
                 if not self.rework_controller.should_rework(self.current_state):
-                    print(f"✅ [协调器] 审查通过，无需重做")
+                    print("✅ [协调器] 审查通过，无需重做")
                     break
                 
                 # 3.4 检查是否需要人工审核
                 if self.current_state.get("needs_human_review"):
-                    print(f"⚠️ [协调器] 需要人工介入审核")
+                    print("⚠️ [协调器] 需要人工介入审核")
                     self.current_state["status"] = "pending_review"
                     return {
                         **self.current_state,
@@ -443,7 +439,7 @@ class AgentCoordinator:
                     )
                     await self._rework_agents(rework_agents)
                 else:
-                    print(f"⚠️ [协调器] 已达最大迭代次数，停止重做")
+                    print("⚠️ [协调器] 已达最大迭代次数，停止重做")
             
             # 4. 生成最终报告
             final_report = await self._generate_final_report()
@@ -520,7 +516,7 @@ class AgentCoordinator:
         # 加载企业历史记忆
         await self._load_enterprise_memory()
         
-        print(f"📋 [协调器] 状态初始化完成")
+        print("📋 [协调器] 状态初始化完成")
     
     async def _triage_phase(self) -> bool:
         """
@@ -622,7 +618,7 @@ class AgentCoordinator:
             self.current_state["triage_rejected_docs"] = rejected_docs
             
             if not all_passed and not self.current_state.get("needs_human_review"):
-                print(f"🚫 [协调器] 所有文档被门卫拒绝")
+                print("🚫 [协调器] 所有文档被门卫拒绝")
                 self.current_state["triage_passed"] = False
                 return False
             
@@ -920,7 +916,7 @@ class AgentCoordinator:
             else:
                 print(f"✅ [协调器] {agent_name} Agent 重做完成")
         
-        print(f"✅ [协调器] Agent 重做完成")
+        print("✅ [协调器] Agent 重做完成")
 
     
     async def _generate_final_report(self) -> Dict[str, Any]:

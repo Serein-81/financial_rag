@@ -2,7 +2,7 @@ import asyncio
 import os
 import logging
 from app.mcp.client_manager import MCPClientManager, MCPToolInfo
-from app.mcp.langchain_adapter import MCPToolAdapter, LangGraphMCPIntegration
+from app.mcp.langchain_adapter import LangGraphMCPIntegration
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

@@ -5,23 +5,22 @@ Comprehensive Multi-Agent System Core Tests
 
 import pytest
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from datetime import datetime
-from typing import Dict, Any, List, Optional
 
 from app.multi_agent_system.coordinator import AgentCoordinator
 from app.multi_agent_system.session_manager import SessionManager
 from app.multi_agent_system.message_bus import MessageBus, MessageType, Message
 from app.multi_agent_system.task_decomposer import TaskDecomposer
 from app.multi_agent_system.result_merger import ResultMerger, Finding, RiskLevel
-from app.multi_agent_system.state import create_initial_state, MultiAgentState
+from app.multi_agent_system.state import create_initial_state
 from app.multi_agent_system.agents import (
     FinanceSpecialist,
     TaxSpecialist,
     LegalSpecialist,
     IntentRouterAgent
 )
-from app.schemas.multi_agent import SpecialistType, TaskRequest, TaskResult
+from app.schemas.multi_agent import SpecialistType, TaskRequest
 
 
 class TestMessageBus:

@@ -80,7 +80,7 @@ async def test_agent_tracing():
         
         # 6. 查询追踪结果
         trace_data = await agent_tracer.get_trace_with_steps(trace_id)
-        print(f"✅ 查询追踪结果:")
+        print("✅ 查询追踪结果:")
         print(f"   - 总步骤: {trace_data['total_iterations']}")
         print(f"   - 工具调用: {trace_data['tool_calls_count']}")
         print(f"   - 总耗时: {trace_data['total_time']:.2f}s")
@@ -137,7 +137,7 @@ async def test_tool_tracing(trace_id):
         
         # 5. 查询调用链
         chain_data = await tool_call_tracer.build_call_chain(trace_id)
-        print(f"✅ 查询调用链:")
+        print("✅ 查询调用链:")
         print(f"   - 总调用: {chain_data['statistics']['total_calls']}")
         print(f"   - 总耗时: {chain_data['statistics']['total_duration']}ms")
         print(f"   - 成功率: {chain_data['statistics']['success_rate']}%")
@@ -145,7 +145,7 @@ async def test_tool_tracing(trace_id):
         
         # 6. 查询工具统计
         stats = await tool_call_tracer.get_tool_statistics(days=1)
-        print(f"✅ 工具统计:")
+        print("✅ 工具统计:")
         print(f"   - 统计的工具数: {len(stats['tool_stats'])}")
         
         return True
@@ -222,19 +222,19 @@ async def test_prompt_optimization():
             perf_a = await optimizer.analyze_template_performance(template_a.id, days=1)
             perf_b = await optimizer.analyze_template_performance(template_b.id, days=1)
             
-            print(f"✅ 模板 A 性能:")
+            print("✅ 模板 A 性能:")
             print(f"   - 执行次数: {perf_a['total_executions']}")
             print(f"   - 成功率: {perf_a['success_rate']:.1%}")
             print(f"   - 平均评分: {perf_a['avg_score']:.2f}")
             
-            print(f"✅ 模板 B 性能:")
+            print("✅ 模板 B 性能:")
             print(f"   - 执行次数: {perf_b['total_executions']}")
             print(f"   - 成功率: {perf_b['success_rate']:.1%}")
             print(f"   - 平均评分: {perf_b['avg_score']:.2f}")
             
             # 5. 比较模板
             comparison = await optimizer.compare_templates(template_a.id, template_b.id, days=1)
-            print(f"✅ 模板比较结果:")
+            print("✅ 模板比较结果:")
             print(f"   - 获胜者: {comparison['winner']}")
             print(f"   - 评分差异: {comparison['comparison']['score_diff']:.1f}%")
             
@@ -246,7 +246,7 @@ async def test_prompt_optimization():
             
             # 7. 分析 A/B 测试结果
             test_results = await ab_manager.analyze_test_results(ab_test.id)
-            print(f"✅ A/B 测试结果:")
+            print("✅ A/B 测试结果:")
             print(f"   - 总执行: {test_results['total_executions']}")
             print(f"   - 获胜者: {test_results['winner']}")
             print(f"   - 置信度: {test_results['confidence']:.2f}")

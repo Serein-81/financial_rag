@@ -16,7 +16,6 @@ from app.services.hybrid_retriever import HybridRetriever
 from app.knowledge_graph.entity_extractor import EntityExtractor
 from app.knowledge_graph.relation_extractor import RelationExtractor
 from app.knowledge_graph.neo4j_manager import Neo4jManager
-from app.agent_framework.llm.factory import LLMAdapterFactory
 from app.core.config import settings
 
 

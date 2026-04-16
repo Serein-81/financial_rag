@@ -4,7 +4,6 @@
 """
 
 import uuid
-from datetime import datetime
 from sqlalchemy import Column, String, DateTime, Integer, Float, ForeignKey, Text, Boolean, func, Date, Index
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship

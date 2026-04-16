@@ -24,7 +24,7 @@ import logging
 import numpy as np
 from sqlalchemy import create_engine, text
 from sklearn.decomposition import PCA
-from typing import List, Tuple, Optional
+from typing import List, Tuple
 
 logging.basicConfig(
     level=logging.INFO,

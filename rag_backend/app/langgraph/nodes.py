@@ -6,16 +6,12 @@ LangGraph 节点函数
 
 import time
 import logging
-from typing import Dict, Any, Optional, List, Callable
-from datetime import datetime
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
-from langchain_core.tools import tool as langchain_tool_decorator
+from typing import Dict, Any, Callable
 
 from .state import (
     AgentState, 
     SpecialistResult, 
     SpecialistType,
-    create_initial_state,
     add_specialist_result,
     add_error,
     increment_iteration
@@ -173,7 +169,7 @@ class AgentNodeFactory:
         """
         async def reflection_node(state: AgentState) -> AgentState:
             """反思节点 - 质量审核"""
-            logger.info(f"[Reflection] 开始质量审核")
+            logger.info("[Reflection] 开始质量审核")
             
             try:
                 from app.prompts.llm_functions import review_quality
@@ -203,7 +199,7 @@ class AgentNodeFactory:
         """
         async def rag_node(state: AgentState) -> AgentState:
             """RAG 检索节点"""
-            logger.info(f"[RAG] 执行知识检索")
+            logger.info("[RAG] 执行知识检索")
             
             try:
                 rag_retriever = self.get_or_create_agent("rag_retriever")
@@ -259,7 +255,7 @@ class AgentNodeFactory:
         """
         async def final_answer_node(state: AgentState) -> AgentState:
             """最终答案节点"""
-            logger.info(f"[FinalAnswer] 生成最终答案")
+            logger.info("[FinalAnswer] 生成最终答案")
             
             try:
                 if state.get("needs_human_review"):
@@ -316,7 +312,7 @@ def create_human_review_node() -> Callable:
     """
     async def human_review_node(state: AgentState) -> AgentState:
         """人工审核节点"""
-        logger.info(f"[HumanReview] 请求人工审核")
+        logger.info("[HumanReview] 请求人工审核")
         
         return {
             **state,

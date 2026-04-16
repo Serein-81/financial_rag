@@ -1,8 +1,7 @@
 import traceback
-import sys
 import asyncio
 from sqlalchemy import text
-from app.db.session import engine, AsyncSessionLocal
+from app.db.session import AsyncSessionLocal
 from app.services.invite_code_service import InviteCodeService
 
 async def test_get_invite_codes():

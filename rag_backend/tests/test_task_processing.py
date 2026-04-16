@@ -6,9 +6,6 @@
 
 import pytest
 import asyncio
-from datetime import datetime
-from typing import Dict, Any
-from unittest.mock import AsyncMock, MagicMock
 
 from app.tasks.three_layer_protection import (
     ThreeLayerProtection,

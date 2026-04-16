@@ -7,10 +7,7 @@
 
 import logging
 from typing import Dict, Any, List, Optional
-from datetime import datetime, date
 from dataclasses import dataclass, asdict
-from decimal import Decimal
-import json
 
 from sqlalchemy import select, func, and_, or_, desc
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -324,7 +321,7 @@ class FinancialDataQueryService:
             recommendations.append({
                 "type": "filter",
                 "reason": f"当前返回 {total_count} 条记录",
-                "action": f"建议按年份筛选：添加 fiscal_year 参数"
+                "action": "建议按年份筛选：添加 fiscal_year 参数"
             })
         
         if params.period_type is None:

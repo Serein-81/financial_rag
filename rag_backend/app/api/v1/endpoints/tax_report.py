@@ -1,10 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, Query
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, update
+from sqlalchemy import update
 from typing import Optional
 from pathlib import Path
-import json
 import logging
 import io
 import os
@@ -12,10 +11,9 @@ import uuid
 import asyncio
 from datetime import datetime
 
-from app.api.deps import get_current_user, get_db, CurrentUser, PaginatedParams
-from app.models.tax_report import TaxReport, TaxReportDocument
+from app.api.deps import get_current_user, get_db, CurrentUser
+from app.models.tax_report import TaxReport
 from app.schemas.tax_report import (
-    TaxReportCreate,
     TaxReportResponse,
     TaxReportStatusResponse,
     TaxReportListResponse,
@@ -284,7 +282,6 @@ async def upload_tax_report(
     - 自动检测重复文件
     """
     import time
-    import hashlib
     start_time = time.time()
     
     logger.info(f"📤 [TaxUpload] 收到上传请求: {file.filename}, 大小: {file.size}")
@@ -299,7 +296,7 @@ async def upload_tax_report(
 
     try:
         # Step 0: 检测重复文件
-        logger.info(f"⏱️ [TaxUpload] Step 0: 检测重复文件...")
+        logger.info("⏱️ [TaxUpload] Step 0: 检测重复文件...")
         service = TaxReportService()
         duplicate_result = await service.check_duplicate_report(
             tenant_id=user.tenant_id,
@@ -331,11 +328,11 @@ async def upload_tax_report(
         saved_filename = f"{report_id}{ext}"
         file_path = UPLOAD_DIR / saved_filename
         
-        logger.info(f"⏱️ [TaxUpload] Step 1: 开始读取文件内容...")
+        logger.info("⏱️ [TaxUpload] Step 1: 开始读取文件内容...")
         content = await file.read()
         logger.info(f"⏱️ [TaxUpload] 文件读取完成，耗时: {time.time() - start_time:.2f}s")
         
-        logger.info(f"⏱️ [TaxUpload] Step 2: 开始保存文件到磁盘...")
+        logger.info("⏱️ [TaxUpload] Step 2: 开始保存文件到磁盘...")
         await asyncio.to_thread(_save_file_sync, file_path, content)
         logger.info(f"⏱️ [TaxUpload] 文件保存完成，耗时: {time.time() - start_time:.2f}s")
         
@@ -351,7 +348,7 @@ async def upload_tax_report(
         
         logger.info(f"💾 [TaxUpload] 文件已保存: {file_path}, 大小: {file_size} bytes")
         
-        logger.info(f"⏱️ [TaxUpload] Step 3: 开始创建数据库记录...")
+        logger.info("⏱️ [TaxUpload] Step 3: 开始创建数据库记录...")
         report = TaxReport(
             id=report_id,
             user_id=user.id,
@@ -369,7 +366,7 @@ async def upload_tax_report(
         
         db.add(report)
         
-        logger.info(f"⏱️ [TaxUpload] Step 4: 开始提交数据库事务...")
+        logger.info("⏱️ [TaxUpload] Step 4: 开始提交数据库事务...")
         try:
             await db.commit()
             logger.info(f"⏱️ [TaxUpload] 数据库提交完成，耗时: {time.time() - start_time:.2f}s")
@@ -386,7 +383,7 @@ async def upload_tax_report(
         
         logger.info(f"✅ [TaxUpload] 数据库记录已创建: {report_id}")
         
-        logger.info(f"⏱️ [TaxUpload] Step 5: 创建后台处理任务...")
+        logger.info("⏱️ [TaxUpload] Step 5: 创建后台处理任务...")
         asyncio.create_task(
             _process_tax_report_async(
                 report_id=report_id,
@@ -502,7 +499,7 @@ async def upload_tax_report(
         )
         
         if "validation errors" in str(e).lower() or "pydantic" in str(e).lower():
-            logger.error(f"🔍 [TaxUpload] Pydantic 验证错误详情:")
+            logger.error("🔍 [TaxUpload] Pydantic 验证错误详情:")
             for key, value in error_details.items():
                 logger.error(f"   {key}: {value}")
         

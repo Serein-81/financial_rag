@@ -18,8 +18,7 @@ from app.models.multi_agent_session import (
     MultiAgentReflectionRecord
 )
 from app.models.multi_agent_report import (
-    MultiAgentReport,
-    MultiAgentReportVersion
+    MultiAgentReport
 )
 
 logger = logging.getLogger(__name__)

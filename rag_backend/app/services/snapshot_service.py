@@ -8,19 +8,17 @@
 4. 自动快照 - 定期自动创建快照
 """
 
-import asyncio
 import logging
 import json
 import hashlib
 from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime, timedelta
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from enum import Enum
 import uuid
-from app.core.config import settings
 from app.models.chat import ChatSession, ChatMessage
 from app.db import AsyncSessionLocal
-from sqlalchemy import select, and_
+from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
 

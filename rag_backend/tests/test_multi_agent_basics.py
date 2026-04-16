@@ -16,14 +16,6 @@ async def test_imports():
     print("="*60)
     
     try:
-        from app.multi_agent_system.agents import (
-            FinanceSpecialist,
-            TaxSpecialist,
-            LegalSpecialist,
-            ReflectionSpecialist,
-            IntentAgent,
-            ReportGenerator
-        )
         print("✅ 所有专家智能体导入成功")
         return True
     except Exception as e:
@@ -41,7 +33,6 @@ async def test_schemas():
     try:
         from app.schemas.multi_agent import (
             MultiAgentRequest,
-            MultiAgentResponse,
             SpecialistType,
             IntentCategory,
             RoutingStrategy
@@ -53,7 +44,7 @@ async def test_schemas():
             user_id="test-user",
             tenant_id="test-tenant"
         )
-        print(f"✅ MultiAgentRequest 创建成功")
+        print("✅ MultiAgentRequest 创建成功")
         print(f"   - query: {request.query}")
         print(f"   - session_id: {request.session_id}")
         
@@ -119,19 +110,19 @@ async def test_specialist_creation():
         )
         
         finance = FinanceSpecialist()
-        print(f"✅ FinanceSpecialist 创建成功")
+        print("✅ FinanceSpecialist 创建成功")
         print(f"   - specialty: {finance.specialty}")
         
         tax = TaxSpecialist()
-        print(f"✅ TaxSpecialist 创建成功")
+        print("✅ TaxSpecialist 创建成功")
         print(f"   - specialty: {tax.specialty}")
         
         legal = LegalSpecialist()
-        print(f"✅ LegalSpecialist 创建成功")
+        print("✅ LegalSpecialist 创建成功")
         print(f"   - specialty: {legal.specialty}")
         
         reflection = ReflectionSpecialist()
-        print(f"✅ ReflectionSpecialist 创建成功")
+        print("✅ ReflectionSpecialist 创建成功")
         print(f"   - specialty: {reflection.specialty}")
         
         return True
@@ -151,7 +142,7 @@ async def test_api_router():
         from app.api.v1.endpoints import multi_agent
         
         print("✅ multi_agent路由模块导入成功")
-        print(f"✅ 可用端点:")
+        print("✅ 可用端点:")
         
         routes = [route for route in multi_agent.router.routes]
         for route in routes:

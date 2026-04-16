@@ -3,14 +3,12 @@
 负责租户隔离验证、审计日志记录等安全功能
 """
 
-from typing import Optional, Dict, Any, List
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import text, select
+from typing import Optional, Dict, Any
+from sqlalchemy import text
 from app.db.session import AsyncSessionLocal
 from app.models.tenant_audit_log import TenantAuditLog
 from app.middleware.tenant_middleware import get_current_tenant_id, get_current_user_id, set_tenant_context_for_db
 import logging
-import json
 from datetime import datetime
 
 logger = logging.getLogger(__name__)

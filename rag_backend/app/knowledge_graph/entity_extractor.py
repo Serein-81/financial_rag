@@ -389,7 +389,7 @@ class EntityExtractor:
                     entity['description'] = description
 
         if callback:
-            callback(f"✅ 所有实体描述生成完成")
+            callback("✅ 所有实体描述生成完成")
 
         return entities
 

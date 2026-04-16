@@ -40,41 +40,41 @@ async def test_redis_configurations():
             
             # 测试连接
             await redis_client.ping()
-            print(f"   ✅ 连接成功！")
+            print("   ✅ 连接成功！")
             
             # 测试读写
             await redis_client.set("test_key", "test_value", ex=5)
             value = await redis_client.get("test_key")
             
             if value == "test_value":
-                print(f"   ✅ 读写测试成功！")
-                print(f"   💡 正确的Redis配置:")
-                print(f"      REDIS_HOST=localhost")
-                print(f"      REDIS_PORT=6379")
-                print(f"      REDIS_DB=0")
+                print("   ✅ 读写测试成功！")
+                print("   💡 正确的Redis配置:")
+                print("      REDIS_HOST=localhost")
+                print("      REDIS_PORT=6379")
+                print("      REDIS_DB=0")
                 print(f"      REDIS_PASSWORD={config['password'] or ''}")
                 
                 await redis_client.delete("test_key")
                 await redis_client.close()
                 return config['password']
             else:
-                print(f"   ⚠️ 连接成功但读写失败")
+                print("   ⚠️ 连接成功但读写失败")
             
             await redis_client.close()
             
         except redis.AuthenticationError:
-            print(f"   ❌ 认证失败")
+            print("   ❌ 认证失败")
         except redis.ConnectionError as e:
             print(f"   ❌ 连接失败: {e}")
         except Exception as e:
             print(f"   ❌ 其他错误: {e}")
     
-    print(f"\n❌ 所有配置都失败了")
-    print(f"\n💡 可能的解决方案:")
-    print(f"   1. 检查Redis是否正确启动")
-    print(f"   2. 查看Redis启动日志中的密码信息")
-    print(f"   3. 检查redis.conf文件中的requirepass设置")
-    print(f"   4. 尝试使用redis-cli连接测试")
+    print("\n❌ 所有配置都失败了")
+    print("\n💡 可能的解决方案:")
+    print("   1. 检查Redis是否正确启动")
+    print("   2. 查看Redis启动日志中的密码信息")
+    print("   3. 检查redis.conf文件中的requirepass设置")
+    print("   4. 尝试使用redis-cli连接测试")
     
     return None
 
@@ -94,7 +94,7 @@ async def update_env_with_correct_password(password):
         for line in lines:
             if line.startswith('REDIS_PASSWORD='):
                 updated_lines.append(f'REDIS_PASSWORD={password or ""}')
-                print(f"✅ 已更新.env文件中的REDIS_PASSWORD")
+                print("✅ 已更新.env文件中的REDIS_PASSWORD")
             else:
                 updated_lines.append(line)
         
@@ -116,22 +116,22 @@ async def main():
     correct_password = await test_redis_configurations()
     
     if correct_password is not None:
-        print(f"\n🎉 找到正确的Redis配置！")
+        print("\n🎉 找到正确的Redis配置！")
         
         # 更新.env文件
         if await update_env_with_correct_password(correct_password):
-            print(f"✅ 配置已更新到.env文件")
-            print(f"🚀 现在可以重新运行API测试了")
+            print("✅ 配置已更新到.env文件")
+            print("🚀 现在可以重新运行API测试了")
         else:
             print(f"⚠️ 请手动更新.env文件中的REDIS_PASSWORD={correct_password or ''}")
     else:
-        print(f"\n❌ 未找到正确的Redis配置")
-        print(f"\n🔧 手动检查方法:")
-        print(f"   1. 打开新的命令提示符")
-        print(f"   2. 切换到 D:\\redis 目录")
-        print(f"   3. 运行: redis-cli.exe")
-        print(f"   4. 如果提示输入密码，记录下正确的密码")
-        print(f"   5. 或者查看redis.conf文件中的requirepass设置")
+        print("\n❌ 未找到正确的Redis配置")
+        print("\n🔧 手动检查方法:")
+        print("   1. 打开新的命令提示符")
+        print("   2. 切换到 D:\\redis 目录")
+        print("   3. 运行: redis-cli.exe")
+        print("   4. 如果提示输入密码，记录下正确的密码")
+        print("   5. 或者查看redis.conf文件中的requirepass设置")
 
 
 if __name__ == "__main__":

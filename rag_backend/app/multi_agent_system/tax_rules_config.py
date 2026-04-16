@@ -3,7 +3,7 @@
 用于配置税务审核场景的规则、阈值和验证逻辑
 """
 
-from typing import Dict, List, Any, Tuple
+from typing import Dict, List, Tuple
 from dataclasses import dataclass
 from enum import Enum
 

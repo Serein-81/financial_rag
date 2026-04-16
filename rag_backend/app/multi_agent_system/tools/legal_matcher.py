@@ -3,7 +3,7 @@
 提供法律条款匹配和合规检查功能
 """
 
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, List
 import re
 from datetime import datetime
 

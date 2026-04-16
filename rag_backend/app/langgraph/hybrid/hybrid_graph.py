@@ -232,7 +232,6 @@ class HybridGraphBuilder:
         Returns:
             LangGraph 兼容的节点函数
         """
-        import asyncio
         node = self.expert_consultation_node
         
         async def expert_consultation_func(state: UnifiedState) -> UnifiedState:
@@ -247,7 +246,6 @@ class HybridGraphBuilder:
         Returns:
             LangGraph 兼容的节点函数
         """
-        import asyncio
         node = self.summarizer_node
         
         async def summarizer_func(state: UnifiedState) -> UnifiedState:
@@ -388,7 +386,7 @@ class HybridGraphBuilder:
         """创建生成节点"""
         async def generator_func(state: UnifiedState) -> UnifiedState:
             logger.info(
-                f"[Generator] 生成响应"
+                "[Generator] 生成响应"
             )
             state["current_phase"] = "generation"
             
@@ -403,7 +401,7 @@ class HybridGraphBuilder:
         """创建反思节点"""
         async def reflection_func(state: UnifiedState) -> UnifiedState:
             logger.info(
-                f"[Reflection] 执行反思"
+                "[Reflection] 执行反思"
             )
             state["current_phase"] = "reflection"
             

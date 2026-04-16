@@ -6,7 +6,6 @@ PolicyNotificationAgent API 测试脚本
 """
 
 import asyncio
-import json
 from typing import Dict, Any
 import sys
 import os
@@ -113,7 +112,7 @@ class PolicyAgentAPITester:
                 "match_weights": self.service.agent.match_weights if self.service.agent else None
             }
             
-            print(f"\n✅ 智能体状态:")
+            print("\n✅ 智能体状态:")
             print(f"   - 状态: {status['status']}")
             print(f"   - 使用 LLM: {status['use_llm']}")
             print(f"   - LLM 提供商: {status['llm_provider']}")
@@ -146,7 +145,7 @@ class PolicyAgentAPITester:
                 enterprise_profile=self.test_data['enterprise']
             )
             
-            print(f"\n✅ 匹配结果:")
+            print("\n✅ 匹配结果:")
             print(f"   - 总匹配度: {match_result['match_score']*100:.1f}%")
             print(f"   - 语义匹配: {match_result['semantic_score']*100:.1f}%")
             print(f"   - 行业匹配: {match_result['industry_score']*100:.1f}%")
@@ -155,7 +154,7 @@ class PolicyAgentAPITester:
             print(f"   - 紧急度: {match_result['urgency_score']*100:.1f}%")
             print(f"   - 使用 LLM: {'✅' if match_result['use_llm'] else '❌'}")
             
-            print(f"\n📌 匹配理由:")
+            print("\n📌 匹配理由:")
             for i, reason in enumerate(match_result['reasons'], 1):
                 print(f"   {i}. {reason}")
             
@@ -174,7 +173,7 @@ class PolicyAgentAPITester:
         print("="*60)
         
         try:
-            print(f"\n📝 正在生成通知...")
+            print("\n📝 正在生成通知...")
             
             match_result = await self.test_match()
             if not match_result:
@@ -187,19 +186,19 @@ class PolicyAgentAPITester:
                 match_result=match_result
             )
             
-            print(f"\n✅ 通知生成完成:")
+            print("\n✅ 通知生成完成:")
             print(f"   - 标题: {notification['title']}")
             print(f"   - 紧急度: {notification['urgency_level']}")
             print(f"   - 使用 LLM: {'✅' if notification['use_llm'] else '❌'}")
             
-            print(f"\n📋 通知内容:")
+            print("\n📋 通知内容:")
             print(f"   {notification['content'][:200]}...")
             
-            print(f"\n🎯 关键要点:")
+            print("\n🎯 关键要点:")
             for i, point in enumerate(notification['key_points'], 1):
                 print(f"   {i}. {point}")
             
-            print(f"\n✅ 行动步骤:")
+            print("\n✅ 行动步骤:")
             for i, step in enumerate(notification['action_steps'], 1):
                 print(f"   {i}. {step}")
             
@@ -229,7 +228,7 @@ class PolicyAgentAPITester:
             )
             
             print(f"\n✅ 排序完成 - {len(prioritized)} 个政策")
-            print(f"\n📊 优先级排序结果:")
+            print("\n📊 优先级排序结果:")
             
             for i, policy in enumerate(prioritized, 1):
                 print(f"\n   {i}. {policy.get('title', '未知')}")
@@ -254,7 +253,7 @@ class PolicyAgentAPITester:
         import time
         
         try:
-            print(f"\n⏳ 正在运行完整流程测试...")
+            print("\n⏳ 正在运行完整流程测试...")
             print(f"   - 处理 {len(self.test_data['policies'])} 个政策")
             print(f"   - 企业: {self.test_data['enterprise']['enterprise_name']}")
             
@@ -279,7 +278,7 @@ class PolicyAgentAPITester:
                     match_result=match_result
                 )
                 notifications.append(notification)
-                print(f"      ✅ 通知生成完成")
+                print("      ✅ 通知生成完成")
                 
                 await asyncio.sleep(0.5)
             
@@ -290,7 +289,7 @@ class PolicyAgentAPITester:
             
             processing_time = time.time() - start_time
             
-            print(f"\n✅ 完整流程测试完成:")
+            print("\n✅ 完整流程测试完成:")
             print(f"   - 处理政策数: {len(self.test_data['policies'])}")
             print(f"   - 生成匹配数: {len(matches)}")
             print(f"   - 生成通知数: {len(notifications)}")

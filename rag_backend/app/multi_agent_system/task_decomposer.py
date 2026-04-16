@@ -3,7 +3,7 @@
 负责分析文档类型并分解审查任务
 """
 
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any
 from enum import Enum
 
 
@@ -151,7 +151,7 @@ class TaskDecomposer:
             ])
         }
         
-        print(f"✅ [任务分解器] 任务分解完成")
+        print("✅ [任务分解器] 任务分解完成")
         print(f"   - 需要审查类型: {', '.join(required_audit_types)}")
         print(f"   - 高优先级文档: {result['high_priority_documents']} 个")
         print(f"   - 预估时间: {estimated_time} 秒")

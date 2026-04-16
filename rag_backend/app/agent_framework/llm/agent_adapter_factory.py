@@ -8,11 +8,10 @@
 """
 
 import logging
-from typing import Optional
 
 from app.core.config import settings
 from .base_adapter import BaseLLMAdapter
-from .agent_llm_config import AgentLLMConfig, AgentType
+from .agent_llm_config import AgentLLMConfig
 
 logger = logging.getLogger(__name__)
 

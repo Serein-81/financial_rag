@@ -4,10 +4,8 @@
 """
 
 import sys
-import asyncio
 from pathlib import Path
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -20,7 +18,7 @@ def test_orchestration_context_creation():
     
     try:
         from dataclasses import dataclass, field
-        from typing import Dict, List, Any, Optional
+        from typing import Dict, Any, Optional
         from datetime import datetime
         
         @dataclass
@@ -43,7 +41,7 @@ def test_orchestration_context_creation():
             user_query="测试查询：分析公司财务状况"
         )
         
-        print(f"✅ OrchestrationContext 创建成功")
+        print("✅ OrchestrationContext 创建成功")
         print(f"   - session_id: {context.session_id}")
         print(f"   - tenant_id: {context.tenant_id}")
         print(f"   - user_query: {context.user_query}")
@@ -86,7 +84,7 @@ def test_intent_analysis_result():
             suggested_questions=["预期收益率是多少？", "风险评估如何？"]
         )
         
-        print(f"✅ IntentAnalysisResult 创建成功")
+        print("✅ IntentAnalysisResult 创建成功")
         print(f"   - primary_intent: {intent_result.primary_intent}")
         print(f"   - routing_strategy: {intent_result.routing_strategy}")
         print(f"   - confidence: {intent_result.confidence}")
@@ -127,7 +125,7 @@ def test_specialist_result_creation():
             metadata={"source": "financial_analysis"}
         )
         
-        print(f"✅ SpecialistResult 创建成功")
+        print("✅ SpecialistResult 创建成功")
         print(f"   - specialist_type: {finance_result.specialist_type}")
         print(f"   - success: {finance_result.success}")
         print(f"   - confidence: {finance_result.confidence}")
@@ -163,7 +161,7 @@ def test_reflection_result_creation():
             ]
         )
         
-        print(f"✅ ReflectionResult 创建成功")
+        print("✅ ReflectionResult 创建成功")
         print(f"   - quality_score: {reflection_result.quality_score}")
         print(f"   - quality_level: {reflection_result.quality_level}")
         print(f"   - needs_revision: {reflection_result.needs_revision}")
@@ -221,7 +219,7 @@ def test_multi_specialist_collaboration():
             processing_time=1.0
         ))
         
-        print(f"✅ 多专家协作测试成功")
+        print("✅ 多专家协作测试成功")
         print(f"   - 专家数量: {len(specialist_results)}")
         for sr in specialist_results:
             print(f"   - {sr.specialist_type}: {'成功' if sr.success else '失败'}")
@@ -269,8 +267,6 @@ def test_orchestration_context_flow():
         
         from app.schemas.multi_agent import (
             IntentAnalysisResult,
-            SpecialistResult,
-            ReflectionResult,
             IntentCategory,
             RoutingStrategy,
             ComplexityLevel,
@@ -319,7 +315,7 @@ def test_orchestration_context_flow():
         
         context.final_response = "综合分析完成：贵公司在财务、税务和合规方面表现良好。"
         
-        print(f"✅ 编排上下文流程测试成功")
+        print("✅ 编排上下文流程测试成功")
         print(f"   - session_id: {context.session_id}")
         print(f"   - intent_result: {context.intent_result.primary_intent}")
         print(f"   - specialist_results 数量: {len(context.specialist_results)}")
@@ -362,7 +358,7 @@ def test_report_generation_flow():
             include_sections=["intent_analysis", "specialist_results", "quality_review"]
         )
         
-        print(f"✅ 报告生成请求创建成功")
+        print("✅ 报告生成请求创建成功")
         print(f"   - session_id: {request.session_id}")
         print(f"   - report_type: {request.report_type}")
         print(f"   - format: {request.format}")
@@ -426,7 +422,7 @@ def test_report_generation_flow():
 *本报告由多智能体系统自动生成*
 """
         
-        print(f"✅ 报告内容生成成功")
+        print("✅ 报告内容生成成功")
         print(f"   - 报告长度: {len(report_content)} 字符")
         
         assert request.session_id == "report-test-session"
@@ -460,7 +456,7 @@ def test_error_handling():
             request_id="error-test-req-123"
         )
         
-        print(f"✅ 错误响应创建成功")
+        print("✅ 错误响应创建成功")
         print(f"   - error_code: {error_response.error_code}")
         print(f"   - error_message: {error_response.error_message}")
         print(f"   - request_id: {error_response.request_id}")
@@ -515,7 +511,7 @@ def test_system_health_check():
             timestamp=datetime.now()
         )
         
-        print(f"✅ 系统健康检查成功")
+        print("✅ 系统健康检查成功")
         print(f"   - overall_status: {health_response.overall_status}")
         print(f"   - agents 数量: {len(health_response.agents)}")
         print(f"   - orchestrator_status: {health_response.orchestrator_status}")
@@ -554,7 +550,7 @@ def test_session_management():
             metadata={"source": "integration_test", "test_id": "test-001"}
         )
         
-        print(f"✅ 会话创建请求成功")
+        print("✅ 会话创建请求成功")
         print(f"   - user_id: {session_request.user_id}")
         print(f"   - tenant_id: {session_request.tenant_id}")
         
@@ -567,7 +563,7 @@ def test_session_management():
             }
         )
         
-        print(f"✅ 会话创建响应成功")
+        print("✅ 会话创建响应成功")
         print(f"   - session_id: {session_response.session_id}")
         print(f"   - created_at: {session_response.created_at}")
         
@@ -582,7 +578,7 @@ def test_session_management():
             metadata={}
         )
         
-        print(f"✅ 会话状态查询成功")
+        print("✅ 会话状态查询成功")
         print(f"   - session_id: {session_status.session_id}")
         print(f"   - status: {session_status.status}")
         print(f"   - message_count: {session_status.message_count}")

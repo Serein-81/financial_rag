@@ -4,8 +4,8 @@
 整合 Memory 和 RAG，根据智能路由结果执行相应的检索
 """
 
-from typing import List, Dict, Any, Optional
-from app.services.smart_router import smart_router, RouteMode, is_greeting_query
+from typing import List, Dict, Any
+from app.services.smart_router import smart_router, RouteMode
 from app.services.search_service import search_service
 from app.memory_system.memory_manager import MemoryManager
 from app.memory_system.base_memory import MemoryItem

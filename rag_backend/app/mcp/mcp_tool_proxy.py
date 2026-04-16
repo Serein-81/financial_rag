@@ -5,7 +5,6 @@ MCP 工具代理
 让 Agent 可以通过统一的接口调用本地工具和 MCP 工具
 """
 
-import os
 import logging
 from typing import Any, Dict, Optional
 from langchain_core.tools import tool
@@ -80,7 +79,7 @@ class MCPToolProxy:
         """
         client = await self.get_client()
         if client is None:
-            return f"错误: MCP 服务不可用，请检查 MCP_SERVER_URL 配置"
+            return "错误: MCP 服务不可用，请检查 MCP_SERVER_URL 配置"
         
         try:
             result = await client.call_tool(tool_name, **kwargs)

@@ -7,7 +7,6 @@ import re
 import json
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
-from decimal import Decimal, InvalidOperation
 from dataclasses import dataclass, field
 
 
@@ -180,7 +179,7 @@ class TaxOutputValidator:
                     if amount < 0 and field_name not in ["net_amount", "deductible_amount"]:
                         errors.append(ValidationError(
                             field=field_name,
-                            message=f"金额字段不应为负数",
+                            message="金额字段不应为负数",
                             value=amount,
                             expected=">= 0"
                         ))
@@ -189,15 +188,15 @@ class TaxOutputValidator:
                     if abs(amount - round(amount, 2)) > 0.001:
                         errors.append(ValidationError(
                             field=field_name,
-                            message=f"金额精度超过2位小数，已自动修正",
+                            message="金额精度超过2位小数，已自动修正",
                             value=amount,
                             expected="最多2位小数"
                         ))
                 
-                except (ValueError, TypeError) as e:
+                except (ValueError, TypeError):
                     errors.append(ValidationError(
                         field=field_name,
-                        message=f"金额字段格式无效",
+                        message="金额字段格式无效",
                         value=value,
                         expected="数字类型"
                     ))

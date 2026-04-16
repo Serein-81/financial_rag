@@ -5,7 +5,7 @@
 """
 
 import re
-from typing import Literal, Dict, Any
+from typing import Dict, Any
 from enum import Enum
 from app.services.llm_service import llm_service
 
@@ -153,7 +153,7 @@ HYBRID"""
         """
         # 问候语检测 - 直接返回 GREETING 模式，跳过 LLM 调用
         if is_greeting_query(query):
-            print(f"💬 [智能路由] 检测到问候语，跳过 RAG 检索")
+            print("💬 [智能路由] 检测到问候语，跳过 RAG 检索")
             return RouteMode.GREETING
         
         # 构造 prompt

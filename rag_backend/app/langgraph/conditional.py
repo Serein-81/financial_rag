@@ -5,7 +5,7 @@ LangGraph 条件边路由
 """
 
 import logging
-from typing import Literal, List, Callable
+from typing import List, Callable
 from .state import AgentState, IntentCategory, SpecialistType, QualityLevel
 
 logger = logging.getLogger(__name__)

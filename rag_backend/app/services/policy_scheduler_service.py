@@ -9,9 +9,7 @@
 
 import logging
 import asyncio
-from datetime import datetime, timedelta
-from typing import List, Optional
-from uuid import UUID
+from typing import Optional
 
 from app.services.policy_crawler_service import policy_crawler_service, CrawledPolicy
 from app.models.policy import Policy, PolicyStatus, PolicyPriority

@@ -11,7 +11,6 @@ from app.schemas.policy_tracking import (
     PolicyCategory,
     PolicyImpactLevel,
     SubscriptionStatus,
-    NotificationChannel,
     NotificationFrequency,
     PolicySubscriptionRequest,
     PolicyUpdate,

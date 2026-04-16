@@ -5,7 +5,7 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import and_, or_, desc, func, select, update
+from sqlalchemy import and_, or_, desc, func, select
 
 from app.api import deps
 from app.models.user import User

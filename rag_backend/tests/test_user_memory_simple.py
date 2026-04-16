@@ -11,7 +11,7 @@ import json
 import re
 from datetime import datetime
 from dataclasses import dataclass
-from typing import List, Dict, Any, Optional
+from typing import List, Dict
 
 
 @dataclass
@@ -273,7 +273,7 @@ def test_01_parse_extraction_result():
         # 解析模拟的LLM响应
         result = _parse_extraction_result(MOCK_LLM_RESPONSE)
         
-        print(f"\n📊 解析结果:")
+        print("\n📊 解析结果:")
         print(f"   - 事实数量: {len(result.facts)}")
         print(f"   - 偏好数量: {len(result.preferences)}")
         print(f"   - 纠正数量: {len(result.corrections)}")
@@ -309,7 +309,7 @@ def test_02_filter_by_confidence():
         filtered_result = _filter_by_confidence(result, confidence_threshold=0.9)
         filtered_count = filtered_result.total_items
         
-        print(f"\n📊 过滤结果:")
+        print("\n📊 过滤结果:")
         print(f"   - 原始数量: {original_count}")
         print(f"   - 过滤后数量: {filtered_count}")
         print(f"   - 过滤掉: {original_count - filtered_count}")
@@ -345,7 +345,7 @@ def test_03_format_conversation():
         # 格式化对话
         formatted = _format_conversation(SAMPLE_CONVERSATION)
         
-        print(f"\n📊 格式化结果:")
+        print("\n📊 格式化结果:")
         print(f"   - 原始消息数: {len(SAMPLE_CONVERSATION)}")
         print(f"   - 格式化后长度: {len(formatted)} 字符")
         print(f"   - 包含用户消息: {'用户' in formatted}")

@@ -2,7 +2,6 @@
 import logging
 import asyncio
 from typing import List, Dict, Any, Optional, Callable
-from sqlalchemy.orm import Session
 
 from app.knowledge_graph.entity_extractor import EntityExtractor
 from app.knowledge_graph.relation_extractor import RelationExtractor
@@ -167,7 +166,7 @@ class GraphBuilder:
                     progress.warning(f"处理文本 {idx + 1} 失败: {e}")
                     continue
 
-            progress.info(f"📊 合并实体和关系")
+            progress.info("📊 合并实体和关系")
             merged_entities = self.entity_extractor._merge_entities(all_entities)
             merged_relations = self.relation_extractor._merge_relations(all_relations)
 
@@ -481,20 +480,20 @@ class GraphBuilder:
 
             await asyncio.gather(*tasks, return_exceptions=True)
 
-            progress.info(f"📊 合并实体和关系")
+            progress.info("📊 合并实体和关系")
 
             merged_entities = self.entity_extractor._merge_entities(all_entities)
             merged_relations = self.relation_extractor._merge_relations(all_relations)
 
             progress.info(f"✅ 合并完成: {len(merged_entities)} 个实体, {len(merged_relations)} 个关系")
 
-            progress.info(f"📤 创建实体到图数据库")
+            progress.info("📤 创建实体到图数据库")
             created_entities = await self._batch_create_entities(
                 merged_entities, user_id, session_id, tenant_id, progress
             )
             progress.success(f"✅ 成功创建 {len(created_entities)} 个实体")
 
-            progress.info(f"📤 创建关系到图数据库")
+            progress.info("📤 创建关系到图数据库")
             created_relations = await self._batch_create_relations(
                 merged_relations, user_id, session_id, tenant_id, progress
             )

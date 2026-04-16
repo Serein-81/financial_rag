@@ -11,7 +11,6 @@ from datetime import datetime, timedelta
 from collections import deque
 from enum import Enum
 import logging
-import json
 
 logger = logging.getLogger(__name__)
 

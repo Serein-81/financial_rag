@@ -5,16 +5,14 @@ from sqlalchemy import text
 from app.core.config import settings
 from app.db.session import engine
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from app.utils.logging_config import setup_logging, get_logger, LogFormat
 
 from app.core.resource_manager import make_resource_manager, RedisConnectionPool
 
-from app.db.base import Base
 # ➕ 2. 必须导入 models 里的文件！
 # 只有导入了 document，SQLAlchemy 才知道 "哦，原来有一个叫 Document 的子类要建表"
 # 如果不导入这行，Base.metadata 里面是空的，就不会建表。
-from app.models import document, tax_report, audit_task, review_request, user_financial_data, tenant_settings, policy, policy_relation, enterprise_policy_match, financial_health, contract_review, scheduled_task, workflow_trace
+from app.models import tax_report, user_financial_data, tenant_settings, policy, financial_health, contract_review
 from app.api.v1.endpoints import document as document_router, search, chat, auth, session, knowledge, agent_trace, tool_trace, prompt_optimization, memory, knowledge_graph, audit, invite_code, enterprise, logs, chat_logs, tax_report, human_review, multi_agent, group_chat, user_financial_data, tenant_settings, policy, rate_limit, streaming, snapshot, suggestion, tax_intelligence, financial_health, policy_tracking, contract_review, task_manager, agent_llm_config, agent_discovery, financial_tools_test, workflow_events, policy_notifications, policy_agent, workflow
 from app.api.v1.endpoints import circuit_breaker_router
 
@@ -107,7 +105,7 @@ async def lifespan(app: FastAPI):
             from app.memory_system.model_context_manager import model_context_manager
             init_success = await model_context_manager.initialize()
             if init_success:
-                logger.info(f"✅ ModelContextManager 初始化成功 - 从 API 加载")
+                logger.info("✅ ModelContextManager 初始化成功 - 从 API 加载")
             else:
                 cached_count = len(model_context_manager.get_all_context_limits())
                 logger.info(f"✅ ModelContextManager 初始化完成 - 使用缓存 ({cached_count} 个模型)")

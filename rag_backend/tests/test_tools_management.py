@@ -87,9 +87,9 @@ def test_integration_with_prompt():
     tools_info = get_tools_info()
     
     print("📝 提示词渲染所需的工具数据:")
-    print(f"   context = {{")
+    print("   context = {")
     print(f"       'tools': {tools_info}")
-    print(f"   }}")
+    print("   }")
     
     print("\n✅ 这些数据可以直接传递给 prompt_engine.render()")
     print()

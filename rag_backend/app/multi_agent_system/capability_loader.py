@@ -6,7 +6,7 @@
 import yaml
 import logging
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, Any, Optional
 
 from .agent_capability_registry import (
     AgentCapabilityRegistry,
