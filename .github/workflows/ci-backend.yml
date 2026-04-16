@@ -46,6 +46,15 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
+      # 👇 新增的 Neo4j 服务，为测试提供图数据库环境
+      neo4j:
+        image: neo4j:5
+        env:
+          NEO4J_AUTH: neo4j/test_password
+        ports:
+          - 7687:7687
+          - 7474:7474
+
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
