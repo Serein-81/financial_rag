@@ -1,0 +1,105 @@
+{
+  "timestamp": "2026-03-13T17:14:11.023321",
+  "summary": {
+    "total_tests": 9,
+    "passed_tests": 4,
+    "success_rate": 44.44444444444444
+  },
+  "results": {
+    "数据库": [
+      {
+        "test": "连接测试",
+        "success": true,
+        "message": "连接成功 | 数据库: rag_db",
+        "data": null,
+        "timestamp": "2026-03-13T17:13:52.123092"
+      },
+      {
+        "test": "表结构检查",
+        "success": true,
+        "message": "发现 15 个表",
+        "data": [
+          "agent_steps",
+          "agent_traces",
+          "chat_messages",
+          "chat_sessions",
+          "document_chunks",
+          "documents",
+          "knowledge_bases",
+          "prompt_ab_tests",
+          "prompt_executions",
+          "prompt_templates",
+          "search_logs",
+          "system_logs",
+          "tool_call_traces",
+          "user_action_logs",
+          "users"
+        ],
+        "timestamp": "2026-03-13T17:13:52.145768"
+      }
+    ],
+    "LLM服务": [
+      {
+        "test": "对话测试",
+        "success": false,
+        "message": "调用失败: Attribute name 'metadata' is reserved when using the Declarative API.",
+        "data": null,
+        "timestamp": "2026-03-13T17:13:54.333728"
+      }
+    ],
+    "和风天气": [
+      {
+        "test": "API测试",
+        "success": false,
+        "message": "请求失败: ",
+        "data": null,
+        "timestamp": "2026-03-13T17:13:55.442671"
+      }
+    ],
+    "高德地图": [
+      {
+        "test": "地理编码",
+        "success": false,
+        "message": "API错误: USERKEY_PLAT_NOMATCH",
+        "data": null,
+        "timestamp": "2026-03-13T17:13:57.421446"
+      }
+    ],
+    "Tavily搜索": [
+      {
+        "test": "API测试",
+        "success": false,
+        "message": "请求失败: ",
+        "data": null,
+        "timestamp": "2026-03-13T17:13:59.812830"
+      }
+    ],
+    "Redis": [
+      {
+        "test": "连接测试",
+        "success": false,
+        "message": "连接失败: 'RedisService' object has no attribute 'set'",
+        "data": null,
+        "timestamp": "2026-03-13T17:14:04.637084"
+      }
+    ],
+    "MinIO": [
+      {
+        "test": "连接测试",
+        "success": true,
+        "message": "连接成功 | 存储桶: ['avatars', 'documents']",
+        "data": null,
+        "timestamp": "2026-03-13T17:14:04.660207"
+      }
+    ],
+    "向量嵌入": [
+      {
+        "test": "嵌入生成",
+        "success": true,
+        "message": "生成成功 | 维度: 2048",
+        "data": "前5维: [-0.018842278, -0.00213704, -0.00019792154, 0.0064623854, -0.023131005]",
+        "timestamp": "2026-03-13T17:14:11.020306"
+      }
+    ]
+  }
+}

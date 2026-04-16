@@ -1,0 +1,133 @@
+-- ====================================================================
+-- 财务模块完整测试数据 - 分步执行版
+-- 生成时间: 2026-04-11
+-- 重要：按步骤顺序执行，每个步骤独立运行
+-- ====================================================================
+
+-- ====================================================================
+-- 步骤1: financial_health_reports (财务健康报告)
+-- 说明: 独立数据，不需要依赖其他表
+-- 注意：如果已有重复数据，可以先删除或跳过
+-- 插入3条记录
+-- ====================================================================
+
+-- 可选：先清空旧数据（谨慎使用！）
+-- TRUNCATE TABLE financial_health_reports CASCADE;
+
+-- 插入财务健康报告
+INSERT INTO financial_health_reports (
+    id,
+    user_id,
+    tenant_id,
+    report_name,
+    report_period,
+    period_start,
+    period_end,
+    overall_health_score,
+    health_status,
+    revenue_summary,
+    expense_summary,
+    profit_summary,
+    cash_flow_summary,
+    financial_metrics,
+    trend_indicators,
+    anomaly_detections,
+    risk_assessments,
+    recommendations,
+    revenue_data,
+    expense_data,
+    generated_by,
+    source_data_description,
+    status,
+    created_at,
+    completed_at,
+    expires_at
+) VALUES
+(
+    gen_random_uuid(),
+    (SELECT id FROM users LIMIT 1),
+    'test_tenant_001',
+    '2024年Q1综合财务健康报告',
+    'quarterly',
+    '2024-01-01'::timestamp,
+    '2024-03-31'::timestamp,
+    78.5,
+    'healthy',
+    '{"total_revenue": 5000000, "revenue_growth": 12.5, "main_revenue_sources": ["产品销售", "服务收入"]}'::jsonb,
+    '{"total_expense": 3800000, "expense_growth": 8.2, "main_expense_items": ["运营成本", "管理费用"]}'::jsonb,
+    '{"gross_profit": 1200000, "net_profit": 850000, "profit_margin": 17.0}'::jsonb,
+    '{"operating_cash_flow": 950000, "investing_cash_flow": -200000, "financing_cash_flow": -150000, "cash_position": 1800000}'::jsonb,
+    '{"liquidity_ratio": 2.1, "current_ratio": 1.8, "debt_to_asset": 0.45, "roe": 15.2, "roa": 8.5}'::jsonb,
+    '{"revenue_trend": "up", "profit_trend": "stable", "cash_flow_trend": "improving"}'::jsonb,
+    '{"margin_decline": false, "cash_flow_negative": false, "debt_ratio_increase": false}'::jsonb,
+    '{"high_risk": false, "medium_risk": true, "low_risk": false}'::jsonb,
+    '["继续优化成本控制", "提高资产周转效率", "加强应收账款管理"]'::jsonb,
+    '{"monthly": [1500000, 1600000, 1900000], "quarterly": [5000000], "yearly": null}'::jsonb,
+    '{"monthly": [1200000, 1250000, 1350000], "quarterly": [3800000], "yearly": null}'::jsonb,
+    'system',
+    '基于2024年Q1财务数据生成，包含月度、季度收入支出数据',
+    'completed',
+    NOW(),
+    NOW(),
+    NOW() + INTERVAL '90 days'
+),
+(
+    gen_random_uuid(),
+    (SELECT id FROM users LIMIT 1 OFFSET 1),
+    'test_tenant_002',
+    '2024年Q1风险预警报告',
+    'quarterly',
+    '2024-01-01'::timestamp,
+    '2024-03-31'::timestamp,
+    65.2,
+    'warning',
+    '{"total_revenue": 3200000, "revenue_growth": 3.2, "main_revenue_sources": ["产品销售"]}'::jsonb,
+    '{"total_expense": 2900000, "expense_growth": 12.8, "main_expense_items": ["运营成本", "财务费用"]}'::jsonb,
+    '{"gross_profit": 300000, "net_profit": 150000, "profit_margin": 4.7}'::jsonb,
+    '{"operating_cash_flow": -150000, "investing_cash_flow": -80000, "financing_cash_flow": 300000, "cash_position": 850000}'::jsonb,
+    '{"liquidity_ratio": 1.2, "current_ratio": 0.95, "debt_to_asset": 0.68, "roe": 6.8, "roa": 2.3}'::jsonb,
+    '{"revenue_trend": "slow", "profit_trend": "declining", "cash_flow_trend": "worsening"}'::jsonb,
+    '{"margin_decline": true, "cash_flow_negative": true, "debt_ratio_increase": true}'::jsonb,
+    '{"high_risk": true, "medium_risk": false, "low_risk": false}'::jsonb,
+    '["加强现金流管理", "优化库存结构", "拓展融资渠道", "控制成本费用"]'::jsonb,
+    '{"monthly": [1000000, 1100000, 1100000], "quarterly": [3200000], "yearly": null}'::jsonb,
+    '{"monthly": [950000, 980000, 970000], "quarterly": [2900000], "yearly": null}'::jsonb,
+    'system',
+    '基于2024年Q1财务数据生成，检测到多项财务风险指标',
+    'completed',
+    NOW(),
+    NOW(),
+    NOW() + INTERVAL '90 days'
+),
+(
+    gen_random_uuid(),
+    (SELECT id FROM users LIMIT 1 OFFSET 2),
+    'test_tenant_001',
+    '2024年Q2优秀财务报告',
+    'quarterly',
+    '2024-04-01'::timestamp,
+    '2024-06-30'::timestamp,
+    85.6,
+    'excellent',
+    '{"total_revenue": 5800000, "revenue_growth": 16.0, "main_revenue_sources": ["产品销售", "服务收入", "技术授权"]}'::jsonb,
+    '{"total_expense": 4000000, "expense_growth": 5.3, "main_expense_items": ["运营成本", "研发费用"]}'::jsonb,
+    '{"gross_profit": 1800000, "net_profit": 1350000, "profit_margin": 23.3}'::jsonb,
+    '{"operating_cash_flow": 1500000, "investing_cash_flow": -300000, "financing_cash_flow": -200000, "cash_position": 2500000}'::jsonb,
+    '{"liquidity_ratio": 2.5, "current_ratio": 2.2, "debt_to_asset": 0.38, "roe": 18.5, "roa": 10.2}'::jsonb,
+    '{"revenue_trend": "up", "profit_trend": "improving", "cash_flow_trend": "stable"}'::jsonb,
+    '{"margin_decline": false, "cash_flow_negative": false, "debt_ratio_increase": false}'::jsonb,
+    '{"high_risk": false, "medium_risk": false, "low_risk": true}'::jsonb,
+    '["保持现有优势", "适度进行业务扩张", "加强风险防控", "继续研发投入"]'::jsonb,
+    '{"monthly": [1800000, 1950000, 2050000], "quarterly": [5800000], "yearly": null}'::jsonb,
+    '{"monthly": [1250000, 1350000, 1400000], "quarterly": [4000000], "yearly": null}'::jsonb,
+    'system',
+    '基于2024年Q2财务数据生成，企业财务状况优秀',
+    'completed',
+    NOW(),
+    NOW(),
+    NOW() + INTERVAL '90 days'
+);
+
+-- 验证插入结果
+SELECT 'financial_health_reports' AS table_name, COUNT(*) AS count FROM financial_health_reports;
+

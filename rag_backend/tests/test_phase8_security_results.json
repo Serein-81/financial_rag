@@ -1,0 +1,27 @@
+[
+  {
+    "test": "PostgreSQL 租户隔离",
+    "status": "PASS",
+    "details": "所有隔离测试通过"
+  },
+  {
+    "test": "MinIO 租户隔离",
+    "status": "PASS",
+    "details": "路径隔离验证通过"
+  },
+  {
+    "test": "API 权限验证",
+    "status": "PASS",
+    "details": "所有权限模块正常"
+  },
+  {
+    "test": "审计日志隔离",
+    "status": "PASS",
+    "details": "日志隔离验证通过"
+  },
+  {
+    "test": "数据泄露防护",
+    "status": "FAIL",
+    "error": "密码应该被哈希"
+  }
+]
