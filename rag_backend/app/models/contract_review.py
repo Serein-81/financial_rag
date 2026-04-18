@@ -57,6 +57,7 @@ class ContractReviewReport(Base):
     contract_type = Column(SQLEnum(ContractType), nullable=True)
     counterparty = Column(String(255), nullable=True)
 
+    # 合同金额
     contract_value = Column(Float, nullable=True)
     currency = Column(String(10), default="CNY")
 

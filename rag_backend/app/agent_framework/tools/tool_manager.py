@@ -221,6 +221,42 @@ class ToolManager:
             logger.error(f"❌ 注册 LangChain 工具失败: {str(e)}")
             raise
     
+    def register_tool(self, tool: 'ToolBase'):
+        """
+        注册 ToolBase 实例工具
+        
+        Args:
+            tool: ToolBase 实例
+        """
+        try:
+            metadata = tool.get_metadata()
+            name = metadata.name
+            description = metadata.description
+            
+            self.tools[name] = {
+                "func": tool.execute,
+                "description": description,
+                "parameters": metadata.parameters,
+                "timeout": metadata.timeout,
+                "type": "toolbase",
+                "original_tool": tool
+            }
+            
+            logger.info(f"✅ 注册 ToolBase 工具: {name}")
+            logger.info(f"   描述: {description}")
+            logger.info(f"   超时: {metadata.timeout}秒")
+            logger.info(f"   标签: {', '.join(metadata.tags)}")
+            
+        except (ValueError, KeyError) as e:
+            logger.error(f"❌ 注册 ToolBase 工具数据错误: {str(e)}")
+            raise
+        except (OSError, IOError) as e:
+            logger.error(f"❌ 注册 ToolBase 工具IO错误: {str(e)}")
+            raise
+        except Exception as e:
+            logger.error(f"❌ 注册 ToolBase 工具失败: {str(e)}")
+            raise
+    
     async def call_tool(self, tool_name: str, trace_id: str = None, **kwargs) -> str:
         """
         调用工具（带追踪）

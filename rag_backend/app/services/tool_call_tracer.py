@@ -91,7 +91,7 @@ class ToolCallTracer:
             call_trace.end_time = time.time()
             call_trace.status = status
             call_trace.error_message = error_message
-            call_trace.metadata = metadata
+            call_trace.extra_metadata = metadata  # 映射到数据库的 metadata 列
             
             await db.commit()
             

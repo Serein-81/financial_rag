@@ -25,6 +25,7 @@ from app.mcp.mcp_factory import (
     BaseMCPClient,
     LocalMCPClient,
     CloudMCPClient,
+    HybridMCPClient,
     mcp_factory,
 )
 
@@ -42,5 +43,6 @@ __all__ = [
     "BaseMCPClient",
     "LocalMCPClient",
     "CloudMCPClient",
+    "HybridMCPClient",
     "mcp_factory",
 ]

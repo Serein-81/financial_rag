@@ -6,8 +6,8 @@ Prompt 优化数据模型
 用于 Prompt 模板管理、执行记录和 A/B 测试
 """
 
-from sqlalchemy import Column, String, Text, Integer, Float, Boolean, JSON, ForeignKey, DateTime, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Column, String, Text, Integer, Float, Boolean, ForeignKey, DateTime, func
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 import uuid
 from app.db.base import Base
@@ -37,8 +37,8 @@ class PromptTemplate(Base):
     is_active = Column(Boolean, default=True)  # 是否启用
     is_baseline = Column(Boolean, default=False)  # 是否为基准版本
     
-    # 变量定义
-    variables = Column(JSON, nullable=True)  # 模板中的变量定义
+    # 变量定义（使用 JSONB 提升查询性能）
+    variables = Column(JSONB, nullable=True)  # 模板中的变量定义
     
     # 描述
     description = Column(Text, nullable=True)

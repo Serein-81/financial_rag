@@ -16,6 +16,13 @@ from typing import List, Dict, Any, AsyncGenerator, Optional
 
 logger = logging.getLogger(__name__)
 
+ENABLE_INIT_LOGGING = os.getenv("ENABLE_INIT_LOGGING", "false").lower() == "true"
+
+def _log_init(*args, **kwargs):
+    """条件初始化日志"""
+    if ENABLE_INIT_LOGGING:
+        print(*args, **kwargs)
+
 from app.core.config import settings
 from app.core.exceptions import (
     ServiceException,
@@ -94,17 +101,17 @@ class EnterpriseAgentService:
         # 🧠 初始化记忆管理器字典 (session_id -> MemoryManager)
         self.memory_managers: Dict[str, MemoryManager] = {}
         
-        print("=" * 60)
-        print("企业级 Agent 服务初始化")
-        print("=" * 60)
+        _log_init("=" * 60)
+        _log_init("企业级 Agent 服务初始化")
+        _log_init("=" * 60)
         
         if use_custom_framework:
             self._init_custom_framework()
         else:
             self._init_langchain_framework()
         
-        print("Agent 服务初始化完成！")
-        print("=" * 60)
+        _log_init("Agent 服务初始化完成！")
+        _log_init("=" * 60)
     
     def _init_custom_framework(self):
         """
@@ -127,24 +134,26 @@ class EnterpriseAgentService:
         compat_layer.register_langchain_tools(langchain_tools)
         
         # 4. 注册 MCP 工具（异步）
+        mcp_tools = []
         try:
             from app.mcp.mcp_tool_proxy import get_all_mcp_tools_as_langchain_tools
-            loop = asyncio.get_event_loop()
             
-            # 在__init__中（同步上下文），使用run_until_complete
-            # 如果已经在异步环境中，建议在外部async方法中调用此初始化
-            if loop.is_running():
-                logger.warning("在异步环境中调用AgentService.__init__，跳过MCP工具注册（应在外部await）")
-                mcp_tools = []
-            else:
+            try:
+                loop = asyncio.get_running_loop()
+                logger.warning(
+                    "在异步环境中调用AgentService.__init__，跳过MCP工具注册。"
+                    "如需MCP工具，请使用 await initialize_mcp_tools(self) 单独初始化。"
+                )
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
                 mcp_tools = loop.run_until_complete(get_all_mcp_tools_as_langchain_tools())
+                loop.close()
             
-            # 确保结果是列表
             if mcp_tools and isinstance(mcp_tools, list):
                 compat_layer.register_langchain_tools(mcp_tools)
                 print(f"[CLOUD] 已注册 {len(mcp_tools)} 个 MCP 远程工具")
             elif mcp_tools:
-                # 如果不是列表，尝试转换为列表
                 try:
                     mcp_tools_list = list(mcp_tools)
                     if mcp_tools_list:
@@ -153,7 +162,7 @@ class EnterpriseAgentService:
                 except (TypeError, AttributeError) as e:
                     logger.warning(f"MCP 工具列表转换失败: {e}")
         except ImportError as e:
-            print(f"[WARNING] MCP工具模块导入失败: {e}")
+            print(f"[WARNING] MCP工具模块导入失败，跳过MCP工具注册: {e}")
         except RuntimeError as e:
             print(f"[WARNING] 异步运行时错误(MCP工具): {e}")
         except (ValueError, KeyError) as e:
@@ -179,6 +188,40 @@ class EnterpriseAgentService:
             tool_info = self.tool_manager.tools[tool_name]
             tool_type = "[LOCAL]" if tool_info.get("type") == "langchain" else "[MCP]"
             print(f"   {i}. [{tool_type}] {tool_name}: {tool_info['description'][:40]}...")
+    
+    async def initialize_mcp_tools_async(self) -> int:
+        """
+        异步初始化 MCP 工具
+        
+        如果在异步环境中创建了 AgentService，可以使用此方法单独初始化 MCP 工具。
+        
+        Returns:
+            注册的 MCP 工具数量
+        """
+        if not hasattr(self, 'tool_manager') or not hasattr(self, 'llm_adapter'):
+            logger.error("AgentService 未正确初始化，无法注册 MCP 工具")
+            return 0
+        
+        try:
+            from app.mcp.mcp_tool_proxy import get_all_mcp_tools_as_langchain_tools
+            from app.agent_framework.tools import LangChainCompatLayer
+            
+            compat_layer = LangChainCompatLayer(self.tool_manager)
+            mcp_tools = await get_all_mcp_tools_as_langchain_tools()
+            
+            if mcp_tools and isinstance(mcp_tools, list):
+                compat_layer.register_langchain_tools(mcp_tools)
+                print(f"[CLOUD] [异步] 已注册 {len(mcp_tools)} 个 MCP 远程工具")
+                return len(mcp_tools)
+            else:
+                logger.warning("MCP 工具列表为空")
+                return 0
+        except ImportError as e:
+            logger.warning(f"MCP 工具模块导入失败: {e}")
+            return 0
+        except Exception as e:
+            logger.error(f"MCP 工具异步初始化失败: {e}")
+            return 0
     
     def _get_memory_manager(self, session_id: str, user_id: str) -> MemoryManager:
         """

@@ -1037,10 +1037,29 @@ class AgentOrchestrator:
                     intent_result,
                     user_input
                 )
-                yield json.dumps({
-                    "type": "text",
-                    "content": final_response
-                }, ensure_ascii=False)
+                
+                if self.output_agent and hasattr(self.output_agent, 'synthesize_and_format_stream'):
+                    buffer = ""
+                    for chunk in final_response.split():
+                        buffer += chunk + " "
+                        if len(buffer) >= 5:
+                            yield json.dumps({
+                                "type": "text",
+                                "content": buffer
+                            }, ensure_ascii=False)
+                            buffer = ""
+                    if buffer:
+                        yield json.dumps({
+                            "type": "text",
+                            "content": buffer
+                        }, ensure_ascii=False)
+                else:
+                    for i in range(0, len(final_response), 5):
+                        chunk = final_response[i:i + 5]
+                        yield json.dumps({
+                            "type": "text",
+                            "content": chunk
+                        }, ensure_ascii=False)
                 
                 processing_time = int((datetime.now() - start_time).total_seconds() * 1000)
                 yield json.dumps({
@@ -1121,10 +1140,13 @@ class AgentOrchestrator:
                     intent_result,
                     user_input
                 )
-                yield json.dumps({
-                    "type": "text",
-                    "content": final_response
-                }, ensure_ascii=False)
+                
+                for i in range(0, len(final_response), 5):
+                    chunk = final_response[i:i + 5]
+                    yield json.dumps({
+                        "type": "text",
+                        "content": chunk
+                    }, ensure_ascii=False)
                 
                 processing_time = int((datetime.now() - start_time).total_seconds() * 1000)
                 yield json.dumps({

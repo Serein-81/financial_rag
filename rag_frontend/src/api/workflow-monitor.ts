@@ -3,7 +3,7 @@
  * 具有鲁棒的错误处理机制，支持租户上下文错误处理
  */
 
-import axios from 'axios'
+import axios, { type AxiosResponse } from 'axios'
 import { ElMessage } from 'element-plus'
 import { API_BASE } from '@/config/api'
 
@@ -16,7 +16,7 @@ let isShowingReloginMessage = false
 let lastReloginTimestamp = 0
 const RELOGIN_COOLDOWN_MS = 5000 // 5秒内不重复提示
 
-const workflowApi = axios.create({
+const workflowApi = axios.create<any>({
   baseURL: API_BASE_URL,
   timeout: 30000,
 })
@@ -390,7 +390,7 @@ export const workflowMonitorApi = {
     status?: string
     priority?: string
   } = {}): Promise<{ items: HumanReviewTracking[]; total: number }> {
-    const response = await workflowApi.get('/human-review/reviews', { params })
+    const response = await workflowApi.get<{ items: HumanReviewTracking[]; total: number }>('/human-review/reviews', { params })
     return {
       items: response.data.items || [],
       total: response.data.total || 0
@@ -401,7 +401,7 @@ export const workflowMonitorApi = {
    * 获取人工审核动作历史
    */
   async getReviewActions(trackingId: string): Promise<ReviewActionRecord[]> {
-    const response = await workflowApi.get(`/human-review/reviews/${trackingId}/comments`)
+    const response = await workflowApi.get<ReviewActionRecord[]>(`/human-review/reviews/${trackingId}/comments`)
     return response.data || []
   },
 

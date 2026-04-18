@@ -521,14 +521,16 @@ async def list_tax_reports(
     service: TaxReportService = Depends(get_tax_report_service),
 ):
     """
-    获取当前用户的税务报告列表
+    获取当前用户的税务报告列表（租户+用户双重隔离）
 
     - 支持分页
     - 支持按状态、税种类型、日期范围过滤
     - 按创建时间倒序排列
+    - 每个用户只能看到自己的税务报告
     """
     reports, total = await service.list_tax_reports(
         tenant_id=user.tenant_id,
+        user_id=str(user.id),  # 用户级隔离：每个用户只能看到自己的提交记录
         skip=skip,
         limit=limit,
         status=status,
@@ -561,8 +563,9 @@ async def get_tax_report_statistics(
     - 按状态统计数量
     - 按税种类型统计数量
     - 总处理时长统计
+    - 支持用户级隔离：每个用户只能看到自己的统计数据
     """
-    stats = await service.get_statistics(user.tenant_id)
+    stats = await service.get_statistics(user.tenant_id, str(user.id))
     return stats
 
 
@@ -573,13 +576,14 @@ async def get_tax_report(
     service: TaxReportService = Depends(get_tax_report_service),
 ):
     """
-    获取税务报告详情
+    获取税务报告详情（租户+用户双重隔离）
 
     - 返回报告基本信息
     - 返回处理结果
     - 返回税务验证结果（如有）
+    - 用户只能访问自己的报告
     """
-    report = await service.get_tax_report(report_id, user.tenant_id)
+    report = await service.get_tax_report(report_id, user.tenant_id, str(user.id))
     if not report:
         raise HTTPException(status_code=404, detail="税务报告不存在")
     return TaxReportResponse.model_validate(report)
@@ -592,12 +596,13 @@ async def get_report_status(
     service: TaxReportService = Depends(get_tax_report_service),
 ):
     """
-    获取税务报告处理状态
+    获取税务报告处理状态（租户+用户双重隔离）
 
     - 用于轮询查询处理进度
     - 返回当前状态和进度信息
+    - 用户只能查看自己的报告状态
     """
-    status = await service.get_processing_status(report_id, user.tenant_id)
+    status = await service.get_processing_status(report_id, user.tenant_id, str(user.id))
     if not status:
         raise HTTPException(status_code=404, detail="税务报告不存在")
     return TaxReportStatusResponse(**status)
@@ -611,12 +616,13 @@ async def retry_processing(
     service: TaxReportService = Depends(get_tax_report_service),
 ):
     """
-    重试失败的税务报告处理
+    重试失败的税务报告处理（租户+用户双重隔离）
 
     - 仅在状态为 FAILED 时可用
     - 重新触发后台处理流程
+    - 用户只能重试自己的报告
     """
-    report = await service.get_tax_report(report_id, user.tenant_id)
+    report = await service.get_tax_report(report_id, user.tenant_id, str(user.id))
     if not report:
         raise HTTPException(status_code=404, detail="税务报告不存在")
 
@@ -640,12 +646,13 @@ async def delete_tax_report(
     service: TaxReportService = Depends(get_tax_report_service),
 ):
     """
-    删除税务报告
+    删除税务报告（租户+用户双重隔离）
 
     - 仅可删除自己上传的报告
     - 删除时会同时删除关联的文件和文档
+    - 用户只能删除自己的报告
     """
-    success = await service.delete_tax_report(report_id, user.tenant_id)
+    success = await service.delete_tax_report(report_id, user.tenant_id, str(user.id))
     if not success:
         raise HTTPException(status_code=404, detail="税务报告不存在或无权删除")
     return {"message": "税务报告已删除", "report_id": report_id}
@@ -721,3 +728,39 @@ async def processing_callback(
     except Exception as e:
         logger.error(f"处理回调失败: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="回调处理失败")
+
+
+@router.get("/reviews/pending", response_model=TaxReportListResponse)
+async def get_pending_tax_reviews(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    user: CurrentUser = Depends(get_current_user),
+    service: TaxReportService = Depends(get_tax_report_service),
+):
+    """
+    获取待审核的税务报告列表（租户+用户双重隔离）
+
+    - 只返回需要人工审核的报告
+    - 支持分页
+    - 按创建时间倒序排列
+    - 每个用户只能看到自己的待审核报告
+    """
+    reports, total = await service.list_tax_reports(
+        tenant_id=user.tenant_id,
+        user_id=str(user.id),  # 用户级隔离
+        skip=skip,
+        limit=limit,
+        status="pending_review",
+    )
+
+    # 计算分页信息
+    page = (skip // limit) + 1 if limit > 0 else 1
+    total_pages = (total + limit - 1) // limit if limit > 0 else 1
+    
+    return TaxReportListResponse(
+        items=[TaxReportResponse.model_validate(r) for r in reports],
+        total=total,
+        page=page,
+        page_size=limit,
+        total_pages=total_pages,
+    )

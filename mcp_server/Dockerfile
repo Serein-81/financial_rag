@@ -22,7 +22,7 @@ RUN rm -f /etc/nginx/sites-enabled/default && \
     listen 8080; \
     server_name _; \
     location / { \
-        proxy_pass http://127.0.0.1:8000; \
+        proxy_pass http://127.0.0.1:8888; \
         proxy_set_header Host \$host; \
         proxy_set_header X-Real-IP \$remote_addr; \
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for; \
@@ -37,5 +37,5 @@ RUN rm -f /etc/nginx/sites-enabled/default && \
 
 EXPOSE 8080
 
-# 启动命令
-CMD sh -c "python -m uvicorn app.main:app --host 0.0.0.0 --port 8080 & sleep 2 && nginx -g 'daemon off;'"
+# 启动命令：uvicorn 监听 8888，nginx 监听 8080
+CMD sh -c "python -m uvicorn app.main:app --host 0.0.0.0 --port 8888 & sleep 2 && nginx -g 'daemon off;'"

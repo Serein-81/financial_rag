@@ -38,9 +38,9 @@ marked.setOptions({
 })
 
 const renderer = new marked.Renderer()
-renderer.code = function({ text, lang }: { text: string; lang?: string }) {
+renderer.code = function(code: string, lang?: string): string {
   const language = lang && hljs.getLanguage(lang) ? lang : 'plaintext'
-  const highlighted = hljs.highlight(text, { language }).value
+  const highlighted = hljs.highlight(code, { language }).value
   return `<pre class="hljs"><div class="code-header"><span class="code-lang">${language}</span><button class="copy-btn" onclick="navigator.clipboard.writeText(this.closest('pre').querySelector('code').textContent)"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg> 复制</button></div><code class="language-${language}">${highlighted}</code></pre>`
 }
 marked.use({ renderer })
@@ -64,6 +64,7 @@ const sourcesCollapsed = ref<Map<number, boolean>>(new Map())
 const copiedMessageIndex = ref<number | null>(null)
 const likedMessages = ref<Set<number>>(new Set())
 const showSessionsPanel = ref(false)
+const streamingContent = ref<Map<number, string>>(new Map())
 
 const messages = computed(() => sessionStore.currentMessages)
 const sessions = computed(() => sessionStore.sessions)
@@ -419,8 +420,8 @@ function createNewChat() {
           </div>
         </div>
 
-        <div v-for="(message, index) in messages" :key="index">
-          <!-- User Message -->
+        <div v-for="(message, index) in messages" :key="index" class="animate-message">
+          <!-- User Message - 深灰色气泡 -->
           <div v-if="message.role === 'user'" class="flex gap-3 max-w-4xl ml-auto items-end">
             <!-- Message Content -->
             <div class="flex-1 flex flex-col items-end">
@@ -428,7 +429,7 @@ function createNewChat() {
                 <span class="text-xs text-gray-400">{{ message.created_at ? formatChatTime(message.created_at) : '' }}</span>
                 <span class="text-sm font-medium text-gray-700">{{ message.sender_name || authStore.userName || '用户' }}</span>
               </div>
-              <div class="bg-gradient-to-br from-emerald-500 to-teal-600 text-white px-4 py-3 rounded-2xl rounded-br-md max-w-xl">
+              <div class="bg-zinc-800 text-white px-4 py-3 rounded-2xl rounded-br-md max-w-xl shadow-sm">
                 <p class="whitespace-pre-wrap">{{ message.content }}</p>
               </div>
             </div>
@@ -440,16 +441,16 @@ function createNewChat() {
                 :src="message.sender_avatar"
                 :alt="message.sender_name || 'User'"
                 class="w-full h-full object-cover"
-                @error="$event.target.style.display = 'none'"
+                @error="(e) => { (e.target as HTMLImageElement).style.display = 'none' }"
               />
               <span v-else>{{ getInitials(message.sender_name || authStore.userName || 'U') }}</span>
             </div>
           </div>
 
-          <!-- Assistant Message -->
-          <div v-else class="flex gap-3 max-w-4xl">
+          <!-- Assistant Message - 白色气泡 -->
+          <div v-else class="flex gap-3 max-w-4xl animate-message">
             <!-- Avatar -->
-            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center text-white font-bold flex-shrink-0">
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-white font-bold flex-shrink-0 shadow-sm">
               <Sparkles :size="18" />
             </div>
 
@@ -461,9 +462,16 @@ function createNewChat() {
               </div>
               <div class="bg-white border border-gray-200 px-4 py-3 rounded-2xl rounded-bl-md">
                 <div v-if="message.content" class="prose prose-sm max-w-none" v-html="renderMarkdown(message.content)"></div>
-                <div v-else class="flex items-center gap-2 text-gray-500">
-                  <Loader2 :size="18" class="animate-spin" />
-                  <span>AI 正在思考...</span>
+                <div v-else class="flex items-center gap-2">
+                  <!-- 骨架屏加载动画 -->
+                  <div class="space-y-2 animate-pulse">
+                    <div class="flex gap-2">
+                      <div class="h-4 bg-gray-200 rounded w-24"></div>
+                      <div class="h-4 bg-gray-200 rounded w-32"></div>
+                    </div>
+                    <div class="h-4 bg-gray-200 rounded w-48"></div>
+                    <div class="h-4 bg-gray-200 rounded w-36"></div>
+                  </div>
                 </div>
 
                 <!-- Sources -->
@@ -725,6 +733,57 @@ function createNewChat() {
 .slide-enter-from,
 .slide-leave-to {
   transform: translateX(-100%);
+}
+
+/* 消息列表动画 */
+.message-list-enter-active {
+  animation: messageSlideIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.message-list-leave-active {
+  animation: messageFadeOut 0.2s ease-out;
+}
+
+.message-list-move {
+  transition: transform 0.3s ease;
+}
+
+@keyframes messageSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes messageFadeOut {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+}
+
+/* 单条消息动画 */
+.animate-message {
+  animation: messageAppear 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes messageAppear {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .ai-table {

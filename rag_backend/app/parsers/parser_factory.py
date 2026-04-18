@@ -1,11 +1,8 @@
 # app/parsers/parser_factory.py
 from typing import Optional
 from .base_parser import FileParserStrategy
-from .pdf_parser import PDFParser
-from .word_parser import WordParser
 from .text_parser import TextParser
 from .image_parser import ImageParser
-from .excel_parser import ExcelParser
 from .structured_pdf_parser import StructuredPDFParser
 from .structured_word_parser import StructuredWordParser
 from .structured_markdown_parser import StructuredMarkdownParser
@@ -34,16 +31,13 @@ class FileParserFactory:
             return
         
         # 注册基础解析器
-        cls.register_parser(PDFParser())
-        cls.register_parser(WordParser())
         cls.register_parser(TextParser())
         cls.register_parser(ImageParser())
-        cls.register_parser(ExcelParser())  # 新增Excel解析器
         
         # 注册结构化解析器（优先级更高，会覆盖基础解析器）
         cls.register_parser(StructuredPDFParser())
         cls.register_parser(StructuredWordParser())
-        cls.register_parser(StructuredMarkdownParser())  # 结构化Markdown解析器
+        cls.register_parser(StructuredMarkdownParser())
         
         cls._initialized = True
     

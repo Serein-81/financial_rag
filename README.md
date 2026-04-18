@@ -27,6 +27,38 @@
 
 ---
 
+## 🏛️ 项目组成
+
+本项目采用前后端分离架构，包含以下主要模块：
+
+| 模块 | 技术栈 | 说明 |
+|------|--------|------|
+| **[前端应用](./rag_frontend)** | Vue 3 + TypeScript | 企业级 Web 应用界面，包含完整的用户交互体验 |
+| **[后端服务](./rag_backend)** | FastAPI + Python | RESTful API 服务，提供核心业务逻辑和 AI 能力 |
+| **[MCP 工具服务](./mcp_server)** | Python | 财税法务领域专用工具接口，支持 MCP 标准协议 |
+
+### 🚀 快速访问
+
+- 📱 **前端界面**：[查看前端 README](./rag_frontend/README.md)
+- ⚙️ **后端 API**：[查看后端项目](./rag_backend)
+- 🔧 **MCP 服务**：[查看 MCP 服务](./mcp_server)
+- 🐳 **Docker 部署**：[docker-compose.yml](./rag_backend/docker-compose.yml)
+
+### 💡 前端亮点
+
+前端采用 **Vue 3 + TypeScript** 构建，提供企业级用户体验：
+
+| 功能模块 | 说明 |
+|---------|------|
+| 🤖 **智能对话** | 单/多智能体对话、群组聊天、流式输出 |
+| 💼 **企业管理** | 知识库管理、财务数据、政策服务 |
+| 📊 **工作流** | 税务申报、合同审查、安全审计 |
+| 🔧 **系统工具** | Agent 监控、意图分类、人机协作 |
+| 📈 **数据可视化** | 分析仪表板、实时监控、图表展示 |
+| 🎨 **交互体验** | 动画效果、骨架屏、国际化支持 |
+
+---
+
 ## ✨ 核心特性
 
 ### 1. 多智能体协作系统
@@ -2143,8 +2175,9 @@ redis.client.expire(notification_key, 604800)  # 7天过期
 
 ## 📬 联系方式
 
-- **项目主页**: https://github.com/yourusername/your-repo
-- **问题反馈**: https://github.com/yourusername/your-repo/issues
+- 负责人：陈
+- 邮箱：chenjh8181@gmail.com
+
 
 ---
 

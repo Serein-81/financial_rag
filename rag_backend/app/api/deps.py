@@ -56,22 +56,31 @@ async def get_db() -> AsyncSession:
                         logger.warning(f"Failed to set tenant context: {safe_error_str(e)}")
                     except Exception:
                         logger.warning("Failed to set tenant context: <failed to format error message>")
-                    await session.rollback()
-                    await session.begin()
+                    try:
+                        await session.rollback()
+                        await session.begin()
+                    except Exception:
+                        pass
             
             yield session
         except HTTPException:
-            await session.rollback()
+            try:
+                await session.rollback()
+            except Exception:
+                pass
+            raise
+        except GeneratorExit:
             raise
         except Exception as e:
             try:
                 logger.error(f"Database session error: {safe_error_str(e)}")
             except Exception:
                 logger.error("Database session error: <failed to format error message>")
-            await session.rollback()
+            try:
+                await session.rollback()
+            except Exception:
+                pass
             raise
-        finally:
-            await session.close()
 
 
 async def get_current_user_from_token(

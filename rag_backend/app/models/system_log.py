@@ -6,8 +6,8 @@
 记录用户操作、系统事件、错误信息等，支持分级权限查看
 """
 
-from sqlalchemy import Column, String, DateTime, Text, Integer, Boolean, JSON, Index
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Column, String, DateTime, Text, Integer, Boolean, Index
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy import ForeignKey, func
 import uuid
@@ -77,8 +77,8 @@ class SystemLog(Base):
     execution_time = Column(Integer, nullable=True)  # 执行时间(毫秒)
     memory_usage = Column(Integer, nullable=True)  # 内存使用(KB)
     
-    # 扩展数据
-    extra_data = Column(JSON, nullable=True)  # 额外数据(JSON格式)
+    # 扩展数据（使用 JSONB 提升查询性能）
+    extra_data = Column(JSONB, nullable=True)  # 额外数据(JSON格式)
     
     # 错误信息
     error_type = Column(String(100), nullable=True)  # 错误类型
@@ -180,10 +180,10 @@ class UserActionLog(Base):
     user_agent = Column(Text, nullable=True)
     session_id = Column(String(100), nullable=True)
     
-    # 扩展信息
-    before_data = Column(JSON, nullable=True)  # 操作前数据
-    after_data = Column(JSON, nullable=True)   # 操作后数据
-    extra_info = Column(JSON, nullable=True)   # 额外信息
+    # 扩展信息（使用 JSONB 提升查询性能）
+    before_data = Column(JSONB, nullable=True)  # 操作前数据
+    after_data = Column(JSONB, nullable=True)   # 操作后数据
+    extra_info = Column(JSONB, nullable=True)   # 额外信息
     
     # 关联关系
     user = relationship("User", backref="action_logs")

@@ -85,30 +85,26 @@ class BaseAgent(ABC):
 
         Args:
             context: 渲染上下文，包含需要替换的变量（可选）
-            **render_kwargs: 传递给 PromptEngine.render() 的额外参数
-                          支持: load_skills, include_shared 等
+            **render_kwargs: 传递给统一提示词加载器的额外参数
 
         Returns:
             系统提示词
         """
-        # 1. 优先使用结构化提示词系统
         if self.agent_name:
-            from app.services.prompt_service import PromptEngine
+            try:
+                from app.multi_agent_system.agents.base_agent_prompt import load_agent_prompt
+                
+                prompt = load_agent_prompt(
+                    agent_name=self.agent_name,
+                    context=context,
+                    **render_kwargs
+                )
+                
+                if prompt:
+                    return prompt
+            except ImportError:
+                pass
 
-            # 使用 PromptEngine 渲染变量
-            engine = PromptEngine()
-            rendered = engine.render(
-                template_name=self.agent_name,
-                context=context or {},
-                use_cache=True,
-                load_skills=render_kwargs.get('load_skills', False),
-                include_shared=render_kwargs.get('include_shared')
-            )
-            
-            if rendered:
-                return rendered
-
-        # 2. 使用静态提示词（回退方案）
         return self.system_prompt
     
     @abstractmethod

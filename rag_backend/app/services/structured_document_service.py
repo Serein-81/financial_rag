@@ -127,10 +127,16 @@ class StructuredDocumentService:
     
     def _parse_markdown_blocks(self, markdown_content: str) -> List[DocumentBlock]:
         """解析Markdown内容为文档块"""
+        import sys
+        
         blocks = []
         lines = markdown_content.split('\n')
         current_block_lines = []
         current_block_type = BlockType.PARAGRAPH
+        
+        # 统计信息
+        total_lines = len(lines)
+        empty_lines = 0
         
         i = 0
         while i < len(lines):
@@ -189,6 +195,7 @@ class StructuredDocumentService:
             
             # 空行 - 段落分隔
             elif line.strip() == '':
+                empty_lines += 1
                 if current_block_lines:
                     content = '\n'.join(current_block_lines).strip()
                     if content:
@@ -213,6 +220,9 @@ class StructuredDocumentService:
                     type=current_block_type,
                     content=content
                 ))
+        
+        # 输出统计信息
+        print(f"[MarkdownParser] 总行数: {total_lines}, 空行数: {empty_lines}, 段落数: {len(blocks)}", file=sys.stderr)
         
         return blocks
     
@@ -270,14 +280,32 @@ class StructuredDocumentService:
         """获取文档统计信息"""
         stats = structured_doc.get_statistics()
         
-        # 添加额外的统计信息
+        # 添加字符数统计
+        total_chars = sum(len(block.content) for block in structured_doc.raw_blocks if block.content)
+        total_tokens = sum(self._approx_token_len(block.content) for block in structured_doc.raw_blocks if block.content)
+        
         stats.update({
             "has_structure": len(structured_doc.sections) > 0,
             "extraction_method": structured_doc.metadata.extraction_method,
-            "source_format": structured_doc.metadata.source_format
+            "source_format": structured_doc.metadata.source_format,
+            "estimated_chars": total_chars,
+            "estimated_tokens": total_tokens,
+            "avg_chunk_size": total_tokens / stats["total_blocks"] if stats["total_blocks"] > 0 else 0
         })
         
         return stats
+    
+    def _approx_token_len(self, text: str) -> int:
+        """估算文本的Token数量"""
+        if not text:
+            return 0
+        
+        # 统计CJK字符数量
+        cjk_count = sum(1 for ch in text if 0x4E00 <= ord(ch) <= 0x9FFF)
+        # 统计非CJK Token数量
+        non_cjk_tokens = len([t for t in text.split() if t])
+        
+        return cjk_count + non_cjk_tokens
 
 
 # 创建全局服务实例

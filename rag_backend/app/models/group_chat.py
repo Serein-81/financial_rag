@@ -1,4 +1,5 @@
-from sqlalchemy import Column, String, DateTime, Boolean, ForeignKey, JSON, Text
+from sqlalchemy import Column, String, DateTime, Boolean, ForeignKey, Text, JSON
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from app.db.base import Base
 import uuid
@@ -32,7 +33,8 @@ class ChatGroup(Base):
     status = Column(String, default="active")
     created_by = Column(String, nullable=False)
     
-    settings = Column(JSON, default=lambda: {
+    # 使用 JSONB 提升查询性能
+    settings = Column(JSONB, default=lambda: {
         "allow_member_invite": True,
         "require_approval": False,
         "max_members": 100
@@ -66,7 +68,8 @@ class GroupMember(Base):
     joined_at = Column(DateTime, default=datetime.utcnow)
     left_at = Column(DateTime, nullable=True)
     
-    notification_settings = Column(JSON, default=lambda: {
+    # 使用 JSONB 提升查询性能
+    notification_settings = Column(JSONB, default=lambda: {
         "all_messages": True,
         "mentions_only": False
     })
@@ -112,7 +115,8 @@ class GroupMessage(Base):
     content = Column(Text, nullable=False)
     content_type = Column(String, default="text")
     
-    metadata_ = Column("metadata", JSON, default=dict)
+    # 注意：由于 SQLAlchemy 保留字限制，字段名为 extra_metadata 但映射到数据库的 metadata 列
+    extra_metadata = Column("metadata", JSON, default=dict)
     
     is_deleted = Column(Boolean, default=False)
     is_edited = Column(Boolean, default=False)
@@ -133,7 +137,7 @@ class GroupMessage(Base):
             "tenant_id": self.tenant_id,
             "content": self.content,
             "content_type": self.content_type,
-            "metadata": self.metadata_,
+            "metadata": self.extra_metadata,  # 映射到 extra_metadata 属性
             "is_deleted": self.is_deleted,
             "is_edited": self.is_edited,
             "edited_at": self.edited_at.isoformat() if self.edited_at else None,

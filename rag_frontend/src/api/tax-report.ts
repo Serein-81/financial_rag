@@ -252,6 +252,24 @@ export const taxReportApiClient = {
   },
 
   /**
+   * 获取待审核的税务报告列表
+   */
+  async getPendingReviews(
+    page: number = 1,
+    pageSize: number = 20
+  ): Promise<TaxReportListResponse> {
+    const params = new URLSearchParams()
+    params.append('skip', String((page - 1) * pageSize))
+    params.append('limit', String(pageSize))
+    
+    const response = await taxReportApi.get<TaxReportListResponse>(
+      `/tax-reports/reviews/pending`,
+      { params }
+    )
+    return response.data
+  },
+
+  /**
    * 获取税务报告详情（包含处理结果）
    */
   async getWithDetails(reportId: string): Promise<TaxReportWithDetails> {

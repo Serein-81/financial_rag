@@ -6,8 +6,8 @@
 用于记录工具调用链路，支持嵌套调用和性能分析
 """
 
-from sqlalchemy import Column, String, Text, Float, JSON, ForeignKey, DateTime, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Column, String, Text, Float, ForeignKey, DateTime, func, JSON
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 import uuid
 from app.db.base import Base
@@ -33,7 +33,7 @@ class ToolCallTrace(Base):
     tool_type = Column(String, default="function")  # function, langchain, api
     
     # 调用信息
-    input_params = Column(JSON, nullable=True)  # 输入参数
+    input_params = Column(JSONB, nullable=True)  # 与数据库一致：jsonb
     output_result = Column(Text, nullable=True)  # 输出结果
     
     # 性能指标
@@ -45,8 +45,10 @@ class ToolCallTrace(Base):
     status = Column(String, default="running")  # running, success, error, timeout
     error_message = Column(Text, nullable=True)
     
-    # 元数据
-    tool_metadata = Column(JSON, nullable=True)  # 额外信息（如 API 调用次数、token 消耗等）
+    # 元数据（与数据库一致）
+    # 注意：由于 SQLAlchemy 保留字限制，字段名为 extra_metadata 但映射到数据库的 metadata 列
+    extra_metadata = Column("metadata", JSONB, nullable=True)  # 与数据库一致：jsonb
+    tool_metadata = Column(JSON, nullable=True)  # 与数据库一致：json
     
     # 时间戳
     created_at = Column(DateTime(timezone=True), server_default=func.now())

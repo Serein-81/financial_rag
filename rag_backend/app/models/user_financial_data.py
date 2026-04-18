@@ -41,27 +41,27 @@ class UserFinancialData(Base):
         Index('ix_user_financial_data_user_year', 'user_id', 'fiscal_year'),
     )
 
-    # 收入数据
+    # 收入数据（与数据库一致：float8）
     total_revenue = Column(Float, default=0.0, comment="总收入")
     taxable_sales = Column(Float, default=0.0, comment="应税销售额")
     tax_free_sales = Column(Float, default=0.0, comment="免税销售额")
     
-    # 支出和成本
+    # 支出和成本（与数据库一致：float8）
     total_expenses = Column(Float, default=0.0, comment="总支出")
     deductible_expenses = Column(Float, default=0.0, comment="可抵扣支出")
     non_deductible_expenses = Column(Float, default=0.0, comment="不可抵扣支出")
     
-    # 税务数据
+    # 税务数据（与数据库一致：float8）
     input_tax = Column(Float, default=0.0, comment="进项税额")
     output_tax = Column(Float, default=0.0, comment="销项税额")
     vat_rate = Column(Float, default=0.13, comment="增值税率")
     
-    # 企业所得税相关
+    # 企业所得税相关（与数据库一致：float8）
     taxable_income = Column(Float, default=0.0, comment="应纳税所得额")
     corporate_tax_rate = Column(Float, default=0.25, comment="企业所得税率")
     is_small_enterprise = Column(Boolean, default=False, comment="是否小微企业")
     
-    # 个人所得税相关（工资薪金等）
+    # 个人所得税相关（与数据库一致：float8）
     total_payroll = Column(Float, default=0.0, comment="工资薪金总额")
     special_deductions = Column(Float, default=0.0, comment="专项附加扣除")
     

@@ -8,8 +8,8 @@
 - WorkflowNodeExecution: 节点级别的追踪
 """
 
-from sqlalchemy import Column, String, Text, Integer, Float, JSON, ForeignKey, DateTime, Index
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Column, String, Text, Integer, Float, ForeignKey, DateTime, Index
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import uuid
@@ -47,14 +47,14 @@ class WorkflowNodeExecution(Base):
     
     execution_order = Column(Integer, nullable=False, default=0, comment="执行顺序")
     
-    input_data = Column(JSON, nullable=True, comment="节点输入（摘要）")
-    output_data = Column(JSON, nullable=True, comment="节点输出（摘要）")
+    input_data = Column(JSONB, nullable=True, comment="节点输入（摘要）")
+    output_data = Column(JSONB, nullable=True, comment="节点输出（摘要）")
     
     status = Column(String(20), nullable=False, default="running", comment="状态: running/completed/failed/skipped")
     error_message = Column(Text, nullable=True, comment="错误信息")
     
     execution_time_ms = Column(Float, nullable=True, comment="执行时长（毫秒）")
-    token_usage = Column(JSON, nullable=True, comment="Token使用量")
+    token_usage = Column(JSONB, nullable=True, comment="Token使用量")
     
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     completed_at = Column(DateTime(timezone=True), nullable=True, comment="完成时间")
@@ -87,8 +87,8 @@ class WorkflowTrace(Base):
     tenant_id = Column(String(50), nullable=True, index=True, comment="租户ID")
     user_id = Column(UUID, nullable=True, index=True, comment="用户ID")
     
-    input_data = Column(JSON, nullable=True, comment="工作流输入参数")
-    output_data = Column(JSON, nullable=True, comment="工作流输出结果")
+    input_data = Column(JSONB, nullable=True, comment="工作流输入参数")
+    output_data = Column(JSONB, nullable=True, comment="工作流输出结果")
     
     status = Column(String(30), nullable=False, default="pending", index=True, comment="状态")
     
@@ -103,7 +103,7 @@ class WorkflowTrace(Base):
     checkpointer_type = Column(String(20), nullable=True, comment="检查点存储类型: redis/postgres")
     checkpoint_id = Column(String(100), nullable=True, comment="检查点ID")
     
-    workflow_metadata = Column(JSON, nullable=True, comment="额外元数据")
+    workflow_metadata = Column(JSONB, nullable=True, comment="额外元数据")
     
     human_review_id = Column(UUID, ForeignKey("review_requests.id", ondelete="SET NULL"), nullable=True, index=True, comment="关联的人工审核请求ID")
     

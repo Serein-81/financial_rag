@@ -7,6 +7,8 @@ import './style.css'
 import 'element-plus/dist/index.css'
 import i18n from './locales'
 import router from './router'
+import Vue3Toastify from 'vue3-toastify'
+import 'vue3-toastify/dist/index.css'
 
 console.log('🚀 Initializing RAG Terminal...')
 
@@ -30,6 +32,18 @@ console.log('✅ Vue I18n initialized')
 
 app.use(router)
 console.log('✅ Vue Router initialized')
+
+app.use(Vue3Toastify, {
+  autoClose: 3000,
+  theme: 'colored',
+  position: 'top-right',
+  pauseOnFocusLoss: false,
+  pauseOnHover: false,
+  draggable: true,
+  closeOnClick: true,
+  transition: 'slide'
+})
+console.log('✅ Vue3 Toastify initialized')
 
 app.mount('#app')
 console.log('✅ Vue app mounted to #app')

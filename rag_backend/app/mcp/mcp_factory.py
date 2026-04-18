@@ -21,6 +21,7 @@ class MCPMode(Enum):
     """MCP 运行模式"""
     LOCAL = "local"
     CLOUD = "cloud"
+    AUTO = "auto"  # 同时支持本地和云端
 
 
 @dataclass
@@ -215,6 +216,101 @@ class CloudMCPClient(BaseMCPClient):
         return self._tools
 
 
+class HybridMCPClient(BaseMCPClient):
+    """混合 MCP 客户端 - 同时管理本地和云端连接，优先使用本地"""
+    
+    def __init__(self, local_url: str = "http://127.0.0.1:8001", local_key: str = "",
+                 cloud_url: str = "http://127.0.0.1:8080", cloud_key: str = "", timeout: int = 120):
+        self.local_client = LocalMCPClient(base_url=local_url, api_key=local_key)
+        self.cloud_client = CloudMCPClient(server_url=cloud_url, api_key=cloud_key, timeout=timeout)
+        self._local_connected = False
+        self._cloud_connected = False
+    
+    async def connect(self) -> None:
+        """连接两个服务器，优先本地"""
+        logger.info("🔄 混合模式：尝试连接本地和云端 MCP 服务器")
+        
+        self._local_connected = False
+        self._cloud_connected = False
+        
+        try:
+            await self.local_client.connect()
+            self._local_connected = True
+            logger.info("✅ 混合模式：本地 MCP 连接成功")
+        except Exception as e:
+            logger.warning(f"⚠️ 混合模式：本地 MCP 连接失败: {e}")
+        
+        try:
+            await self.cloud_client.connect()
+            self._cloud_connected = True
+            logger.info("✅ 混合模式：云端 MCP 连接成功")
+        except Exception as e:
+            logger.warning(f"⚠️ 混合模式：云端 MCP 连接失败: {e}")
+        
+        if not self._local_connected and not self._cloud_connected:
+            raise ConnectionError("无法连接到任何 MCP 服务器（本地和云端都失败）")
+        
+        logger.info(f"📊 混合模式连接状态：本地={self._local_connected}, 云端={self._cloud_connected}")
+    
+    async def disconnect(self) -> None:
+        """断开两个连接"""
+        if self._local_connected:
+            await self.local_client.disconnect()
+            self._local_connected = False
+        if self._cloud_connected:
+            await self.cloud_client.disconnect()
+            self._cloud_connected = False
+        logger.info("混合模式：已断开所有连接")
+    
+    async def call_tool(self, tool_name: str, **kwargs) -> MCPToolResult:
+        """调用工具：优先本地，失败则使用云端"""
+        if self._local_connected:
+            try:
+                result = await self.local_client.call_tool(tool_name, **kwargs)
+                if result.success:
+                    return result
+                logger.warning(f"⚠️ 本地工具 {tool_name} 调用失败，尝试云端: {result.error}")
+            except Exception as e:
+                logger.warning(f"⚠️ 本地工具 {tool_name} 调用异常: {e}")
+        
+        if self._cloud_connected:
+            logger.info(f"🔄 使用云端调用工具: {tool_name}")
+            return await self.cloud_client.call_tool(tool_name, **kwargs)
+        
+        return MCPToolResult(
+            success=False, 
+            data=None, 
+            error="无可用的 MCP 服务器（本地和云端都不可用）"
+        )
+    
+    async def list_tools(self) -> List[Dict[str, Any]]:
+        """列出所有工具：合并本地和云端的工具列表"""
+        all_tools = []
+        
+        if self._local_connected:
+            try:
+                local_tools = await self.local_client.list_tools()
+                for tool in local_tools:
+                    tool["source"] = "local"
+                    all_tools.append(tool)
+                logger.info(f"📋 本地工具: {len(local_tools)} 个")
+            except Exception as e:
+                logger.warning(f"⚠️ 获取本地工具列表失败: {e}")
+        
+        if self._cloud_connected:
+            try:
+                cloud_tools = await self.cloud_client.list_tools()
+                for tool in cloud_tools:
+                    tool["source"] = "cloud"
+                    all_tools.append(tool)
+                logger.info(f"📋 云端工具: {len(cloud_tools)} 个")
+            except Exception as e:
+                logger.warning(f"⚠️ 获取云端工具列表失败: {e}")
+        
+        logger.info(f"📊 混合模式总计: {len(all_tools)} 个工具")
+        return all_tools
+
+
 class MCPClientFactory:
     """MCP 客户端工厂 - 根据配置自动选择模式"""
 
@@ -245,6 +341,11 @@ class MCPClientFactory:
     def is_cloud(cls) -> bool:
         """是否云端模式"""
         return cls.get_mode() == MCPMode.CLOUD
+    
+    @classmethod
+    def is_auto(cls) -> bool:
+        """是否自动模式（同时支持本地和云端）"""
+        return cls.get_mode() == MCPMode.AUTO
 
     async def get_client(self) -> BaseMCPClient:
         """获取 MCP 客户端实例"""
@@ -254,7 +355,21 @@ class MCPClientFactory:
         mode = self.get_mode()
         logger.info(f"📦 初始化 MCP 客户端，模式: {mode.value}")
 
-        if mode == MCPMode.LOCAL:
+        if mode == MCPMode.AUTO:
+            local_url = os.getenv("MCP_LOCAL_URL", "http://127.0.0.1:8001")
+            local_key = os.getenv("MCP_LOCAL_API_KEY", "")
+            cloud_url = os.getenv("MCP_SERVER_URL", "http://127.0.0.1:8080")
+            cloud_key = os.getenv("MCP_API_KEY", "")
+            timeout = int(os.getenv("MCP_TIMEOUT", "120"))
+            self._client = HybridMCPClient(
+                local_url=local_url, 
+                local_key=local_key,
+                cloud_url=cloud_url,
+                cloud_key=cloud_key,
+                timeout=timeout
+            )
+            logger.info(f"   自动模式: 本地={local_url}, 云端={cloud_url}")
+        elif mode == MCPMode.LOCAL:
             local_url = os.getenv("MCP_LOCAL_URL", "http://127.0.0.1:8001")
             local_key = os.getenv("MCP_LOCAL_API_KEY", "")
             self._client = LocalMCPClient(base_url=local_url, api_key=local_key)
@@ -294,7 +409,10 @@ class MCPClientFactory:
         mode = self.get_mode()
         print("\n🔧 MCP 配置信息:")
         print(f"   模式: {mode.value.upper()}")
-        if mode == MCPMode.LOCAL:
+        if mode == MCPMode.AUTO:
+            print(f"   本地地址: {os.getenv('MCP_LOCAL_URL', 'http://127.0.0.1:8001')}")
+            print(f"   云端地址: {os.getenv('MCP_SERVER_URL', 'http://127.0.0.1:8080')}")
+        elif mode == MCPMode.LOCAL:
             print(f"   本地地址: {os.getenv('MCP_LOCAL_URL', 'http://127.0.0.1:8001')}")
         else:
             print(f"   云端地址: {os.getenv('MCP_SERVER_URL', 'http://127.0.0.1:8080')}")

@@ -182,64 +182,58 @@ reviewed = await output_agent.review_and_improve(
 )
 ```
 
-### 3. Reviewed Agent（带审查的 ReAct）
+### 3. Plan Agent（计划-执行模式）
 
-**核心思想**: ReAct 执行后自动进行输出审查
+**核心思想**: 先规划后执行，适合复杂多步骤任务
 
 ```python
-from app.agent_framework import create_reviewed_agent
+from app.agent_framework import PlanAgent
 
-agent = create_reviewed_agent(
+agent = PlanAgent(
     llm_adapter=llm_adapter,
     tool_manager=tool_manager,
-    review_threshold=0.7  # 质量阈值
+    agent_name="plan"
 )
-result = await agent.run("复杂的多步骤任务")
+result = await agent.run("帮我分析季度财务报告并提出改进建议")
 ```
 
-### 4. Report Agent（报表生成）
+### 4. Reflect Agent（反思-改进模式）
+
+**核心思想**: 执行-反思-改进，适合需要高质量输出的任务
+
+```python
+from app.agent_framework import ReflectAgent
+
+agent = ReflectAgent(
+    llm_adapter=llm_adapter,
+    tool_manager=tool_manager,
+    agent_name="reflect",
+    max_reflections=2
+)
+result = await agent.run("帮我审查这份合同的潜在风险")
+```
+
+### 5. Report Agent（报表生成）
 
 **核心思想**: 专门优化报表生成的智能体
 
 ```python
 from app.agent_framework import ReportAgent, report_agent
+from app.agent_framework.tools.tool_manager import ToolManager
 
 # 独立使用
-report_agent_instance = ReportAgent(llm_adapter)
+tool_manager = ToolManager()
+report_agent_instance = ReportAgent(llm_adapter, tool_manager)
 result = await report_agent_instance.generate_report(
-    report_type="sales",
-    time_range="2024-Q1",
-    data={"sales_data": [...]}
+    user_input="生成销售报表",
+    time_range="2024-Q1"
 )
 
-# 或使用便捷函数
-report = await report_agent.generate(
-    type="financial",
-    period="monthly",
-    include_charts=True
+# 或使用全局实例
+report = await report_agent.generate_report(
+    user_input="生成财务报表",
+    time_range="本月"
 )
-```
-
-### 5. Agent Orchestrator（多智能体调度）
-
-**核心思想**: 自动选择和协调多个专业智能体
-
-```python
-from app.agent_framework import AgentOrchestrator, TaskType, TaskContext
-
-orchestrator = AgentOrchestrator()
-
-# 注册所有内置智能体
-orchestrator.register_all_agents()
-
-# 自动识别任务类型并选择合适的智能体
-context = TaskContext(
-    user_input="帮我生成一份销售报表并分析趋势",
-    requires_report=True,
-    requires_data=True
-)
-
-result = await orchestrator.execute_task(context)
 ```
 
 ## 🤖 LLM 适配器

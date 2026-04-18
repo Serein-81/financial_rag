@@ -1,9 +1,10 @@
 # app/models/policy.py
 import uuid
-from sqlalchemy import Column, String, Text, DateTime, Integer, Enum as SQLEnum, Index, LargeBinary, JSON
+from sqlalchemy import Column, String, Text, DateTime, Integer, Enum as SQLEnum, Index, JSON
 from sqlalchemy.dialects.postgresql import UUID, ARRAY
 from sqlalchemy.sql import func
 from app.db.base import Base
+from pgvector.sqlalchemy import Vector
 import enum
 
 
@@ -51,9 +52,13 @@ class Policy(Base):
     scales = Column(ARRAY(String), default=[])
     tax_types = Column(ARRAY(String), default=[])
     
-    embedding = Column(LargeBinary, nullable=True)
-    
     tags = Column(ARRAY(String), default=[])
+    
+    # 🔢 政策向量嵌入（与数据库一致：halfvec，使用 Vector(768)）
+    embedding = Column(Vector(768), nullable=True)
+    
+    # 注意：数据库中使用的是 json，不是 jsonb
+    meta_info = Column(JSON, default={})
     
     status = Column(
         SQLEnum(PolicyStatus, name='policy_status', native_enum=False),
@@ -69,11 +74,12 @@ class Policy(Base):
         index=True
     )
     
-    version = Column(String(50), default="1.0")
+    version = Column(String(50), default="1")
     
     view_count = Column(Integer, default=0)
     
-    meta_info = Column(JSON, default={})
+    # 🟢 租户隔离字段（与数据库一致）
+    tenant_id = Column(String(100), nullable=True, index=True)
     
     created_at = Column(DateTime(timezone=True), default=func.now(), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), default=func.now(), server_default=func.now(), onupdate=func.now())

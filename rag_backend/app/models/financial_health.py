@@ -110,6 +110,7 @@ class FinancialAnomalyRecord(Base):
     title = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
 
+    # 财务异常值（与数据库一致：float8）
     detected_value = Column(Float, nullable=True)
     expected_value = Column(Float, nullable=True)
     deviation = Column(Float, nullable=True)

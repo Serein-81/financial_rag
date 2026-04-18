@@ -1,5 +1,5 @@
 # app/models/chat.py
-from sqlalchemy import Column, String, Text, ForeignKey, DateTime, func, JSON, Float, Integer
+from sqlalchemy import Column, String, Text, ForeignKey, DateTime, func, Float, Integer, JSON
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from pgvector.sqlalchemy import Vector
@@ -12,7 +12,8 @@ class ChatSession(Base):
     __tablename__ = "chat_sessions"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)  # 与数据库一致：nullable
+    tenant_id = Column(String(50), nullable=True, index=True)  # 与数据库一致：nullable
     title = Column(String, default="New Chat")  # 会话标题
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
@@ -26,11 +27,13 @@ class ChatMessage(Base):
     __tablename__ = "chat_messages"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    session_id = Column(UUID(as_uuid=True), ForeignKey("chat_sessions.id"))
+    session_id = Column(UUID(as_uuid=True), ForeignKey("chat_sessions.id"), nullable=True)  # 与数据库一致：nullable
     role = Column(String, nullable=False)  # 'user' or 'assistant'
     content = Column(Text, nullable=False)
 
+    # 注意：数据库中使用的是 json，不是 jsonb
     sources = Column(JSON, nullable=True)
+    tenant_id = Column(String(50), nullable=True, index=True)  # 与数据库一致：nullable
 
     embedding = Column(Vector(1024), nullable=True)
     importance = Column(Float, default=0.5)

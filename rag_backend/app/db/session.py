@@ -59,13 +59,9 @@ AsyncSessionLocal = sessionmaker(
 # FastAPI 就会自动帮你执行下面的逻辑：
 async def get_db():
     async with AsyncSessionLocal() as session:
-        try:
-            # yield 相当于“借出”这个 session 给接口用
-            yield session
-        finally:
-            # 无论接口代码有没有报错，这里都会执行
-            # 相当于"归还"连接，关闭 session，防止数据库连接数爆满
-            await session.close()
+        # yield 相当于"借出"这个 session 给接口用
+        # async with 上下文管理器会自动处理 session 的关闭
+        yield session
 
 
 @asynccontextmanager
@@ -75,7 +71,4 @@ async def get_db_context():
     用于在非 FastAPI 依赖注入的场景下获取数据库会话
     """
     async with AsyncSessionLocal() as session:
-        try:
-            yield session
-        finally:
-            await session.close()
+        yield session

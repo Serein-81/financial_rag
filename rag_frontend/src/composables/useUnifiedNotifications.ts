@@ -318,6 +318,34 @@ export function useUnifiedNotifications() {
     loadNotifications('all', true)
   }
 
+  async function acceptInvitation(invitationId: string) {
+    try {
+      await groupChatApi.acceptInvitation(invitationId)
+      notifications.value = notifications.value.filter(n => n.id !== `chat-${invitationId}`)
+      calculateStats()
+      ElMessage.success('已接受邀请')
+      return true
+    } catch (error) {
+      console.error('Failed to accept invitation:', error)
+      ElMessage.error('接受邀请失败')
+      return false
+    }
+  }
+
+  async function declineInvitation(invitationId: string) {
+    try {
+      await groupChatApi.declineInvitation(invitationId)
+      notifications.value = notifications.value.filter(n => n.id !== `chat-${invitationId}`)
+      calculateStats()
+      ElMessage.success('已拒绝邀请')
+      return true
+    } catch (error) {
+      console.error('Failed to decline invitation:', error)
+      ElMessage.error('拒绝邀请失败')
+      return false
+    }
+  }
+
   return {
     notifications: readonly(notifications),
     stats: readonly(stats),
@@ -327,6 +355,8 @@ export function useUnifiedNotifications() {
     markAsRead,
     markAllAsRead,
     deleteNotification,
+    acceptInvitation,
+    declineInvitation,
     filterByCategory,
     filterUnread,
     refresh

@@ -59,25 +59,17 @@ import { useRouter } from 'vue-router'
 const router = useRouter()
 
 const {
-
   notifications,
-
   stats,
-
   isLoading,
-
   unreadCount,
-
   loadNotifications,
-
   markAsRead,
-
   markAllAsRead,
-
   deleteNotification,
-
+  acceptInvitation,
+  declineInvitation,
   refresh
-
 } = useUnifiedNotifications()
 
 
@@ -387,35 +379,40 @@ async function markSelectedAsRead() {
 
 
 async function deleteSelected() {
-
   try {
-
     await ElMessageBox.confirm(
-
       `确定要删除选中${selectedNotifications.value.size}条通知吗？`,
-
       '确认删除',
-
       { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }
-
     )
 
-
-
     for (const id of selectedNotifications.value) {
-
       await deleteNotification(id)
-
     }
-
     selectedNotifications.value.clear()
-
     isSelectionMode.value = false
-
   } catch {
-
   }
+}
 
+async function handleAcceptInvitation(notification: UnifiedNotification) {
+  const invitationId = notification.metadata?.invitation_id || notification.metadata?.id
+  if (invitationId) {
+    await acceptInvitation(invitationId)
+    refresh()
+  }
+}
+
+async function handleDeclineInvitation(notification: UnifiedNotification) {
+  const invitationId = notification.metadata?.invitation_id || notification.metadata?.id
+  if (invitationId) {
+    await declineInvitation(invitationId)
+    refresh()
+  }
+}
+
+function isInvitationNotification(notification: UnifiedNotification): boolean {
+  return notification.category === 'chat' && notification.metadata?.type === 'invitation'
 }
 
 
@@ -1094,20 +1091,32 @@ function clearFilters() {
 
                         </button>
 
+                        <template v-if="isInvitationNotification(notification)">
+                          <button
+                            @click.stop="handleAcceptInvitation(notification)"
+                            class="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg transition-colors text-sm font-medium flex items-center gap-1"
+                            title="接受邀请"
+                          >
+                            <Check :size="14" />
+                            接受
+                          </button>
+                          <button
+                            @click.stop="handleDeclineInvitation(notification)"
+                            class="px-3 py-1.5 bg-gray-300 hover:bg-gray-400 text-gray-700 rounded-lg transition-colors text-sm font-medium flex items-center gap-1"
+                            title="拒绝邀请"
+                          >
+                            <X :size="14" />
+                            拒绝
+                          </button>
+                        </template>
                         <button
-
+                          v-else
                           @click.stop="deleteNotification(notification.id)"
-
                           class="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-
                           title="删除"
-
                         >
-
                           <Trash2 :size="16" />
-
                         </button>
-
                       </div>
 
                     </div>

@@ -149,7 +149,7 @@ async def list_user_groups(
                 content_type=last_msg.content_type,
                 sender_name=sender_name,
                 sender_avatar=sender_avatar,
-                metadata=last_msg.metadata_,
+                metadata=last_msg.extra_metadata,
                 is_deleted=last_msg.is_deleted,
                 is_edited=last_msg.is_edited,
                 edited_at=last_msg.edited_at,
@@ -420,7 +420,7 @@ async def get_group_messages(
             content_type=m.content_type,
             sender_name=sender_map.get(str(m.sender_id), {}).get("name"),
             sender_avatar=sender_map.get(str(m.sender_id), {}).get("avatar"),
-            metadata=m.metadata_,
+            metadata=m.extra_metadata,
             is_deleted=m.is_deleted,
             is_edited=m.is_edited,
             edited_at=m.edited_at,
@@ -474,7 +474,7 @@ async def send_group_message(
             content_type=message.content_type,
             sender_name=current_user.full_name,
             sender_avatar=current_user.avatar_url,
-            metadata=message.metadata_,
+            metadata=message.extra_metadata,
             is_deleted=message.is_deleted,
             is_edited=message.is_edited,
             edited_at=message.edited_at,
@@ -872,6 +872,7 @@ async def group_websocket(
     user_id = None
     current_user_name = None
     current_user_avatar = None
+    db_gen = None
     db_session = None
     try:
         from app.core.security import verify_token
@@ -881,9 +882,15 @@ async def group_websocket(
         
         if not user_id:
             await websocket.close(code=4001, reason="Invalid token")
+            if db_gen:
+                try:
+                    await db_gen.aclose()
+                except Exception:
+                    pass
             return
         
-        db_session = await get_db().__anext__()
+        db_gen = get_db()
+        db_session = await db_gen.__anext__()
         
         user_result = await db_session.execute(select(User).where(User.id == user_id))
         current_user_obj = user_result.scalar_one_or_none()
@@ -895,6 +902,11 @@ async def group_websocket(
         
         if not await service.is_group_member(group_id, user_id):
             await websocket.close(code=4003, reason="Not a group member")
+            if db_gen:
+                try:
+                    await db_gen.aclose()
+                except Exception:
+                    pass
             return
         
         redis = get_redis_service()
@@ -1044,14 +1056,23 @@ async def group_websocket(
                 redis = get_redis_service()
                 service.set_redis(redis)
                 
-                await group_chat_ws_manager.broadcast_to_group(
-                    group_id,
-                    {
-                        "event": "member_offline",
-                        "data": {
-                            "user_id": user_id,
-                            "user_name": current_user_name,
-                            "timestamp": datetime.utcnow().isoformat()
+                try:
+                    await group_chat_ws_manager.broadcast_to_group(
+                        group_id,
+                        {
+                            "event": "member_offline",
+                            "data": {
+                                "user_id": user_id,
+                                "user_name": current_user_name,
+                                "timestamp": datetime.utcnow().isoformat()
+                            }
                         }
-                    }
-                )
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to broadcast offline event: {e}")
+        
+        if db_gen:
+            try:
+                await db_gen.aclose()
+            except Exception as e:
+                logger.warning(f"Failed to close db generator: {e}")

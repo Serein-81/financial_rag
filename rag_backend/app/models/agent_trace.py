@@ -6,8 +6,8 @@ Agent 追踪数据模型
 用于记录 Agent 的执行过程，包括每一步的思考、行动和观察
 """
 
-from sqlalchemy import Column, String, Text, Integer, Float, JSON, ForeignKey, DateTime, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Column, String, Text, Integer, Float, ForeignKey, DateTime, func, JSON
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 import uuid
 from app.db.base import Base
@@ -76,15 +76,20 @@ class AgentStep(Base):
     
     # 工具调用信息（仅 action 类型有值）
     tool_name = Column(String, nullable=True)
-    tool_input = Column(JSON, nullable=True)
+    tool_input = Column(JSONB, nullable=True)  # 与数据库一致：jsonb
     tool_output = Column(Text, nullable=True)
     tool_duration = Column(Float, nullable=True)  # 毫秒
     
     # 置信度评分（可选）
     confidence = Column(Float, nullable=True)  # 0-1 之间
     
-    # 元数据
-    step_metadata = Column(JSON, nullable=True)  # 额外的元数据
+    # 元数据（与数据库一致：jsonb）
+    # 注意：由于 SQLAlchemy 保留字限制，字段名为 metadata 但映射到数据库的 metadata 列
+    # 使用 column 属性指定实际的数据库列名
+    extra_metadata = Column("metadata", JSONB, nullable=True)
+    
+    # 注意：数据库中还有 step_metadata 字段（json 类型）
+    step_metadata = Column(JSON, nullable=True)
     
     # 时间戳
     timestamp = Column(Float, nullable=False)  # Unix 时间戳

@@ -278,6 +278,9 @@ async def process_document_task(doc_id: UUID, tenant_id: str):
                 doc_stats = structured_document_service.get_document_statistics(structured_doc)
                 print(f"📊 文档统计: {doc_stats}")
                 
+                # 保存统计信息到文档meta_info
+                doc.meta_info = doc_stats
+                
             except (ValueError, KeyError) as e:
                 raise HTTPException(status_code=400, detail=f"结构化文档解析数据错误: {str(e)}")
             except (OSError, IOError) as e:
@@ -290,10 +293,11 @@ async def process_document_task(doc_id: UUID, tenant_id: str):
             print("✂️ 正在进行智能切分...")
             
             # 🌟 使用结构化切块
+            # 优化参数：增加chunk_tokens减少碎片化，overlap保证上下文连续性
             chunk_results = await structured_document_service.chunk_structured_document(
                 structured_doc,
-                chunk_tokens=500,
-                overlap_tokens=50
+                chunk_tokens=800,  # 增加到800 tokens，减少碎片化
+                overlap_tokens=80   # 增加到80 tokens，保证上下文重叠
             )
 
             if not chunk_results:

@@ -92,15 +92,10 @@ class PolicyNotificationAgent:
     2. LLM 智能匹配企业与政策
     3. LLM 生成个性化通知文案
     4. 智能优先级排序和推荐
-    """
     
-    SYSTEM_PROMPT = """你是一位专业的税收政策顾问，擅长：
-1. 深度理解政策文本的意图和影响
-2. 分析政策对不同类型企业的适用性
-3. 生成清晰、准确、有价值的政策通知
-4. 识别政策风险和机会
-
-请始终保持专业、客观、友善的态度。"""
+    提示词来源：
+    - 使用 AgentPromptLoader 从 app/prompts/agents/policy_notification/system.md 加载
+    """
 
     def __init__(
         self,
@@ -126,12 +121,53 @@ class PolicyNotificationAgent:
             "urgency": 0.1
         }
         
+        self.system_prompt = self._load_system_prompt()
+        
         if not getattr(PolicyNotificationAgent, '_initialized', False):
             PolicyNotificationAgent._initialized = True
             print("🤖 [Policy Notification Agent] 初始化完成 ✨")
             print("   - 能力: 语义理解 + 智能匹配 + 个性化生成")
             print(f"   - 匹配权重: {self.match_weights}")
+            print("   - 提示词来源: AgentPromptLoader (policy_notification)")
             print("   - LLM 支持: ✅ 已启用")
+    
+    def _load_system_prompt(self) -> str:
+        """
+        从结构化提示词系统加载系统提示词
+        
+        加载顺序：
+        1. 从 app/prompts/agents/policy_notification/system.md 加载
+        2. 如果加载失败，使用回退提示词
+        
+        Returns:
+            系统提示词
+        """
+        try:
+            from app.prompts.loader import AgentPromptLoader
+            
+            loader = AgentPromptLoader()
+            prompt = loader.load_system_prompt("policy_notification")
+            
+            if prompt:
+                logger.info("✅ [PolicyNotificationAgent] 成功加载结构化提示词")
+                return prompt
+            else:
+                logger.warning("⚠️ [PolicyNotificationAgent] 加载提示词失败，使用回退提示词")
+                return self._get_fallback_prompt()
+                
+        except Exception as e:
+            logger.error(f"❌ [PolicyNotificationAgent] 加载提示词异常: {e}")
+            return self._get_fallback_prompt()
+    
+    def _get_fallback_prompt(self) -> str:
+        """获取回退提示词（当模板加载失败时使用）"""
+        return """你是一位专业的税收政策顾问，擅长：
+1. 深度理解政策文本的意图和影响
+2. 分析政策对不同类型企业的适用性
+3. 生成清晰、准确、有价值的政策通知
+4. 识别政策风险和机会
+
+请始终保持专业、客观、友善的态度。"""
     
     async def understand_policy(
         self,
@@ -158,7 +194,7 @@ class PolicyNotificationAgent:
         """
         logger.info(f"🧠 LLM 深度理解政策: {policy_id or title[:30]}...")
         
-        prompt = f"""{self.SYSTEM_PROMPT}
+        prompt = f"""{self.system_prompt}
 
 请深度分析以下政策文本，提取关键信息：
 
@@ -550,7 +586,7 @@ class PolicyNotificationAgent:
         policy_title = policy.get("title", "未知政策")
         policy_id = str(policy.get("policy_id", policy.get("id", "")))
         
-        prompt = f"""{self.SYSTEM_PROMPT}
+        prompt = f"""{self.system_prompt}
 
 请为这家企业生成个性化的政策通知：
 
@@ -670,7 +706,7 @@ class PolicyNotificationAgent:
                 f"匹配分: {p.get('match_score', 0):.2f})"
             )
         
-        prompt = f"""{self.SYSTEM_PROMPT}
+        prompt = f"""{self.system_prompt}
 
 请为这家企业排序以下政策的优先级：
 

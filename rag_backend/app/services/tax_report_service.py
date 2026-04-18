@@ -531,26 +531,35 @@ class TaxReportService:
                 print(f"❌ [税务报告服务] 查询列表失败: {str(e)}")
                 return [], 0
     
-    async def get_tax_report(self, report_id: str, tenant_id: str):
+    async def get_tax_report(self, report_id: str, tenant_id: str, user_id: str = None):
         """
-        获取单个税务报告详情
+        获取单个税务报告详情（租户+用户双重隔离）
         
         Args:
             report_id: 报告ID
             tenant_id: 租户ID
+            user_id: 用户ID（可选，用于用户级隔离）
             
         Returns:
             报告详情
         """
         async with AsyncSessionLocal() as db:
             try:
-                result = await db.execute(
-                    text("""
+                # 构建查询条件
+                conditions = ["id = :id", "tenant_id = :tenant_id"]
+                params = {"id": report_id, "tenant_id": tenant_id}
+                
+                # 添加用户级隔离
+                if user_id:
+                    conditions.append("user_id = :user_id")
+                    params["user_id"] = user_id
+                
+                query = text(f"""
                     SELECT * FROM tax_reports 
-                    WHERE id = :id AND tenant_id = :tenant_id
-                    """),
-                    {"id": report_id, "tenant_id": tenant_id}
-                )
+                    WHERE {' AND '.join(conditions)}
+                """)
+                
+                result = await db.execute(query, params)
                 report = result.fetchone()
                 
                 if not report:
@@ -622,20 +631,27 @@ class TaxReportService:
                                 "confidence": finding.get('confidence', 0.0),
                             })
                         
-                        # 提取 RAG 上下文
+                        # 提取RAG上下文
                         rag_contexts = proc_result.get('rag_contexts', [])
                         for ctx in rag_contexts:
                             rag_references.append({
-                                "content": ctx.get('content', '')[:200],
                                 "source": ctx.get('source', ''),
-                                "relevance": ctx.get('relevance', 0.0)
+                                "content": ctx.get('content', ''),
+                                "relevance": ctx.get('relevance', 0.0),
                             })
                         
                         # 提取税务验证结果
-                        tax_validation_result = proc_result.get('tax_validation')
+                        tax_validation = proc_result.get('tax_validation')
+                        if tax_validation:
+                            tax_validation_result = {
+                                "is_valid": tax_validation.get('is_valid', False),
+                                "confidence": tax_validation.get('confidence', 0.0),
+                                "issues": tax_validation.get('issues', []),
+                                "suggestions": tax_validation.get('suggestions', []),
+                            }
                         
-                    except (json.JSONDecodeError, Exception) as e:
-                        print(f"⚠️ [税务报告服务] 解析 processing_result 失败: {str(e)}")
+                    except (json.JSONDecodeError, ValueError, KeyError) as e:
+                        print(f"⚠️ [税务报告服务] 解析处理结果失败: {str(e)}")
                 
                 return {
                     "id": str(report.id),
@@ -656,118 +672,122 @@ class TaxReportService:
                     "risk_level": report.risk_level,
                     "needs_human_review": report.needs_human_review == "true",
                     "review_request_id": str(report.review_request_id) if report.review_request_id else None,
-                    "processing_result": None,
-                    "tax_validation_result": tax_validation_result,
                     "key_metrics": report.key_metrics,
+                    "tax_validation_result": tax_validation_result,
+                    "processing_result": report.processing_result,
                     "issues": issues,
                     "rag_references": rag_references,
-                    "indicators": [],
                     "created_at": report.created_at,
                     "updated_at": report.updated_at,
                     "completed_at": report.completed_at,
                 }
                 
             except (ValueError, KeyError) as e:
-                print(f"❌ [税务报告服务] 查询详情数据错误: {str(e)}")
+                print(f"❌ [税务报告服务] 获取详情数据错误: {str(e)}")
                 return None
             except (OSError, IOError) as e:
-                print(f"❌ [税务报告服务] 查询详情IO错误: {str(e)}")
+                print(f"❌ [税务报告服务] 获取详情IO错误: {str(e)}")
                 return None
             except Exception as e:
-                print(f"❌ [税务报告服务] 查询详情失败: {str(e)}")
+                print(f"❌ [税务报告服务] 获取详情失败: {str(e)}")
                 return None
     
-    async def get_statistics(self, tenant_id: str) -> dict:
+    async def get_statistics(self, tenant_id: str, user_id: str = None) -> dict:
         """
         获取税务报告统计信息
         
         Args:
             tenant_id: 租户ID
+            user_id: 用户ID（可选，用于用户级隔离）
             
         Returns:
             统计信息
         """
         async with AsyncSessionLocal() as db:
             try:
-                # 统计总数
-                total_result = await db.execute(
-                    text("SELECT COUNT(*) FROM tax_reports WHERE tenant_id = :tenant_id"),
-                    {"tenant_id": tenant_id}
-                )
-                total = total_result.scalar() or 0
+                # 构建基础查询条件
+                base_conditions = "tenant_id = :tenant_id"
+                params = {"tenant_id": tenant_id}
+                
+                if user_id:
+                    base_conditions += " AND user_id = :user_id"
+                    params["user_id"] = user_id
                 
                 # 按状态统计
-                status_result = await db.execute(
-                    text("""
-                    SELECT status, COUNT(*) as count 
-                    FROM tax_reports 
-                    WHERE tenant_id = :tenant_id
+                status_query = text(f"""
+                    SELECT status, COUNT(*) as count
+                    FROM tax_reports
+                    WHERE {base_conditions}
                     GROUP BY status
-                    """),
-                    {"tenant_id": tenant_id}
-                )
-                status_counts = {row.status: row.count for row in status_result.fetchall()}
+                """)
+                result = await db.execute(status_query, params)
+                status_counts = {row.status: row.count for row in result}
                 
-                # 按税种统计
-                tax_type_result = await db.execute(
-                    text("""
-                    SELECT tax_type, COUNT(*) as count 
-                    FROM tax_reports 
-                    WHERE tenant_id = :tenant_id AND tax_type IS NOT NULL
+                # 按税种类型统计
+                tax_type_query = text(f"""
+                    SELECT tax_type, COUNT(*) as count
+                    FROM tax_reports
+                    WHERE {base_conditions}
                     GROUP BY tax_type
-                    """),
-                    {"tenant_id": tenant_id}
-                )
-                tax_type_counts = {row.tax_type: row.count for row in tax_type_result.fetchall()}
+                """)
+                result = await db.execute(tax_type_query, params)
+                tax_type_counts = {row.tax_type: row.count for row in result}
                 
-                # 需要审核的数量
-                review_result = await db.execute(
-                    text("""
-                    SELECT COUNT(*) FROM tax_reports 
-                    WHERE tenant_id = :tenant_id AND needs_human_review = 'true'
-                    """),
-                    {"tenant_id": tenant_id}
-                )
-                needs_review = review_result.scalar() or 0
+                # 计算需要审核的数量
+                needs_review = status_counts.get('pending_review', 0)
+                
+                # 总数
+                total_query = text(f"SELECT COUNT(*) as total FROM tax_reports WHERE {base_conditions}")
+                result = await db.execute(total_query, params)
+                total = result.scalar() or 0
                 
                 return {
                     "total": total,
                     "by_status": status_counts,
                     "by_tax_type": tax_type_counts,
-                    "needs_review": needs_review,
+                    "needs_review": needs_review
                 }
                 
             except (ValueError, KeyError) as e:
                 print(f"❌ [税务报告服务] 统计数据错误: {str(e)}")
                 return {"total": 0, "by_status": {}, "by_tax_type": {}, "needs_review": 0}
             except (OSError, IOError) as e:
-                print(f"❌ [税务报告服务] 统计IO错误: {str(e)}")
+                print(f"❌ [税务报告服务] 统计数据IO错误: {str(e)}")
                 return {"total": 0, "by_status": {}, "by_tax_type": {}, "needs_review": 0}
             except Exception as e:
                 print(f"❌ [税务报告服务] 统计失败: {str(e)}")
                 return {"total": 0, "by_status": {}, "by_tax_type": {}, "needs_review": 0}
     
-    async def get_processing_status(self, report_id: str, tenant_id: str) -> dict:
+    async def get_processing_status(self, report_id: str, tenant_id: str, user_id: str = None) -> dict:
         """
-        获取报告处理状态
+        获取报告处理状态（租户+用户双重隔离）
         
         Args:
             report_id: 报告ID
             tenant_id: 租户ID
+            user_id: 用户ID（可选，用于用户级隔离）
             
         Returns:
             状态信息
         """
         async with AsyncSessionLocal() as db:
             try:
-                result = await db.execute(
-                    text("""
+                # 构建查询条件
+                conditions = ["id = :id", "tenant_id = :tenant_id"]
+                params = {"id": report_id, "tenant_id": tenant_id}
+                
+                # 添加用户级隔离
+                if user_id:
+                    conditions.append("user_id = :user_id")
+                    params["user_id"] = user_id
+                
+                query = text(f"""
                     SELECT status, processing_message, needs_human_review, completed_at, created_at
                     FROM tax_reports 
-                    WHERE id = :id AND tenant_id = :tenant_id
-                    """),
-                    {"id": report_id, "tenant_id": tenant_id}
-                )
+                    WHERE {' AND '.join(conditions)}
+                """)
+                
+                result = await db.execute(query, params)
                 report = result.fetchone()
                 
                 if not report:
@@ -804,26 +824,35 @@ class TaxReportService:
                 print(f"❌ [税务报告服务] 查询状态失败: {str(e)}")
                 return None
     
-    async def delete_tax_report(self, report_id: str, tenant_id: str) -> bool:
+    async def delete_tax_report(self, report_id: str, tenant_id: str, user_id: str = None) -> bool:
         """
-        删除税务报告
+        删除税务报告（租户+用户双重隔离）
         
         Args:
             report_id: 报告ID
             tenant_id: 租户ID
+            user_id: 用户ID（可选，用于用户级隔离）
             
         Returns:
             是否成功
         """
         async with AsyncSessionLocal() as db:
             try:
-                result = await db.execute(
-                    text("""
+                # 构建查询条件
+                conditions = ["id = :id", "tenant_id = :tenant_id"]
+                params = {"id": report_id, "tenant_id": tenant_id}
+                
+                # 添加用户级隔离
+                if user_id:
+                    conditions.append("user_id = :user_id")
+                    params["user_id"] = user_id
+                
+                query = text(f"""
                     DELETE FROM tax_reports 
-                    WHERE id = :id AND tenant_id = :tenant_id
-                    """),
-                    {"id": report_id, "tenant_id": tenant_id}
-                )
+                    WHERE {' AND '.join(conditions)}
+                """)
+                
+                result = await db.execute(query, params)
                 await db.commit()
                 return result.rowcount > 0
                 
@@ -876,6 +905,12 @@ class TaxReportService:
                 anonymized_content = pii_anonymizer.anonymize(content)
                 pii_mapping = {}
                 
+                # 5. 重复发票检测
+                await self._update_status(db, report_id, "processing", "正在检测重复发票...")
+                duplicate_invoice_issues = await self._detect_duplicate_invoices(
+                    db, tenant_id, report.key_metrics, report_id
+                )
+                
                 # 5. Agent处理（核心处理逻辑）
                 await self._update_status(db, report_id, "processing", "正在进行AI分析...")
                 processing_result = await self._process_with_agents(
@@ -885,10 +920,18 @@ class TaxReportService:
                     file_type=report.file_type
                 )
                 
-                # 6. 更新报告记录
+                # 6. 合并重复发票问题到处理结果
+                if duplicate_invoice_issues:
+                    if not processing_result.get('tax_findings'):
+                        processing_result['tax_findings'] = []
+                    processing_result['tax_findings'].extend(duplicate_invoice_issues)
+                    processing_result['needs_human_review'] = True
+                    processing_result['review_trigger_reason'] = 'duplicate_invoices_detected'
+                
+                # 7. 更新报告记录
                 await self._update_report_result(db, report_id, processing_result, pii_mapping)
                 
-                # 7. 检查是否需要人工审核
+                # 8. 检查是否需要人工审核
                 if processing_result.get('needs_human_review', False):
                     await self._update_status(db, report_id, "pending_review", "需要人工审核")
                     await self._create_review_request(db, report_id, tenant_id, processing_result)
@@ -910,421 +953,92 @@ class TaxReportService:
                 print(f"❌ [税务报告服务] 处理失败: {report_id}, 错误: {str(e)}")
                 await self._update_status(db, report_id, "failed", f"处理失败: {error_msg}")
     
-    async def _parse_file(self, filename: str, content: bytes, file_type: str) -> str:
-        """
-        解析文件内容
-        
-        Args:
-            filename: 文件名
-            content: 文件内容
-            file_type: 文件类型
-            
-        Returns:
-            解析后的文本内容
-        """
-        try:
-            # 根据文件类型选择解析方式
-            if file_type in ['pdf']:
-                # PDF解析
-                from app.parsers.pdf_parser import PDFParser
-                parser = PDFParser()
-                text = await parser.parse(content)
-            elif file_type in ['xlsx', 'xls']:
-                # Excel解析
-                from app.parsers.excel_parser import ExcelParser
-                parser = ExcelParser()
-                text = await parser.parse(content)
-            elif file_type in ['jpg', 'jpeg', 'png']:
-                # 图片OCR
-                from app.services.ocr_service import ocr_service
-                text = await ocr_service.recognize(content)
-            else:
-                # 通用文本解析
-                text = content.decode('utf-8', errors='ignore')
-            
-            return text
-            
-        except (UnicodeDecodeError, UnicodeEncodeError) as e:
-            print(f"⚠️ [税务报告服务] 文件解码错误: {str(e)}")
-            return content.decode('utf-8', errors='ignore')
-        except (OSError, IOError) as e:
-            print(f"⚠️ [税务报告服务] 文件IO错误: {str(e)}")
-            return content.decode('utf-8', errors='ignore')
-        except (ValueError, KeyError) as e:
-            print(f"⚠️ [税务报告服务] 文件解析数据错误: {str(e)}")
-            return content.decode('utf-8', errors='ignore')
-        except Exception as e:
-            print(f"⚠️ [税务报告服务] 文件解析失败: {str(e)}")
-            return content.decode('utf-8', errors='ignore')
-    
-    async def _process_with_agents(
+    async def _detect_duplicate_invoices(
         self,
-        report_id: str,
+        db: AsyncSession,
         tenant_id: str,
-        content: str,
-        file_type: str
-    ) -> Dict[str, Any]:
+        key_metrics: dict,
+        current_report_id: str
+    ) -> list:
         """
-        使用Agent编排器处理税务报告
-        
-        Args:
-            report_id: 报告ID
-            tenant_id: 租户ID
-            content: 处理后的内容
-            file_type: 文件类型
-            
-        Returns:
-            处理结果
-        """
-        try:
-            # 初始化Agent协调器（租户隔离）
-            coordinator = AgentCoordinator(
-                tenant_id=tenant_id,
-                user_id="system"  # 系统处理
-            )
-            
-            # 构建文档对象
-            documents = [{
-                "id": report_id,
-                "filename": f"report_{report_id}.{file_type}",
-                "content": content,
-                "type": file_type
-            }]
-            
-            # 准备初始状态
-            from app.multi_agent_system.state import create_initial_state
-            initial_state = create_initial_state(
-                task_id=report_id,
-                tenant_id=tenant_id,
-                user_id="system",
-                audit_type="tax",
-                documents=documents
-            )
-            
-            # 执行审查流程
-            result = await coordinator.execute_audit(initial_state)
-            
-            # 提取结果
-            processing_result = {
-                "status": "success",
-                "report_id": report_id,
-                "tax_findings": result.get('tax_findings', []),
-                "finance_findings": result.get('finance_findings', []),
-                "legal_findings": result.get('legal_findings', []),
-                "tax_validation": result.get('tax_validation'),
-                "confidence_scores": result.get('confidence_scores', {}),
-                "conflicts": result.get('conflicts', []),
-                "evidence_gaps": result.get('evidence_gaps', []),
-                "rag_contexts": result.get('rag_contexts', []),
-                "needs_human_review": result.get('needs_human_review', False),
-                "review_trigger_reason": result.get('review_trigger_reason'),
-                "overall_risk_score": self._calculate_risk_score(result),
-                "risk_level": self._determine_risk_level(result)
-            }
-            
-            return processing_result
-            
-        except (ValueError, KeyError) as e:
-            print(f"❌ [税务报告服务] Agent处理数据错误: {str(e)}")
-            return {
-                "status": "error",
-                "error_message": str(e),
-                "needs_human_review": True,
-                "review_trigger_reason": "agent_processing_data_error"
-            }
-        except (OSError, IOError) as e:
-            print(f"❌ [税务报告服务] Agent处理IO错误: {str(e)}")
-            return {
-                "status": "error",
-                "error_message": str(e),
-                "needs_human_review": True,
-                "review_trigger_reason": "agent_processing_io_error"
-            }
-        except Exception as e:
-            print(f"❌ [税务报告服务] Agent处理失败: {str(e)}")
-            return {
-                "status": "error",
-                "error_message": str(e),
-                "needs_human_review": True,
-                "review_trigger_reason": "agent_processing_failed"
-            }
-    
-    def _calculate_risk_score(self, result: Dict[str, Any]) -> float:
-        """
-        计算综合风险评分
-        
-        Args:
-            result: Agent处理结果
-            
-        Returns:
-            风险评分 (0-100)
-        """
-        score = 0.0
-        
-        # 基于发现数量
-        tax_findings = result.get('tax_findings', [])
-        score += min(len(tax_findings) * 5, 30)  # 最多30分
-        
-        # 基于税务验证错误
-        tax_validation = result.get('tax_validation', {})
-        errors = tax_validation.get('errors', [])
-        high_severity = tax_validation.get('high_severity', 0)
-        score += high_severity * 20  # 每个高严重错误20分
-        score += len(errors) * 5  # 每个错误5分
-        
-        # 基于冲突
-        conflicts = result.get('conflicts', [])
-        score += len(conflicts) * 10  # 每个冲突10分
-        
-        # 基于置信度
-        confidence_scores = result.get('confidence_scores', {})
-        if confidence_scores:
-            avg_confidence = sum(confidence_scores.values()) / len(confidence_scores)
-            score += (1 - avg_confidence) * 20  # 低置信度增加风险
-        
-        return min(score, 100)
-    
-    def _determine_risk_level(self, result: Dict[str, Any]) -> str:
-        """
-        确定风险等级
-        
-        Args:
-            result: Agent处理结果
-            
-        Returns:
-            风险等级 (low/medium/high/critical)
-        """
-        score = self._calculate_risk_score(result)
-        
-        if score >= 80:
-            return "critical"
-        elif score >= 60:
-            return "high"
-        elif score >= 30:
-            return "medium"
-        else:
-            return "low"
-    
-    async def _update_status(
-        self,
-        db: AsyncSession,
-        report_id: str,
-        status: str,
-        message: str
-    ):
-        """
-        更新报告状态
+        检测重复发票（同一发票号在同一租户内多次出现）
         
         Args:
             db: 数据库会话
-            report_id: 报告ID
-            status: 新状态
-            message: 状态消息
-        """
-        try:
-            await db.execute(
-                text("""
-                UPDATE tax_reports 
-                SET status = :status,
-                    processing_message = :message,
-                    updated_at = :updated_at
-                WHERE id = :id
-                """),
-                {
-                    "id": report_id,
-                    "status": status,
-                    "message": message,
-                    "updated_at": datetime.utcnow()
-                }
-            )
-            await db.commit()
+            tenant_id: 租户ID
+            key_metrics: 当前报告的关键指标（包含提取的发票号）
+            current_report_id: 当前报告ID
             
-            # 发布状态更新到Redis（用于WebSocket推送）
-            try:
-                from app.services.redis_service import redis_service
-                import json
+        Returns:
+            重复发票问题列表
+        """
+        duplicate_issues = []
+        
+        try:
+            # 获取当前报告提取的发票号
+            invoice_numbers = key_metrics.get('invoice_numbers', []) if key_metrics else []
+            
+            if not invoice_numbers:
+                print("📋 [重复发票检测] 当前报告未提取到发票号")
+                return duplicate_issues
+            
+            print(f"🔍 [重复发票检测] 当前报告包含 {len(invoice_numbers)} 个发票号")
+            
+            # 查询同一租户内其他报告的发票号
+            for invoice_number in invoice_numbers:
+                query = text("""
+                    SELECT tr.id, tr.original_filename, tr.created_at, tr.key_metrics
+                    FROM tax_reports tr
+                    WHERE tr.tenant_id = :tenant_id
+                    AND tr.id != :current_report_id
+                    AND tr.status IN ('completed', 'processing')
+                    AND tr.key_metrics IS NOT NULL
+                """)
                 
-                status_data = {
-                    "report_id": report_id,
-                    "status": status,
-                    "message": message,
-                    "timestamp": datetime.utcnow().isoformat()
-                }
+                result = await db.execute(query, {
+                    "tenant_id": tenant_id,
+                    "current_report_id": current_report_id
+                })
                 
-                await redis_service.publish(
-                    f"tax_report:status:{report_id}",
-                    json.dumps(status_data)
-                )
-            except (OSError, IOError):
-                print("⚠️ [税务报告服务] Redis连接失败，跳过状态发布")
-            except (ValueError, KeyError) as e:
-                print(f"⚠️ [税务报告服务] Redis数据错误，跳过状态发布: {e}")
-            except RuntimeError as e:
-                print(f"⚠️ [税务报告服务] Redis运行时错误，跳过状态发布: {str(e)}")
-            except Exception:
-                print("⚠️ [税务报告服务] Redis发布失败，跳过状态发布")
+                other_reports = result.fetchall()
+                
+                # 检查每个报告中是否包含相同的发票号
+                duplicate_details = []
+                for other_report in other_reports:
+                    other_key_metrics = other_report.key_metrics
+                    if other_key_metrics and isinstance(other_key_metrics, dict):
+                        other_invoice_numbers = other_key_metrics.get('invoice_numbers', [])
+                        if invoice_number in other_invoice_numbers:
+                            duplicate_details.append({
+                                "report_id": str(other_report.id),
+                                "filename": other_report.original_filename,
+                                "created_at": other_report.created_at.isoformat() if other_report.created_at else None
+                            })
+                
+                # 如果发现重复，添加问题记录
+                if duplicate_details:
+                    issue = {
+                        "type": "duplicate_invoice",
+                        "severity": "high",
+                        "title": f"检测到重复发票号码: {invoice_number}",
+                        "description": f"发票号码 {invoice_number} 在本租户内出现 {len(duplicate_details) + 1} 次",
+                        "evidence": {
+                            "invoice_number": invoice_number,
+                            "occurrences": len(duplicate_details) + 1,
+                            "duplicate_reports": duplicate_details
+                        },
+                        "recommendation": "请核实发票真实性，确认是否为重复报销或发票重复使用",
+                        "auto_fixable": False
+                    }
+                    duplicate_issues.append(issue)
+                    print(f"⚠️ [重复发票检测] 发现重复发票: {invoice_number}, 出现在 {len(duplicate_details) + 1} 个报告中")
             
-        except (ValueError, KeyError) as e:
-            print(f"⚠️ [税务报告服务] 更新状态数据错误: {str(e)}")
-        except (OSError, IOError) as e:
-            print(f"⚠️ [税务报告服务] 更新状态IO错误: {str(e)}")
+            if not duplicate_issues:
+                print("✅ [重复发票检测] 未发现重复发票")
+            
+            return duplicate_issues
+            
         except Exception as e:
-            print(f"⚠️ [税务报告服务] 更新状态失败: {str(e)}")
+            print(f"⚠️ [重复发票检测] 检测失败: {str(e)}")
+            return []
     
-    async def _update_report_result(
-        self,
-        db: AsyncSession,
-        report_id: str,
-        result: Dict[str, Any],
-        pii_mapping: Dict[str, str]
-    ):
-        """
-        更新报告处理结果
-        
-        Args:
-            db: 数据库会话
-            report_id: 报告ID
-            result: 处理结果
-            pii_mapping: PII映射
-        """
-        try:
-            import json
-            await db.execute(
-                text("""
-                UPDATE tax_reports 
-                SET 
-                    processing_result = :processing_result,
-                    confidence_score = :confidence_score,
-                    risk_score = :risk_score,
-                    risk_level = :risk_level,
-                    needs_human_review = :needs_human_review,
-                    pii_anonymized = :pii_anonymized,
-                    pii_mapping = :pii_mapping,
-                    completed_at = :completed_at,
-                    updated_at = :updated_at
-                WHERE id = :id
-                """),
-                {
-                    "id": report_id,
-                    "processing_result": json.dumps(result, ensure_ascii=False, default=str),
-                    "confidence_score": str(result.get('confidence_scores', {}).get('tax', 0.0)),
-                    "risk_score": int(result.get('overall_risk_score', 0)),
-                    "risk_level": result.get('risk_level', 'low'),
-                    "needs_human_review": "true" if result.get('needs_human_review') else "false",
-                    "pii_anonymized": "true",
-                    "pii_mapping": json.dumps(pii_mapping, ensure_ascii=False),
-                    "completed_at": datetime.utcnow(),
-                    "updated_at": datetime.utcnow()
-                }
-            )
-            await db.commit()
-            print(f"✅ [税务报告服务] 更新结果成功: {report_id}")
-            
-        except (ValueError, KeyError) as e:
-            print(f"⚠️ [税务报告服务] 更新结果数据错误: {str(e)}")
-        except (OSError, IOError) as e:
-            print(f"⚠️ [税务报告服务] 更新结果IO错误: {str(e)}")
-        except Exception as e:
-            print(f"⚠️ [税务报告服务] 更新结果失败: {str(e)}")
-    
-    async def _create_review_request(
-        self,
-        db: AsyncSession,
-        report_id: str,
-        tenant_id: str,
-        result: Dict[str, Any]
-    ):
-        """
-        创建人工审核请求
-        
-        Args:
-            db: 数据库会话
-            report_id: 报告ID
-            tenant_id: 租户ID
-            result: 处理结果
-        """
-        try:
-            # 导入审核模型（将在Phase 2创建）
-            from app.models.review_request import ReviewRequest
-            
-            review_id = str(uuid.uuid4())
-            
-            review_request = ReviewRequest(
-                id=review_id,
-                task_id=report_id,
-                tenant_id=tenant_id,
-                user_id="system",
-                review_type="tax",
-                priority="high" if result.get('overall_risk_score', 0) > 60 else "normal",
-                trigger_reason=result.get('review_trigger_reason', 'low_confidence'),
-                description=f"税务报告处理后需要人工审核，风险评分：{result.get('overall_risk_score', 0)}",
-                content=result,
-                status="pending"
-            )
-            
-            db.add(review_request)
-            
-            # 更新报告记录
-            await db.execute(
-                text("""
-                UPDATE tax_reports 
-                SET review_request_id = :review_id
-                WHERE id = :id
-                """),
-                {"id": report_id, "review_id": review_id}
-            )
-            
-            await db.commit()
-            
-            print(f"✅ [税务报告服务] 创建审核请求: {review_id}")
-            
-        except (ValueError, KeyError) as e:
-            print(f"⚠️ [税务报告服务] 创建审核请求数据错误: {str(e)}")
-        except (OSError, IOError) as e:
-            print(f"⚠️ [税务报告服务] 创建审核请求IO错误: {str(e)}")
-        except Exception as e:
-            print(f"⚠️ [税务报告服务] 创建审核请求失败: {str(e)}")
-    
-    async def get_report_with_details(self, report_id: str, tenant_id: str) -> Optional[Dict[str, Any]]:
-        """
-        获取报告详情（包含所有处理结果）
-        
-        Args:
-            report_id: 报告ID
-            tenant_id: 租户ID
-            
-        Returns:
-            报告详情
-        """
-        async with AsyncSessionLocal() as db:
-            result = await db.execute(
-                text("""
-                SELECT * FROM tax_reports 
-                WHERE id = :id AND tenant_id = :tenant_id
-                """),
-                {"id": report_id, "tenant_id": tenant_id}
-            )
-            report = result.fetchone()
-            
-            if not report:
-                return None
-            
-            return {
-                "id": str(report.id),
-                "filename": report.original_filename,
-                "file_type": report.file_type,
-                "status": report.status,
-                "processing_message": report.processing_message,
-                "confidence_score": float(report.confidence_score) if report.confidence_score else None,
-                "risk_score": report.risk_score,
-                "risk_level": report.risk_level,
-                "needs_human_review": report.needs_human_review == "true",
-                "result": report.processing_result,
-                "tax_validation": report.tax_validation_result,
-                "created_at": report.created_at.isoformat() if report.created_at else None,
-                "completed_at": report.completed_at.isoformat() if report.completed_at else None
-            }
-
-
-# 单例实例
-tax_report_service = TaxReportService()

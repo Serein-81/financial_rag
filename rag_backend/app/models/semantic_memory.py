@@ -1,6 +1,6 @@
 # app/models/semantic_memory.py
-from sqlalchemy import Column, String, Text, ForeignKey, DateTime, func, JSON, Float, Integer, ARRAY
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Column, String, Text, ForeignKey, DateTime, func, Float, Integer, ARRAY
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from pgvector.sqlalchemy import Vector
 import uuid
@@ -31,7 +31,7 @@ class SemanticMemory(Base):
     tags = Column(ARRAY(String), nullable=True)  # 标签数组（使用 ARRAY 类型）
     
     # 元数据
-    memory_metadata = Column(JSON, nullable=True)  # 扩展信息
+    memory_metadata = Column(JSONB, nullable=True)  # 扩展信息（使用 JSONB 提升查询性能）
     source_session_id = Column(UUID(as_uuid=True), nullable=True)  # 来源会话
     
     # 时间戳

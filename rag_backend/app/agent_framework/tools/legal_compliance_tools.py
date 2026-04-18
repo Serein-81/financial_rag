@@ -1,24 +1,34 @@
 """
-法律匹配工具
-提供法律条款匹配和合规检查功能
+法律合规检查工具集
+
+整合法律条款匹配、合同检查和合规性评估功能
+提供全面的企业法律风险管理能力
 """
 
-from typing import Dict, Any, List
+import logging
 import re
+from typing import Dict, Any, List, Optional
 from datetime import datetime
+from .base import ToolBase
+
+logger = logging.getLogger(__name__)
 
 
-class LegalMatcher:
-    """法律匹配工具"""
+class ContractEssentialsChecker(ToolBase):
+    """
+    合同必备条款检查工具
+    
+    检查合同是否包含法律要求的必备条款
+    """
     
     def __init__(self):
-        self.name = "legal_matcher"
-        self.description = "匹配法律条款和进行合规检查"
+        super().__init__(
+            name="contract_essentials_checker",
+            description="检查合同必备条款的完整性，评估合同法律风险",
+            timeout=30,
+            tags=["法律", "合同", "合规", "检查"]
+        )
         
-        # 法律条款库
-        self.legal_clauses = self._load_legal_clauses()
-        
-        # 合同必备条款
         self.contract_essentials = [
             "当事人名称",
             "标的",
@@ -30,6 +40,115 @@ class LegalMatcher:
             "履行方式",
             "违约责任"
         ]
+    
+    async def execute(
+        self,
+        contract_text: str,
+        tenant_id: str
+    ) -> Dict[str, Any]:
+        """
+        检查合同必备条款
+        
+        Args:
+            contract_text: 合同文本
+            tenant_id: 租户ID
+            
+        Returns:
+            必备条款检查结果
+        """
+        try:
+            missing_clauses = []
+            found_clauses = []
+            
+            for essential in self.contract_essentials:
+                if self._check_clause_exists(contract_text, essential):
+                    found_clauses.append(essential)
+                else:
+                    missing_clauses.append(essential)
+            
+            completeness_score = (len(found_clauses) / len(self.contract_essentials)) * 100
+            
+            if len(missing_clauses) == 0:
+                risk_level = "low"
+                risk_description = "合同必备条款完整"
+            elif len(missing_clauses) <= 2:
+                risk_level = "medium"
+                risk_description = "合同缺少部分必备条款"
+            else:
+                risk_level = "high"
+                risk_description = "合同缺少多个必备条款，存在法律风险"
+            
+            return {
+                "tenant_id": tenant_id,
+                "completeness_score": round(completeness_score, 1),
+                "risk_level": risk_level,
+                "risk_description": risk_description,
+                "found_clauses": found_clauses,
+                "missing_clauses": missing_clauses,
+                "total_essentials": len(self.contract_essentials),
+                "recommendations": self._generate_contract_recommendations(missing_clauses),
+                "check_date": datetime.now().isoformat()
+            }
+        except Exception as e:
+            logger.error(f"合同必备条款检查失败: {str(e)}", exc_info=True)
+            return {
+                "tenant_id": tenant_id,
+                "error": f"合同必备条款检查失败: {str(e)}",
+                "completeness_score": 0,
+                "check_date": datetime.now().isoformat()
+            }
+    
+    def _check_clause_exists(self, text: str, clause: str) -> bool:
+        """检查条款是否存在"""
+        keywords_map = {
+            "当事人名称": ["甲方", "乙方", "当事人", "委托方", "受托方"],
+            "标的": ["标的", "合同标的", "交易标的", "服务内容"],
+            "数量": ["数量", "件数", "批次", "规格"],
+            "质量": ["质量", "质量标准", "技术要求", "验收标准"],
+            "价款或者报酬": ["价款", "报酬", "费用", "金额", "价格"],
+            "履行期限": ["履行期限", "完成时间", "交付时间", "期限"],
+            "履行地点": ["履行地点", "交付地点", "服务地点", "地点"],
+            "履行方式": ["履行方式", "交付方式", "付款方式", "方式"],
+            "违约责任": ["违约责任", "违约", "责任", "赔偿", "损失"]
+        }
+        
+        keywords = keywords_map.get(clause, [clause])
+        
+        for keyword in keywords:
+            if keyword in text:
+                return True
+        
+        return False
+    
+    def _generate_contract_recommendations(self, missing_clauses: List[str]) -> List[str]:
+        """生成合同建议"""
+        if not missing_clauses:
+            return ["合同条款完整，建议定期审查更新"]
+        
+        recommendations = []
+        for clause in missing_clauses:
+            recommendations.append(f"建议补充{clause}相关条款")
+        
+        recommendations.append("建议咨询专业律师完善合同条款")
+        return recommendations
+
+
+class LegalClauseMatcher(ToolBase):
+    """
+    法律条款匹配工具
+    
+    提供法律条款的智能匹配和检索
+    """
+    
+    def __init__(self):
+        super().__init__(
+            name="legal_clause_matcher",
+            description="根据文本内容匹配相关法律条款，支持合同法、劳动法、公司法等",
+            timeout=30,
+            tags=["法律", "匹配", "条款", "检索"]
+        )
+        
+        self.legal_clauses = self._load_legal_clauses()
     
     def _load_legal_clauses(self) -> Dict[str, List[Dict[str, Any]]]:
         """加载法律条款库"""
@@ -67,89 +186,7 @@ class LegalMatcher:
             ]
         }
     
-    def check_contract_essentials(
-        self,
-        contract_text: str,
-        tenant_id: str
-    ) -> Dict[str, Any]:
-        """
-        检查合同必备条款
-        
-        Args:
-            contract_text: 合同文本
-            tenant_id: 租户ID
-            
-        Returns:
-            必备条款检查结果
-        """
-        try:
-            missing_clauses = []
-            found_clauses = []
-            
-            for essential in self.contract_essentials:
-                if self._check_clause_exists(contract_text, essential):
-                    found_clauses.append(essential)
-                else:
-                    missing_clauses.append(essential)
-            
-            # 计算完整性分数
-            completeness_score = (len(found_clauses) / len(self.contract_essentials)) * 100
-            
-            # 风险评估
-            if len(missing_clauses) == 0:
-                risk_level = "low"
-                risk_description = "合同必备条款完整"
-            elif len(missing_clauses) <= 2:
-                risk_level = "medium"
-                risk_description = "合同缺少部分必备条款"
-            else:
-                risk_level = "high"
-                risk_description = "合同缺少多个必备条款，存在法律风险"
-            
-            return {
-                "tenant_id": tenant_id,  # 🔒 租户隔离
-                "completeness_score": round(completeness_score, 1),
-                "risk_level": risk_level,
-                "risk_description": risk_description,
-                "found_clauses": found_clauses,
-                "missing_clauses": missing_clauses,
-                "total_essentials": len(self.contract_essentials),
-                "recommendations": self._generate_contract_recommendations(missing_clauses),
-                "check_date": datetime.now().isoformat()
-            }
-            
-        except Exception as e:
-            return {
-                "tenant_id": tenant_id,
-                "error": f"合同必备条款检查失败: {str(e)}",
-                "completeness_score": 0,
-                "check_date": datetime.now().isoformat()
-            }
-    
-    def _check_clause_exists(self, text: str, clause: str) -> bool:
-        """检查条款是否存在"""
-        # 简化的关键词匹配
-        keywords_map = {
-            "当事人名称": ["甲方", "乙方", "当事人", "委托方", "受托方"],
-            "标的": ["标的", "合同标的", "交易标的", "服务内容"],
-            "数量": ["数量", "件数", "批次", "规格"],
-            "质量": ["质量", "质量标准", "技术要求", "验收标准"],
-            "价款或者报酬": ["价款", "报酬", "费用", "金额", "价格"],
-            "履行期限": ["履行期限", "完成时间", "交付时间", "期限"],
-            "履行地点": ["履行地点", "交付地点", "服务地点", "地点"],
-            "履行方式": ["履行方式", "交付方式", "付款方式", "方式"],
-            "违约责任": ["违约责任", "违约", "责任", "赔偿", "损失"]
-        }
-        
-        keywords = keywords_map.get(clause, [clause])
-        
-        for keyword in keywords:
-            if keyword in text:
-                return True
-        
-        return False
-    
-    def match_legal_provisions(
+    async def execute(
         self,
         text: str,
         legal_area: str,
@@ -167,15 +204,15 @@ class LegalMatcher:
             匹配的法律条款
         """
         try:
-            matched_provisions = []
-            
             if legal_area not in self.legal_clauses:
                 return {
                     "tenant_id": tenant_id,
                     "error": f"不支持的法律领域: {legal_area}",
-                    "matched_provisions": []
+                    "matched_provisions": [],
+                    "available_areas": list(self.legal_clauses.keys())
                 }
             
+            matched_provisions = []
             provisions = self.legal_clauses[legal_area]
             
             for provision in provisions:
@@ -189,18 +226,17 @@ class LegalMatcher:
                         "matched_keywords": [kw for kw in provision["keywords"] if kw in text]
                     })
             
-            # 按相关性排序
             matched_provisions.sort(key=lambda x: x["relevance_score"], reverse=True)
             
             return {
-                "tenant_id": tenant_id,  # 🔒 租户隔离
+                "tenant_id": tenant_id,
                 "legal_area": legal_area,
                 "total_matches": len(matched_provisions),
-                "matched_provisions": matched_provisions[:5],  # 返回前5个最相关的
+                "matched_provisions": matched_provisions[:5],
                 "match_date": datetime.now().isoformat()
             }
-            
         except Exception as e:
+            logger.error(f"法律条款匹配失败: {str(e)}", exc_info=True)
             return {
                 "tenant_id": tenant_id,
                 "error": f"法律条款匹配失败: {str(e)}",
@@ -212,14 +248,30 @@ class LegalMatcher:
         """计算相关性分数"""
         matched_count = sum(1 for keyword in keywords if keyword in text)
         return matched_count / len(keywords) if keywords else 0
+
+
+class LaborComplianceChecker(ToolBase):
+    """
+    劳动法合规检查工具
     
-    def check_labor_compliance(
+    检查劳动合同和用工文档的合规性
+    """
+    
+    def __init__(self):
+        super().__init__(
+            name="labor_compliance_checker",
+            description="检查劳动用工合规性，包括工作时间、社会保险、劳动报酬等",
+            timeout=30,
+            tags=["法律", "劳动", "合规", "检查"]
+        )
+    
+    async def execute(
         self,
         labor_text: str,
         tenant_id: str
     ) -> Dict[str, Any]:
         """
-        劳动法合规检查
+        检查劳动法合规性
         
         Args:
             labor_text: 劳动合同或用工文档文本
@@ -232,7 +284,6 @@ class LegalMatcher:
             compliance_issues = []
             compliance_score = 100
             
-            # 检查工作时间
             if "工作时间" in labor_text:
                 if re.search(r"[9-9]小时|10小时|11小时|12小时", labor_text):
                     compliance_issues.append({
@@ -243,7 +294,6 @@ class LegalMatcher:
                     })
                     compliance_score -= 20
             
-            # 检查社会保险
             if "社保" not in labor_text and "社会保险" not in labor_text:
                 compliance_issues.append({
                     "type": "社会保险",
@@ -253,7 +303,6 @@ class LegalMatcher:
                 })
                 compliance_score -= 25
             
-            # 检查劳动报酬
             if "工资" not in labor_text and "报酬" not in labor_text and "薪酬" not in labor_text:
                 compliance_issues.append({
                     "type": "劳动报酬",
@@ -263,7 +312,6 @@ class LegalMatcher:
                 })
                 compliance_score -= 20
             
-            # 检查试用期
             if "试用期" in labor_text:
                 if re.search(r"试用期.*[7-9]个月|试用期.*1[0-9]个月", labor_text):
                     compliance_issues.append({
@@ -274,18 +322,10 @@ class LegalMatcher:
                     })
                     compliance_score -= 15
             
-            # 确定合规等级
-            if compliance_score >= 90:
-                compliance_level = "优秀"
-            elif compliance_score >= 80:
-                compliance_level = "良好"
-            elif compliance_score >= 70:
-                compliance_level = "一般"
-            else:
-                compliance_level = "较差"
+            compliance_level = self._get_compliance_level(compliance_score)
             
             return {
-                "tenant_id": tenant_id,  # 🔒 租户隔离
+                "tenant_id": tenant_id,
                 "compliance_score": compliance_score,
                 "compliance_level": compliance_level,
                 "total_issues": len(compliance_issues),
@@ -293,8 +333,8 @@ class LegalMatcher:
                 "recommendations": self._generate_labor_recommendations(compliance_issues),
                 "check_date": datetime.now().isoformat()
             }
-            
         except Exception as e:
+            logger.error(f"劳动法合规检查失败: {str(e)}", exc_info=True)
             return {
                 "tenant_id": tenant_id,
                 "error": f"劳动法合规检查失败: {str(e)}",
@@ -302,13 +342,58 @@ class LegalMatcher:
                 "check_date": datetime.now().isoformat()
             }
     
-    def check_ip_risks(
+    def _get_compliance_level(self, score: int) -> str:
+        """确定合规等级"""
+        if score >= 90:
+            return "优秀"
+        elif score >= 80:
+            return "良好"
+        elif score >= 70:
+            return "一般"
+        else:
+            return "较差"
+    
+    def _generate_labor_recommendations(self, issues: List[Dict[str, Any]]) -> List[str]:
+        """生成劳动法建议"""
+        if not issues:
+            return ["劳动用工合规情况良好"]
+        
+        recommendations = []
+        for issue in issues:
+            if issue["type"] == "工作时间":
+                recommendations.append("建议调整工作时间安排，确保符合法定标准（8小时/天，44小时/周）")
+            elif issue["type"] == "社会保险":
+                recommendations.append("建议明确约定社会保险缴纳义务，依法为员工缴纳社保")
+            elif issue["type"] == "劳动报酬":
+                recommendations.append("建议明确约定劳动报酬标准、支付方式和支付时间")
+            elif issue["type"] == "试用期":
+                recommendations.append("建议核查试用期设置是否符合法律规定（劳动合同3个月-1年，试用期不超过1个月）")
+        
+        return recommendations
+
+
+class IPRiskChecker(ToolBase):
+    """
+    知识产权风险检查工具
+    
+    检查文档中的知识产权风险
+    """
+    
+    def __init__(self):
+        super().__init__(
+            name="ip_risk_checker",
+            description="检查知识产权风险，包括商标、专利、著作权和商业秘密",
+            timeout=30,
+            tags=["法律", "知识产权", "风险", "合规"]
+        )
+    
+    async def execute(
         self,
         text: str,
         tenant_id: str
     ) -> Dict[str, Any]:
         """
-        知识产权风险检查
+        检查知识产权风险
         
         Args:
             text: 文档文本
@@ -321,7 +406,6 @@ class LegalMatcher:
             ip_risks = []
             risk_score = 0
             
-            # 检查商标使用
             if re.search(r"®|™|商标", text):
                 if "授权" not in text and "许可" not in text:
                     ip_risks.append({
@@ -331,7 +415,6 @@ class LegalMatcher:
                     })
                     risk_score += 30
             
-            # 检查专利使用
             if "专利" in text:
                 if "授权" not in text and "许可" not in text:
                     ip_risks.append({
@@ -341,7 +424,6 @@ class LegalMatcher:
                     })
                     risk_score += 40
             
-            # 检查著作权
             if "版权" in text or "著作权" in text:
                 if "原创" not in text and "授权" not in text:
                     ip_risks.append({
@@ -351,7 +433,6 @@ class LegalMatcher:
                     })
                     risk_score += 25
             
-            # 检查商业秘密
             if "商业秘密" in text or "保密" in text:
                 if "保密协议" not in text:
                     ip_risks.append({
@@ -361,7 +442,6 @@ class LegalMatcher:
                     })
                     risk_score += 20
             
-            # 确定风险等级
             if risk_score == 0:
                 risk_level = "low"
                 risk_description = "未发现明显知识产权风险"
@@ -373,7 +453,7 @@ class LegalMatcher:
                 risk_description = "存在较高知识产权风险"
             
             return {
-                "tenant_id": tenant_id,  # 🔒 租户隔离
+                "tenant_id": tenant_id,
                 "risk_score": risk_score,
                 "risk_level": risk_level,
                 "risk_description": risk_description,
@@ -382,44 +462,14 @@ class LegalMatcher:
                 "recommendations": self._generate_ip_recommendations(ip_risks),
                 "check_date": datetime.now().isoformat()
             }
-            
         except Exception as e:
+            logger.error(f"知识产权风险检查失败: {str(e)}", exc_info=True)
             return {
                 "tenant_id": tenant_id,
                 "error": f"知识产权风险检查失败: {str(e)}",
                 "risk_score": 0,
                 "check_date": datetime.now().isoformat()
             }
-    
-    def _generate_contract_recommendations(self, missing_clauses: List[str]) -> List[str]:
-        """生成合同建议"""
-        if not missing_clauses:
-            return ["合同条款完整，建议定期审查更新"]
-        
-        recommendations = []
-        for clause in missing_clauses:
-            recommendations.append(f"建议补充{clause}相关条款")
-        
-        recommendations.append("建议咨询专业律师完善合同条款")
-        return recommendations
-    
-    def _generate_labor_recommendations(self, issues: List[Dict[str, Any]]) -> List[str]:
-        """生成劳动法建议"""
-        if not issues:
-            return ["劳动用工合规情况良好"]
-        
-        recommendations = []
-        for issue in issues:
-            if issue["type"] == "工作时间":
-                recommendations.append("建议调整工作时间安排，确保符合法定标准")
-            elif issue["type"] == "社会保险":
-                recommendations.append("建议明确约定社会保险缴纳义务")
-            elif issue["type"] == "劳动报酬":
-                recommendations.append("建议明确约定劳动报酬标准和支付方式")
-            elif issue["type"] == "试用期":
-                recommendations.append("建议核查试用期设置是否符合法律规定")
-        
-        return recommendations
     
     def _generate_ip_recommendations(self, risks: List[Dict[str, Any]]) -> List[str]:
         """生成知识产权建议"""
@@ -429,12 +479,12 @@ class LegalMatcher:
         recommendations = []
         for risk in risks:
             if risk["type"] == "商标风险":
-                recommendations.append("建议获得商标使用授权或许可")
+                recommendations.append("建议获得商标使用授权或许可，避免商标侵权风险")
             elif risk["type"] == "专利风险":
-                recommendations.append("建议核查专利权属，获得必要授权")
+                recommendations.append("建议核查专利权属，获得必要授权，避免专利侵权")
             elif risk["type"] == "著作权风险":
-                recommendations.append("建议明确著作权权属，避免侵权风险")
+                recommendations.append("建议明确著作权权属，避免著作权侵权风险")
             elif risk["type"] == "商业秘密风险":
-                recommendations.append("建议签署保密协议，加强商业秘密保护")
+                recommendations.append("建议签署保密协议，加强商业秘密保护措施")
         
         return recommendations

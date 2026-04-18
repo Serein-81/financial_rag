@@ -15,7 +15,7 @@ from .audit_result import AuditResult
 from .agent_collaboration import AgentCollaboration
 from .invite_code import InviteCode, InviteCodeUsage
 from .tax_report import TaxReport, TaxReportDocument
-from .review_request import ReviewRequest
+from .review_request import ReviewRequest, ReviewRequestComment, ReviewRequestAction
 from .multi_agent_session import (
     MultiAgentSession,
     MultiAgentSpecialistResult,

@@ -201,7 +201,7 @@ class AgentTracer:
                 tool_output=tool_output,
                 tool_duration=tool_duration,
                 confidence=confidence,
-                metadata=metadata,
+                extra_metadata=metadata,  # 映射到数据库的 metadata 列
                 timestamp=time.time()
             )
             

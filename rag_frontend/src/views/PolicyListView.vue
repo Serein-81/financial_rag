@@ -788,12 +788,7 @@ function selectExportFormat(format: ExportFormat) {
 
         <!-- Policy List -->
         <div v-else-if="policies.length > 0" class="space-y-4">
-          <div
-            v-for="policy in policies"
-            :key="policy.id"
-            @click="viewPolicyDetail(policy)"
-            class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 hover:shadow-lg hover:border-blue-200 transition-all cursor-pointer group"
-          >
+          <div v-for="(policy, index) in policies" :key="policy.id" @click="viewPolicyDetail(policy)" class="bg-white rounded-2xl p-6 shadow-sm border border-gray-200 hover:shadow-lg hover:border-emerald-300 transition-all cursor-pointer group animate-policy-card" :style="{ animationDelay: index * 0.05 + 's' }">
             <div class="flex items-start justify-between gap-4">
               <div class="flex-1">
                 <div class="flex items-center gap-2 mb-2 flex-wrap">
@@ -904,38 +899,25 @@ function selectExportFormat(format: ExportFormat) {
                     </div>
 
                     <div class="space-y-3">
-                      <!-- Summary -->
-                      <div v-if="getLLMSummary(policy.id).summary">
+                      <div v-if="getLLMSummary(policy.id).summary" class="mb-3">
                         <div class="text-xs text-purple-700 font-medium mb-1">摘要：</div>
-                        <p class="text-xs text-gray-700 leading-relaxed">
-                          {{ getLLMSummary(policy.id).summary }}
-                        </p>
+                        <p class="text-xs text-gray-700 leading-relaxed">{{ getLLMSummary(policy.id).summary }}</p>
                       </div>
 
-                      <!-- Key Points -->
-                      <div v-if="getLLMSummary(policy.id).key_points?.length > 0">
+                      <div v-if="getLLMSummary(policy.id).key_points?.length > 0" class="mb-3">
                         <div class="text-xs text-purple-700 font-medium mb-2">关键要点：</div>
                         <div class="space-y-1">
-                          <div
-                            v-for="(point, idx) in getLLMSummary(policy.id).key_points.slice(0, 4)"
-                            :key="idx"
-                            class="flex items-start gap-2 text-xs text-gray-700"
-                          >
+                          <div v-for="(point, idx) in getLLMSummary(policy.id).key_points.slice(0, 4)" :key="idx" class="flex items-start gap-2 text-xs text-gray-700 mb-1">
                             <Wand2 :size="10" class="text-purple-600 mt-0.5 flex-shrink-0" />
                             <span>{{ point }}</span>
                           </div>
                         </div>
                       </div>
 
-                      <!-- Recommendations -->
-                      <div v-if="getLLMSummary(policy.id).recommendations?.length > 0">
+                      <div v-if="getLLMSummary(policy.id).recommendations?.length > 0" class="mb-3">
                         <div class="text-xs text-purple-700 font-medium mb-2">建议行动：</div>
                         <div class="space-y-1">
-                          <div
-                            v-for="(rec, idx) in getLLMSummary(policy.id).recommendations.slice(0, 3)"
-                            :key="idx"
-                            class="flex items-start gap-2 text-xs text-gray-700"
-                          >
+                          <div v-for="(rec, idx) in getLLMSummary(policy.id).recommendations.slice(0, 3)" :key="idx" class="flex items-start gap-2 text-xs text-gray-700 mb-1">
                             <Sparkles :size="10" class="text-blue-600 mt-0.5 flex-shrink-0" />
                             <span>{{ rec }}</span>
                           </div>
@@ -956,17 +938,19 @@ function selectExportFormat(format: ExportFormat) {
             </div>
           </div>
         </div>
-
-        <!-- Empty State -->
-        <div v-else class="text-center py-20">
-          <div class="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <FileText :size="40" class="text-gray-400" />
-          </div>
-          <h3 class="text-lg font-semibold text-gray-900 mb-2">暂无政策</h3>
-          <p class="text-sm text-gray-500">请尝试调整筛选条件或搜索关键词</p>
+              <!-- Empty State -->
+      <div v-else class="text-center py-20">
+        <div class="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+          <FileText :size="40" class="text-gray-400" />
         </div>
+        <h3 class="text-lg font-semibold text-gray-900 mb-2">暂无政策</h3>
+        <p class="text-sm text-gray-500">请尝试调整筛选条件或搜索关键词</p>
+      </div>
+      </div>
 
-        <!-- Pagination -->
+
+
+      <!-- Pagination -->
         <div v-if="totalPages > 1" class="flex items-center justify-center gap-2 mt-8">
           <button
             @click="goToPage(currentPage - 1)"
@@ -1007,7 +991,7 @@ function selectExportFormat(format: ExportFormat) {
         </div>
       </div>
     </div>
-  </div>
+
 
   <ExportProgressModal
     :visible="showExportModal"
@@ -1025,5 +1009,56 @@ function selectExportFormat(format: ExportFormat) {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+/* 政策列表动画 */
+.policy-list-enter-active {
+  animation: policySlideIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.policy-list-leave-active {
+  animation: policyFadeOut 0.2s ease-out;
+}
+
+.policy-list-move {
+  transition: transform 0.3s ease;
+}
+
+@keyframes policySlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes policyFadeOut {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+}
+
+/* 单个政策卡片动画 */
+.animate-policy-card {
+  animation: cardSlideIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) backwards;
+}
+
+@keyframes cardSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(15px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 </style>

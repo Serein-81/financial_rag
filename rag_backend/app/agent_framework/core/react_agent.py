@@ -361,7 +361,6 @@ class ReActAgent(BaseAgent):
                                 tool_call_detected = False
                                 try:
                                     import json
-                                    import re
                                     # 模式1: ReAct Action Input 格式
                                     json_match = re.search(r'Action Input:\s*([\s\S]*?)(?:\n|$)', response_text)
                                     if json_match:

@@ -2,6 +2,8 @@
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useGroupChatStore } from '@/stores/group-chat'
 import { useAuthStore } from '@/stores/auth'
+import { enterpriseApi, type EnterpriseUser } from '@/api/enterprise'
+import { useToast } from '@/composables/useToast'
 import {
   Users,
   Plus,
@@ -35,6 +37,13 @@ const newGroupDesc = ref('')
 const newMessage = ref('')
 const searchQuery = ref('')
 const messagesContainerRef = ref<HTMLDivElement>()
+const inviteSearchQuery = ref('')
+const inviteSelectedUsers = ref<Set<string>>(new Set())
+const enterpriseUsers = ref<EnterpriseUser[]>([])
+const inviteLoading = ref(false)
+const inviteSending = ref(false)
+
+const toast = useToast()
 
 const filteredGroups = computed(() => {
   if (!searchQuery.value.trim()) {
@@ -84,6 +93,70 @@ function scrollToBottomDelayed() {
     scrollToBottom()
   }, 50)
 }
+
+async function openInviteModal() {
+  inviteSearchQuery.value = ''
+  inviteSelectedUsers.value = new Set()
+  inviteLoading.value = true
+  
+  try {
+    const users = await enterpriseApi.getTenantUsers()
+    const currentMemberIds = new Set(
+      groupChatStore.currentMembers.map(m => m.user_id)
+    )
+    enterpriseUsers.value = users.filter(u => !currentMemberIds.has(u.id) && u.id !== currentUserId.value && u.is_active)
+  } catch (e) {
+    console.error('加载企业成员失败:', e)
+    enterpriseUsers.value = []
+  } finally {
+    inviteLoading.value = false
+    showInviteModal.value = true
+  }
+}
+
+function toggleInviteUser(userId: string) {
+  if (inviteSelectedUsers.value.has(userId)) {
+    inviteSelectedUsers.value.delete(userId)
+  } else {
+    inviteSelectedUsers.value.add(userId)
+  }
+  inviteSelectedUsers.value = new Set(inviteSelectedUsers.value)
+}
+
+async function handleInviteMembers() {
+  if (inviteSelectedUsers.value.size === 0) return
+  
+  inviteSending.value = true
+  try {
+    await groupChatStore.inviteMembers(Array.from(inviteSelectedUsers.value))
+    showInviteModal.value = false
+    const count = inviteSelectedUsers.value.size
+    toast.success(
+      `已成功向 ${count} 位成员发送群聊邀请`,
+      '邀请已发送'
+    )
+    inviteSelectedUsers.value = new Set()
+    
+    await groupChatStore.fetchNotifications()
+  } catch (e) {
+    console.error('邀请成员失败:', e)
+    toast.error('邀请失败，请重试', '操作失败')
+  } finally {
+    inviteSending.value = false
+  }
+}
+
+const filteredInviteUsers = computed(() => {
+  if (!inviteSearchQuery.value.trim()) {
+    return enterpriseUsers.value
+  }
+  const query = inviteSearchQuery.value.toLowerCase()
+  return enterpriseUsers.value.filter(u =>
+    u.full_name.toLowerCase().includes(query) ||
+    u.email.toLowerCase().includes(query) ||
+    u.nickname?.toLowerCase().includes(query)
+  )
+})
 
 async function handleCreateGroup() {
   if (!newGroupName.value.trim()) return
@@ -336,7 +409,7 @@ function getRoleLabel(role: string): string {
           </div>
           <div class="flex items-center gap-2">
             <button
-              @click="showInviteModal = true"
+              @click="openInviteModal"
               class="p-2 hover:bg-gray-100 rounded-lg text-gray-600 hover:text-emerald-600 transition-colors"
               title="邀请成员"
             >
@@ -539,23 +612,87 @@ function getRoleLabel(role: string): string {
     <Teleport to="body">
       <div v-if="showInviteModal" class="fixed inset-0 z-50 flex items-center justify-center">
         <div class="absolute inset-0 bg-black/50" @click="showInviteModal = false"></div>
-        <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 animate-in fade-in zoom-in duration-200">
-          <h2 class="text-xl font-bold text-gray-900 mb-4">邀请成员</h2>
+        <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 animate-in fade-in zoom-in duration-200">
+          <h2 class="text-xl font-bold text-gray-900 mb-2">邀请成员</h2>
           <p class="text-sm text-gray-500 mb-4">邀请企业成员加入「{{ groupChatStore.currentGroup?.name }}」</p>
           
-          <div class="space-y-3 max-h-64 overflow-y-auto">
-            <div class="p-3 bg-amber-50 border border-amber-200 rounded-xl">
-              <p class="text-sm text-amber-700">邀请功能将通过系统通知发送给企业成员</p>
+          <div class="mb-4">
+            <div class="relative">
+              <Search :size="16" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                v-model="inviteSearchQuery"
+                type="text"
+                placeholder="搜索成员..."
+                class="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+              />
             </div>
           </div>
           
-          <div class="flex justify-end gap-3 mt-6">
-            <button
-              @click="showInviteModal = false"
-              class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-xl transition-colors"
+          <div v-if="inviteLoading" class="py-8 text-center">
+            <div class="animate-spin w-8 h-8 border-4 border-emerald-500 border-t-transparent rounded-full mx-auto"></div>
+            <p class="mt-2 text-sm text-gray-500">加载中...</p>
+          </div>
+          
+          <div v-else-if="filteredInviteUsers.length === 0" class="py-8 text-center">
+            <Users :size="48" class="mx-auto text-gray-300" />
+            <p class="mt-2 text-sm text-gray-500">暂无可邀请的成员</p>
+            <p class="text-xs text-gray-400 mt-1">所有企业成员可能已在群中</p>
+          </div>
+          
+          <div v-else class="space-y-2 max-h-80 overflow-y-auto">
+            <div
+              v-for="user in filteredInviteUsers"
+              :key="user.id"
+              @click="toggleInviteUser(user.id)"
+              :class="[
+                'flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all',
+                inviteSelectedUsers.has(user.id)
+                  ? 'bg-emerald-50 border-2 border-emerald-500'
+                  : 'bg-gray-50 border-2 border-transparent hover:bg-gray-100'
+              ]"
             >
-              关闭
-            </button>
+              <div class="relative">
+                <div class="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center text-white font-bold">
+                  {{ user.full_name?.charAt(0) || user.email.charAt(0).toUpperCase() }}
+                </div>
+                <div
+                  v-if="inviteSelectedUsers.has(user.id)"
+                  class="absolute -top-1 -right-1 w-5 h-5 bg-emerald-500 rounded-full flex items-center justify-center"
+                >
+                  <Check :size="12" class="text-white" />
+                </div>
+              </div>
+              <div class="flex-1 min-w-0">
+                <p class="font-medium text-gray-900 truncate">{{ user.full_name || user.nickname || user.email }}</p>
+                <p class="text-xs text-gray-500 truncate">{{ user.email }}</p>
+              </div>
+            </div>
+          </div>
+          
+          <div class="flex justify-between items-center mt-6 pt-4 border-t border-gray-100">
+            <p class="text-sm text-gray-500">
+              已选择 <span class="font-bold text-emerald-600">{{ inviteSelectedUsers.size }}</span> 位成员
+            </p>
+            <div class="flex gap-3">
+              <button
+                @click="showInviteModal = false"
+                class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-xl transition-colors"
+              >
+                取消
+              </button>
+              <button
+                @click="handleInviteMembers"
+                :disabled="inviteSelectedUsers.size === 0 || inviteSending"
+                :class="[
+                  'px-4 py-2 rounded-xl transition-colors',
+                  inviteSelectedUsers.size > 0 && !inviteSending
+                    ? 'bg-emerald-500 hover:bg-emerald-600 text-white'
+                    : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                ]"
+              >
+                {{ inviteSending ? '发送中...' : `发送邀请 (${inviteSelectedUsers.size})` }}
+              </button>
+            </div>
           </div>
         </div>
       </div>

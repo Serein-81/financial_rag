@@ -209,27 +209,46 @@ def setup_logging(
         root_logger.addHandler(console_handler)
     
     if enable_file:
-        log_path = Path(log_dir)
-        log_path.mkdir(parents=True, exist_ok=True)
-        
-        file_handler = logging.handlers.RotatingFileHandler(
-            filename=str(log_path / log_file),
-            maxBytes=max_bytes,
-            backupCount=backup_count,
-            encoding="utf-8"
-        )
-        file_handler.setLevel(getattr(logging, log_level.upper()))
-        
-        if format_type == LogFormat.JSON:
-            file_handler.setFormatter(StructuredLogFormatter())
-        else:
-            file_handler.setFormatter(
-                logging.Formatter(
-                    "[%(asctime)s] [%(levelname)s] [%(name)s] [%(filename)s:%(lineno)d] %(message)s"
-                )
+        try:
+            log_path = Path(log_dir)
+            log_path.mkdir(parents=True, exist_ok=True)
+            
+            file_handler = logging.handlers.RotatingFileHandler(
+                filename=str(log_path / log_file),
+                maxBytes=max_bytes,
+                backupCount=backup_count,
+                encoding="utf-8"
             )
-        
-        root_logger.addHandler(file_handler)
+            file_handler.setLevel(getattr(logging, log_level.upper()))
+            
+            if format_type == LogFormat.JSON:
+                file_handler.setFormatter(StructuredLogFormatter())
+            else:
+                file_handler.setFormatter(
+                    logging.Formatter(
+                        "[%(asctime)s] [%(levelname)s] [%(name)s] [%(filename)s:%(lineno)d] %(message)s"
+                    )
+                )
+            
+            root_logger.addHandler(file_handler)
+        except (PermissionError, OSError, IOError) as e:
+            console_handler = logging.StreamHandler(sys.stdout)
+            console_handler.setLevel(getattr(logging, log_level.upper()))
+            console_handler.setFormatter(
+                logging.Formatter("[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s")
+            )
+            console_handler.setLevel(logging.WARNING)
+            warning_handler = logging.StreamHandler(sys.stderr)
+            warning_handler.setLevel(logging.WARNING)
+            warning_handler.setFormatter(
+                logging.Formatter("[%(asctime)s] [WARNING] [%(name)s] 日志文件写入失败: %(message)s")
+            )
+            root_logger.addHandler(console_handler)
+            root_logger.addHandler(warning_handler)
+            root_logger.warning(
+                f"无法创建日志文件 {log_dir}/{log_file}: {e}。"
+                f"日志将仅输出到控制台。"
+            )
     
     if stdio_safe:
         error_handler = logging.StreamHandler(sys.stderr)

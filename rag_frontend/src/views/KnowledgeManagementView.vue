@@ -370,6 +370,13 @@ function formatFileSize(bytes: number | null): string {
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`
 }
 
+function formatNumber(num: number | null): string {
+  if (num === null || num === undefined) return '-'
+  if (num >= 10000) return `${(num / 10000).toFixed(1)}w`
+  if (num >= 1000) return `${(num / 1000).toFixed(1)}k`
+  return num.toString()
+}
+
 function closePreviewModal() {
   if (previewPdfUrl.value) {
     window.URL.revokeObjectURL(previewPdfUrl.value)
@@ -1000,7 +1007,7 @@ function formatDate(dateString: string): string {
             class="w-full h-full border-0"
             title="PDF Preview"
             scrolling="yes"
-            sandbox="allow-same-origin allow-scripts"
+            sandbox="allow-same-origin allow-scripts allow-downloads"
           />
 
           <iframe
@@ -1009,7 +1016,7 @@ function formatDate(dateString: string): string {
             class="w-full h-full border-0"
             title="Word Preview"
             scrolling="yes"
-            sandbox="allow-same-origin allow-scripts"
+            sandbox="allow-same-origin allow-scripts allow-downloads"
           />
 
           <iframe
@@ -1018,7 +1025,7 @@ function formatDate(dateString: string): string {
             class="w-full h-full border-0"
             title="HTML Preview"
             scrolling="yes"
-            sandbox="allow-same-origin allow-scripts"
+            sandbox="allow-same-origin allow-scripts allow-downloads"
           />
 
           <pre
@@ -1100,7 +1107,7 @@ function formatDate(dateString: string): string {
             
             <div class="bg-emerald-50 rounded-xl p-4 border border-emerald-200">
               <p class="text-xs text-emerald-600 mb-1">切块数量</p>
-              <p class="text-lg font-bold text-emerald-700">{{ selectedDoc.chunk_count || 0 }}</p>
+              <p class="text-lg font-bold text-emerald-700">{{ formatNumber(selectedDoc.chunk_count) }}</p>
             </div>
             
             <div class="bg-slate-50 rounded-xl p-4">
@@ -1111,8 +1118,38 @@ function formatDate(dateString: string): string {
             </div>
           </div>
 
+          <!-- 提取内容统计 -->
+          <div v-if="selectedDoc.meta_info && selectedDoc.meta_info.estimated_words" class="bg-gradient-to-r from-emerald-50 to-teal-50 rounded-xl p-4 border border-emerald-200">
+            <p class="text-sm font-semibold text-emerald-800 mb-3 flex items-center gap-2">
+              <Info :size="16" class="text-emerald-500" />
+              提取内容统计
+            </p>
+            <div class="grid grid-cols-2 gap-3">
+              <div class="bg-white rounded-lg p-3">
+                <p class="text-xs text-slate-500 mb-1">提取字数</p>
+                <p class="text-sm font-semibold text-slate-900">{{ selectedDoc.meta_info.estimated_words || 0 }}</p>
+              </div>
+              <div class="bg-white rounded-lg p-3">
+                <p class="text-xs text-slate-500 mb-1">提取字符</p>
+                <p class="text-sm font-semibold text-slate-900">{{ selectedDoc.meta_info.estimated_chars || 0 }}</p>
+              </div>
+              <div class="bg-white rounded-lg p-3">
+                <p class="text-xs text-slate-500 mb-1">提取Token</p>
+                <p class="text-sm font-semibold text-slate-900">{{ selectedDoc.meta_info.estimated_tokens || 0 }}</p>
+              </div>
+              <div class="bg-white rounded-lg p-3">
+                <p class="text-xs text-slate-500 mb-1">内容块数</p>
+                <p class="text-sm font-semibold text-slate-900">{{ selectedDoc.meta_info.total_blocks || 0 }}</p>
+              </div>
+              <div class="bg-white rounded-lg p-3 col-span-2">
+                <p class="text-xs text-slate-500 mb-1">提取方法</p>
+                <p class="text-sm font-semibold text-slate-900">{{ selectedDoc.meta_info.extraction_method || '-' }}</p>
+              </div>
+            </div>
+          </div>
+
           <!-- 元信息 -->
-          <div v-if="selectedDoc.meta_info && Object.keys(selectedDoc.meta_info).length > 0" class="bg-slate-50 rounded-xl p-4">
+          <div v-else-if="selectedDoc.meta_info && Object.keys(selectedDoc.meta_info).length > 0" class="bg-slate-50 rounded-xl p-4">
             <p class="text-sm font-semibold text-slate-900 mb-3 flex items-center gap-2">
               <Info :size="16" class="text-emerald-500" />
               元信息

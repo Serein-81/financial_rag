@@ -6,8 +6,8 @@
 存储企业/租户的配置信息，包括企业名称、Logo、主题设置等
 """
 
-from sqlalchemy import Column, String, DateTime, Text, Boolean, Integer, JSON, Index, ARRAY
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Column, String, DateTime, Text, Boolean, Integer, Index, ARRAY
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy import func
 import uuid
 from app.db.base import Base
@@ -81,8 +81,8 @@ class TenantSettings(Base):
     is_trial = Column(Boolean, default=True)  # 是否试用版
     trial_expires_at = Column(DateTime(timezone=True), nullable=True)  # 试用过期时间
 
-    # 扩展数据
-    extra_settings = Column(JSON, nullable=True)  # 额外设置(JSON)
+    # 扩展数据（使用 JSONB 提升查询性能）
+    extra_settings = Column(JSONB, nullable=True)  # 额外设置(JSON)
 
     # 创建索引
     __table_args__ = (

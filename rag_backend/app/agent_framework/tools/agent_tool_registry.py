@@ -1,7 +1,7 @@
 """
 Agent 工具注册器
 
-负责将 MCP 工具和本地工具注册到 ToolManager
+负责将 MCP 工具、本地工具和业务工具注册到 ToolManager
 """
 
 import logging
@@ -11,6 +11,76 @@ from app.agent_framework.tools.tool_manager import ToolManager
 from app.agent_framework.tools.tool_router import TOOL_ROUTING_CONFIG, get_mcp_tools
 
 logger = logging.getLogger(__name__)
+
+
+def register_business_tools(tool_manager: ToolManager) -> List[str]:
+    """
+    注册所有业务工具到 ToolManager
+    
+    注册的工具有：
+    - 财务分析工具（FinancialIndicatorTool, FinancialHealthAnalyzer）
+    - 税务合规工具（TaxCalculationTool, TaxComplianceChecker）
+    - 法律合规工具（ContractEssentialsChecker, LegalClauseMatcher, LaborComplianceChecker, IPRiskChecker）
+    - 文档检索工具（DocumentChunkRetrievalTool）
+    
+    这些工具继承 ToolBase，需要通过 register_tool 方法注册
+
+    Args:
+        tool_manager: 工具管理器实例
+
+    Returns:
+        已注册的工具名称列表
+    """
+    from app.agent_framework.tools.base import ToolBase
+    from app.agent_framework.tools.financial_analysis_tools import (
+        FinancialIndicatorTool,
+        FinancialHealthAnalyzer
+    )
+    from app.agent_framework.tools.tax_compliance_tools import (
+        TaxCalculationTool,
+        TaxComplianceChecker
+    )
+    from app.agent_framework.tools.legal_compliance_tools import (
+        ContractEssentialsChecker,
+        LegalClauseMatcher,
+        LaborComplianceChecker,
+        IPRiskChecker
+    )
+    from app.agent_framework.tools.document_retrieval_tools import (
+        DocumentChunkRetrievalTool
+    )
+
+    business_tools = [
+        FinancialIndicatorTool(),
+        FinancialHealthAnalyzer(),
+        TaxCalculationTool(),
+        TaxComplianceChecker(),
+        ContractEssentialsChecker(),
+        LegalClauseMatcher(),
+        LaborComplianceChecker(),
+        IPRiskChecker(),
+        DocumentChunkRetrievalTool(),
+    ]
+
+    registered_tools = []
+
+    for tool in business_tools:
+        try:
+            if isinstance(tool, ToolBase):
+                metadata = tool.get_metadata()
+                tool_manager.register_tool(tool)
+                registered_tools.append(metadata.name)
+                logger.info(f"✅ 注册业务工具: {metadata.name} - {metadata.description[:50]}...")
+            else:
+                logger.warning(f"⚠️ 跳过非 ToolBase 实例: {type(tool)}")
+        except (ValueError, KeyError) as e:
+            logger.error(f"❌ 注册业务工具数据错误: {getattr(tool, 'name', 'unknown')} - {e}")
+        except (OSError, IOError) as e:
+            logger.error(f"❌ 注册业务工具IO错误: {getattr(tool, 'name', 'unknown')} - {e}")
+        except Exception as e:
+            logger.error(f"❌ 注册业务工具失败: {getattr(tool, 'name', 'unknown')} - {e}")
+
+    return registered_tools
 
 
 async def register_all_mcp_tools(tool_manager: ToolManager) -> List[str]:

@@ -35,6 +35,7 @@ const currentUserId = computed(() => authStore.userEmail || '')
 const isLoading = ref(false)
 const error = ref<string | null>(null)
 const lastUpdated = ref(new Date())
+const animatedValues = ref<Record<string, number>>({})
 
 const timeRange = ref<'today' | 'week' | 'month' | 'all'>('week')
 
@@ -105,12 +106,53 @@ async function loadStats() {
     }
     
     lastUpdated.value = new Date()
+    
+    // 触发数字动画
+    animateAllNumbers()
   } catch (e: any) {
     error.value = e.message || '加载数据失败'
     console.error('Failed to load stats:', e)
   } finally {
     isLoading.value = false
   }
+}
+
+const animateAllNumbers = () => {
+  if (adminStats.value) {
+    animateNumber('totalUsers', adminStats.value.total_users)
+    animateNumber('activeUsers', adminStats.value.active_users)
+    animateNumber('totalSessions', adminStats.value.total_sessions)
+    animateNumber('activeSessions', adminStats.value.active_sessions)
+    animateNumber('totalMessages', adminStats.value.total_messages)
+    animateNumber('avgSessionLength', adminStats.value.avg_session_length)
+  }
+  if (userStats.value) {
+    animateNumber('userMessages', userStats.value.total_messages)
+    animateNumber('userSessions', userStats.value.total_sessions)
+  }
+}
+
+const animateNumber = (key: string, target: number) => {
+  const start = animatedValues.value[key] || 0
+  const duration = 1500
+  const startTime = performance.now()
+  
+  const animate = (currentTime: number) => {
+    const elapsed = currentTime - startTime
+    const progress = Math.min(elapsed / duration, 1)
+    const easeOut = 1 - Math.pow(1 - progress, 3)
+    
+    animatedValues.value = {
+      ...animatedValues.value,
+      [key]: Math.round(start + (target - start) * easeOut)
+    }
+    
+    if (progress < 1) {
+      requestAnimationFrame(animate)
+    }
+  }
+  
+  requestAnimationFrame(animate)
 }
 
 function createMockAdminStats(): TenantStatistics {
@@ -286,45 +328,57 @@ function getAvatarColor(name: string): string {
       <template v-if="isAdmin && adminStats">
         <!-- 统计卡片 -->
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-          <div class="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+          <div class="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:shadow-md transition-all transform hover:-translate-y-1">
             <div class="flex items-center justify-between mb-3">
               <div class="w-11 h-11 bg-emerald-100 rounded-xl flex items-center justify-center">
                 <Users :size="22" class="text-emerald-600" />
               </div>
             </div>
-            <div class="text-3xl font-bold text-gray-900 mb-1">{{ formatNumber(adminStats.total_users) }}</div>
+            <div class="text-3xl font-bold text-gray-900 mb-1">
+              <span class="bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text">
+                {{ formatNumber(animatedValues.totalUsers || 0) }}
+              </span>
+            </div>
             <div class="text-sm text-gray-500">总用户数</div>
             <div class="mt-3 pt-3 border-t border-gray-100">
               <div class="flex items-center justify-between text-xs">
                 <span class="text-gray-400">活跃用户</span>
-                <span class="font-medium text-gray-700">{{ formatNumber(adminStats.active_users) }}</span>
+                <span class="font-medium text-gray-700">{{ formatNumber(animatedValues.activeUsers || 0) }}</span>
               </div>
             </div>
           </div>
 
-          <div class="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+          <div class="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:shadow-md transition-all transform hover:-translate-y-1">
             <div class="flex items-center justify-between mb-3">
               <div class="w-11 h-11 bg-green-100 rounded-xl flex items-center justify-center">
                 <MessageSquare :size="22" class="text-green-600" />
               </div>
             </div>
-            <div class="text-3xl font-bold text-gray-900 mb-1">{{ formatNumber(adminStats.total_messages) }}</div>
+            <div class="text-3xl font-bold text-gray-900 mb-1">
+              <span class="bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text">
+                {{ formatNumber(animatedValues.totalMessages || 0) }}
+              </span>
+            </div>
             <div class="text-sm text-gray-500">总消息数</div>
             <div class="mt-3 pt-3 border-t border-gray-100">
               <div class="flex items-center justify-between text-xs">
                 <span class="text-gray-400">活跃会话</span>
-                <span class="font-medium text-gray-700">{{ formatNumber(adminStats.active_sessions) }}</span>
+                <span class="font-medium text-gray-700">{{ formatNumber(animatedValues.activeSessions || 0) }}</span>
               </div>
             </div>
           </div>
 
-          <div class="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+          <div class="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:shadow-md transition-all transform hover:-translate-y-1">
             <div class="flex items-center justify-between mb-3">
               <div class="w-11 h-11 bg-teal-100 rounded-xl flex items-center justify-center">
                 <Activity :size="22" class="text-teal-600" />
               </div>
             </div>
-            <div class="text-3xl font-bold text-gray-900 mb-1">{{ formatNumber(adminStats.total_sessions) }}</div>
+            <div class="text-3xl font-bold text-gray-900 mb-1">
+              <span class="bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text">
+                {{ formatNumber(animatedValues.totalSessions || 0) }}
+              </span>
+            </div>
             <div class="text-sm text-gray-500">总会话数</div>
             <div class="mt-3 pt-3 border-t border-gray-100">
               <div class="flex items-center justify-between text-xs">
@@ -334,13 +388,17 @@ function getAvatarColor(name: string): string {
             </div>
           </div>
 
-          <div class="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+          <div class="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:shadow-md transition-all transform hover:-translate-y-1">
             <div class="flex items-center justify-between mb-3">
               <div class="w-11 h-11 bg-amber-100 rounded-xl flex items-center justify-center">
                 <Zap :size="22" class="text-amber-600" />
               </div>
             </div>
-            <div class="text-3xl font-bold text-gray-900 mb-1">{{ formatNumber(adminStats.avg_session_length) }}</div>
+            <div class="text-3xl font-bold text-gray-900 mb-1">
+              <span class="bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text">
+                {{ formatNumber(animatedValues.avgSessionLength || 0) }}
+              </span>
+            </div>
             <div class="text-sm text-gray-500">平均会话长度</div>
             <div class="mt-3 pt-3 border-t border-gray-100">
               <div class="flex items-center justify-between text-xs">

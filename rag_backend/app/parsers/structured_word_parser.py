@@ -51,18 +51,29 @@ class StructuredWordParser(FileParserStrategy):
     
     def _extract_structured_content(self, file_bytes: bytes) -> str:
         """同步结构化内容提取（在线程池中运行）"""
+        import sys
         try:
             file_stream = io.BytesIO(file_bytes)
             doc = DocxDocument(file_stream)
             
+            # 输出文档基本信息
+            print(f"[WordParser] 文档段落总数: {len(doc.paragraphs)}", file=sys.stderr)
+            print(f"[WordParser] 文档表格总数: {len(doc.tables)}", file=sys.stderr)
+            
             # 1. 分析样式层级
             style_hierarchy = self._analyze_style_hierarchy(doc)
+            print(f"[WordParser] 检测到的样式层级: {style_hierarchy}", file=sys.stderr)
             
             # 2. 提取结构化内容
             structured_blocks = self._extract_structured_blocks(doc, style_hierarchy)
             
             # 3. 构建Markdown格式
             markdown_content = self._build_markdown(structured_blocks)
+            
+            # 输出最终统计
+            total_chars = len(markdown_content)
+            total_words = len(markdown_content.split())
+            print(f"[WordParser] 提取完成 - 总字符数: {total_chars}, 总词数: {total_words}", file=sys.stderr)
             
             return markdown_content
             
@@ -169,15 +180,32 @@ class StructuredWordParser(FileParserStrategy):
         Returns:
             List[Dict]: 结构化块列表
         """
+        import sys
+        
         structured_blocks = []
+        empty_paragraphs = 0
+        paragraphs_with_images = 0
         
         # 处理段落
         for paragraph in doc.paragraphs:
             text = paragraph.text.strip()
-            if not text:
+            style_name = paragraph.style.name
+            
+            # 检查段落是否包含图片
+            has_images = False
+            for run in paragraph.runs:
+                if run._element.xpath('.//w:drawing') or run._element.xpath('.//w:pict'):
+                    has_images = True
+                    break
+            
+            if not text and not has_images:
+                empty_paragraphs += 1
                 continue
             
-            style_name = paragraph.style.name
+            if has_images and not text:
+                # 只有图片的段落，记录但不添加
+                paragraphs_with_images += 1
+                continue
             
             # 判断是否为标题
             if style_name in style_hierarchy:
@@ -208,6 +236,12 @@ class StructuredWordParser(FileParserStrategy):
                     "type": "table",
                     "content": table_content
                 })
+        
+        # 输出详细统计信息
+        print(f"[WordParser] 空段落数: {empty_paragraphs}", file=sys.stderr)
+        print(f"[WordParser] 只含图片段落数: {paragraphs_with_images}", file=sys.stderr)
+        print(f"[WordParser] 段落总数: {len(doc.paragraphs)}", file=sys.stderr)
+        print(f"[WordParser] 提取的块数: {len(structured_blocks)}", file=sys.stderr)
         
         return structured_blocks
     

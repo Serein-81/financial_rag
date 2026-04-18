@@ -42,6 +42,8 @@ const {
   markAsRead,
   markAllAsRead,
   deleteNotification,
+  acceptInvitation,
+  declineInvitation,
   refresh
 } = useUnifiedNotifications()
 
@@ -213,6 +215,28 @@ function formatTime(dateStr: string): string {
   if (hours < 24) return `${hours}小时前`
   if (days < 7) return `${days}天前`
   return date.toLocaleDateString('zh-CN')
+}
+
+function isInvitationNotification(notification: UnifiedNotification): boolean {
+  return notification.category === 'chat' && notification.metadata?.type === 'invitation'
+}
+
+async function handleAcceptInvitation(notification: UnifiedNotification, event: Event) {
+  event.stopPropagation()
+  const invitationId = notification.metadata?.invitation_id || notification.metadata?.id
+  if (invitationId) {
+    await acceptInvitation(invitationId)
+    refresh()
+  }
+}
+
+async function handleDeclineInvitation(notification: UnifiedNotification, event: Event) {
+  event.stopPropagation()
+  const invitationId = notification.metadata?.invitation_id || notification.metadata?.id
+  if (invitationId) {
+    await declineInvitation(invitationId)
+    refresh()
+  }
 }
 </script>
 
@@ -413,8 +437,22 @@ function formatTime(dateStr: string): string {
                   </span>
                   <span class="text-xs text-gray-400">{{ formatTime(notification.createdAt) }}</span>
                 </div>
+                <div v-if="isInvitationNotification(notification)" class="flex items-center gap-1.5">
+                  <button
+                    @click="handleDeclineInvitation(notification, $event)"
+                    class="px-2.5 py-1 text-xs font-medium bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg transition-colors"
+                  >
+                    拒绝
+                  </button>
+                  <button
+                    @click="handleAcceptInvitation(notification, $event)"
+                    class="px-2.5 py-1 text-xs font-medium bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg transition-colors"
+                  >
+                    接受
+                  </button>
+                </div>
                 <div
-                  v-if="notification.actionUrl || notification.category === 'chat'"
+                  v-else-if="notification.actionUrl || notification.category === 'chat'"
                   class="flex items-center gap-0.5 text-xs text-blue-600"
                 >
                   <span>查看详情</span>

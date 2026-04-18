@@ -225,9 +225,19 @@ class StructuredDocumentChunker(ChunkStrategy):
         chunk_tokens: int,
         overlap_tokens: int
     ) -> List[Dict[str, Any]]:
-        """基于Token数量合并内容块"""
+        """基于Token数量合并内容块，优化碎片化问题"""
         if not content_blocks:
             return []
+        
+        # 预处理：拆分超长段落，避免单段落过大导致chunk质量差
+        processed_blocks = []
+        for block in content_blocks:
+            if block["tokens"] > chunk_tokens * 2:
+                # 拆分超长段落
+                sub_blocks = self._split_long_block(block, chunk_tokens)
+                processed_blocks.extend(sub_blocks)
+            else:
+                processed_blocks.append(block)
         
         merged_chunks = []
         current_chunk = {
@@ -239,7 +249,7 @@ class StructuredDocumentChunker(ChunkStrategy):
             "end": 0
         }
         
-        for i, block in enumerate(content_blocks):
+        for i, block in enumerate(processed_blocks):
             block_tokens = block["tokens"]
             
             # 如果当前块加入后不超过限制，则合并
@@ -277,9 +287,90 @@ class StructuredDocumentChunker(ChunkStrategy):
         if current_chunk["content"]:
             merged_chunks.append(current_chunk)
         
+        # 优化：合并过小的块到前一个块，避免碎片化
+        merged_chunks = self._merge_small_chunks(merged_chunks, chunk_tokens)
+        
         # 处理重叠
         if overlap_tokens > 0 and len(merged_chunks) > 1:
             merged_chunks = self._add_overlap(merged_chunks, overlap_tokens)
+        
+        return merged_chunks
+    
+    def _split_long_block(
+        self,
+        block: Dict[str, Any],
+        chunk_tokens: int
+    ) -> List[Dict[str, Any]]:
+        """拆分超长段落为多个子块"""
+        content = block["content"]
+        block_type = block["type"]
+        page = block.get("page")
+        
+        # 按句子或换行拆分
+        sentences = []
+        current_sentence = ""
+        
+        for char in content:
+            current_sentence += char
+            # 句号、问号、感叹号后断句（适用于中英文）
+            if char in "。！？.!?":
+                sentences.append(current_sentence.strip())
+                current_sentence = ""
+        
+        # 处理最后未完成的句子
+        if current_sentence.strip():
+            sentences.append(current_sentence.strip())
+        
+        # 如果没有断句成功，按固定长度拆分
+        if len(sentences) <= 1 and len(content) > chunk_tokens * 2:
+            sentences = []
+            chars = list(content)
+            chunk_size = chunk_tokens * 2
+            for i in range(0, len(chars), chunk_size):
+                sentences.append("".join(chars[i:i+chunk_size]))
+        
+        # 创建子块
+        sub_blocks = []
+        for sentence in sentences:
+            if sentence.strip():
+                sub_blocks.append({
+                    "content": sentence,
+                    "tokens": self.approx_token_len(sentence),
+                    "type": block_type,
+                    "page": page
+                })
+        
+        return sub_blocks if sub_blocks else [block]
+    
+    def _merge_small_chunks(
+        self,
+        chunks: List[Dict[str, Any]],
+        chunk_tokens: int
+    ) -> List[Dict[str, Any]]:
+        """合并过小的chunk到前一个chunk，避免碎片化"""
+        if len(chunks) <= 1:
+            return chunks
+        
+        # 降低合并阈值到20%，允许更激进地合并小chunk
+        min_chunk_ratio = 0.2
+        min_tokens = int(chunk_tokens * min_chunk_ratio)
+        
+        merged_chunks = [chunks[0]]
+        
+        for i in range(1, len(chunks)):
+            current = chunks[i]
+            
+            # 如果当前chunk太小，尝试合并到前一个
+            # 放宽条件：允许合并到超过chunk_tokens的1.5倍
+            if current["tokens"] < min_tokens and merged_chunks[-1]["tokens"] + current["tokens"] <= chunk_tokens * 1.5:
+                merged_chunks[-1]["content"] += "\n\n" + current["content"]
+                merged_chunks[-1]["tokens"] += current["tokens"]
+                merged_chunks[-1]["block_types"].extend(current["block_types"])
+                if current.get("pages"):
+                    merged_chunks[-1]["pages"].extend(current["pages"])
+                merged_chunks[-1]["end"] = merged_chunks[-1]["start"] + len(merged_chunks[-1]["content"])
+            else:
+                merged_chunks.append(current)
         
         return merged_chunks
     

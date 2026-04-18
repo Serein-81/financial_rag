@@ -52,8 +52,8 @@ class ZhipuAdapter(BaseLLMAdapter):
         # 只在首次初始化时打印详细信息
         if not getattr(ZhipuAdapter, '_initialized', False):
             ZhipuAdapter._initialized = True
-            print("✅ 智谱 AI 适配器初始化完成")
-            print(f"   - 模型: {self.model_name}")
+            print("[OK] Zhipu AI adapter initialized")
+            print(f"   - Model: {self.model_name}")
             print(f"   - API Key: {api_key[:8]}...{api_key[-4:]}")
 
     async def generate(
@@ -90,16 +90,16 @@ class ZhipuAdapter(BaseLLMAdapter):
 
             request_params.update(kwargs)
 
-            print(f"🤖 [智谱AI] 调用模型: {self.model_name}")
-            print(f"    提示词长度: {len(prompt)} 字符")
-            print(f"    温度: {temperature}")
+            print(f"[BOT] [ZhipuAI] Calling model: {self.model_name}")
+            print(f"    Prompt length: {len(prompt)} chars")
+            print(f"    Temperature: {temperature}")
 
             response = self.client.chat.completions.create(**request_params)
 
             content = response.choices[0].message.content
             usage = response.usage
 
-            print(f"✅ [智谱AI] 生成完成，长度: {len(content)} 字符")
+            print(f"[OK] [ZhipuAI] Generation complete, length: {len(content)} chars")
             if usage:
                 print(f"    Token: prompt={usage.prompt_tokens}, completion={usage.completion_tokens}, total={usage.total_tokens}")
 
@@ -113,16 +113,16 @@ class ZhipuAdapter(BaseLLMAdapter):
             )
 
         except (ValueError, KeyError) as e:
-            error_msg = f"智谱 AI 调用数据错误: {str(e)}"
-            print(f"❌ [智谱AI] {error_msg}")
+            error_msg = f"Zhipu AI data error: {str(e)}"
+            print(f"[ERROR] [ZhipuAI] {error_msg}")
             raise Exception(error_msg)
         except (OSError, IOError) as e:
-            error_msg = f"智谱 AI 调用IO错误: {str(e)}"
-            print(f"❌ [智谱AI] {error_msg}")
+            error_msg = f"Zhipu AI IO error: {str(e)}"
+            print(f"[ERROR] [ZhipuAI] {error_msg}")
             raise Exception(error_msg)
         except Exception as e:
-            error_msg = f"智谱 AI 调用失败: {str(e)}"
-            print(f"❌ [智谱AI] {error_msg}")
+            error_msg = f"Zhipu AI generation failed: {str(e)}"
+            print(f"[ERROR] [ZhipuAI] {error_msg}")
             raise Exception(error_msg)
 
     async def stream_generate(
@@ -159,8 +159,8 @@ class ZhipuAdapter(BaseLLMAdapter):
 
             request_params.update(kwargs)
 
-            print(f"🌊 [智谱AI] 流式调用: {self.model_name}")
-            print(f"    提示词长度: {len(prompt)} 字符")
+            print(f"[STREAM] [ZhipuAI] Streaming call: {self.model_name}")
+            print(f"    Prompt length: {len(prompt)} chars")
 
             response = self.client.chat.completions.create(**request_params)
 
@@ -178,7 +178,7 @@ class ZhipuAdapter(BaseLLMAdapter):
                 if hasattr(chunk, 'usage') and chunk.usage:
                     usage = chunk.usage
 
-            print(f"✅ [智谱AI] 流式生成完成，总长度: {total_chars} 字符")
+            print(f"[OK] [ZhipuAI] Streaming complete, total length: {total_chars} chars")
 
             if usage:
                 print(f"    Token: prompt={usage.prompt_tokens}, completion={usage.completion_tokens}, total={usage.total_tokens}")
@@ -192,17 +192,17 @@ class ZhipuAdapter(BaseLLMAdapter):
                 }
 
         except (ValueError, KeyError) as e:
-            error_msg = f"智谱 AI 流式调用数据错误: {str(e)}"
-            print(f"❌ [智谱AI] {error_msg}")
-            yield {"delta": f"[错误: {error_msg}]"}
+            error_msg = f"Zhipu AI streaming data error: {str(e)}"
+            print(f"[ERROR] [ZhipuAI] {error_msg}")
+            yield {"delta": f"[Error: {error_msg}]"}
         except (OSError, IOError) as e:
-            error_msg = f"智谱 AI 流式调用IO错误: {str(e)}"
-            print(f"❌ [智谱AI] {error_msg}")
-            yield {"delta": f"[错误: {error_msg}]"}
+            error_msg = f"Zhipu AI streaming IO error: {str(e)}"
+            print(f"[ERROR] [ZhipuAI] {error_msg}")
+            yield {"delta": f"[Error: {error_msg}]"}
         except Exception as e:
-            error_msg = f"智谱 AI 流式调用失败: {str(e)}"
-            print(f"❌ [智谱AI] {error_msg}")
-            yield {"delta": f"[错误: {error_msg}]"}
+            error_msg = f"Zhipu AI streaming failed: {str(e)}"
+            print(f"[ERROR] [ZhipuAI] {error_msg}")
+            yield {"delta": f"[Error: {error_msg}]"}
 
     async def chat(
         self,
@@ -236,16 +236,16 @@ class ZhipuAdapter(BaseLLMAdapter):
 
             request_params.update(kwargs)
 
-            print(f"💬 [智谱AI] 对话调用: {self.model_name}")
-            print(f"    消息数量: {len(messages)}")
-            print(f"    温度: {temperature}")
+            print(f"[CHAT] [ZhipuAI] Chat call: {self.model_name}")
+            print(f"    Message count: {len(messages)}")
+            print(f"    Temperature: {temperature}")
 
             response = self.client.chat.completions.create(**request_params)
 
             content = response.choices[0].message.content
             usage = response.usage
 
-            print(f"✅ [智谱AI] 对话完成，长度: {len(content)} 字符")
+            print(f"[OK] [ZhipuAI] Chat complete, length: {len(content)} chars")
             if usage:
                 print(f"    Token: prompt={usage.prompt_tokens}, completion={usage.completion_tokens}, total={usage.total_tokens}")
 
@@ -258,8 +258,8 @@ class ZhipuAdapter(BaseLLMAdapter):
             )
 
         except Exception as e:
-            error_msg = f"智谱 AI 对话调用失败: {str(e)}"
-            print(f"❌ [智谱AI] {error_msg}")
+            error_msg = f"Zhipu AI chat failed: {str(e)}"
+            print(f"[ERROR] [ZhipuAI] {error_msg}")
             raise Exception(error_msg)
 
     async def _chat(
@@ -308,6 +308,6 @@ class ZhipuAdapter(BaseLLMAdapter):
             )
 
         except Exception as e:
-            error_msg = f"智谱 AI _chat 调用失败: {str(e)}"
-            print(f"❌ [智谱AI] {error_msg}")
+            error_msg = f"Zhipu AI _chat failed: {str(e)}"
+            print(f"[ERROR] [ZhipuAI] {error_msg}")
             raise Exception(error_msg)

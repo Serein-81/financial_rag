@@ -418,10 +418,6 @@ export const useGroupChatStore = defineStore('groupChat', () => {
   }
 
   async function fetchNotifications() {
-    if (connectionStatus.value === 'disconnected' || connectionStatus.value === 'error') {
-      return
-    }
-
     try {
       notifications.value = await groupChatApi.getNotifications({ unread_only: false })
       unreadCount.value = notifications.value.filter(n => !n.is_read).length

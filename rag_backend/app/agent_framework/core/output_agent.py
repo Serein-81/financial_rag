@@ -18,8 +18,9 @@ import json
 import random
 import uuid
 import logging
+import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Any, TYPE_CHECKING
+from typing import Dict, List, Optional, Tuple, Any, TYPE_CHECKING, AsyncGenerator
 from datetime import datetime
 from dataclasses import dataclass, field
 from enum import Enum
@@ -138,6 +139,7 @@ class OutputAgentPrompts:
     """输出智能体提示词（从 app/prompts/agents/output/ 目录加载）"""
 
     _prompt_dir = Path(__file__).parent.parent.parent / "prompts" / "agents" / "output"
+    _prompts_cache: Dict[str, str] = {}
 
     @classmethod
     def _load_prompt_file(cls, filename: str) -> str:
@@ -146,6 +148,34 @@ class OutputAgentPrompts:
         if file_path.exists():
             return file_path.read_text(encoding="utf-8")
         return ""
+
+    @classmethod
+    def _extract_prompt_section(cls, content: str, section_name: str) -> str:
+        """从合并的提示词文件中提取特定部分"""
+        import re
+        pattern = rf'## \d+\. [^\n]+\({section_name}\)\n(.*?)(?=\n---\n## |\Z)'
+        match = re.search(pattern, content, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+        return ""
+
+    @classmethod
+    def _load_merged_prompts(cls) -> Dict[str, str]:
+        """加载合并的提示词文件"""
+        if cls._prompts_cache:
+            return cls._prompts_cache
+
+        prompts_file = cls._prompt_dir / "prompts.md"
+        if prompts_file.exists():
+            content = prompts_file.read_text(encoding="utf-8")
+            cls._prompts_cache = {
+                "final_output": cls._extract_prompt_section(content, "final_output"),
+                "regeneration": cls._extract_prompt_section(content, "regeneration"),
+                "synthesis": cls._extract_prompt_section(content, "synthesis"),
+                "quick_review": cls._extract_prompt_section(content, "quick_review"),
+                "deep_review": cls._extract_prompt_section(content, "deep_review"),
+            }
+        return cls._prompts_cache
 
     @staticmethod
     def get_system_prompt() -> str:
@@ -165,7 +195,8 @@ class OutputAgentPrompts:
         """获取整合提示词"""
         try:
             from app.agent_framework.core.output_agent import OutputAgentPrompts
-            template = OutputAgentPrompts._load_prompt_file("synthesis.md")
+            prompts = OutputAgentPrompts._load_merged_prompts()
+            template = prompts.get("synthesis", "")
             if template:
                 return template.format(user_query=user_query, specialist_results=specialist_results)
         except Exception:
@@ -177,7 +208,8 @@ class OutputAgentPrompts:
         """获取快速审查提示词"""
         try:
             from app.agent_framework.core.output_agent import OutputAgentPrompts
-            template = OutputAgentPrompts._load_prompt_file("quick_review.md")
+            prompts = OutputAgentPrompts._load_merged_prompts()
+            template = prompts.get("quick_review", "")
             if template:
                 return template.format(user_query=user_query, output=output)
         except Exception:
@@ -189,7 +221,8 @@ class OutputAgentPrompts:
         """获取深度审查提示词"""
         try:
             from app.agent_framework.core.output_agent import OutputAgentPrompts
-            template = OutputAgentPrompts._load_prompt_file("deep_review.md")
+            prompts = OutputAgentPrompts._load_merged_prompts()
+            template = prompts.get("deep_review", "")
             if template:
                 return template.format(user_query=user_query, output=output)
         except Exception:
@@ -201,7 +234,8 @@ class OutputAgentPrompts:
         """获取改进提示词"""
         try:
             from app.agent_framework.core.output_agent import OutputAgentPrompts
-            template = OutputAgentPrompts._load_prompt_file("regeneration.md")
+            prompts = OutputAgentPrompts._load_merged_prompts()
+            template = prompts.get("regeneration", "")
             if template:
                 return template.format(user_query=user_query, original_output=original_output, feedback=feedback)
         except Exception:
@@ -213,7 +247,8 @@ class OutputAgentPrompts:
         """获取最终输出提示词"""
         try:
             from app.agent_framework.core.output_agent import OutputAgentPrompts
-            template = OutputAgentPrompts._load_prompt_file("final_output.md")
+            prompts = OutputAgentPrompts._load_merged_prompts()
+            template = prompts.get("final_output", "")
             if template:
                 return template.format(user_query=user_query, tool_result=tool_result)
         except Exception:
@@ -984,6 +1019,92 @@ class OutputAgent:
         except Exception as e:
             logger.warning(f"⚠️ [输出智能体] LLM整合失败: {e}，使用备用格式")
             return self._fallback_format(specialist_results, user_query)
+
+    async def synthesize_and_format_stream(
+        self,
+        specialist_results: Dict[str, Any],
+        user_query: str,
+        buffer_size: int = 10
+    ) -> AsyncGenerator[str, None]:
+        """
+        流式整合专家结果并美化输出
+        
+        将多位专家的分析结果通过 LLM 整合成一份专业、美观的 Markdown 报告，
+        并以流式方式逐步返回文本内容。
+
+        Args:
+            specialist_results: 专家结果字典，格式为 {"专家名称": 结果内容, ...}
+            user_query: 用户原始问题
+            buffer_size: 缓冲区大小，达到此字符数或超时时发送
+
+        Yields:
+            逐步生成的内容片段
+        """
+        if not self.llm:
+            content = self._fallback_format(specialist_results, user_query)
+            for chunk in self._chunk_text(content, buffer_size):
+                yield chunk
+            return
+
+        try:
+            specialist_results_text = self._format_specialist_results_for_prompt(specialist_results)
+            synthesis_prompt = self._get_synthesis_prompt(user_query, specialist_results_text)
+            system_prompt = self._get_system_prompt()
+
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": synthesis_prompt}
+            ]
+
+            if hasattr(self.llm, 'stream_chat'):
+                buffer = ""
+                last_send_time = time.time()
+                
+                async def flush_buffer():
+                    nonlocal buffer, last_send_time
+                    if buffer:
+                        yield buffer
+                        buffer = ""
+                        last_send_time = time.time()
+
+                async for chunk in self.llm.stream_chat(messages, temperature=0.1, max_tokens=4000):
+                    if isinstance(chunk, dict):
+                        text = chunk.get("delta", chunk.get("content", ""))
+                    else:
+                        text = str(chunk)
+                    
+                    buffer += text
+                    current_time = time.time()
+                    
+                    if len(buffer) >= buffer_size or (current_time - last_send_time) >= 0.05:
+                        async for data in flush_buffer():
+                            yield data
+
+                async for data in flush_buffer():
+                    yield data
+            elif hasattr(self.llm, 'chat'):
+                response = await self.llm.chat(messages, stream=False, max_tokens=4000)
+                content = response.content if hasattr(response, 'content') else str(response)
+                cleaned = self._clean_output(content)
+                for chunk in self._chunk_text(cleaned, buffer_size):
+                    yield chunk
+            else:
+                content = self._fallback_format(specialist_results, user_query)
+                for chunk in self._chunk_text(content, buffer_size):
+                    yield chunk
+
+        except Exception as e:
+            logger.warning(f"⚠️ [输出智能体] 流式整合失败: {e}，使用备用格式")
+            content = self._fallback_format(specialist_results, user_query)
+            for chunk in self._chunk_text(content, buffer_size):
+                yield chunk
+
+    def _chunk_text(self, text: str, chunk_size: int = 10) -> AsyncGenerator[str, None]:
+        """将文本分割成小块流式返回"""
+        import asyncio
+        
+        for i in range(0, len(text), chunk_size):
+            yield text[i:i + chunk_size]
 
     def _format_specialist_results_for_prompt(self, specialist_results: Dict[str, Any]) -> str:
         """将专家结果格式化为提示词文本"""

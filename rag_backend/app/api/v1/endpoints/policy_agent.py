@@ -9,16 +9,24 @@ PolicyNotificationAgent API 端点
 """
 
 import logging
-from typing import List, Dict, Any, Optional
+from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from app.services.policy_notification_agent_service import get_agent_service
+from app.services.policy_notification_agent_service import PolicyNotificationAgentService, get_agent_service
 from app.api.deps import get_current_user, CurrentUser
 from app.multi_agent_system.agents.policy_notification_agent import EnterpriseProfile
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/policy-agent", tags=["政策通知智能体"])
+
+MAX_POLICIES_PER_REQUEST = 100
+MAX_POLICY_CONTENT_LENGTH = 50000
+
+
+async def get_agent_service_dep() -> PolicyNotificationAgentService:
+    """服务依赖注入"""
+    return get_agent_service()
 
 
 class PolicyInput(BaseModel):
@@ -38,8 +46,8 @@ class EnterpriseProfileInput(BaseModel):
     industry: str = Field(..., description="所属行业")
     region: str = Field(..., description="所在地区")
     scale: str = Field(..., description="企业规模")
-    tax_types: List[str] = Field(default_factory=list, description="纳税类型")
-    qualifications: List[str] = Field(default_factory=list, description="资质认证")
+    tax_types: list[str] = Field(default_factory=list, description="纳税类型")
+    qualifications: list[str] = Field(default_factory=list, description="资质认证")
 
 
 class PolicyMatchRequest(BaseModel):
@@ -58,7 +66,7 @@ class PolicyMatchResponse(BaseModel):
     scale_score: float
     tax_type_score: float
     urgency_score: float
-    reasons: List[str]
+    reasons: list[str]
     policy_id: str
     enterprise_id: str
     use_llm: bool
@@ -66,9 +74,9 @@ class PolicyMatchResponse(BaseModel):
 
 class NotificationRequest(BaseModel):
     """通知生成请求"""
-    policy: Dict[str, Any]
+    policy: dict[str, Any]
     enterprise_profile: EnterpriseProfileInput
-    match_result: Dict[str, Any]
+    match_result: dict[str, Any]
 
 
 class NotificationResponse(BaseModel):
@@ -76,21 +84,21 @@ class NotificationResponse(BaseModel):
     title: str
     content: str
     urgency_level: str
-    key_points: List[str] = Field(default_factory=list)
-    action_steps: List[str] = Field(default_factory=list)
+    key_points: list[str] = Field(default_factory=list)
+    action_steps: list[str] = Field(default_factory=list)
     deadline: Optional[str] = None
     use_llm: bool
 
 
 class PriorityRequest(BaseModel):
     """优先级排序请求"""
-    policies: List[Dict[str, Any]]
+    policies: list[dict[str, Any]]
     enterprise_profile: EnterpriseProfileInput
 
 
 class PolicyTestRequest(BaseModel):
     """完整流程测试请求"""
-    policies: List[PolicyInput]
+    policies: list[PolicyInput]
     enterprise: EnterpriseProfileInput
     use_llm: bool = Field(default=True, description="是否使用 LLM")
 
@@ -99,18 +107,47 @@ class PolicyTestResponse(BaseModel):
     """完整流程测试响应"""
     enterprise_id: str
     policies_processed: int
-    matches: List[PolicyMatchResponse]
-    notifications: List[NotificationResponse]
-    prioritized_policies: List[Dict[str, Any]]
+    matches: list[PolicyMatchResponse]
+    notifications: list[NotificationResponse]
+    prioritized_policies: list[dict[str, Any]]
     use_llm: bool
     llm_provider: str
     processing_time: float
 
 
+def _create_enterprise_profile(enterprise_input: EnterpriseProfileInput) -> EnterpriseProfile:
+    """从输入模型创建企业画像"""
+    return EnterpriseProfile(
+        enterprise_id=enterprise_input.enterprise_id,
+        name=enterprise_input.enterprise_name,
+        industry=enterprise_input.industry,
+        region=enterprise_input.region,
+        scale=enterprise_input.scale,
+        tax_types=enterprise_input.tax_types,
+        keywords=getattr(enterprise_input, 'qualifications', []),
+        business_scope=None,
+        recent_interests=[],
+        preferences={}
+    )
+
+
+def _policy_input_to_dict(policy_input: PolicyInput) -> dict[str, Any]:
+    """将 PolicyInput 转换为字典"""
+    return {
+        "policy_id": policy_input.policy_id,
+        "title": policy_input.title,
+        "content": policy_input.content,
+        "source": policy_input.source,
+        "publish_date": policy_input.publish_date,
+        "priority": policy_input.priority
+    }
+
+
 @router.post("/match", response_model=PolicyMatchResponse)
 async def match_policy(
     request: PolicyMatchRequest,
-    user: CurrentUser = Depends(get_current_user)
+    user: CurrentUser = Depends(get_current_user),
+    service: PolicyNotificationAgentService = Depends(get_agent_service_dep)
 ):
     """
     匹配政策与企业
@@ -120,55 +157,73 @@ async def match_policy(
     Args:
         request: 包含政策和企业的请求
         user: 当前用户
+        service: 政策通知智能体服务
 
     Returns:
         PolicyMatchResponse: 匹配结果
     """
-    logger.info(f"🔍 政策匹配请求: policy={request.policy.policy_id}, enterprise={request.enterprise.enterprise_id}")
+    logger.info(
+        "政策匹配请求",
+        extra={
+            "event": "policy_match_request",
+            "policy_id": request.policy.policy_id,
+            "enterprise_id": request.enterprise.enterprise_id,
+            "user_id": str(user.id)
+        }
+    )
 
     try:
-        service = get_agent_service()
+        if len(request.policy.content) > MAX_POLICY_CONTENT_LENGTH:
+            logger.warning(
+                f"政策内容过长: {len(request.policy.content)} 字符",
+                extra={
+                    "event": "policy_content_truncated",
+                    "policy_id": request.policy.policy_id,
+                    "content_length": len(request.policy.content)
+                }
+            )
+            request.policy.content = request.policy.content[:MAX_POLICY_CONTENT_LENGTH]
 
-        policy_dict = {
-            "policy_id": request.policy.policy_id,
-            "title": request.policy.title,
-            "content": request.policy.content,
-            "source": request.policy.source,
-            "publish_date": request.policy.publish_date,
-            "priority": request.policy.priority
-        }
-
-        enterprise_profile = EnterpriseProfile(
-            enterprise_id=request.enterprise.enterprise_id,
-            name=request.enterprise.enterprise_name,
-            industry=request.enterprise.industry,
-            region=request.enterprise.region,
-            scale=request.enterprise.scale,
-            tax_types=request.enterprise.tax_types,
-            keywords=request.enterprise.qualifications if hasattr(request.enterprise, 'qualifications') else [],
-            business_scope=None,
-            recent_interests=[],
-            preferences={}
-        )
+        policy_dict = _policy_input_to_dict(request.policy)
+        enterprise_profile = _create_enterprise_profile(request.enterprise)
 
         match_result = await service.match_policy_for_enterprise(
             policy=policy_dict,
             enterprise_profile=enterprise_profile
         )
 
-        logger.info(f"✅ 匹配完成: score={match_result['match_score']:.2f}, use_llm={match_result['use_llm']}")
+        logger.info(
+            "匹配完成",
+            extra={
+                "event": "policy_match_success",
+                "policy_id": request.policy.policy_id,
+                "enterprise_id": request.enterprise.enterprise_id,
+                "match_score": match_result['match_score'],
+                "use_llm": match_result['use_llm']
+            }
+        )
 
         return PolicyMatchResponse(**match_result)
 
+    except ValueError as e:
+        logger.warning(f"无效的请求参数: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=f"无效的请求参数: {str(e)}")
+    except KeyError as e:
+        logger.warning(f"缺少必需字段: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=f"缺少必需字段: {str(e)}")
+    except (OSError, IOError) as e:
+        logger.error(f"IO错误: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="文件操作失败")
     except Exception as e:
-        logger.error(f"❌ 政策匹配失败: {e}", exc_info=True)
+        logger.error(f"政策匹配失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"政策匹配失败: {str(e)}")
 
 
 @router.post("/notify", response_model=NotificationResponse)
 async def generate_notification(
     request: NotificationRequest,
-    user: CurrentUser = Depends(get_current_user)
+    user: CurrentUser = Depends(get_current_user),
+    service: PolicyNotificationAgentService = Depends(get_agent_service_dep)
 ):
     """
     生成个性化通知
@@ -178,27 +233,24 @@ async def generate_notification(
     Args:
         request: 包含政策、匹配结果的请求
         user: 当前用户
+        service: 政策通知智能体服务
 
     Returns:
         NotificationResponse: 个性化通知
     """
-    logger.info(f"📝 生成通知请求: policy={request.policy.get('policy_id')}")
+    policy_id = request.policy.get('policy_id', 'unknown')
+    logger.info(
+        "生成通知请求",
+        extra={
+            "event": "notification_request",
+            "policy_id": policy_id,
+            "enterprise_id": request.enterprise_profile.enterprise_id,
+            "user_id": str(user.id)
+        }
+    )
 
     try:
-        service = get_agent_service()
-
-        enterprise_profile = EnterpriseProfile(
-            enterprise_id=request.enterprise_profile.enterprise_id,
-            name=request.enterprise_profile.enterprise_name,
-            industry=request.enterprise_profile.industry,
-            region=request.enterprise_profile.region,
-            scale=request.enterprise_profile.scale,
-            tax_types=request.enterprise_profile.tax_types,
-            keywords=request.enterprise_profile.qualifications if hasattr(request.enterprise_profile, 'qualifications') else [],
-            business_scope=None,
-            recent_interests=[],
-            preferences={}
-        )
+        enterprise_profile = _create_enterprise_profile(request.enterprise_profile)
 
         notification = await service.generate_notification(
             policy=request.policy,
@@ -212,19 +264,37 @@ async def generate_notification(
         if 'deadline' not in notification:
             notification['deadline'] = None
 
-        logger.info(f"✅ 通知生成完成: urgency={notification['urgency_level']}")
+        logger.info(
+            "通知生成完成",
+            extra={
+                "event": "notification_success",
+                "policy_id": policy_id,
+                "enterprise_id": request.enterprise_profile.enterprise_id,
+                "urgency_level": notification['urgency_level']
+            }
+        )
 
         return NotificationResponse(**notification)
 
+    except ValueError as e:
+        logger.warning(f"无效的请求参数: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=f"无效的请求参数: {str(e)}")
+    except KeyError as e:
+        logger.warning(f"缺少必需字段: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=f"缺少必需字段: {str(e)}")
+    except (OSError, IOError) as e:
+        logger.error(f"IO错误: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="文件操作失败")
     except Exception as e:
-        logger.error(f"❌ 通知生成失败: {e}", exc_info=True)
+        logger.error(f"通知生成失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"通知生成失败: {str(e)}")
 
 
-@router.post("/prioritize", response_model=List[Dict[str, Any]])
+@router.post("/prioritize", response_model=list[dict[str, Any]])
 async def prioritize_policies(
     request: PriorityRequest,
-    user: CurrentUser = Depends(get_current_user)
+    user: CurrentUser = Depends(get_current_user),
+    service: PolicyNotificationAgentService = Depends(get_agent_service_dep)
 ):
     """
     政策优先级排序
@@ -234,92 +304,146 @@ async def prioritize_policies(
     Args:
         request: 包含政策列表和企业画像的请求
         user: 当前用户
+        service: 政策通知智能体服务
 
     Returns:
-        List[Dict[str, Any]]: 排序后的政策列表
+        list[dict[str, Any]]: 排序后的政策列表
     """
-    logger.info(f"📊 优先级排序请求: {len(request.policies)} 个政策")
+    if not request.policies:
+        logger.warning(
+            "优先级排序请求失败: 政策列表为空",
+            extra={
+                "event": "priority_request_empty",
+                "enterprise_id": request.enterprise_profile.enterprise_id,
+                "user_id": str(user.id)
+            }
+        )
+        raise HTTPException(status_code=400, detail="政策列表不能为空")
+
+    logger.info(
+        "优先级排序请求",
+        extra={
+            "event": "priority_request",
+            "policy_count": len(request.policies),
+            "enterprise_id": request.enterprise_profile.enterprise_id,
+            "user_id": str(user.id)
+        }
+    )
 
     try:
-        service = get_agent_service()
-
-        enterprise_profile = EnterpriseProfile(
-            enterprise_id=request.enterprise_profile.enterprise_id,
-            name=request.enterprise_profile.enterprise_name,
-            industry=request.enterprise_profile.industry,
-            region=request.enterprise_profile.region,
-            scale=request.enterprise_profile.scale,
-            tax_types=request.enterprise_profile.tax_types,
-            keywords=request.enterprise_profile.qualifications if hasattr(request.enterprise_profile, 'qualifications') else [],
-            business_scope=None,
-            recent_interests=[],
-            preferences={}
-        )
+        enterprise_profile = _create_enterprise_profile(request.enterprise_profile)
 
         sorted_policies = await service.prioritize_policies(
             policies=request.policies,
             enterprise_profile=enterprise_profile
         )
 
-        logger.info(f"✅ 排序完成: {len(sorted_policies)} 个政策")
+        logger.info(
+            "排序完成",
+            extra={
+                "event": "priority_success",
+                "policy_count": len(sorted_policies),
+                "enterprise_id": request.enterprise_profile.enterprise_id
+            }
+        )
 
         return sorted_policies
 
+    except ValueError as e:
+        logger.warning(f"无效的请求参数: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=f"无效的请求参数: {str(e)}")
+    except KeyError as e:
+        logger.warning(f"缺少必需字段: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=f"缺少必需字段: {str(e)}")
+    except (OSError, IOError) as e:
+        logger.error(f"IO错误: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="文件操作失败")
     except Exception as e:
-        logger.error(f"❌ 优先级排序失败: {e}", exc_info=True)
+        logger.error(f"优先级排序失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"优先级排序失败: {str(e)}")
 
 
 @router.post("/test", response_model=PolicyTestResponse)
 async def test_policy_agent(
     request: PolicyTestRequest,
-    user: CurrentUser = Depends(get_current_user)
+    user: CurrentUser = Depends(get_current_user),
+    service: PolicyNotificationAgentService = Depends(get_agent_service_dep)
 ):
     """
     完整流程测试
 
     测试政策智能体的完整流程：匹配 -> 生成通知 -> 优先级排序
+    
+    ⚠️ 注意：此端点会消耗较多资源，建议在测试环境中使用
 
     Args:
         request: 测试请求
         user: 当前用户
+        service: 政策通知智能体服务
 
     Returns:
         PolicyTestResponse: 测试结果
     """
     import time
 
-    logger.info(f"🧪 完整流程测试: {len(request.policies)} 个政策, enterprise={request.enterprise.enterprise_id}")
+    if not request.policies:
+        logger.warning(
+            "完整流程测试失败: 政策列表为空",
+            extra={
+                "event": "test_request_empty",
+                "enterprise_id": request.enterprise.enterprise_id,
+                "user_id": str(user.id)
+            }
+        )
+        raise HTTPException(status_code=400, detail="政策列表不能为空")
+
+    if len(request.policies) > MAX_POLICIES_PER_REQUEST:
+        logger.warning(
+            f"完整流程测试: 政策数量超过限制 ({len(request.policies)} > {MAX_POLICIES_PER_REQUEST})",
+            extra={
+                "event": "test_request_too_large",
+                "policy_count": len(request.policies),
+                "enterprise_id": request.enterprise.enterprise_id,
+                "user_id": str(user.id)
+            }
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=f"单次请求的政策数量不能超过 {MAX_POLICIES_PER_REQUEST} 个"
+        )
+
+    logger.info(
+        "完整流程测试",
+        extra={
+            "event": "test_request",
+            "policy_count": len(request.policies),
+            "enterprise_id": request.enterprise.enterprise_id,
+            "use_llm": request.use_llm,
+            "user_id": str(user.id)
+        }
+    )
     start_time = time.time()
 
     try:
-        service = get_agent_service()
-
-        enterprise_profile = EnterpriseProfile(
-            enterprise_id=request.enterprise.enterprise_id,
-            name=request.enterprise.enterprise_name,
-            industry=request.enterprise.industry,
-            region=request.enterprise.region,
-            scale=request.enterprise.scale,
-            tax_types=request.enterprise.tax_types,
-            keywords=[],
-            business_scope=None,
-            recent_interests=[],
-            preferences={}
-        )
+        enterprise_profile = _create_enterprise_profile(request.enterprise)
 
         matches = []
         notifications = []
 
-        for policy_input in request.policies:
-            policy_dict = {
-                "policy_id": policy_input.policy_id,
-                "title": policy_input.title,
-                "content": policy_input.content,
-                "source": policy_input.source,
-                "publish_date": policy_input.publish_date,
-                "priority": policy_input.priority
-            }
+        for idx, policy_input in enumerate(request.policies):
+            if len(policy_input.content) > MAX_POLICY_CONTENT_LENGTH:
+                logger.warning(
+                    f"政策内容过长已截断: {policy_input.policy_id}",
+                    extra={
+                        "event": "policy_content_truncated",
+                        "policy_id": policy_input.policy_id,
+                        "content_length": len(policy_input.content),
+                        "policy_index": idx
+                    }
+                )
+                policy_input.content = policy_input.content[:MAX_POLICY_CONTENT_LENGTH]
+
+            policy_dict = _policy_input_to_dict(policy_input)
 
             match_result = await service.match_policy_for_enterprise(
                 policy=policy_dict,
@@ -348,7 +472,16 @@ async def test_policy_agent(
 
         processing_time = time.time() - start_time
 
-        logger.info(f"✅ 测试完成: {len(matches)} 个匹配, {len(notifications)} 个通知, 耗时 {processing_time:.2f}s")
+        logger.info(
+            "测试完成",
+            extra={
+                "event": "test_success",
+                "policy_count": len(matches),
+                "notification_count": len(notifications),
+                "processing_time": processing_time,
+                "enterprise_id": request.enterprise.enterprise_id
+            }
+        )
 
         return PolicyTestResponse(
             enterprise_id=request.enterprise.enterprise_id,
@@ -361,26 +494,46 @@ async def test_policy_agent(
             processing_time=processing_time
         )
 
+    except ValueError as e:
+        logger.warning(f"无效的请求参数: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=f"无效的请求参数: {str(e)}")
+    except KeyError as e:
+        logger.warning(f"缺少必需字段: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=f"缺少必需字段: {str(e)}")
+    except (OSError, IOError) as e:
+        logger.error(f"IO错误: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="文件操作失败")
     except Exception as e:
-        logger.error(f"❌ 测试失败: {e}", exc_info=True)
+        logger.error(f"测试失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"测试失败: {str(e)}")
 
 
 @router.get("/status")
 async def get_agent_status(
-    user: CurrentUser = Depends(get_current_user)
+    user: CurrentUser = Depends(get_current_user),
+    service: PolicyNotificationAgentService = Depends(get_agent_service_dep)
 ):
     """
     获取 Agent 状态
     
     查看 PolicyNotificationAgent 的运行状态和配置
     
+    Args:
+        user: 当前用户
+        service: 政策通知智能体服务
+    
     Returns:
         dict: Agent 状态信息
     """
+    logger.info(
+        "获取Agent状态",
+        extra={
+            "event": "get_status",
+            "user_id": str(user.id)
+        }
+    )
+    
     try:
-        service = get_agent_service()
-        
         return {
             "status": "healthy",
             "use_llm": service.use_llm,
@@ -395,5 +548,5 @@ async def get_agent_status(
         }
         
     except Exception as e:
-        logger.error(f"❌ 获取状态失败: {e}", exc_info=True)
+        logger.error(f"获取状态失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"获取状态失败: {str(e)}")
