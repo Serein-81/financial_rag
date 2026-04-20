@@ -251,7 +251,7 @@ class InviteCodeService:
         query = select(InviteCode).where(InviteCode.tenant_id == tenant_id)
         
         if not include_inactive:
-            query = query.where(InviteCode.is_active == True)
+            query = query.where(InviteCode.is_active.is_(True))
         
         query = query.order_by(desc(InviteCode.created_at)).offset(skip).limit(limit)
         
@@ -270,7 +270,7 @@ class InviteCodeService:
         
         active_codes_result = await db.execute(
             select(func.count(InviteCode.id)).where(
-                and_(InviteCode.tenant_id == tenant_id, InviteCode.is_active == True)
+                and_(InviteCode.tenant_id == tenant_id, InviteCode.is_active.is_(True))
             )
         )
         active_codes = active_codes_result.scalar()

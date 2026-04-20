@@ -16,6 +16,7 @@ from app.services.group_chat_service import (
     get_group_chat_service
 )
 from app.services.redis_service import get_redis_service, RedisService
+from app.models.group_chat import GroupInvitation
 
 logger = logging.getLogger(__name__)
 
@@ -727,7 +728,8 @@ async def mark_notification_read(
 async def delete_notification(
     notification_id: str,
     current_user: User = Depends(get_current_user),
-    redis: RedisService = Depends(get_redis_service)
+    redis: RedisService = Depends(get_redis_service),
+    db: AsyncSession = Depends(get_db)
 ):
     user_id_str = str(current_user.id)
     key = f"notification:user:{user_id_str}"

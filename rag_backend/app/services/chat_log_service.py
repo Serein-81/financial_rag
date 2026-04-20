@@ -377,7 +377,6 @@ class ChatLogService:
             )
             total_tokens = sum(m.total_tokens or 0 for m in assistant_messages)
 
-            user_message_count = len([m for m in messages if m.role == "user"])
             assistant_message_count = len(assistant_messages)
 
             user_result = await session.execute(
@@ -688,7 +687,7 @@ class ChatLogService:
                 query = query.join(
                     ChatSession, ChatMessage.session_id == ChatSession.id
                 ).where(ChatSession.user_id == user_uuid)
-            query = query.where(ChatMessage.embedding == None).limit(limit)
+            query = query.where(ChatMessage.embedding.is_(None)).limit(limit)
             result = await session.execute(query)
             messages = result.scalars().all()
             return [{
@@ -734,17 +733,17 @@ class ChatLogService:
             total_messages = len(result.scalars().all())
 
             result = await session.execute(
-                query.where(ChatMessage.embedding == None)
+                query.where(ChatMessage.embedding.is_(None))
             )
             missing_embedding = len(result.scalars().all())
 
             result = await session.execute(
-                query.where(ChatMessage.importance == None)
+                query.where(ChatMessage.importance.is_(None))
             )
             missing_importance = len(result.scalars().all())
 
             result = await session.execute(
-                query.where(ChatMessage.embedding == None)
+                query.where(ChatMessage.embedding.is_(None))
             )
             missing_embedding_ids = [str(m.id) for m in result.scalars().all()]
 

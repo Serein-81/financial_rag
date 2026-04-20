@@ -11,12 +11,10 @@ PgBouncer Transaction 模式改造：
 
 import uuid
 from typing import Dict, Any, Optional
-from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories.tax_report import TaxReportRepository
 from app.services.minio_service import minio_service
-from app.services.pii_anonymizer import pii_anonymizer
 
 
 class TaxReportService:

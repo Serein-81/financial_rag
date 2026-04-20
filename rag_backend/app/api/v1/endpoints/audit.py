@@ -370,7 +370,7 @@ async def execute_audit_task(
             await db.commit()
         
         # 执行审查
-        result = await coordinator.audit(
+        await coordinator.audit(
             task_id=task_id,
             tenant_id=tenant_id,
             user_id=user_id,

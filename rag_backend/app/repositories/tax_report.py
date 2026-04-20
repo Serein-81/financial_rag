@@ -12,7 +12,7 @@
 """
 
 from typing import Optional, List, Dict, Any
-from sqlalchemy import select, func, text, and_
+from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.repositories.base import BaseRepository
 from app.models.tax_report import TaxReport

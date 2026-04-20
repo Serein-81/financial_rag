@@ -74,7 +74,7 @@ class PromptOptimizer:
                 and_(
                     PromptTemplate.agent_type == agent_type,
                     PromptTemplate.use_case == use_case,
-                    PromptTemplate.is_active == True
+                    PromptTemplate.is_active.is_(True)
                 )
             )
             .order_by(desc(PromptTemplate.created_at))

@@ -175,7 +175,7 @@ async def query_anomalies(
         
         levels_list = None
         if severity_levels:
-            levels_list = [SeverityLevel(l) for l in severity_levels.split(",")]
+            levels_list = [SeverityLevel(level) for level in severity_levels.split(",")]
         
         status_enum = None
         if status:

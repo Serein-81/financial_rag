@@ -368,10 +368,10 @@ class TaskScheduler:
             await self._sync_task_to_db(task)
             
             end_time = datetime.now()
-            result_message = f"任务执行成功"
+            result_message = "任务执行成功"
             callback_data = None
             if callback_result is not None:
-                result_message = f"任务执行成功"
+                result_message = "任务执行成功"
                 callback_data = callback_result
             
             await self._save_execution_log_to_db(

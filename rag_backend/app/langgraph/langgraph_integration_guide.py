@@ -147,10 +147,11 @@ async def example_usage():
         }
         
         # 执行专家任务
-        result = await finance_specialist.run("分析第一季度财务情况")
+        # result = await finance_specialist.run("分析第一季度财务情况")
+        # 注意：实际使用时需要导入并实例化 finance_specialist
         
         trace["metadata"]["outputs"] = {
-            "result": result,
+            # "result": result,
             "confidence": 0.85
         }
         
@@ -162,7 +163,7 @@ async def example_usage():
         thread_id="user_123_workflow_1",
         checkpoint={
             "current_node": "reflection",
-            "specialist_results": [{"finance": result}],
+            # "specialist_results": [{"finance": result}],
             "iteration": 1
         }
     )

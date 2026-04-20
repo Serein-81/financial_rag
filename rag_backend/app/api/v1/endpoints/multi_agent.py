@@ -238,7 +238,8 @@ async def process_multi_agent_query(
 @router.post("/specialist/query", response_model=SpecialistQueryResponse)
 async def query_specialist(
     request: SpecialistQueryRequest,
-    current_user: User = Depends(deps.get_current_user)
+    current_user: User = Depends(deps.get_current_user),
+    tenant_context: dict = Depends(deps.get_tenant_context)
 ):
     """
     单独查询专家智能体

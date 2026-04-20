@@ -978,7 +978,7 @@ class FinanceSpecialist(BaseSpecialistAgent):
                             except ValueError:
                                 pass
                     elif isinstance(sub_value, dict):
-                        for sub_sub_key, sub_sub_value in sub_sub_value.items():
+                        for sub_sub_key, sub_sub_value in sub_value.items():
                             if isinstance(sub_sub_value, (int, float)):
                                 cleaned[f"{key}_{sub_key}_{sub_sub_key}"] = float(sub_sub_value)
             

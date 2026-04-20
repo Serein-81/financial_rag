@@ -22,6 +22,8 @@ from app.agent_framework.tools.tool_manager import ToolManager
 from app.services.prompt_service import PromptEngine
 from app.multi_agent_system.agents.base_agent_prompt import load_agent_prompt
 
+logger = logging.getLogger(__name__)
+
 
 class IntentCategory(str, Enum):
     """意图分类枚举"""

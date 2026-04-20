@@ -459,7 +459,7 @@ class PolicyNotificationAgent:
             
             if pr_lower in er_lower or er_lower in pr_lower:
                 matched.append(pr)
-            elif "全国" in pr or "全国" in er:
+            elif "全国" in pr or "全国" in enterprise_region:
                 matched.append("全国")
         
         score = 1.0 if matched else 0.3

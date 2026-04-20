@@ -103,7 +103,7 @@ class FinancialDataQueryService:
         try:
             conditions = [
                 UserFinancialData.tenant_id == params.tenant_id,
-                UserFinancialData.is_current == True
+                UserFinancialData.is_current.is_(True)
             ]
             
             if params.fiscal_year:
@@ -335,7 +335,7 @@ class FinancialDataQueryService:
             "recommendations": recommendations,
             "alternative_query": {
                 "aggregate": True,
-                "fiscal_year": params.fiscal_year or fiscal_years[0] if params.fiscal_year else None,
+                "fiscal_year": params.fiscal_year if params.fiscal_year else None,
                 "period_type": params.period_type
             }
         }
@@ -397,7 +397,7 @@ class FinancialDataQueryService:
         try:
             conditions = [
                 UserFinancialData.tenant_id == tenant_id,
-                UserFinancialData.is_current == True,
+                UserFinancialData.is_current.is_(True),
                 or_(
                     UserFinancialData.notes.ilike(f"%{query}%"),
                     UserFinancialData.data_source.ilike(f"%{query}%")

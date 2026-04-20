@@ -2,6 +2,7 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from pydantic import BaseModel
+from typing import List
 
 from app.mcp.client_manager import (
     MCPClientManager,
@@ -125,10 +126,10 @@ class TestMCPToolAdapter:
         client = MCPClientManager("http://test.com", "key")
         adapter = MCPToolAdapter(client)
 
-        assert adapter._infer_pydantic_type({"type": "string"}) == str
-        assert adapter._infer_pydantic_type({"type": "number"}) == float
-        assert adapter._infer_pydantic_type({"type": "integer"}) == int
-        assert adapter._infer_pydantic_type({"type": "boolean"}) == bool
+        assert adapter._infer_pydantic_type({"type": "string"}) is str
+        assert adapter._infer_pydantic_type({"type": "number"}) is float
+        assert adapter._infer_pydantic_type({"type": "integer"}) is int
+        assert adapter._infer_pydantic_type({"type": "boolean"}) is bool
 
     def test_infer_array_type(self, sample_tool_info):
         client = MCPClientManager("http://test.com", "key")

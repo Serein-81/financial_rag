@@ -1,0 +1,23 @@
+[tool.ruff]
+line-length = 120
+indent-width = 4
+
+[tool.ruff.lint]
+select = [
+    "E4",   # Import errors
+    "F4",   # Miscellaneous errors
+    "F8",   # Frame errors
+    "E7",   # Runtime errors
+    "E9",   # Recursion errors
+]
+ignore = [
+    "E402",  # 模块级导入不在顶部（避免循环导入）
+    "F401",  # 未使用的导入（待清理）
+    "F403",  # from ... import *（待清理）
+    "F811",  # redefinition of unused name
+    "F841",  # 未使用的局部变量（待清理）
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401", "F403"]  # __init__.py 通常有未使用的导入
+"test_*.py" = ["E402", "F401"]  # 测试文件忽略某些规则

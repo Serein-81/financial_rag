@@ -15,7 +15,6 @@ SQLAlchemy Model Mixins
 
 from sqlalchemy import Column, String, DateTime, func
 from sqlalchemy.dialects.postgresql import UUID
-from datetime import datetime
 import uuid
 
 

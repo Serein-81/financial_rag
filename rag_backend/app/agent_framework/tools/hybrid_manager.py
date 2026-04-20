@@ -416,6 +416,7 @@ class HybridToolManager:
             chain_result = await self._execute_chain_mode(user_input, context)
             base_info = chain_result.get("output", "")
         except Exception:
+            # 工具链失败时继续使用Agent模式
             base_info = ""
         
         # 然后使用Agent进行深度分析

@@ -119,7 +119,7 @@ async def test_get_financial_overview(
         
         conditions = [
             UserFinancialData.tenant_id == request.tenant_id,
-            UserFinancialData.is_current == True
+            UserFinancialData.is_current.is_(True)
         ]
         
         if request.fiscal_year:

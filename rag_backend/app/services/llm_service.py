@@ -351,9 +351,10 @@ class LLMService:
 
         except Exception as e:
             logger.error(f"流式调用失败: {e}")
+            captured_error = e
 
             async def error_gen():
-                error_msg = self._handle_error(e, settings.LLM_PROVIDER)
+                error_msg = self._handle_error(captured_error, settings.LLM_PROVIDER)
                 yield {"delta": error_msg, "error": True}
 
             return error_gen, None

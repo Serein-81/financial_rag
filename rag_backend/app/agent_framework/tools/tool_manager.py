@@ -6,7 +6,9 @@
 负责工具的注册、调用和管理
 """
 
-from typing import Dict, Any, Callable, List, Optional, Set, Tuple
+from __future__ import annotations
+
+from typing import Dict, Any, Callable, List, Optional, Set, Tuple, TYPE_CHECKING
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from collections import defaultdict
@@ -18,6 +20,9 @@ import time
 import logging
 from app.services.tool_call_tracer import tool_call_tracer
 from app.services.tool_dependency_graph import tool_dependency_graph
+
+if TYPE_CHECKING:
+    from app.agent_framework.tools.base import ToolBase
 
 logger = logging.getLogger(__name__)
 

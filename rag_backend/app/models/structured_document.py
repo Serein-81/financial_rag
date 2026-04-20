@@ -257,9 +257,9 @@ class StructuredDocument:
                 current_sections[level] = section
                 
                 # 清除更深层级的章节
-                levels_to_remove = [l for l in current_sections.keys() if l > level]
-                for l in levels_to_remove:
-                    del current_sections[l]
+                levels_to_remove = [lvl for lvl in current_sections.keys() if lvl > level]
+                for lvl in levels_to_remove:
+                    del current_sections[lvl]
             
             else:
                 # 非标题块，添加到最近的章节

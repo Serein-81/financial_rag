@@ -342,7 +342,7 @@ async def export_chat_sessions(
             output.seek(0)
             output_bytes = BytesIO(output.getvalue().encode('utf-8-sig'))
 
-            user_name = clean_for_export(current_user.full_name or current_user.username or "user")
+            user_name = clean_for_excel(current_user.full_name or current_user.username or "user")
             filename = f"{user_name}_对话日志_{now_beijing().strftime('%Y%m%d%H%M')}.csv"
             encoded_filename = quote(filename)
 
@@ -408,7 +408,8 @@ async def export_chat_sessions(
                     try:
                         if cell.value and len(str(cell.value)) > max_length:
                             max_length = len(str(cell.value))
-                    except Exception:
+                    except (AttributeError, TypeError, ValueError):
+                        # 忽略单元格访问错误
                         pass
                 adjusted_width = min(max_length + 2, 50)
                 ws.column_dimensions[column_letter].width = adjusted_width
@@ -417,7 +418,7 @@ async def export_chat_sessions(
             wb.save(output)
             output.seek(0)
 
-            user_name = clean_for_export(current_user.full_name or current_user.username or "user")
+            user_name = clean_for_excel(current_user.full_name or current_user.username or "user")
             filename = f"{user_name}_对话日志_{now_beijing().strftime('%Y%m%d%H%M')}.xlsx"
             encoded_filename = quote(filename)
 
@@ -620,7 +621,8 @@ async def export_user_action_logs(
                     try:
                         if cell.value and len(str(cell.value)) > max_length:
                             max_length = len(str(cell.value))
-                    except Exception:
+                    except (AttributeError, TypeError, ValueError):
+                        # 忽略单元格访问错误
                         pass
                 adjusted_width = min(max_length + 2, 50)
                 ws.column_dimensions[column_letter].width = adjusted_width

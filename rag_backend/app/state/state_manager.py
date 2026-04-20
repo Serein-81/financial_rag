@@ -19,7 +19,7 @@ from contextlib import asynccontextmanager
 
 from app.state.unified_state import UnifiedState
 from app.state.state_factory import StateFactory
-from app.state.state_validator import StateValidator
+from app.state.state_validator import StateValidator, ValidationError
 
 logger = logging.getLogger(__name__)
 

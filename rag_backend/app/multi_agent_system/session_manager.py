@@ -357,7 +357,7 @@ class MultiAgentReportManager:
             .where(
                 MultiAgentReport.session_id == uuid.UUID(session_id),
                 MultiAgentReport.tenant_id == tenant_id,
-                MultiAgentReport.is_latest == True
+                MultiAgentReport.is_latest.is_(True)
             )
         )
         return result.scalar_one_or_none()

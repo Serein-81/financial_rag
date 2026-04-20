@@ -12,7 +12,6 @@ Agent 追踪 Repository
 """
 
 from typing import Optional, List, Dict, Any
-from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.repositories.base import BaseRepository
 from app.models.agent_trace import AgentTrace, AgentStep

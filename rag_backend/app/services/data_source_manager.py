@@ -9,6 +9,7 @@ from enum import Enum
 from abc import ABC, abstractmethod
 import json
 import httpx
+from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from minio import Minio, ResponseError
 

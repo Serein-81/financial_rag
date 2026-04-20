@@ -12,7 +12,7 @@ import asyncio
 import re
 import uuid
 import logging
-from typing import Dict, List, Any, Optional, Callable, Set, Pattern
+from typing import Dict, List, Any, Optional, Callable, Set, Pattern, AsyncGenerator
 from datetime import datetime
 from dataclasses import dataclass, field
 from enum import Enum

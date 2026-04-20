@@ -563,13 +563,13 @@ async def get_statistics(
         total_tasks = total_result.scalar()
 
         active_query = select(func.count(ScheduledTask.id)).where(
-            and_(*base_conditions, ScheduledTask.enabled == True)
+            and_(*base_conditions, ScheduledTask.enabled.is_(True))
         )
         active_result = await db.execute(active_query)
         active_tasks = active_result.scalar()
 
         paused_query = select(func.count(ScheduledTask.id)).where(
-            and_(*base_conditions, ScheduledTask.enabled == False)
+            and_(*base_conditions, ScheduledTask.enabled.is_(False))
         )
         paused_result = await db.execute(paused_query)
         paused_tasks = paused_result.scalar()
@@ -600,7 +600,7 @@ async def get_statistics(
 
         upcoming_query = (
             select(ScheduledTask)
-            .where(and_(*base_conditions, ScheduledTask.enabled == True))
+            .where(and_(*base_conditions, ScheduledTask.enabled.is_(True)))
             .order_by(ScheduledTask.next_run_time)
             .limit(5)
         )

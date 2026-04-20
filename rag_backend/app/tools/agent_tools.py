@@ -406,9 +406,9 @@ def print_tools_summary():
     print("🛠️ Agent 工具列表")
     print("=" * 60)
     
-    for i, tool in enumerate(tools, 1):
-        print(f"{i}. {tool.name}")
-        print(f"   描述: {tool.description}")
+    for i, t in enumerate(tools, 1):
+        print(f"{i}. {t.name}")
+        print(f"   描述: {t.description}")
         print()
     
     print(f"总计: {len(tools)} 个工具")

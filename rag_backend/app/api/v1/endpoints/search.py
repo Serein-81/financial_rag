@@ -1,6 +1,7 @@
 import time
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
+from starlette import status
 from typing import List, Optional
 from app.schemas import SearchRequest, SearchResponse
 from app.schemas.search import SearchWithCallbackRequest, HybridSearchResponse, CallbackMessage, HybridSynonymSearchRequest

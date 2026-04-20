@@ -207,8 +207,6 @@ class OCRService:
         Returns:
             str: 文档类型 (invoice/contract/bank_statement/id_card/business_license/unknown)
         """
-        text_lower = text.lower()
-        
         # 发票识别
         invoice_keywords = ['发票', '税号', '增值税', '纳税人识别号', '价税合计', '开票日期']
         if any(keyword in text for keyword in invoice_keywords):
@@ -285,7 +283,8 @@ class OCRService:
             json_match = re.search(r'\{.*\}', response, re.DOTALL)
             if json_match:
                 return json.loads(json_match.group())
-        except:
+        except (json.JSONDecodeError, AttributeError, ValueError):
+            # 忽略 JSON 解析错误
             pass
         
         return {

@@ -1,15 +1,11 @@
 import uuid
-from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
-from fastapi.responses import StreamingResponse
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, delete
-from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.document import Document, DocumentVisibility
 from app.models.user import User
 from app.api import deps
 from app.db import AsyncSessionLocal
-import hashlib
-import io
 
 router = APIRouter()
 

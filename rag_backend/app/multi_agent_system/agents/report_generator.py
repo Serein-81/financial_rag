@@ -5,7 +5,7 @@
 
 from app.utils.json_compat import json
 import logging
-from typing import Dict, List, Any, Optional, AsyncGenerator
+from typing import Dict, List, Any, Optional, AsyncGenerator, TYPE_CHECKING
 from datetime import datetime
 from enum import Enum
 from dataclasses import dataclass
@@ -17,6 +17,9 @@ from app.agent_framework.llm.base_adapter import BaseLLMAdapter
 from app.agent_framework.tools.tool_manager import ToolManager
 from app.agent_framework.core.base_agent import BaseAgent
 from app.multi_agent_system.agents.base_agent_prompt import load_agent_prompt
+
+if TYPE_CHECKING:
+    from app.multi_agent_system.state_machine import AuditState
 
 logger = logging.getLogger(__name__)
 

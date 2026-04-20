@@ -507,7 +507,7 @@ class GroupChatService:
         query = select(GroupMessage).where(
             and_(
                 GroupMessage.group_id == group_id,
-                GroupMessage.is_deleted == False
+                GroupMessage.is_deleted.is_(False)
             )
         )
         
@@ -528,7 +528,7 @@ class GroupChatService:
             .where(
                 and_(
                     GroupMessage.group_id == group_id,
-                    GroupMessage.is_deleted == False
+                    GroupMessage.is_deleted.is_(False)
                 )
             )
             .order_by(desc(GroupMessage.created_at))

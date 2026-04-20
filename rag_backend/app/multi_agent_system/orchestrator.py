@@ -898,7 +898,7 @@ class AgentOrchestrator:
                 return
             
             intent_stage_event = json.dumps({"type": "stage", "stage": "intent"}, ensure_ascii=False)
-            print(f"📤 [流式] 发送意图分析阶段事件")
+            print("📤 [流式] 发送意图分析阶段事件")
             yield intent_stage_event
             
             intent_result = routing_result.intent_result
@@ -948,7 +948,7 @@ class AgentOrchestrator:
                 return
             
             specialists_stage_event = json.dumps({"type": "stage", "stage": "specialists"}, ensure_ascii=False)
-            print(f"📤 [流式] 发送专家处理阶段事件")
+            print("📤 [流式] 发送专家处理阶段事件")
             yield specialists_stage_event
             
             if intent_result.routing_strategy == RoutingStrategy.SINGLE_SPECIALIST:
@@ -962,7 +962,7 @@ class AgentOrchestrator:
                     "message": f"正在连接 {specialist_display}...",
                     "progress": 10
                 }, ensure_ascii=False)
-                print(f"📤 [流式] 发送 thinking 事件: 正在连接专家")
+                print("📤 [流式] 发送 thinking 事件: 正在连接专家")
                 yield thinking_event1
                 
                 thinking_event2 = json.dumps({
@@ -971,7 +971,7 @@ class AgentOrchestrator:
                     "message": "正在检索相关数据...",
                     "progress": 25
                 }, ensure_ascii=False)
-                print(f"📤 [流式] 发送 thinking 事件: 正在检索")
+                print("📤 [流式] 发送 thinking 事件: 正在检索")
                 yield thinking_event2
                 
                 thinking_event3 = json.dumps({
@@ -980,7 +980,7 @@ class AgentOrchestrator:
                     "message": "正在查询企业财务数据...",
                     "progress": 40
                 }, ensure_ascii=False)
-                print(f"📤 [流式] 发送 thinking 事件: 正在查询")
+                print("📤 [流式] 发送 thinking 事件: 正在查询")
                 yield thinking_event3
                 
                 thinking_messages = [

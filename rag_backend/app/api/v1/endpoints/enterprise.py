@@ -109,7 +109,7 @@ async def get_enterprise_user_stats(
     
     active_users_result = await db.execute(
         select(func.count(User.id)).where(
-            and_(User.tenant_id == tenant_id, User.is_active == True)
+            and_(User.tenant_id == tenant_id, User.is_active.is_(True))
         )
     )
     active_users = active_users_result.scalar()
@@ -117,7 +117,7 @@ async def get_enterprise_user_stats(
     
     admin_users_result = await db.execute(
         select(func.count(User.id)).where(
-            and_(User.tenant_id == tenant_id, User.is_admin == True)
+            and_(User.tenant_id == tenant_id, User.is_admin.is_(True))
         )
     )
     admin_users = admin_users_result.scalar()
@@ -300,7 +300,7 @@ async def get_enterprise_info(
     
     active_users_result = await db.execute(
         select(func.count(User.id)).where(
-            and_(User.tenant_id == admin_user.tenant_id, User.is_active == True)
+            and_(User.tenant_id == admin_user.tenant_id, User.is_active.is_(True))
         )
     )
     active_users = active_users_result.scalar()
