@@ -34,12 +34,16 @@ done
 # 缺点：无法利用多核 CPU 算力
 echo "🚀 启动应用 (uvloop 高性能模式 + 单进程)..."
 
+# 注意：--reload-dir 排除不需要热重载监控的目录
+# 避免权限问题和性能开销
 exec uvicorn app.main:app \
     --host 0.0.0.0 \
     --port 8000 \
     --loop uvloop \
     --http h11 \
-    --reload
+    --reload \
+    --reload-dir app \
+    --reload-dir tests
 
 # ---------------------------------------------------------
 # 【后续扩容建议：生产/多核模式】

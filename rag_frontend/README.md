@@ -469,7 +469,13 @@ docker run -d -p 5173:80 --name rag-frontend rag-frontend:latest
 - SPA 路由 fallback
 - 静态资源缓存
 - Gzip 压缩
-- HTTPS 重定向（需配置证书）
+- **HTTPS/SSL Termination（已配置）**
+  - HTTP → HTTPS 自动重定向
+  - 自签名证书（本地测试用）
+  - 安全响应头（HSTS, X-Frame-Options 等）
+  - TLS 1.2/1.3 协议支持
+
+> ℹ️ **提示**: 详细的 HTTPS 部署指南请查看 [HTTPS_DEPLOYMENT.md](./HTTPS_DEPLOYMENT.md)
 
 ### 环境变量
 

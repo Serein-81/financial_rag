@@ -4,7 +4,7 @@
 """
 
 import asyncio
-import json
+from app.utils.json_compat import json
 import uuid
 import traceback
 import logging
@@ -848,40 +848,58 @@ class AgentOrchestrator:
         try:
             user_input = context.user_query
             
-            yield json.dumps({"type": "stage", "stage": "receptionist"}, ensure_ascii=False)
+            # 发送接待阶段事件
+            receptionist_event = json.dumps({"type": "stage", "stage": "receptionist"}, ensure_ascii=False)
+            print(f"📤 [流式] 发送事件: {receptionist_event[:100]}")
+            yield receptionist_event
             
             if not user_input:
-                yield json.dumps({
+                error_event = json.dumps({
                     "type": "error",
                     "error": "用户查询不能为空"
                 }, ensure_ascii=False)
-                yield json.dumps({
+                print(f"📤 [流式] 发送错误事件: {error_event}")
+                yield error_event
+                done_event = json.dumps({
                     "type": "done",
                     "processing_time": 0
                 }, ensure_ascii=False)
+                print(f"📤 [流式] 发送完成事件: {done_event}")
+                yield done_event
                 return
             
+            print("🎯 [流式] 开始意图路由分析...")
             routing_result = await self.intent_router.run(
                 user_input=user_input,
                 history=[],
                 context={"session_id": context.session_id, "tenant_id": context.tenant_id}
             )
+            print(f"✅ [流式] 意图路由完成，is_simple={routing_result.is_simple}")
             
             if routing_result.is_simple:
-                yield json.dumps({"type": "stage", "stage": "response"}, ensure_ascii=False)
-                yield json.dumps({
+                print("📝 [流式] 发送简单响应阶段...")
+                stage_event = json.dumps({"type": "stage", "stage": "response"}, ensure_ascii=False)
+                yield stage_event
+                
+                text_event = json.dumps({
                     "type": "text",
                     "content": routing_result.simple_response
                 }, ensure_ascii=False)
+                print(f"📤 [流式] 发送文本事件: {text_event[:100]}...")
+                yield text_event
                 
                 processing_time = int((datetime.now() - start_time).total_seconds() * 1000)
-                yield json.dumps({
+                done_event = json.dumps({
                     "type": "done",
                     "processing_time": processing_time
                 }, ensure_ascii=False)
+                print(f"📤 [流式] 发送完成事件: 处理时间={processing_time}ms")
+                yield done_event
                 return
             
-            yield json.dumps({"type": "stage", "stage": "intent"}, ensure_ascii=False)
+            intent_stage_event = json.dumps({"type": "stage", "stage": "intent"}, ensure_ascii=False)
+            print(f"📤 [流式] 发送意图分析阶段事件")
+            yield intent_stage_event
             
             intent_result = routing_result.intent_result
             context.intent_result = intent_result
@@ -890,7 +908,7 @@ class AgentOrchestrator:
                 context.enable_report_generation = True
                 print("📄 [编排器] 检测到用户要求生成报告")
             
-            yield json.dumps({
+            intent_detail_event = json.dumps({
                 "type": "stage",
                 "stage": "intent",
                 "intent": {
@@ -899,6 +917,8 @@ class AgentOrchestrator:
                     "routing_strategy": intent_result.routing_strategy.value
                 }
             }, ensure_ascii=False)
+            print(f"📤 [流式] 发送意图详情事件: category={intent_result.intent.value}, confidence={intent_result.confidence}")
+            yield intent_detail_event
             
             from app.services.admin_notification_service import (
                 admin_notification_service
@@ -927,33 +947,41 @@ class AgentOrchestrator:
                 }, ensure_ascii=False)
                 return
             
-            yield json.dumps({"type": "stage", "stage": "specialists"}, ensure_ascii=False)
+            specialists_stage_event = json.dumps({"type": "stage", "stage": "specialists"}, ensure_ascii=False)
+            print(f"📤 [流式] 发送专家处理阶段事件")
+            yield specialists_stage_event
             
             if intent_result.routing_strategy == RoutingStrategy.SINGLE_SPECIALIST:
                 specialist_type = intent_result.requires_specialists[0] if intent_result.requires_specialists else "finance"
                 specialist_name_map = {"finance": "💰 财务专家", "tax": "📋 税务专家", "legal": "⚖️ 法务专家"}
                 specialist_display = specialist_name_map.get(specialist_type, specialist_type)
                 
-                yield json.dumps({
+                thinking_event1 = json.dumps({
                     "type": "thinking",
                     "stage": "analyzing",
                     "message": f"正在连接 {specialist_display}...",
                     "progress": 10
                 }, ensure_ascii=False)
+                print(f"📤 [流式] 发送 thinking 事件: 正在连接专家")
+                yield thinking_event1
                 
-                yield json.dumps({
+                thinking_event2 = json.dumps({
                     "type": "thinking",
                     "stage": "retrieving",
                     "message": "正在检索相关数据...",
                     "progress": 25
                 }, ensure_ascii=False)
+                print(f"📤 [流式] 发送 thinking 事件: 正在检索")
+                yield thinking_event2
                 
-                yield json.dumps({
+                thinking_event3 = json.dumps({
                     "type": "thinking",
                     "stage": "querying",
                     "message": "正在查询企业财务数据...",
                     "progress": 40
                 }, ensure_ascii=False)
+                print(f"📤 [流式] 发送 thinking 事件: 正在查询")
+                yield thinking_event3
                 
                 thinking_messages = [
                     {"stage": "analyzing", "message": f"{specialist_display}正在思考中...", "progress": 50},
@@ -1040,32 +1068,49 @@ class AgentOrchestrator:
                 
                 if self.output_agent and hasattr(self.output_agent, 'synthesize_and_format_stream'):
                     buffer = ""
+                    text_count = 0
+                    # 优化：降低缓冲阈值到2个字符，实现更流畅的逐字显示
+                    CHAR_BUFFER_SIZE = 2
                     for chunk in final_response.split():
                         buffer += chunk + " "
-                        if len(buffer) >= 5:
-                            yield json.dumps({
+                        if len(buffer) >= CHAR_BUFFER_SIZE:
+                            text_event = json.dumps({
                                 "type": "text",
                                 "content": buffer
                             }, ensure_ascii=False)
+                            text_count += 1
+                            if text_count % 20 == 0:
+                                print(f"📤 [流式] 发送文本块 #{text_count}: {buffer[:50]}...")
+                            yield text_event
                             buffer = ""
                     if buffer:
-                        yield json.dumps({
+                        text_event = json.dumps({
                             "type": "text",
                             "content": buffer
                         }, ensure_ascii=False)
+                        print(f"📤 [流式] 发送最后文本块 #{text_count + 1}: {buffer[:50]}...")
+                        yield text_event
                 else:
-                    for i in range(0, len(final_response), 5):
-                        chunk = final_response[i:i + 5]
-                        yield json.dumps({
+                    text_count = 0
+                    # 优化：降低到2个字符分块，实现逐字显示
+                    for i in range(0, len(final_response), 2):
+                        chunk = final_response[i:i + 2]
+                        text_event = json.dumps({
                             "type": "text",
                             "content": chunk
                         }, ensure_ascii=False)
+                        text_count += 1
+                        if text_count % 25 == 0:
+                            print(f"📤 [流式] 发送文本块 #{text_count}: {chunk}")
+                        yield text_event
                 
                 processing_time = int((datetime.now() - start_time).total_seconds() * 1000)
-                yield json.dumps({
+                done_event = json.dumps({
                     "type": "done",
                     "processing_time": processing_time
                 }, ensure_ascii=False)
+                print(f"📤 [流式] 发送完成事件: 处理时间={processing_time}ms")
+                yield done_event
                 return
             
             elif intent_result.routing_strategy in [
@@ -1141,12 +1186,18 @@ class AgentOrchestrator:
                     user_input
                 )
                 
-                for i in range(0, len(final_response), 5):
-                    chunk = final_response[i:i + 5]
-                    yield json.dumps({
+                # 优化：降低到2个字符分块，实现逐字显示
+                text_count = 0
+                for i in range(0, len(final_response), 2):
+                    chunk = final_response[i:i + 2]
+                    text_event = json.dumps({
                         "type": "text",
                         "content": chunk
                     }, ensure_ascii=False)
+                    text_count += 1
+                    if text_count % 25 == 0:
+                        print(f"📤 [流式-多专家] 发送文本块 #{text_count}: {chunk}")
+                    yield text_event
                 
                 processing_time = int((datetime.now() - start_time).total_seconds() * 1000)
                 yield json.dumps({

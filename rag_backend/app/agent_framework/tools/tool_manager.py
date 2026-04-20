@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 import asyncio
 import inspect
-import json
+from app.utils.json_compat import json
 import re
 import time
 import logging

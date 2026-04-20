@@ -13,7 +13,7 @@ ARQ 任务定义
 注意：ARQ 是可选依赖，如果未安装则跳过相关功能
 """
 
-import json
+from app.utils.json_compat import json
 import logging
 from typing import Any, Dict, Optional
 from datetime import datetime

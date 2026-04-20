@@ -8,7 +8,7 @@
 - 混合检索与重排序
 """
 
-import json
+from app.utils.json_compat import json
 import logging
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass

@@ -5,7 +5,7 @@ from sqlalchemy import select, cast, String
 from typing import Optional, List, Dict
 from pydantic import BaseModel, Field, field_serializer
 from datetime import datetime
-import json
+from app.utils.json_compat import json
 import logging
 
 from app.api.deps import get_current_user, get_db, User

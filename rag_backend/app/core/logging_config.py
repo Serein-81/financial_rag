@@ -8,7 +8,7 @@
 
 import logging
 import sys
-import json
+from app.utils.json_compat import json
 import re
 import os
 from typing import Any, Dict, List

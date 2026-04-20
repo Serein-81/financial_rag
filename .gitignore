@@ -128,6 +128,27 @@ rag_backend/langgraph_cache/
 rag_backend/get_valid_token.py
 rag_backend/minio_data/generate_secret_key.py
 
+# ==========================
+# 10. 流式输出测试脚本（仅用于本地调试）
+# ==========================
+test_streaming_fix.py
+test_real_streaming.py
+quick_test_streaming.py
+
+# ==========================
+# 11. PgBouncer 相关文件（仅本地调试使用）
+# ==========================
+rag_backend/pgbouncer_session_mode.ini
+rag_backend/pgbouncer_transaction_mode.ini
+rag_backend/start_pgbouncer.bat
+rag_backend/start_pgbouncer.ps1
+rag_backend/TEST_COMMANDS.bat
+rag_backend/TEST_COMMANDS.sh
+
+# ==========================
+# 12. pytest 配置（仅本地使用）
+# ==========================
+rag_backend/pytest.ini
 
 # =================================================================
 # 👇 下方为全局通用屏蔽（建议不加前缀，让整个 Monorepo 都生效）

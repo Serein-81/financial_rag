@@ -7,7 +7,7 @@ GPT 专属适配器 (OpenRouter API)
 参考 MiniMax 和智谱适配器的设计实现
 """
 
-import json
+from app.utils.json_compat import json
 import logging
 from typing import AsyncGenerator, Dict, Any, Optional, List
 

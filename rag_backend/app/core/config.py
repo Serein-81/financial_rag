@@ -17,9 +17,37 @@ class Settings(BaseSettings):
     POSTGRES_PORT: str
     POSTGRES_DB: str
 
+    # PgBouncer 配置 (用于 Transaction 模式)
+    PGBOUNCER_ENABLED: bool = False  # 是否启用 PgBouncer
+    PGBOUNCER_HOST: str = "127.0.0.1"  # PgBouncer 主机
+    PGBOUNCER_PORT: int = 6432  # PgBouncer 端口
+    PGBOUNCER_USER: Optional[str] = None  # PgBouncer 用户名（默认使用 POSTGRES_USER）
+    PGBOUNCER_PASSWORD: Optional[str] = None  # PgBouncer 密码（默认使用 POSTGRES_PASSWORD）
+    PGBOUNCER_POOL_MODE: str = "transaction"  # 连接池模式: transaction 或 session
+    PGBOUNCER_DATABASE: Optional[str] = None  # PgBouncer 中的数据库名（默认使用 POSTGRES_DB）
+
+    # 数据库连接池配置（优化用于 PgBouncer）
+    DB_POOL_SIZE: int = 5  # 基础连接数（PgBouncer 模式下可以设小一些）
+    DB_MAX_OVERFLOW: int = 5  # 最大溢出连接数
+    DB_POOL_TIMEOUT: int = 30  # 连接获取超时（秒）
+    DB_POOL_RECYCLE: int = 3600  # 连接回收时间（秒）
+
     # 3. 最终的连接字符串 (代码动态拼接，不需要在 env 里写)
     @property
     def DATABASE_URL(self) -> str:
+        if self.PGBOUNCER_ENABLED:
+            host = self.PGBOUNCER_HOST
+            port = self.PGBOUNCER_PORT
+            user = self.PGBOUNCER_USER or self.POSTGRES_USER
+            password = self.PGBOUNCER_PASSWORD or self.POSTGRES_PASSWORD
+            database = self.PGBOUNCER_DATABASE or self.POSTGRES_DB
+            return f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{database}"
+        else:
+            return f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+
+    # 原始 PostgreSQL 连接字符串（绕过 PgBouncer）
+    @property
+    def POSTGRES_URL(self) -> str:
         return f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
 
     # 4. 👇 【新增】认证与安全配置 (Security)

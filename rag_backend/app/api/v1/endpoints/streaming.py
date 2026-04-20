@@ -4,7 +4,7 @@
 提供流式响应的断点续传、进度查询等功能
 """
 
-import json
+from app.utils.json_compat import json
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from starlette.responses import StreamingResponse

@@ -10,7 +10,7 @@
 4. 拓扑排序执行规划
 """
 
-import json
+from app.utils.json_compat import json
 import logging
 from typing import Dict, List, Optional, Set, Any, Tuple
 from collections import defaultdict, Counter

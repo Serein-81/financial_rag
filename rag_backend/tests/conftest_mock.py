@@ -301,7 +301,6 @@ def authenticated_client(app_with_full_mocks, mock_user):
 
 
 @pytest.fixture
-@pytest.fixture
 async def authenticated_async_client(app_with_full_mocks, mock_user):
     """创建已认证的异步测试客户端"""
     from app.api.deps import get_current_user

@@ -1,0 +1,2 @@
+# 此文件用于保留 ssl 目录在 Git 中
+# 实际的 .key 和 .crt 文件应该被 .gitignore 忽略

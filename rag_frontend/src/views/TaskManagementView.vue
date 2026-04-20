@@ -57,20 +57,14 @@ import {
 const isLoading = ref(false)
 
 const activeTab = ref<'tasks' | 'logs' | 'settings'>('tasks')
-
 const tasks = ref<ScheduledTask[]>([])
-
 const executionLogs = ref<TaskExecutionLog[]>([])
-
 const statistics = ref<TaskStatistics | null>(null)
-
 const totalTasks = ref(0)
-
 const totalLogs = ref(0)
-
 const currentPage = ref(1)
-
 const pageSize = ref(10)
+const selectedLogs = ref<string[]>([])
 
 
 
@@ -452,23 +446,84 @@ async function deleteTask(taskId: string) {
 
 
 async function runTaskNow(taskId: string) {
-
   try {
-
     await taskManagerApi.runTaskNow(taskId)
-
     alert('任务已启用')
-
     await loadLogs()
-
   } catch (e: any) {
-
     console.error('Failed to run task:', e)
-
     alert('启动任务失败')
-
   }
+}
 
+async function deleteLog(logId: string) {
+  if (!confirm('确定要删除这条日志吗？')) return
+  try {
+    await taskManagerApi.deleteExecutionLog(logId)
+    await loadLogs()
+  } catch (e: any) {
+    console.error('Failed to delete log:', e)
+    alert('删除日志失败')
+  }
+}
+
+async function batchDeleteLogs() {
+  if (selectedLogs.value.length === 0) {
+    alert('请先选择要删除的日志')
+    return
+  }
+  if (!confirm(`确定要删除选中的 ${selectedLogs.value.length} 条日志吗？`)) return
+  try {
+    await taskManagerApi.batchDeleteExecutionLogs(selectedLogs.value)
+    selectedLogs.value = []
+    await loadLogs()
+  } catch (e: any) {
+    console.error('Failed to batch delete logs:', e)
+    alert('批量删除日志失败')
+  }
+}
+
+async function deleteLogsByTask(taskId: string) {
+  if (!confirm('确定要删除该任务的所有日志吗？')) return
+  try {
+    await taskManagerApi.deleteLogsByTask(taskId)
+    await loadLogs()
+  } catch (e: any) {
+    console.error('Failed to delete logs by task:', e)
+    alert('删除任务日志失败')
+  }
+}
+
+async function cleanupOldLogs() {
+  const days = prompt('请输入要保留的天数（默认30天）：', '30')
+  if (!days) return
+  const daysNum = parseInt(days)
+  if (isNaN(daysNum) || daysNum < 1) {
+    alert('请输入有效的天数')
+    return
+  }
+  if (!confirm(`确定要清理 ${daysNum} 天前的所有日志吗？`)) return
+  try {
+    const result = await taskManagerApi.cleanupOldLogs(daysNum)
+    alert(result.message)
+    await loadLogs()
+  } catch (e: any) {
+    console.error('Failed to cleanup old logs:', e)
+    alert('清理旧日志失败')
+  }
+}
+
+function clearSelection() {
+  selectedLogs.value = []
+}
+
+function toggleLogSelection(logId: string) {
+  const index = selectedLogs.value.indexOf(logId)
+  if (index === -1) {
+    selectedLogs.value.push(logId)
+  } else {
+    selectedLogs.value.splice(index, 1)
+  }
 }
 
 
@@ -848,101 +903,112 @@ onMounted(() => {
 
 
         <div v-else-if="activeTab === 'logs'" class="space-y-4">
-
           <div v-if="executionLogs.length === 0" class="bg-white rounded-xl border border-slate-200 p-8 text-center">
-
             <Clock :size="48" class="mx-auto text-slate-300 mb-4" />
-
             <p class="text-slate-500">暂无执行日志</p>
-
           </div>
-
-
 
           <div v-else class="bg-white rounded-xl border border-slate-200 overflow-hidden">
-
-            <table class="w-full">
-
-              <thead class="bg-slate-50">
-
-                <tr class="text-left text-sm text-slate-500">
-
-                  <th class="px-5 py-3">任务名称</th>
-
-                  <th class="px-5 py-3">状态</th>
-
-                  <th class="px-5 py-3">开始时间</th>
-
-                  <th class="px-5 py-3">执行时长</th>
-
-                  <th class="px-5 py-3">结果</th>
-
-                </tr>
-
-              </thead>
-
-              <tbody class="divide-y divide-slate-100">
-
-                <tr 
-
-                  v-for="log in executionLogs" 
-
-                  :key="log.id" 
-
-                  class="hover:bg-slate-50 cursor-pointer transition-colors"
-
-                  @click="viewLogDetail(log.id)"
-
+            <div class="px-5 py-3 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+              <div class="flex items-center gap-4">
+                <input
+                  type="checkbox"
+                  :checked="selectedLogs.length === executionLogs.length"
+                  :indeterminate="selectedLogs.length > 0 && selectedLogs.length < executionLogs.length"
+                  @change="selectedLogs.length === executionLogs.length ? clearSelection() : executionLogs.forEach(log => !selectedLogs.includes(log.id) && toggleLogSelection(log.id))"
+                  class="w-4 h-4 rounded border-slate-300"
+                />
+                <span class="text-sm text-slate-600">全选</span>
+                <span v-if="selectedLogs.length > 0" class="text-sm text-amber-600">已选择 {{ selectedLogs.length }} 条</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <button
+                  v-if="selectedLogs.length > 0"
+                  @click="batchDeleteLogs"
+                  class="px-3 py-1.5 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 text-sm flex items-center gap-1 transition-colors"
                 >
-
-                  <td class="px-5 py-4">
-
-                    <p class="font-medium text-slate-900">{{ log.task_name }}</p>
-
-                    <p class="text-xs text-slate-500 mt-1">{{ log.id }}</p>
-
-                  </td>
-
-                  <td class="px-5 py-4">
-
-                    <span :class="['px-2 py-1 rounded text-xs font-medium', statusColors[log.status as keyof typeof statusColors] || statusColors.pending]">
-
-                      {{ log.status === 'completed' ? '已完成' : log.status === 'failed' ? '失败' : log.status === 'started' ? '运行中' : '已取消' }}
-
-                    </span>
-
-                  </td>
-
-                  <td class="px-5 py-4 text-sm text-slate-600">
-
-                    {{ formatDateTime(log.start_time) }}
-
-                  </td>
-
-                  <td class="px-5 py-4 text-sm text-slate-600">
-
-                    {{ log.duration ? formatDuration(log.duration) : '-' }}
-
-                  </td>
-
-                  <td class="px-5 py-4">
-
-                    <span v-if="log.result?.success" class="text-emerald-600 text-sm">成功</span>
-
-                    <span v-else-if="log.error" class="text-red-600 text-sm">{{ log.error }}</span>
-
-                    <span v-else class="text-slate-500 text-sm">-</span>
-
-                  </td>
-
+                  <Trash2 :size="14" />
+                  批量删除
+                </button>
+                <button
+                  @click="cleanupOldLogs"
+                  class="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 text-sm flex items-center gap-1 transition-colors"
+                >
+                  <RefreshCw :size="14" />
+                  清理旧日志
+                </button>
+              </div>
+            </div>
+            <table class="w-full">
+              <thead class="bg-slate-50">
+                <tr class="text-left text-sm text-slate-500">
+                  <th class="px-5 py-3 w-10"></th>
+                  <th class="px-5 py-3">任务名称</th>
+                  <th class="px-5 py-3">状态</th>
+                  <th class="px-5 py-3">开始时间</th>
+                  <th class="px-5 py-3">执行时长</th>
+                  <th class="px-5 py-3">结果</th>
+                  <th class="px-5 py-3">操作</th>
                 </tr>
-
+              </thead>
+              <tbody class="divide-y divide-slate-100">
+                <tr
+                  v-for="log in executionLogs"
+                  :key="log.id"
+                  class="hover:bg-slate-50 transition-colors"
+                >
+                  <td class="px-5 py-4">
+                    <input
+                      type="checkbox"
+                      :checked="selectedLogs.includes(log.id)"
+                      @change="toggleLogSelection(log.id)"
+                      @click.stop
+                      class="w-4 h-4 rounded border-slate-300"
+                    />
+                  </td>
+                  <td class="px-5 py-4">
+                    <p class="font-medium text-slate-900">{{ log.task_name }}</p>
+                    <p class="text-xs text-slate-500 mt-1">{{ log.id }}</p>
+                  </td>
+                  <td class="px-5 py-4">
+                    <span :class="['px-2 py-1 rounded text-xs font-medium', statusColors[log.status as keyof typeof statusColors] || statusColors.pending]">
+                      {{ log.status === 'completed' ? '已完成' : log.status === 'failed' ? '失败' : log.status === 'started' ? '运行中' : '已取消' }}
+                    </span>
+                  </td>
+                  <td class="px-5 py-4 text-sm text-slate-600">
+                    {{ formatDateTime(log.start_time) }}
+                  </td>
+                  <td class="px-5 py-4 text-sm text-slate-600">
+                    {{ log.duration ? formatDuration(log.duration) : '-' }}
+                  </td>
+                  <td class="px-5 py-4">
+                    <span v-if="log.status === 'completed'" class="text-emerald-600 text-sm">成功</span>
+                    <span v-else-if="log.status === 'failed'" class="text-red-600 text-sm">{{ log.error || '失败' }}</span>
+                    <span v-else-if="log.status === 'running'" class="text-amber-600 text-sm">运行中</span>
+                    <span v-else class="text-slate-500 text-sm">-</span>
+                  </td>
+                  <td class="px-5 py-4">
+                    <div class="flex items-center gap-1">
+                      <button
+                        @click.stop="viewLogDetail(log.id)"
+                        class="p-1.5 hover:bg-blue-50 text-blue-600 rounded transition-colors"
+                        title="查看详情"
+                      >
+                        <FileText :size="16" />
+                      </button>
+                      <button
+                        @click.stop="deleteLog(log.id)"
+                        class="p-1.5 hover:bg-red-50 text-red-500 rounded transition-colors"
+                        title="删除"
+                      >
+                        <Trash2 :size="16" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
               </tbody>
-
             </table>
-
           </div>
-
         </div>
 
 
@@ -1628,29 +1694,17 @@ onMounted(() => {
 
 
           <div v-if="selectedLogDetail.result" class="bg-gradient-to-br from-slate-50 to-white rounded-xl border border-slate-200">
-
             <div class="px-4 py-3 border-b border-slate-200 flex items-center gap-2">
-
               <CheckCircle :size="16" class="text-emerald-600" />
-
               <span class="font-medium text-slate-900">执行结果</span>
-
             </div>
-
             <div class="p-4">
-
               <div class="grid grid-cols-3 gap-4 mb-4">
-
                 <div>
-
                   <p class="text-sm text-slate-500">状态</p>
-
-                  <p :class="selectedLogDetail.result.success ? 'text-emerald-600 font-medium' : 'text-red-600 font-medium'">
-
-                    {{ selectedLogDetail.result.success ? '成功' : '失败' }}
-
+                  <p :class="(selectedLogDetail.result?.success ?? (selectedLogDetail.status === 'completed')) ? 'text-emerald-600 font-medium' : 'text-red-600 font-medium'">
+                    {{ (selectedLogDetail.result?.success ?? (selectedLogDetail.status === 'completed')) ? '成功' : '失败' }}
                   </p>
-
                 </div>
 
                 <div v-if="selectedLogDetail.result.message">

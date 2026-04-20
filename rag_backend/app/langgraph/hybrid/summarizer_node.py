@@ -12,7 +12,7 @@
 """
 
 
-import json
+from app.utils.json_compat import json
 import logging
 from typing import Dict, Any, List, Optional, TypedDict
 from dataclasses import dataclass

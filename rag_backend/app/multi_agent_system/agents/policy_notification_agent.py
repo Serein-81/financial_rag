@@ -10,7 +10,7 @@
 这是对 PolicyAgent 和 NotificationAgent 的真正整合
 """
 
-import json
+from app.utils.json_compat import json
 import logging
 from typing import Dict, List, Any, Optional
 from pydantic import BaseModel, Field

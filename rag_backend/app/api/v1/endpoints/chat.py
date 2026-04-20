@@ -1,4 +1,4 @@
-import json
+from app.utils.json_compat import json
 import time
 import uuid
 from typing import Optional
@@ -378,9 +378,9 @@ async def chat_with_agent_stream(
     async def event_generator():
         # SSE 标准要求数据以 "data: " 开头，以 "\n\n" 结尾
         
-        # 流式输出缓冲配置
-        BUFFER_SIZE = 5  # 每积累 N 个字符发送一次（平衡延迟和性能）
-        MAX_WAIT_TIME = 0.1  # 最大等待时间（秒），超时后立即发送
+        # 流式输出缓冲配置 - 优化为更小的缓冲区以实现逐字显示
+        BUFFER_SIZE = 1  # 每收到1个字符就发送（实现真正的逐字显示）
+        MAX_WAIT_TIME = 0.02  # 最大等待时间（秒），超时后立即发送
 
         # 先把 session_id 发给前端，让前端知道当前会话的 ID
         init_data = json.dumps({"type": "init", "session_id": session_id})

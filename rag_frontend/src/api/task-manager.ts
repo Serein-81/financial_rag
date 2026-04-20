@@ -180,5 +180,30 @@ export const taskManagerApi = {
       method: 'POST',
       data: params
     })
+  },
+
+  deleteExecutionLog: async (logId: string): Promise<{ deleted_count: number; message: string }> => {
+    return request(`/task-manager/logs/${logId}`, {
+      method: 'DELETE'
+    })
+  },
+
+  batchDeleteExecutionLogs: async (logIds: string[]): Promise<{ deleted_count: number; message: string }> => {
+    return request('/task-manager/logs/batch', {
+      method: 'DELETE',
+      data: { log_ids: logIds }
+    })
+  },
+
+  deleteLogsByTask: async (taskId: string): Promise<{ deleted_count: number; message: string }> => {
+    return request(`/task-manager/logs/by-task/${taskId}`, {
+      method: 'DELETE'
+    })
+  },
+
+  cleanupOldLogs: async (days: number): Promise<{ deleted_count: number; message: string }> => {
+    return request(`/task-manager/logs/cleanup?days=${days}`, {
+      method: 'DELETE'
+    })
   }
 }

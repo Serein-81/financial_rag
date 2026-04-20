@@ -5,7 +5,7 @@
 
 import uuid
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -667,3 +667,180 @@ async def setup_tax_reminder(
         await db.rollback()
         logger.error(f"❌ 创建税务提醒失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"创建税务提醒失败: {str(e)}")
+
+
+class LogDeleteRequest(BaseModel):
+    log_ids: List[str]
+
+
+class LogDeleteResponse(BaseModel):
+    deleted_count: int
+    message: str
+
+
+@router.delete("/logs/{log_id}", response_model=LogDeleteResponse)
+async def delete_execution_log(
+    log_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    删除单条执行日志
+    """
+    try:
+        query = select(TaskExecutionLog).where(
+            and_(
+                TaskExecutionLog.id == uuid.UUID(log_id),
+                TaskExecutionLog.user_id == current_user.id
+            )
+        )
+        result = await db.execute(query)
+        log = result.scalar_one_or_none()
+
+        if not log:
+            raise HTTPException(status_code=404, detail="日志不存在")
+
+        await db.delete(log)
+        await db.commit()
+
+        logger.info(f"🗑️ 删除执行日志: {log_id}")
+        return LogDeleteResponse(
+            deleted_count=1,
+            message="日志删除成功"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"❌ 删除日志失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"删除日志失败: {str(e)}")
+
+
+@router.delete("/logs/batch", response_model=LogDeleteResponse)
+async def batch_delete_execution_logs(
+    request: LogDeleteRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    批量删除执行日志
+    """
+    try:
+        if not request.log_ids:
+            raise HTTPException(status_code=400, detail="请提供要删除的日志ID列表")
+
+        query = select(TaskExecutionLog).where(
+            and_(
+                TaskExecutionLog.id.in_([uuid.UUID(log_id) for log_id in request.log_ids]),
+                TaskExecutionLog.user_id == current_user.id
+            )
+        )
+        result = await db.execute(query)
+        logs = result.scalars().all()
+
+        if not logs:
+            raise HTTPException(status_code=404, detail="未找到可删除的日志")
+
+        deleted_count = len(logs)
+        for log in logs:
+            await db.delete(log)
+
+        await db.commit()
+
+        logger.info(f"🗑️ 批量删除执行日志: {deleted_count} 条")
+        return LogDeleteResponse(
+            deleted_count=deleted_count,
+            message=f"成功删除 {deleted_count} 条日志"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"❌ 批量删除日志失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"批量删除日志失败: {str(e)}")
+
+
+@router.delete("/logs/by-task/{task_id}", response_model=LogDeleteResponse)
+async def delete_logs_by_task(
+    task_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    删除指定任务的所有执行日志
+    """
+    try:
+        query = select(TaskExecutionLog).where(
+            and_(
+                TaskExecutionLog.task_id == task_id,
+                TaskExecutionLog.user_id == current_user.id
+            )
+        )
+        result = await db.execute(query)
+        logs = result.scalars().all()
+
+        if not logs:
+            raise HTTPException(status_code=404, detail="未找到该任务的日志")
+
+        deleted_count = len(logs)
+        for log in logs:
+            await db.delete(log)
+
+        await db.commit()
+
+        logger.info(f"🗑️ 删除任务 {task_id} 的所有日志: {deleted_count} 条")
+        return LogDeleteResponse(
+            deleted_count=deleted_count,
+            message=f"成功删除任务 {task_id} 的 {deleted_count} 条日志"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"❌ 删除任务日志失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"删除任务日志失败: {str(e)}")
+
+
+@router.delete("/logs/cleanup", response_model=LogDeleteResponse)
+async def cleanup_old_logs(
+    days: int = Query(30, ge=1, le=365, description="保留最近N天的日志"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    清理指定天数之前的执行日志
+    """
+    try:
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+
+        query = select(TaskExecutionLog).where(
+            and_(
+                TaskExecutionLog.user_id == current_user.id,
+                TaskExecutionLog.tenant_id == str(current_user.tenant_id),
+                TaskExecutionLog.created_at < cutoff_date
+            )
+        )
+        result = await db.execute(query)
+        logs = result.scalars().all()
+
+        if not logs:
+            return LogDeleteResponse(
+                deleted_count=0,
+                message=f"没有 {days} 天前的日志需要清理"
+            )
+
+        deleted_count = len(logs)
+        for log in logs:
+            await db.delete(log)
+
+        await db.commit()
+
+        logger.info(f"🗑️ 清理 {days} 天前的执行日志: {deleted_count} 条")
+        return LogDeleteResponse(
+            deleted_count=deleted_count,
+            message=f"成功清理 {days} 天前的 {deleted_count} 条日志"
+        )
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"❌ 清理旧日志失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"清理旧日志失败: {str(e)}")

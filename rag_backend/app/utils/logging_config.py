@@ -21,7 +21,7 @@
 import logging
 import logging.handlers
 import sys
-import json
+from app.utils.json_compat import json
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any

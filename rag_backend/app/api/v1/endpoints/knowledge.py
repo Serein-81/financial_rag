@@ -22,7 +22,7 @@ from app.models.knowledge_base import KnowledgeBase
 from app.models import Document, DocumentChunk
 from app.schemas.knowledge import KnowledgeBaseCreate, KnowledgeBaseOut, DocumentOut
 from app.services.tenant_security_service import tenant_security
-from app.middleware.tenant_middleware import set_tenant_context_for_db
+from app.core.config import settings
 
 # 引入核心服务
 from app.services.file_service import file_service
@@ -247,8 +247,9 @@ async def process_document_task(doc_id: UUID, tenant_id: str):
 
     async with AsyncSessionLocal() as db:
         try:
-            # 设置租户上下文
-            await set_tenant_context_for_db(db, tenant_id)
+            if not settings.PGBOUNCER_ENABLED:
+                from app.middleware.tenant_middleware import set_tenant_context_for_db
+                await set_tenant_context_for_db(db, tenant_id)
             
             doc = await db.get(Document, doc_id)
             if not doc:
@@ -366,7 +367,9 @@ async def process_document_task(doc_id: UUID, tenant_id: str):
             await db.rollback()
             print(f"❌ [后台任务] 严重错误: {e}")
             async with AsyncSessionLocal() as error_db:
-                await set_tenant_context_for_db(error_db, tenant_id)
+                if not settings.PGBOUNCER_ENABLED:
+                    from app.middleware.tenant_middleware import set_tenant_context_for_db
+                    await set_tenant_context_for_db(error_db, tenant_id)
                 error_doc = await error_db.get(Document, doc_id)
                 if error_doc:
                     error_doc.status = "failed"

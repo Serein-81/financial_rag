@@ -48,6 +48,13 @@ coverage
 .eslintcache
 
 # ==========================
+# SSL 证书（敏感文件）
+# ==========================
+ssl/*.key
+ssl/*.pem
+!ssl/openssl.cnf
+
+# ==========================
 # Tailwind CSS 输出
 # ==========================
 src/assets/main.css

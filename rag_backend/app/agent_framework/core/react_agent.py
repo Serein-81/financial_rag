@@ -332,7 +332,8 @@ class ReActAgent(BaseAgent):
                 # 是否应该流式输出内容（无工具调用时）
                 should_stream_output = True
                 # 缓冲区的最小长度（达到后才开始流式输出，避免过早输出被截断）
-                MIN_BUFFER_FOR_STREAM = 20
+                # 优化：降低到3个字符，实现更流畅的逐字显示效果
+                MIN_BUFFER_FOR_STREAM = 3
 
                 async for chunk in self.llm.stream_generate(current_prompt, temperature=0.1):
                     chunk_count += 1

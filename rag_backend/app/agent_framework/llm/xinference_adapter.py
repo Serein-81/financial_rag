@@ -6,7 +6,7 @@ Xinference 适配器
 支持 Xinference 本地部署的 LLM 适配器实现
 """
 
-import json
+from app.utils.json_compat import json
 import logging
 from typing import AsyncGenerator, Dict, Any, Optional, List
 

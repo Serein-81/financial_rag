@@ -11,16 +11,16 @@ from datetime import datetime
 from app.a2a_protocol.client import A2AClient
 from app.a2a_protocol.server import A2AServer
 from app.a2a_protocol.models import (
-    A2AMessage,
-    AgentCard,
+    Message,
     Task,
     TaskStatus
 )
+from app.a2a_protocol.agent_card import AgentCard
 from app.a2a_protocol.registry import AgentRegistry
-from app.a2a_protocol.dispatcher import Dispatcher
+from app.a2a_protocol.dispatcher import HybridDispatcher
 from app.a2a_protocol.initializer import A2AInitializer
-from app.a2a_protocol.transports.http_transport import HTTPTransport
-from app.a2a_protocol.transports.local_transport import LocalTransport
+from app.a2a_protocol.transports.http_transport import HttpAgentTransport
+from app.a2a_protocol.transports.local_transport import LocalAgentTransport
 
 
 class TestAgentRegistry:

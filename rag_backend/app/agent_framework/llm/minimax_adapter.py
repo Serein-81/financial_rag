@@ -7,7 +7,7 @@ MiniMax 适配器
 文档: https://www.minimaxi.com/document
 """
 
-import json
+from app.utils.json_compat import json
 import logging
 from typing import AsyncGenerator, Dict, Any, Optional, List
 

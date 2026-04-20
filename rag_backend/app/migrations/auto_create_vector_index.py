@@ -56,11 +56,19 @@ def auto_create_vector_index():
     from sqlalchemy.orm import sessionmaker
     from sqlalchemy.exc import OperationalError
     
-    db_host = os.getenv('POSTGRES_SERVER', 'db')
-    db_port = os.getenv('POSTGRES_PORT', '5432')
-    db_user = os.getenv('POSTGRES_USER', 'rag_user')
-    db_pass = os.getenv('POSTGRES_PASSWORD', 'rag_password')
-    db_name = os.getenv('POSTGRES_DB', 'rag_db')
+    # PgBouncer 支持
+    if os.getenv('PGBOUNCER_ENABLED', 'false').lower() == 'true':
+        db_host = os.getenv('PGBOUNCER_HOST', 'pgbouncer')
+        db_port = os.getenv('PGBOUNCER_PORT', '5432')
+        db_user = os.getenv('PGBOUNCER_USER') or os.getenv('POSTGRES_USER', 'postgres')
+        db_pass = os.getenv('PGBOUNCER_PASSWORD') or os.getenv('POSTGRES_PASSWORD', '')
+        db_name = os.getenv('PGBOUNCER_DATABASE') or os.getenv('POSTGRES_DB', 'rag_db')
+    else:
+        db_host = os.getenv('POSTGRES_SERVER', 'db')
+        db_port = os.getenv('POSTGRES_PORT', '5432')
+        db_user = os.getenv('POSTGRES_USER', 'postgres')
+        db_pass = os.getenv('POSTGRES_PASSWORD', '')
+        db_name = os.getenv('POSTGRES_DB', 'rag_db')
     
     database_url = f"postgresql://{db_user}:{db_pass}@{db_host}:{db_port}/{db_name}"
     

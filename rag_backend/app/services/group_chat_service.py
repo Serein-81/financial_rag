@@ -3,7 +3,7 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 from sqlalchemy import select, and_, cast, String
 from sqlalchemy.ext.asyncio import AsyncSession
-import json
+from app.utils.json_compat import json
 import logging
 
 from app.models.group_chat import ChatGroup, GroupMember, GroupInvitation, GroupMessage

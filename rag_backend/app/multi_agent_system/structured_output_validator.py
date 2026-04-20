@@ -4,7 +4,7 @@
 """
 
 import re
-import json
+from app.utils.json_compat import json
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
 from dataclasses import dataclass, field

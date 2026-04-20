@@ -3,7 +3,7 @@
 负责整合多专家分析结果，生成结构化、可视化的报告
 """
 
-import json
+from app.utils.json_compat import json
 import logging
 from typing import Dict, List, Any, Optional, AsyncGenerator
 from datetime import datetime

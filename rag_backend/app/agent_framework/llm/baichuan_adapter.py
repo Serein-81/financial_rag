@@ -6,7 +6,7 @@ BaiChuan 百川适配器
 支持百川大模型 API 的 LLM 适配器实现
 """
 
-import json
+from app.utils.json_compat import json
 import time
 import hashlib
 import logging

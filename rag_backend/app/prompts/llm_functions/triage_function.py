@@ -5,7 +5,7 @@
 这是一个轻量级的 LLM 调用
 """
 
-import json
+from app.utils.json_compat import json
 import logging
 from typing import Dict, Any, Optional, List
 from enum import Enum

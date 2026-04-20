@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+﻿﻿﻿<script setup lang="ts">
 
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 
@@ -718,39 +718,24 @@ async function sendMessage() {
         
 
         buffer += decoder.decode(value, { stream: true })
-
-        const lines = buffer.split('\n')
-
+        // SSE 协议使用双换行符 (\n\n) 分隔事件
+        const lines = buffer.split('\n\n')
         buffer = lines.pop() || ''
 
-
-
         for (const line of lines) {
-
           if (line.trim() && line.startsWith('data: ')) {
-
             try {
-
               const data = JSON.parse(line.slice(6))
-
+              console.log('🔄 接收到 SSE 事件:', data.type, data)
               await handleStreamEvent(data)
-
               
-
               if (data.type === 'done') {
-
                 receivedDone = true
-
               }
-
             } catch (e) {
-
-              console.error('解析SSE事件失败:', e, line)
-
+              console.error('❌ 解析SSE事件失败:', e, line)
             }
-
           }
-
         }
 
       } catch (readError: any) {
@@ -918,33 +903,34 @@ async function handleStreamEvent(data: any) {
 
 
     case 'sources':
-
       break
 
-
+    case 'thinking':
+      // 智能体思考中，可以显示进度信息
+      console.log('🤔 智能体思考中:', data.message, '进度:', data.progress)
+      if (data.message) {
+        currentResponse.value += `\n\n*${data.message}*\n\n`
+        lastMsg.content = currentResponse.value
+        scrollToBottom()
+      }
+      break
 
     case 'done':
-
       currentStage.value = 'response'
-
       processingTime.value = data.processing_time
-
       lastMsg.content = currentResponse.value
-
       isLoading.value = false
-
+      console.log('✅ 流式响应完成，处理时间:', data.processing_time, 'ms')
       break
-
-
 
     case 'error':
-
-      lastMsg.content = `错误: ${data.error}`
-
+      console.error('❌ 流式响应错误:', data.error)
+      lastMsg.content = `⚠️ **错误**: ${data.error}`
       isLoading.value = false
-
       break
 
+    default:
+      console.warn('⚠️ 未知的 SSE 事件类型:', data.type, data)
   }
 
 }

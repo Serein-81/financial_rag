@@ -8,11 +8,11 @@ from fastapi import Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import AsyncSessionLocal
 from app.core.security import decode_access_token
+from app.core.config import settings
 from app.models.user import User
 from app.middleware.tenant_middleware import (
     get_current_tenant_id, 
-    get_current_user_id,
-    set_tenant_context_for_db
+    get_current_user_id
 )
 from app.services.tenant_security_service import tenant_security
 import logging
@@ -39,28 +39,32 @@ async def get_db() -> AsyncSession:
     """
     获取数据库会话
     
-    注意：这个会话已经自动设置了租户上下文
+    注意：
+    - PgBouncer Transaction 模式下：不再设置 SET LOCAL，租户隔离通过 Repository 层实现
+    - 非 PgBouncer 模式：自动设置租户上下文（SET LOCAL）
     """
     async with AsyncSessionLocal() as session:
         try:
-            tenant_id = get_current_tenant_id()
-            user_id = get_current_user_id()
-            
-            if tenant_id:
-                try:
-                    await set_tenant_context_for_db(session, tenant_id, user_id)
-                except HTTPException:
-                    raise
-                except Exception as e:
+            if not settings.PGBOUNCER_ENABLED:
+                from app.middleware.tenant_middleware import set_tenant_context_for_db
+                tenant_id = get_current_tenant_id()
+                user_id = get_current_user_id()
+                
+                if tenant_id:
                     try:
-                        logger.warning(f"Failed to set tenant context: {safe_error_str(e)}")
-                    except Exception:
-                        logger.warning("Failed to set tenant context: <failed to format error message>")
-                    try:
-                        await session.rollback()
-                        await session.begin()
-                    except Exception:
-                        pass
+                        await set_tenant_context_for_db(session, tenant_id, user_id)
+                    except HTTPException:
+                        raise
+                    except Exception as e:
+                        try:
+                            logger.warning(f"Failed to set tenant context: {safe_error_str(e)}")
+                        except Exception:
+                            logger.warning("Failed to set tenant context: <failed to format error message>")
+                        try:
+                            await session.rollback()
+                            await session.begin()
+                        except Exception:
+                            pass
             
             yield session
         except HTTPException:
@@ -278,12 +282,17 @@ async def get_db_with_tenant_context(
     
     Yields:
         AsyncSession: 数据库会话
+    
+    注意：
+    - PgBouncer Transaction 模式下：不再设置 SET LOCAL，租户隔离通过 Repository 层实现
+    - 非 PgBouncer 模式：自动设置租户上下文（SET LOCAL）
     """
     async with AsyncSessionLocal() as session:
         try:
-            # 设置租户上下文
-            user_id = get_current_user_id()
-            await set_tenant_context_for_db(session, tenant_id, user_id)
+            if not settings.PGBOUNCER_ENABLED:
+                from app.middleware.tenant_middleware import set_tenant_context_for_db
+                user_id = get_current_user_id()
+                await set_tenant_context_for_db(session, tenant_id, user_id)
             
             yield session
         except Exception as e:

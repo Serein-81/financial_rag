@@ -14,7 +14,7 @@
 """
 
 import re
-import json
+from app.utils.json_compat import json
 import random
 import uuid
 import logging

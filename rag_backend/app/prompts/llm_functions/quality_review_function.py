@@ -5,7 +5,7 @@
 这是一个轻量级的 LLM 调用，不需要完整的 Agent 架构。
 """
 
-import json
+from app.utils.json_compat import json
 import logging
 from typing import Dict, Any, Optional, List
 

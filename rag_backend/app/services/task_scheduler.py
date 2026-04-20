@@ -346,11 +346,12 @@ class TaskScheduler:
         }
 
         try:
+            callback_result = None
             if hasattr(task, 'callback') and task.callback:
                 if asyncio.iscoroutinefunction(task.callback):
-                    await task.callback(task.params or {})
+                    callback_result = await task.callback(task.params or {})
                 else:
-                    task.callback(task.params or {})
+                    callback_result = task.callback(task.params or {})
             
             task.last_run_time = start_time
             task.status = TaskStatus.COMPLETED
@@ -367,12 +368,25 @@ class TaskScheduler:
             await self._sync_task_to_db(task)
             
             end_time = datetime.now()
+            result_message = f"任务执行成功"
+            callback_data = None
+            if callback_result is not None:
+                result_message = f"任务执行成功"
+                callback_data = callback_result
+            
             await self._save_execution_log_to_db(
                 task=task,
                 status="completed",
                 start_time=start_time,
                 end_time=end_time,
-                result_data={"message": "任务执行成功", "task_name": task.name},
+                result_data={
+                    "success": True,
+                    "message": result_message,
+                    "data": {
+                        "task_name": task.name,
+                        "callback_result": callback_data
+                    }
+                },
                 is_manual=is_manual
             )
 

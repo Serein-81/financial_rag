@@ -7,7 +7,7 @@ DeepSeek 专属适配器 (OpenRouter API)
 参考 MiniMax 和智谱适配器的设计实现
 """
 
-import json
+from app.utils.json_compat import json
 import logging
 from typing import AsyncGenerator, Dict, Any, Optional, List
 
@@ -388,6 +388,9 @@ class DeepSeekAdapter(BaseLLMAdapter):
                 response.raise_for_status()
 
                 full_content = ""
+                chunk_count = 0
+                total_chars_yielded = 0
+                
                 async for line in response.aiter_lines():
                     if not line or not line.startswith("data: "):
                         continue
@@ -400,13 +403,32 @@ class DeepSeekAdapter(BaseLLMAdapter):
                         chunk_data = json.loads(data)
                         delta = chunk_data.get("choices", [{}])[0].get("delta", {})
                         content = delta.get("content", "")
+                        
                         if content:
+                            chunk_count += 1
                             full_content += content
-                            yield content
+                            
+                            # 调试：前10个API chunk打印日志
+                            if chunk_count <= 10:
+                                logger.info(f"[DeepSeek] API返回chunk #{chunk_count}: '{content[:30]}...' (累计: {len(full_content)} 字符)")
+                            elif chunk_count == 11:
+                                logger.info(f"[DeepSeek] API返回完成，共 {chunk_count} 个chunks (总长度: {len(full_content)})")
+                            
+                            # 💡 关键优化：如果content较长，逐字符yield实现打字机效果
+                            if len(content) > 1:
+                                # 逐字符yield，实现逐字显示
+                                for char in content:
+                                    yield char
+                                    total_chars_yielded += 1
+                            else:
+                                # 单字符直接yield
+                                yield content
+                                total_chars_yielded += 1
+                                
                     except json.JSONDecodeError:
                         continue
 
-                logger.info(f"[DeepSeek] 流式响应完成，总长度: {len(full_content)}")
+                logger.info(f"[DeepSeek] 流式响应完成 | API chunks: {chunk_count} | 实际输出: {total_chars_yielded} 字符")
 
         except httpx.HTTPStatusError as e:
             error_msg = f"HTTP {e.response.status_code}: {e.response.text}"

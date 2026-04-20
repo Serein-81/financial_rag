@@ -4,7 +4,7 @@
 """
 
 import asyncio
-import json
+from app.utils.json_compat import json
 from typing import AsyncIterator, Dict, List, Any, Optional, Callable, Awaitable
 from dataclasses import dataclass, field
 from datetime import datetime
