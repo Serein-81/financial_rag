@@ -483,7 +483,7 @@ class PDFExportService:
         if isinstance(dt, str):
             try:
                 dt = datetime.fromisoformat(dt.replace("Z", "+00:00"))
-            except:
+            except Exception:
                 return dt
         if isinstance(dt, datetime):
             return dt.strftime("%Y-%m-%d %H:%M:%S")

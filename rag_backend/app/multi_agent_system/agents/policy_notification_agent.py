@@ -390,7 +390,7 @@ class PolicyNotificationAgent:
                     confidence=score
                 )
             ]
-        except:
+        except Exception:
             return 0.5, [
                 MatchReason(
                     category="semantic",

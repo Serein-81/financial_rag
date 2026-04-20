@@ -1246,7 +1246,7 @@ async def upload_financial_data_excel_intelligent(
                 if data['period_start'] and data['period_start'] != 'nan':
                     try:
                         period_start_dt = parse_date(str(data['period_start'])).date()
-                    except:
+                    except Exception:
                         period_start_dt = datetime.strptime(str(data['period_start']), '%Y-%m-%d').date()
                 else:
                     if data['period_type'] == 'yearly':
@@ -1259,7 +1259,7 @@ async def upload_financial_data_excel_intelligent(
                 if data['period_end'] and data['period_end'] != 'nan':
                     try:
                         period_end_dt = parse_date(str(data['period_end'])).date()
-                    except:
+                    except Exception:
                         period_end_dt = datetime.strptime(str(data['period_end']), '%Y-%m-%d').date()
 
                 existing = await db.execute(

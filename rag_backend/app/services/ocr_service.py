@@ -133,7 +133,7 @@ class OCRService:
             image = Image.open(io.BytesIO(image_bytes))
             text = pytesseract.image_to_string(image, lang='chi_sim+eng')
             return text
-        except:
+        except Exception:
             return ""
     
     async def process_document(self, file_path: str) -> Dict[str, Any]:

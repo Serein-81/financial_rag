@@ -132,7 +132,7 @@ class MinerUAdapter(BaseOCRAdapter):
             finally:
                 try:
                     os.unlink(tmp_path)
-                except:
+                except Exception:
                     pass
         
         return await asyncio.to_thread(_sync_ocr)

@@ -176,7 +176,7 @@ class KnowledgeGraphService:
             if json_match:
                 result = json.loads(json_match.group())
                 return result
-        except:
+        except Exception:
             pass
         
         return {"entities": [], "relations": []}
