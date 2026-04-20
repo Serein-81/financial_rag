@@ -148,7 +148,7 @@ async def example_3_workflow_recovery():
     thread_id = "workflow_001"
     
     try:
-        result = await simulate_workflow(thread_id, {"simulate_error": True})
+        await simulate_workflow(thread_id, {"simulate_error": True})
         
     except Exception as e:
         print(f"⚠️ 工作流中断: {e}")

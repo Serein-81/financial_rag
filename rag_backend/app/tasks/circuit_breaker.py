@@ -181,7 +181,7 @@ class CircuitBreaker:
             try:
                 await self.on_state_change(old_state, new_state)
             except Exception:
-                logger.error(f"[CircuitBreaker] 状态变化回调异常")
+                logger.error("[CircuitBreaker] 状态变化回调异常")
     
     async def _record_success(self):
         """记录成功"""

@@ -5,6 +5,7 @@ A2A 协议的客户端实现
 用于向其他 Agent 发送请求
 """
 
+import asyncio
 import httpx
 import logging
 from typing import Optional, Dict, Any, AsyncGenerator, List
@@ -228,6 +229,3 @@ class A2AClient:
         except httpx.HTTPError as e:
             logger.error(f"❌ 列出任务失败: {e}")
             return []
-
-
-import asyncio

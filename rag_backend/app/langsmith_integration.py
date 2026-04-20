@@ -495,7 +495,7 @@ def traceable(func):
                         error=str(e),
                         tags=["error", func.__name__]
                     )
-                except:
+                except Exception:
                     pass
             
             raise

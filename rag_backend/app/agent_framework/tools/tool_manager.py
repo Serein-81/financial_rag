@@ -135,13 +135,13 @@ class ToolManager:
             
             # 尝试从类型注解获取类型
             if param.annotation != inspect.Parameter.empty:
-                if param.annotation == str:
+                if param.annotation is str:
                     param_info["type"] = "string"
-                elif param.annotation == int:
+                elif param.annotation is int:
                     param_info["type"] = "integer"
-                elif param.annotation == float:
+                elif param.annotation is float:
                     param_info["type"] = "number"
-                elif param.annotation == bool:
+                elif param.annotation is bool:
                     param_info["type"] = "boolean"
             
             params[param_name] = param_info

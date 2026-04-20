@@ -34,9 +34,6 @@ logger = logging.getLogger(__name__)
 try:
     from app.prompts.output_agent import (
         get_system_prompt,
-        get_quick_review_prompt,
-        get_deep_review_prompt,
-        get_regeneration_hint_prompt,
     )
     PROMPTS_AVAILABLE = True
 except ImportError:
@@ -1101,8 +1098,6 @@ class OutputAgent:
 
     def _chunk_text(self, text: str, chunk_size: int = 10) -> AsyncGenerator[str, None]:
         """将文本分割成小块流式返回"""
-        import asyncio
-        
         for i in range(0, len(text), chunk_size):
             yield text[i:i + chunk_size]
 

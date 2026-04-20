@@ -1063,12 +1063,6 @@ class ReActAgent(BaseAgent):
         Returns:
             包含 Thought 和 Action 的字典，如果没有则返回 None
         """
-        tool_patterns = [
-            r'Thought:\s*(.*?)(?=\nAction:|\Z)',
-            r'Action:\s*(\w+)',
-            r'Action Input:\s*(\{[\s\S]*?\})',
-        ]
-        
         thought_pattern = r'Thought:\s*(.*?)(?=\nAction:|\nObservation:|\Z)'
         action_pattern = r'Action:\s*(\w+)'
         input_pattern = r'Action Input:\s*(\{[\s\S]*?\})'

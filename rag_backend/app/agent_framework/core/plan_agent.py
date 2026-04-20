@@ -291,7 +291,7 @@ class PlanAgent(BaseAgent):
                 logger.error(f"   ✗ 步骤 {i} 数据错误: {e}")
                 history.append({
                     "step": i,
-                    "action": step.get("action"),
+                    "action": step_info.get("action"),
                     "status": "error",
                     "error": f"数据错误: {str(e)}"
                 })
@@ -299,7 +299,7 @@ class PlanAgent(BaseAgent):
                 logger.error(f"   ✗ 步骤 {i} IO错误: {e}")
                 history.append({
                     "step": i,
-                    "action": step.get("action"),
+                    "action": step_info.get("action"),
                     "status": "error",
                     "error": f"IO错误: {str(e)}"
                 })
