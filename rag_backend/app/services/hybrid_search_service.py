@@ -8,7 +8,7 @@ import time
 import logging
 import re
 from typing import List, Optional, Dict, Any
-from sqlalchemy import text, select
+from sqlalchemy import text, select, func
 from app.db import AsyncSessionLocal
 from app.services.embedding_service import embedding_service
 from app.services.synonym_service import synonym_service
@@ -279,63 +279,100 @@ class HybridSearchService:
         user_id: str = None
     ) -> List[Dict[str, Any]]:
         """
-        PostgreSQL全文搜索
+        PostgreSQL全文搜索 - 优化版
         🔐 租户隔离：必须传入 tenant_id 进行过滤
         🔐 可见性过滤：私人知识库只有创建者可见，企业知识库整个租户可见
 
-        支持短语匹配（Phrase Matching）
+        使用 GIN 索引 + to_tsvector/to_tsquery 实现千万级数据高性能检索
+        不再使用 ILIKE '%phrase%' 这种会导致全表扫描的低效查询
         """
         results = []
 
         try:
-            phrases = self._extract_phrases(query)
-
-            if not phrases:
-                phrases = [query]
-
             async with AsyncSessionLocal() as db:
                 where_clauses = []
-                # 🔐 租户隔离：必须添加 tenant_id 过滤（tenant_id 是字符串类型，不需要 CAST）
-                where_clauses.append("d.tenant_id = :tenant_id")
                 params = {
                     "limit": int(top_k),
                     "tenant_id": str(tenant_id)
                 }
 
+                # 检查是否已迁移到新架构（fts_vector 列存在）
+                check_fts_column = await db.execute(text("""
+                    SELECT EXISTS (
+                        SELECT 1 FROM information_schema.columns 
+                        WHERE table_name = 'document_chunks' 
+                        AND column_name = 'fts_vector'
+                    ) as exists
+                """))
+                has_fts_column = check_fts_column.scalar()
+
+                if has_fts_column:
+                    # 使用优化的全文检索
+                    return await self._fts_search_optimized(
+                        query, kb_id, top_k, tenant_id, user_id
+                    )
+                else:
+                    # 回退到传统方式（仅警告，不使用 ILIKE）
+                    logger.warning("⚠️ 未检测到 fts_vector 列，使用基本全文检索")
+                    return await self._fts_search_basic(
+                        query, kb_id, top_k, tenant_id, user_id
+                    )
+
+        except Exception as e:
+            logger.error(f"❌ 全文搜索失败: {e}", exc_info=True)
+
+        return results
+
+    async def _fts_search_optimized(
+        self,
+        query: str,
+        kb_id: Optional[str],
+        top_k: int,
+        tenant_id: str,
+        user_id: str = None
+    ) -> List[Dict[str, Any]]:
+        """
+        优化的全文检索 - 使用 GIN 索引 + to_tsvector/to_tsquery
+        性能特征：O(log n) 级别，支持千万级数据
+        """
+        results = []
+
+        try:
+            # 使用 pg_catalog.simple 配置，支持中英文混合
+            # to_tsquery 在 SQL 中调用，这里准备查询字符串
+            search_query = query
+
+            async with AsyncSessionLocal() as db:
+                where_clauses = []
+                params = {
+                    "query": search_query,
+                    "limit": int(top_k),
+                    "tenant_id": str(tenant_id)
+                }
+
+                # 🔐 租户隔离
+                where_clauses.append("d.tenant_id = :tenant_id")
+
                 # 🔐 两层可见性过滤
                 if user_id:
                     where_clauses.append("""
                         (
-                            -- 知识库可见性：企业KB全租户可见，私人KB创建者可见
                             (UPPER(kb.visibility) = 'ENTERPRISE' OR (UPPER(kb.visibility) = 'PRIVATE' AND kb.user_id = CAST(:user_id AS UUID)))
                         )
                         AND
                         (
-                            -- 文档可见性：公开文档全租户可见，私人文档上传者可见
                             (UPPER(d.visibility) = 'PUBLIC' OR (UPPER(d.visibility) = 'PRIVATE' AND d.user_id = CAST(:user_id AS UUID)))
                         )
                     """)
                     params["user_id"] = str(user_id)
-
-                phrase_conditions = []
-                for i, phrase in enumerate(phrases):
-                    phrase_conditions.append(f"c.content ILIKE :phrase_{i}")
-                    params[f"phrase_{i}"] = f"%{phrase}%"
-
-                where_clauses.append(f"({' OR '.join(phrase_conditions)})")
 
                 if kb_id:
                     where_clauses.append("d.kb_id = CAST(:kb_id AS UUID)")
                     params["kb_id"] = str(kb_id)
 
                 where_sql = " AND ".join(where_clauses)
-                
-                phrase_weights = []
-                for i in range(len(phrases)):
-                    phrase_weights.append(
-                        f"(CASE WHEN c.content ILIKE :phrase_{i} THEN 1 ELSE 0 END)"
-                    )
-                
+
+                # 使用 ts_rank_cd 进行相关性排序，支持权重
                 sql = text(f"""
                     SELECT
                         c.id,
@@ -344,28 +381,33 @@ class HybridSearchService:
                         c.meta_info,
                         d.filename,
                         kb.name as kb_name,
-                        (
-                            {' + '.join(phrase_weights)}
-                        ) / :phrase_count as match_ratio,
-                        (
-                            {' + '.join(phrase_weights)}
-                        ) as exact_match_count
+                        ts_rank_cd(c.fts_vector, to_tsquery('pg_catalog.simple', :query)) AS rank,
+                        ts_headline(
+                            'pg_catalog.simple',
+                            c.content,
+                            to_tsquery('pg_catalog.simple', :query),
+                            'MaxWords=50, MinWords=20, StartSel=<mark>, StopSel=</mark>'
+                        ) AS highlight
                     FROM document_chunks c
                     JOIN documents d ON c.document_id = d.id
                     JOIN knowledge_bases kb ON d.kb_id = kb.id
                     WHERE {where_sql}
-                    ORDER BY match_ratio DESC, exact_match_count DESC
+                    AND c.fts_vector @@ to_tsquery('pg_catalog.simple', :query)
+                    ORDER BY rank DESC
                     LIMIT :limit
                 """)
-                params["phrase_count"] = float(len(phrases))
-                
+
+                logger.info(f"🔍 全文检索查询: {search_query}")
                 db_res = await db.execute(sql, params)
                 rows = db_res.mappings().all()
-                
+
                 for row in rows:
                     meta = row["meta_info"] or {}
-                    match_ratio = float(row["match_ratio"]) if row["match_ratio"] else 0
-                    
+                    rank = float(row["rank"]) if row["rank"] else 0
+
+                    # 归一化分数到 [0, 1] 范围
+                    normalized_score = min(rank / 10.0, 1.0) if rank > 0 else 0
+
                     results.append({
                         "chunk_id": str(row["id"]),
                         "document_id": str(row["document_id"]),
@@ -374,13 +416,108 @@ class HybridSearchService:
                         "page_number": meta.get("page_number"),
                         "vector_score": 0.0,
                         "synonym_score": 0.0,
-                        "fulltext_score": match_ratio,
-                        "combined_score": match_ratio
+                        "fulltext_score": normalized_score,
+                        "combined_score": normalized_score
                     })
-                    
+
+                logger.info(f"📝 优化全文检索: {len(results)} 个结果")
+
         except Exception as e:
-            logger.error(f"❌ 全文搜索失败: {e}")
-        
+            logger.error(f"❌ 优化全文检索失败: {e}", exc_info=True)
+
+        return results
+
+    async def _fts_search_basic(
+        self,
+        query: str,
+        kb_id: Optional[str],
+        top_k: int,
+        tenant_id: str,
+        user_id: str = None
+    ) -> List[Dict[str, Any]]:
+        """
+        基本全文检索 - 当 fts_vector 列不存在时的回退方案
+        注意：此方法不使用 GIN 索引，仅用于迁移期间
+        """
+        results = []
+
+        try:
+            async with AsyncSessionLocal() as db:
+                where_clauses = []
+                params = {
+                    "query": query,
+                    "limit": int(top_k),
+                    "tenant_id": str(tenant_id)
+                }
+
+                # 🔐 租户隔离
+                where_clauses.append("d.tenant_id = :tenant_id")
+
+                # 🔐 两层可见性过滤
+                if user_id:
+                    where_clauses.append("""
+                        (
+                            (UPPER(kb.visibility) = 'ENTERPRISE' OR (UPPER(kb.visibility) = 'PRIVATE' AND kb.user_id = CAST(:user_id AS UUID)))
+                        )
+                        AND
+                        (
+                            (UPPER(d.visibility) = 'PUBLIC' OR (UPPER(d.visibility) = 'PRIVATE' AND d.user_id = CAST(:user_id AS UUID)))
+                        )
+                    """)
+                    params["user_id"] = str(user_id)
+
+                if kb_id:
+                    where_clauses.append("d.kb_id = CAST(:kb_id AS UUID)")
+                    params["kb_id"] = str(kb_id)
+
+                where_sql = " AND ".join(where_clauses)
+
+                # 使用 to_tsvector/to_tsquery 但不使用索引
+                sql = text(f"""
+                    SELECT
+                        c.id,
+                        c.document_id,
+                        c.content,
+                        c.meta_info,
+                        d.filename,
+                        kb.name as kb_name,
+                        ts_rank_cd(
+                            to_tsvector('pg_catalog.simple', c.content),
+                            to_tsquery('pg_catalog.simple', :query)
+                        ) AS rank
+                    FROM document_chunks c
+                    JOIN documents d ON c.document_id = d.id
+                    JOIN knowledge_bases kb ON d.kb_id = kb.id
+                    WHERE {where_sql}
+                    AND to_tsvector('pg_catalog.simple', c.content) @@ to_tsquery('pg_catalog.simple', :query)
+                    ORDER BY rank DESC
+                    LIMIT :limit
+                """)
+
+                logger.warning("⚠️ 使用基本全文检索（无索引）")
+                db_res = await db.execute(sql, params)
+                rows = db_res.mappings().all()
+
+                for row in rows:
+                    meta = row["meta_info"] or {}
+                    rank = float(row["rank"]) if row["rank"] else 0
+                    normalized_score = min(rank / 10.0, 1.0) if rank > 0 else 0
+
+                    results.append({
+                        "chunk_id": str(row["id"]),
+                        "document_id": str(row["document_id"]),
+                        "content": row["content"],
+                        "source_file": row["filename"],
+                        "page_number": meta.get("page_number"),
+                        "vector_score": 0.0,
+                        "synonym_score": 0.0,
+                        "fulltext_score": normalized_score,
+                        "combined_score": normalized_score
+                    })
+
+        except Exception as e:
+            logger.error(f"❌ 基本全文检索失败: {e}", exc_info=True)
+
         return results
     
     def _extract_phrases(self, query: str) -> List[str]:
