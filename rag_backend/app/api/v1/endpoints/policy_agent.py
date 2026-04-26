@@ -13,20 +13,14 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from app.services.policy_notification_agent_service import PolicyNotificationAgentService, get_agent_service
+from app.services.policy_notification_service import policy_notification_service
 from app.api.deps import get_current_user, CurrentUser
-from app.multi_agent_system.agents.policy_notification_agent import EnterpriseProfile
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/policy-agent", tags=["政策通知智能体"])
 
 MAX_POLICIES_PER_REQUEST = 100
 MAX_POLICY_CONTENT_LENGTH = 50000
-
-
-async def get_agent_service_dep() -> PolicyNotificationAgentService:
-    """服务依赖注入"""
-    return get_agent_service()
 
 
 class PolicyInput(BaseModel):
@@ -115,20 +109,20 @@ class PolicyTestResponse(BaseModel):
     processing_time: float
 
 
-def _create_enterprise_profile(enterprise_input: EnterpriseProfileInput) -> EnterpriseProfile:
+def _create_enterprise_profile(enterprise_input: EnterpriseProfileInput) -> dict:
     """从输入模型创建企业画像"""
-    return EnterpriseProfile(
-        enterprise_id=enterprise_input.enterprise_id,
-        name=enterprise_input.enterprise_name,
-        industry=enterprise_input.industry,
-        region=enterprise_input.region,
-        scale=enterprise_input.scale,
-        tax_types=enterprise_input.tax_types,
-        keywords=getattr(enterprise_input, 'qualifications', []),
-        business_scope=None,
-        recent_interests=[],
-        preferences={}
-    )
+    return {
+        "enterprise_id": enterprise_input.enterprise_id,
+        "name": enterprise_input.enterprise_name,
+        "industry": enterprise_input.industry,
+        "region": enterprise_input.region,
+        "scale": enterprise_input.scale,
+        "tax_types": enterprise_input.tax_types,
+        "keywords": getattr(enterprise_input, 'qualifications', []),
+        "business_scope": None,
+        "recent_interests": [],
+        "preferences": {}
+    }
 
 
 def _policy_input_to_dict(policy_input: PolicyInput) -> dict[str, Any]:
@@ -146,8 +140,7 @@ def _policy_input_to_dict(policy_input: PolicyInput) -> dict[str, Any]:
 @router.post("/match", response_model=PolicyMatchResponse)
 async def match_policy(
     request: PolicyMatchRequest,
-    user: CurrentUser = Depends(get_current_user),
-    service: PolicyNotificationAgentService = Depends(get_agent_service_dep)
+    user: CurrentUser = Depends(get_current_user)
 ):
     """
     匹配政策与企业
@@ -157,7 +150,6 @@ async def match_policy(
     Args:
         request: 包含政策和企业的请求
         user: 当前用户
-        service: 政策通知智能体服务
 
     Returns:
         PolicyMatchResponse: 匹配结果
@@ -187,7 +179,10 @@ async def match_policy(
         policy_dict = _policy_input_to_dict(request.policy)
         enterprise_profile = _create_enterprise_profile(request.enterprise)
 
-        match_result = await service.match_policy_for_enterprise(
+        match_result = await policy_notification_service._llm_match(
+            policy=policy_dict,
+            enterprise_profile=enterprise_profile
+        ) if request.use_llm else policy_notification_service._rule_based_match(
             policy=policy_dict,
             enterprise_profile=enterprise_profile
         )
@@ -202,6 +197,42 @@ async def match_policy(
                 "use_llm": match_result['use_llm']
             }
         )
+
+        if match_result['match_score'] >= 0.6:
+            try:
+                from app.services.policy_notification_service import policy_notification_service
+                from app.services.policy_event_service import policy_event_service
+                from uuid import uuid4
+                
+                policy_dict['policy_id'] = request.policy.policy_id
+                policy_dict['title'] = request.policy.title
+                policy_dict['source_name'] = request.policy.source
+                policy_dict['priority'] = request.policy.priority
+                
+                await policy_notification_service._create_match_and_notification(
+                    enterprise_id=request.enterprise.enterprise_id,
+                    policy_data=policy_dict,
+                    match_score=match_result['match_score']
+                )
+                
+                await policy_event_service.emit_notification_sent(
+                    enterprise_id=request.enterprise.enterprise_id,
+                    policy_id=request.policy.policy_id,
+                    policy_title=request.policy.title,
+                    notification_id=str(uuid4())
+                )
+                
+                logger.info(
+                    "✅ 政策匹配通知已推送",
+                    extra={
+                        "event": "notification_published",
+                        "policy_id": request.policy.policy_id,
+                        "enterprise_id": request.enterprise.enterprise_id,
+                        "match_score": match_result['match_score']
+                    }
+                )
+            except Exception as e:
+                logger.error(f"❌ 推送通知失败: {e}", exc_info=True)
 
         return PolicyMatchResponse(**match_result)
 
@@ -222,8 +253,7 @@ async def match_policy(
 @router.post("/notify", response_model=NotificationResponse)
 async def generate_notification(
     request: NotificationRequest,
-    user: CurrentUser = Depends(get_current_user),
-    service: PolicyNotificationAgentService = Depends(get_agent_service_dep)
+    user: CurrentUser = Depends(get_current_user)
 ):
     """
     生成个性化通知
@@ -233,7 +263,6 @@ async def generate_notification(
     Args:
         request: 包含政策、匹配结果的请求
         user: 当前用户
-        service: 政策通知智能体服务
 
     Returns:
         NotificationResponse: 个性化通知
@@ -252,7 +281,7 @@ async def generate_notification(
     try:
         enterprise_profile = _create_enterprise_profile(request.enterprise_profile)
 
-        notification = await service.generate_notification(
+        notification = await policy_notification_service.generate_notification(
             policy=request.policy,
             enterprise_profile=enterprise_profile,
             match_result=request.match_result
@@ -293,8 +322,7 @@ async def generate_notification(
 @router.post("/prioritize", response_model=list[dict[str, Any]])
 async def prioritize_policies(
     request: PriorityRequest,
-    user: CurrentUser = Depends(get_current_user),
-    service: PolicyNotificationAgentService = Depends(get_agent_service_dep)
+    user: CurrentUser = Depends(get_current_user)
 ):
     """
     政策优先级排序
@@ -304,7 +332,6 @@ async def prioritize_policies(
     Args:
         request: 包含政策列表和企业画像的请求
         user: 当前用户
-        service: 政策通知智能体服务
 
     Returns:
         list[dict[str, Any]]: 排序后的政策列表
@@ -333,7 +360,7 @@ async def prioritize_policies(
     try:
         enterprise_profile = _create_enterprise_profile(request.enterprise_profile)
 
-        sorted_policies = await service.prioritize_policies(
+        sorted_policies = await policy_notification_service.prioritize_policies(
             policies=request.policies,
             enterprise_profile=enterprise_profile
         )
@@ -366,8 +393,7 @@ async def prioritize_policies(
 @router.post("/test", response_model=PolicyTestResponse)
 async def test_policy_agent(
     request: PolicyTestRequest,
-    user: CurrentUser = Depends(get_current_user),
-    service: PolicyNotificationAgentService = Depends(get_agent_service_dep)
+    user: CurrentUser = Depends(get_current_user)
 ):
     """
     完整流程测试
@@ -379,7 +405,6 @@ async def test_policy_agent(
     Args:
         request: 测试请求
         user: 当前用户
-        service: 政策通知智能体服务
 
     Returns:
         PolicyTestResponse: 测试结果
@@ -445,13 +470,16 @@ async def test_policy_agent(
 
             policy_dict = _policy_input_to_dict(policy_input)
 
-            match_result = await service.match_policy_for_enterprise(
+            match_result = await policy_notification_service._llm_match(
+                policy=policy_dict,
+                enterprise_profile=enterprise_profile
+            ) if request.use_llm else policy_notification_service._rule_based_match(
                 policy=policy_dict,
                 enterprise_profile=enterprise_profile
             )
             matches.append(PolicyMatchResponse(**match_result))
 
-            notification = await service.generate_notification(
+            notification = await policy_notification_service.generate_notification(
                 policy=policy_dict,
                 enterprise_profile=enterprise_profile,
                 match_result=match_result
@@ -465,7 +493,7 @@ async def test_policy_agent(
             notifications.append(NotificationResponse(**notification))
 
         policy_dicts = [p.model_dump() for p in request.policies]
-        prioritized = await service.prioritize_policies(
+        prioritized = await policy_notification_service.prioritize_policies(
             policies=policy_dicts,
             enterprise_profile=enterprise_profile
         )
@@ -489,8 +517,8 @@ async def test_policy_agent(
             matches=matches,
             notifications=notifications,
             prioritized_policies=prioritized,
-            use_llm=service.use_llm,
-            llm_provider=service.agent.llm_adapter.__class__.__name__ if service.use_llm else "fallback",
+            use_llm=request.use_llm,
+            llm_provider="ZhipuAI" if request.use_llm else "fallback",
             processing_time=processing_time
         )
 
@@ -510,8 +538,7 @@ async def test_policy_agent(
 
 @router.get("/status")
 async def get_agent_status(
-    user: CurrentUser = Depends(get_current_user),
-    service: PolicyNotificationAgentService = Depends(get_agent_service_dep)
+    user: CurrentUser = Depends(get_current_user)
 ):
     """
     获取 Agent 状态
@@ -520,7 +547,6 @@ async def get_agent_status(
     
     Args:
         user: 当前用户
-        service: 政策通知智能体服务
     
     Returns:
         dict: Agent 状态信息
@@ -536,15 +562,14 @@ async def get_agent_status(
     try:
         return {
             "status": "healthy",
-            "use_llm": service.use_llm,
-            "llm_provider": service.agent.llm_adapter.__class__.__name__ if service.use_llm else None,
+            "use_llm": policy_notification_service._use_llm,
+            "llm_provider": "ZhipuAI" if policy_notification_service._use_llm else None,
             "agent_capabilities": {
                 "policy_understanding": True,
-                "semantic_matching": service.use_llm,
-                "personalized_generation": service.use_llm,
-                "fallback_mode": not service.use_llm
-            },
-            "match_weights": service.agent.match_weights if service.agent else None
+                "semantic_matching": policy_notification_service._use_llm,
+                "personalized_generation": policy_notification_service._use_llm,
+                "fallback_mode": not policy_notification_service._use_llm
+            }
         }
         
     except Exception as e:

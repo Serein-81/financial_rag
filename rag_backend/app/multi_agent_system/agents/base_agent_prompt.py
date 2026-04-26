@@ -38,7 +38,6 @@ def _normalize_agent_name(agent_name: str) -> str:
     - agents/react/        - ReAct推理
     - agents/output/       - 输出处理
     - agents/plan/         - 计划制定
-    - agents/policy/       - 政策专家
     """
     name_mapping = {
         "financespecialist": "finance",
@@ -50,7 +49,6 @@ def _normalize_agent_name(agent_name: str) -> str:
         "reactagent": "react",
         "planagent": "plan",
         "outputagent": "output",
-        "policyspecialist": "policy",
     }
     
     normalized = agent_name.lower().replace("_", "").replace("-", "")

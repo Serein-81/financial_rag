@@ -342,6 +342,8 @@ class FinancialHealthService:
         trace_id = await self.agent_tracer.start_trace(
             agent_type="financial_health",
             user_query="财务健康监控",
+            user_id=request.user_id,
+            tenant_id=request.tenant_id,
             message_id=monitor_id
         )
         

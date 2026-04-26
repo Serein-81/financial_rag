@@ -66,12 +66,12 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     
     # 不同端点的限流配置
     ENDPOINT_TIERS: Dict[str, RateLimitTier] = {
-        "/api/v1/chat/completions": RateLimitTier(30, 500, 5),
-        "/api/v1/chat/agent_chat": RateLimitTier(30, 500, 5),
-        "/api/v1/chat/completions_stream": RateLimitTier(30, 500, 5),
-        "/api/v1/chat/agent_chat_stream": RateLimitTier(30, 500, 5),
-        "/api/v1/multi-agent/execute": RateLimitTier(10, 200, 3),
-        "/api/v1/search/hybrid": RateLimitTier(60, 1000, 10),
+        "/api/v1/chat/completions": RateLimitTier(100, 1000, 20),
+        "/api/v1/chat/agent_chat": RateLimitTier(100, 1000, 20),
+        "/api/v1/chat/completions_stream": RateLimitTier(100, 1000, 20),
+        "/api/v1/chat/agent_chat_stream": RateLimitTier(100, 1000, 20),
+        "/api/v1/multi-agent/execute": RateLimitTier(30, 500, 10),
+        "/api/v1/search/hybrid": RateLimitTier(100, 1000, 20),
     }
     
     # 排除路径（不需要限流）
@@ -100,6 +100,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         "/api/v1/security/permissions",
         "/api/v1/security/cypher-validate",
         "/api/v1/security/audit-logs",
+        "/api/v1/security/roles",
+        "/api/v1/security/statistics",
+        "/api/v1/security/cypher/statistics",
+        "/api/v1/security/audit/events",
+        "/api/v1/security/audit/report",
     }
     
     def __init__(self, app, strategy: str = "sliding_window"):

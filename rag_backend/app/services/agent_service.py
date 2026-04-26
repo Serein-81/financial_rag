@@ -147,30 +147,32 @@ class EnterpriseAgentService:
             except RuntimeError:
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
-                mcp_tools = loop.run_until_complete(get_all_mcp_tools_as_langchain_tools())
-                loop.close()
+                try:
+                    mcp_tools = loop.run_until_complete(get_all_mcp_tools_as_langchain_tools())
+                finally:
+                    loop.close()
             
             if mcp_tools and isinstance(mcp_tools, list):
                 compat_layer.register_langchain_tools(mcp_tools)
-                print(f"[CLOUD] 已注册 {len(mcp_tools)} 个 MCP 远程工具")
+                logger.info(f"已注册 {len(mcp_tools)} 个 MCP 远程工具")
             elif mcp_tools:
                 try:
                     mcp_tools_list = list(mcp_tools)
                     if mcp_tools_list:
                         compat_layer.register_langchain_tools(mcp_tools_list)
-                        print(f"[CLOUD] 已注册 {len(mcp_tools_list)} 个 MCP 远程工具")
+                        logger.info(f"已注册 {len(mcp_tools_list)} 个 MCP 远程工具")
                 except (TypeError, AttributeError) as e:
                     logger.warning(f"MCP 工具列表转换失败: {e}")
         except ImportError as e:
-            print(f"[WARNING] MCP工具模块导入失败，跳过MCP工具注册: {e}")
+            logger.debug(f"MCP工具模块导入失败: {e}")
         except RuntimeError as e:
-            print(f"[WARNING] 异步运行时错误(MCP工具): {e}")
+            logger.debug(f"异步运行时错误(MCP工具): {e}")
         except (ValueError, KeyError) as e:
-            print(f"[WARNING] MCP 工具注册数据错误: {e}")
+            logger.debug(f"MCP 工具注册数据错误: {e}")
         except (OSError, IOError) as e:
-            print(f"[WARNING] MCP 工具注册IO错误: {e}")
+            logger.debug(f"MCP 工具注册IO错误: {e}")
         except Exception as e:
-            print(f"[WARNING] MCP 工具注册失败: {e}")
+            logger.debug(f"MCP 工具注册失败: {e}")
         
         # 5. 创建 ReAct Agent（使用结构化提示词系统）
         # agent_name="react" 会让 Agent 从 app/prompts/agents/react/system.md 加载提示词
@@ -183,11 +185,7 @@ class EnterpriseAgentService:
             timeout=300.0
         )
         
-        print(f"[TOOL] 已注册 {len(self.tool_manager.tools)} 个工具:")
-        for i, tool_name in enumerate(self.tool_manager.get_tool_names(), 1):
-            tool_info = self.tool_manager.tools[tool_name]
-            tool_type = "[LOCAL]" if tool_info.get("type") == "langchain" else "[MCP]"
-            print(f"   {i}. [{tool_type}] {tool_name}: {tool_info['description'][:40]}...")
+        logger.info(f"[TOOL] 已注册 {len(self.tool_manager.tools)} 个工具: {', '.join(self.tool_manager.get_tool_names())}")
     
     async def initialize_mcp_tools_async(self) -> int:
         """
@@ -211,7 +209,7 @@ class EnterpriseAgentService:
             
             if mcp_tools and isinstance(mcp_tools, list):
                 compat_layer.register_langchain_tools(mcp_tools)
-                print(f"[CLOUD] [异步] 已注册 {len(mcp_tools)} 个 MCP 远程工具")
+                logger.info(f"已注册 {len(mcp_tools)} 个 MCP 远程工具")
                 return len(mcp_tools)
             else:
                 logger.warning("MCP 工具列表为空")
@@ -274,7 +272,7 @@ class EnterpriseAgentService:
         else:
             return await self._chat_langchain(user_input, kb_id, session_id, history, user_id)
     
-    async def chat_stream(self, user_input: str, kb_id: str, session_id: str, history: list, user_id: str = None) -> AsyncGenerator[str, None]:
+    async def chat_stream(self, user_input: str, kb_id: str, session_id: str, history: list, user_id: str = None, tenant_id: str = None) -> AsyncGenerator[str, None]:
         """
         流式对话（集成记忆系统）
         
@@ -284,12 +282,13 @@ class EnterpriseAgentService:
             session_id: 会话ID
             history: 对话历史（已废弃，使用记忆系统替代）
             user_id: 用户ID
+            tenant_id: 租户ID（用于图谱检索）
             
         Yields:
             逐步生成的内容
         """
         if self.use_custom_framework:
-            async for chunk in self._chat_stream_custom(user_input, kb_id, session_id, history, user_id):
+            async for chunk in self._chat_stream_custom(user_input, kb_id, session_id, history, user_id, tenant_id):
                 yield chunk
         else:
             async for chunk in self._chat_stream_langchain(user_input, kb_id, session_id, history, user_id):
@@ -384,11 +383,11 @@ class EnterpriseAgentService:
             # 构建完上下文后，再将用户消息持久化到记忆系统
             await memory_manager.add_message("user", user_input)
 
-            print(f"[MEMORY] [记忆系统] 获取增强上下文: {len(memory_context)} 字符")
+            logger.info(f"[记忆系统] 获取增强上下文完成，字符数: {len(memory_context)}")
         else:
             memory_manager = None
             memory_context = ""
-            print("[WARNING] [记忆系统] 缺少session_id或user_id，跳过记忆系统")
+            logger.warning("[记忆系统] 缺少session_id或user_id，跳过记忆系统")
 
         # 🆕 构建增强的用户输入 - 包含RAG上下文和记忆上下文
         # 提示：RAG上下文优先级高于记忆上下文，因为来自知识库文档
@@ -485,7 +484,7 @@ class EnterpriseAgentService:
             traceback.print_exc()
             return f"抱歉，处理过程中出现错误：{str(e)}"
     
-    async def _chat_stream_custom(self, user_input: str, kb_id: str, session_id: str, history: list, user_id: str) -> AsyncGenerator[str, None]:
+    async def _chat_stream_custom(self, user_input: str, kb_id: str, session_id: str, history: list, user_id: str, tenant_id: str = None) -> AsyncGenerator[str, None]:
         """
         自定义框架的流式对话（集成记忆系统）
         """
@@ -522,7 +521,9 @@ class EnterpriseAgentService:
                 session_id=session_id or "default_session",
                 user_id=user_id or "default_user",
                 top_k=5,
-                enable_routing=True
+                enable_routing=True,
+                enable_graph=True,
+                tenant_id=tenant_id
             )
             rag_results = retrieval_result.get("rag_results", [])
             kb_context = retrieval_result.get("combined_context", "")
@@ -574,11 +575,11 @@ class EnterpriseAgentService:
             # 构建完上下文后，再将用户消息持久化到记忆系统
             await memory_manager.add_message("user", user_input)
 
-            print(f"[MEMORY] [记忆系统] 获取上下文: {len(memory_context)} 字符")
+            logger.info(f"[记忆系统] 获取上下文完成，字符数: {len(memory_context)}")
         else:
             memory_manager = None
             memory_context = ""
-            print("[WARNING] [记忆系统] 缺少session_id或user_id，跳过记忆系统")
+            logger.warning("[记忆系统] 缺少session_id或user_id，跳过记忆系统")
         
         # 🆕 构建增强的用户输入 - 包含RAG上下文和记忆上下文
         # 提示：RAG上下文优先级高于记忆上下文，因为来自知识库文档

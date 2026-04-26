@@ -13,7 +13,7 @@ from sqlalchemy import select, func, and_, or_, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user_financial_data import UserFinancialData
-from app.db.session import get_db_context
+from app.db.session import get_db_context, AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
 
@@ -78,14 +78,29 @@ class FinancialDataQueryService:
     MAX_CONTEXT_TOKENS = 8000
     ESTIMATED_TOKENS_PER_RECORD = 200
     
-    def __init__(self, db_session: AsyncSession):
+    def __init__(self, db_session: AsyncSession, owns_session: bool = False):
         self.db = db_session
+        self._owns_session = owns_session
     
     @classmethod
     async def create(cls) -> "FinancialDataQueryService":
         """工厂方法：创建服务实例并获取数据库会话"""
-        async with get_db_context() as session:
-            return cls(session)
+        session = AsyncSessionLocal()
+        return cls(session, owns_session=True)
+    
+    def close(self):
+        """关闭数据库会话"""
+        if self._owns_session and self.db:
+            import asyncio
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    asyncio.create_task(self.db.close())
+                else:
+                    loop.run_until_complete(self.db.close())
+            except Exception:
+                pass
+            self._owns_session = False
     
     async def query_financial_data(
         self,

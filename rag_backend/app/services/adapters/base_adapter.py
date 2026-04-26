@@ -84,6 +84,8 @@ class BaseEmbeddingAdapter(ABC):
         Returns:
             (embeddings, total_tokens) 元组
         """
+        self.logger.debug(f"[encode] 批量编码: {len(texts)} 个文本, task_type={task_type}")
+        
         all_embeddings = []
         total_tokens = 0
         
@@ -92,6 +94,7 @@ class BaseEmbeddingAdapter(ABC):
             
             batch_embeddings = []
             for text in batch:
+                self.logger.debug(f"[encode] 处理单个文本: '{text[:50]}...' (长度: {len(text)})")
                 try:
                     embedding = await self._encode_single(text, task_type)
                     batch_embeddings.append(embedding)

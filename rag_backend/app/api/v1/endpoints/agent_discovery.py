@@ -415,17 +415,26 @@ async def get_trace_visualization(
 @router.get("/traces")
 async def list_recent_traces(
     limit: int = 50,
-    current_user: User = Depends(deps.get_current_user)
+    current_user: User = Depends(deps.get_current_user),
+    tenant_context: dict = Depends(deps.get_tenant_context)
 ):
     """
-    获取最近的追踪记录列表
+    获取当前用户/租户的追踪记录列表
 
     Args:
         limit: 返回的记录数量限制，默认50
         current_user: 当前用户
+        tenant_context: 租户上下文
     """
     try:
-        traces = await agent_tracer.get_recent_traces(limit)
+        user_id = str(current_user.id)
+        tenant_id = tenant_context['tenant_id']
+        
+        traces = await agent_tracer.get_recent_traces(
+            user_id=user_id,
+            tenant_id=tenant_id,
+            limit=limit
+        )
 
         return {
             "total": len(traces),
@@ -445,17 +454,22 @@ async def get_trace_detail(
     current_user: User = Depends(deps.get_current_user)
 ):
     """
-    获取单条追踪记录的详细信息
+    获取单条追踪记录的详细信息（仅限本人）
 
     Args:
         trace_id: 追踪 ID
         current_user: 当前用户
     """
     try:
-        trace_data = await agent_tracer.get_trace_with_steps(trace_id)
+        user_id = str(current_user.id)
+        
+        trace_data = await agent_tracer.get_trace_with_steps(
+            trace_id=trace_id,
+            user_id=user_id
+        )
 
         if not trace_data:
-            raise HTTPException(status_code=404, detail="追踪记录不存在")
+            raise HTTPException(status_code=404, detail="追踪记录不存在或无权访问")
 
         return trace_data
     except HTTPException:

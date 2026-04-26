@@ -112,7 +112,7 @@ class TaxReportRepository(BaseRepository[TaxReport]):
                 TaxReport.tenant_id == tenant_id,
                 func.trim(TaxReport.original_filename) == func.trim(normalized_filename)
             )
-        ).order_by(TaxReport.created_at.desc())
+        ).order_by(TaxReport.created_at.desc()).limit(1)
         
         result = await self.session.execute(query)
         return result.scalar_one_or_none()

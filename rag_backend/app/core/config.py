@@ -172,6 +172,18 @@ class Settings(BaseSettings):
     SILICONFLOW_API_KEY: str = ""
     SILICONFLOW_EMBEDDING_MODEL: str = "BAAI/bge-m3"
     
+    # 硅基流动 Rerank 配置
+    # 推荐模型：
+    # - Pro/BAAI/bge-reranker-v2-m3: 智源BAAI出品，中文优化，精度高
+    # - Qwen/Qwen3-Reranker-0.6B: Qwen3轻量版，速度快
+    # - Qwen/Qwen3-Reranker-4B: Qwen3中等规模
+    # - Qwen/Qwen3-Reranker-8B: Qwen3大规模，精度最高
+    SILICONFLOW_RERANK_MODEL: str = "Pro/BAAI/bge-reranker-v2-m3"
+    ENABLE_RERANK: bool = True
+    RERANK_TOP_K: int = 10
+    RERANK_MAX_CHARS: int = 512
+    RERANK_SCORE_THRESHOLD: float = 0.5  # 相关性分数阈值，低于此分数的结果会被过滤
+    
     # MinIO 配置
     MINIO_ENDPOINT: str = "127.0.0.1:9000"  # MinIO 服务端点（内部访问）
     MINIO_PUBLIC_ENDPOINT: str = "127.0.0.1:9000"  # MinIO 公开端点（浏览器访问）
@@ -285,14 +297,27 @@ class Settings(BaseSettings):
         
         return self.LLM_PROVIDER
 
-    class Config:
+    # A2A 传输模式配置
+    # 支持的模式：
+    # - graph_state: LangGraph 状态黑板模式（当前 MVP）
+    # - http: HTTP 远程调用（未来微服务形态）
+    # - local: 本地进程通信（同服务器跨进程）
+    A2A_TRANSPORT_MODE: str = "graph_state"
+
+    # HTTP 传输配置（A2A_TRANSPORT_MODE=http 时使用）
+    A2A_HTTP_BASE_URL: str = "http://localhost:8000"
+    A2A_HTTP_TIMEOUT: float = 30.0
+    A2A_HTTP_RETRY_TIMES: int = 3
+
+    model_config = {
         # 指定读取根目录下的 .env 文件
-        env_file = os.path.join(
+        "env_file": os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
             ".env"
-        )
-        case_sensitive = True
-        extra = "ignore"  # 忽略 .env 中多余的字段，防止报错
+        ),
+        "case_sensitive": True,
+        "extra": "ignore"  # 忽略 .env 中多余的字段，防止报错
+    }
 
 
 settings = Settings()

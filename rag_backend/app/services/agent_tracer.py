@@ -26,9 +26,11 @@ class AgentTracerSession:
     减少事务数量并确保数据完整性
     """
     
-    def __init__(self, tracer: 'AgentTracer', trace_id: str):
+    def __init__(self, tracer: 'AgentTracer', trace_id: str, user_id: str, tenant_id: str):
         self.tracer = tracer
         self.trace_id = trace_id
+        self.user_id = user_id
+        self.tenant_id = tenant_id
         self.db = None
         self.pending_steps: List[AgentStep] = []
         self._closed = False
@@ -56,6 +58,8 @@ class AgentTracerSession:
         """添加步骤到缓冲"""
         step = AgentStep(
             trace_id=self.trace_id,
+            user_id=self.user_id,
+            tenant_id=self.tenant_id,
             **step_data
         )
         self.pending_steps.append(step)
@@ -83,7 +87,8 @@ class AgentTracer:
         self.langsmith_enabled = False
         self._init_langsmith()
         self._current_trace_id: Optional[str] = None
-        self._current_db = None
+        self._current_user_id: Optional[str] = None
+        self._current_tenant_id: Optional[str] = None
         self._pending_steps: List[AgentStep] = []
         self._lock = asyncio.Lock()
     
@@ -105,6 +110,8 @@ class AgentTracer:
         self,
         agent_type: str,
         user_query: str,
+        user_id: str,
+        tenant_id: str,
         session_id: str = None,
         message_id: str = None
     ) -> str:
@@ -114,13 +121,14 @@ class AgentTracer:
         Args:
             agent_type: Agent 类型（react/plan/reflect）
             user_query: 用户查询
+            user_id: 用户 ID
+            tenant_id: 租户 ID
             session_id: 会话 ID（可选）
             message_id: 消息 ID（可选）
             
         Returns:
             trace_id: 追踪 ID
         """
-        # 获取 LangSmith Run ID
         langsmith_run_id = None
         if self.langsmith_enabled and self.langsmith_tracer:
             try:
@@ -139,6 +147,8 @@ class AgentTracer:
             trace = AgentTrace(
                 agent_type=agent_type,
                 user_query=user_query,
+                user_id=user_id,
+                tenant_id=tenant_id,
                 session_id=session_id,
                 message_id=message_id,
                 status="running"
@@ -150,10 +160,11 @@ class AgentTracer:
             
             async with self._lock:
                 self._current_trace_id = str(trace.id)
-                self._current_db = db
+                self._current_user_id = user_id
+                self._current_tenant_id = tenant_id
                 self._pending_steps = []
             
-            logger.info(f"🎬 开始追踪: {trace.id} | Agent: {agent_type}")
+            logger.info(f"🎬 开始追踪: {trace.id} | Agent: {agent_type} | User: {user_id}")
             if langsmith_run_id:
                 logger.debug(f"[AgentTracer] LangSmith Run ID: {langsmith_run_id}")
             
@@ -193,6 +204,8 @@ class AgentTracer:
         async with self._lock:
             step = AgentStep(
                 trace_id=trace_id,
+                user_id=self._current_user_id,
+                tenant_id=self._current_tenant_id,
                 step_number=step_number,
                 step_type=step_type,
                 content=content,
@@ -201,11 +214,11 @@ class AgentTracer:
                 tool_output=tool_output,
                 tool_duration=tool_duration,
                 confidence=confidence,
-                extra_metadata=metadata,  # 映射到数据库的 metadata 列
+                extra_metadata=metadata,
                 timestamp=time.time()
             )
             
-            if self._current_trace_id == trace_id and self._current_db is not None:
+            if self._current_trace_id == trace_id:
                 self._pending_steps.append(step)
             else:
                 async with AsyncSessionLocal() as db:
@@ -247,85 +260,107 @@ class AgentTracer:
         
         优化：提交所有pending的steps，减少事务数量
         """
-        async with AsyncSessionLocal() as db:
-            pending_steps_to_commit = []
-            async with self._lock:
-                if self._current_trace_id == trace_id and self._pending_steps:
-                    pending_steps_to_commit = self._pending_steps
-                    self._pending_steps = []
-                    self._current_trace_id = None
-                    self._current_db = None
+        try:
+            # 确保 final_answer 是字符串
+            if not isinstance(final_answer, str):
+                final_answer = str(final_answer) if final_answer else ""
             
-            if pending_steps_to_commit:
-                db.add_all(pending_steps_to_commit)
-                await db.flush()
-            
-            trace = await db.get(AgentTrace, trace_id)
-            if not trace:
-                logger.warning(f"⚠️ 追踪记录不存在: {trace_id}")
-                return
-            
-            all_steps = pending_steps_to_commit.copy()
-            result = await db.execute(
-                select(AgentStep)
-                .where(AgentStep.trace_id == trace_id)
-                .order_by(AgentStep.step_number.asc())
-            )
-            existing_steps = result.scalars().all()
-            all_steps.extend(existing_steps)
-            
-            total_duration_ms = None
-            if all_steps:
-                total_duration_ms = (all_steps[-1].timestamp - all_steps[0].timestamp) * 1000
-            
-            trace.final_answer = final_answer
-            trace.total_iterations = len(all_steps)
-            trace.tool_calls_count = len([s for s in all_steps if s.step_type == "action"])
-            trace.status = "completed" if success else "failed"
-            trace.error_message = error_message
-            trace.completed_at = func.now()
-            
-            if all_steps:
-                trace.total_time = all_steps[-1].timestamp - all_steps[0].timestamp
-            
-            await db.commit()
-            
-            logger.info(f"🏁 追踪结束: {trace_id}")
-            logger.info(f"   状态: {trace.status}")
-            logger.info(f"   总步骤: {trace.total_iterations}")
-            logger.info(f"   工具调用: {trace.tool_calls_count}")
-            logger.info(f"   总耗时: {trace.total_time:.2f}s")
-            
-            if self.langsmith_enabled and self.langsmith_tracer:
-                try:
-                    self.langsmith_tracer.end_agent_run(
-                        run_id=str(trace_id),
-                        final_answer=final_answer[:500],
-                        success=success,
-                        error_message=error_message,
-                        total_steps=len(all_steps),
-                        total_duration_ms=total_duration_ms
-                    )
-                except Exception as e:
-                    logger.warning(f"[AgentTracer] LangSmith end_trace 失败: {e}")
+            async with AsyncSessionLocal() as db:
+                pending_steps_to_commit = []
+                async with self._lock:
+                    if self._current_trace_id == trace_id and self._pending_steps:
+                        pending_steps_to_commit = self._pending_steps
+                        self._pending_steps = []
+                        self._current_trace_id = None
+                        self._current_user_id = None
+                        self._current_tenant_id = None
+                
+                if pending_steps_to_commit:
+                    db.add_all(pending_steps_to_commit)
+                    await db.flush()
+                
+                trace = await db.get(AgentTrace, trace_id)
+                if not trace:
+                    logger.warning(f"⚠️ 追踪记录不存在: {trace_id}")
+                    return
+                
+                all_steps = pending_steps_to_commit.copy()
+                result = await db.execute(
+                    select(AgentStep)
+                    .where(AgentStep.trace_id == trace_id)
+                    .order_by(AgentStep.step_number.asc())
+                )
+                existing_steps = result.scalars().all()
+                all_steps.extend(existing_steps)
+                
+                total_duration_ms = None
+                if all_steps:
+                    total_duration_ms = (all_steps[-1].timestamp - all_steps[0].timestamp) * 1000
+                
+                trace.final_answer = final_answer
+                trace.total_iterations = len(all_steps)
+                trace.tool_calls_count = len([s for s in all_steps if s.step_type == "action"])
+                trace.status = "completed" if success else "failed"
+                trace.error_message = error_message
+                trace.completed_at = func.now()
+                
+                if all_steps:
+                    trace.total_time = all_steps[-1].timestamp - all_steps[0].timestamp
+                
+                await db.commit()
+                
+                logger.info(f"🏁 追踪结束: {trace_id}")
+                logger.info(f"   状态: {trace.status}")
+                logger.info(f"   总步骤: {trace.total_iterations}")
+                logger.info(f"   工具调用: {trace.tool_calls_count}")
+                logger.info(f"   总耗时: {trace.total_time:.2f}s" if trace.total_time else "   总耗时: 0.00s")
+                
+                if self.langsmith_enabled and self.langsmith_tracer:
+                    try:
+                        final_answer_preview = final_answer[:500] if final_answer else ""
+                        self.langsmith_tracer.end_agent_run(
+                            run_id=str(trace_id),
+                            final_answer=final_answer_preview,
+                            success=success,
+                            error_message=error_message,
+                            total_steps=len(all_steps),
+                            total_duration_ms=total_duration_ms
+                        )
+                    except Exception as e:
+                        logger.warning(f"[AgentTracer] LangSmith end_trace 失败: {e}")
+                        
+        except Exception as e:
+            logger.error(f"[AgentTracer] end_trace 发生错误: {e}", exc_info=True)
     
-    async def get_trace_with_steps(self, trace_id: str) -> Optional[Dict[str, Any]]:
+    async def get_trace_with_steps(
+        self,
+        trace_id: str,
+        user_id: str = None,
+        tenant_id: str = None
+    ) -> Optional[Dict[str, Any]]:
         """
         获取完整的追踪信息（包括所有步骤）
         
         Args:
             trace_id: 追踪 ID
+            user_id: 用户 ID（用于权限验证）
+            tenant_id: 租户 ID（用于权限验证）
             
         Returns:
             包含追踪和步骤的完整信息
+            
+        Raises:
+            PermissionError: 如果用户无权访问该追踪记录
         """
         async with AsyncSessionLocal() as db:
-            # 获取追踪记录
             trace = await db.get(AgentTrace, trace_id)
             if not trace:
                 return None
             
-            # 获取所有步骤
+            if user_id and trace.user_id != user_id:
+                logger.warning(f"⚠️ 用户 {user_id} 无权访问追踪记录 {trace_id}")
+                return None
+            
             result = await db.execute(
                 select(AgentStep)
                 .where(AgentStep.trace_id == trace_id)
@@ -359,22 +394,32 @@ class AgentTracer:
                 ]
             }
     
-    async def get_session_traces(self, session_id: str) -> List[Dict[str, Any]]:
+    async def get_session_traces(
+        self,
+        session_id: str,
+        user_id: str = None,
+        tenant_id: str = None
+    ) -> List[Dict[str, Any]]:
         """
-        获取某个会话的所有追踪记录
+        获取某个会话的追踪记录（带用户过滤）
         
         Args:
             session_id: 会话 ID
+            user_id: 用户 ID（可选，用于权限验证）
+            tenant_id: 租户 ID（可选）
             
         Returns:
             追踪记录列表
         """
         async with AsyncSessionLocal() as db:
-            result = await db.execute(
-                select(AgentTrace)
-                .where(AgentTrace.session_id == session_id)
-                .order_by(AgentTrace.created_at.desc())
-            )
+            query = select(AgentTrace).where(AgentTrace.session_id == session_id)
+            if user_id:
+                query = query.where(AgentTrace.user_id == user_id)
+            if tenant_id:
+                query = query.where(AgentTrace.tenant_id == tenant_id)
+            
+            query = query.order_by(AgentTrace.created_at.desc())
+            result = await db.execute(query)
             traces = result.scalars().all()
             
             return [
@@ -391,19 +436,30 @@ class AgentTracer:
                 for t in traces
             ]
     
-    async def get_recent_traces(self, limit: int = 50) -> List[Dict[str, Any]]:
+    async def get_recent_traces(
+        self,
+        user_id: str,
+        tenant_id: str,
+        limit: int = 50
+    ) -> List[Dict[str, Any]]:
         """
-        获取最近的追踪记录
+        获取当前用户/租户的追踪记录
         
         Args:
+            user_id: 用户 ID
+            tenant_id: 租户 ID
             limit: 返回的记录数量限制
             
         Returns:
-            最近的追踪记录列表
+            追踪记录列表
         """
         async with AsyncSessionLocal() as db:
             result = await db.execute(
                 select(AgentTrace)
+                .where(
+                    AgentTrace.user_id == user_id,
+                    AgentTrace.tenant_id == tenant_id
+                )
                 .order_by(AgentTrace.created_at.desc())
                 .limit(limit)
             )

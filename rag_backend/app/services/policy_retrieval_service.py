@@ -24,29 +24,12 @@ class PolicyRetrievalService:
     1. 语义检索 - 使用向量相似度
     2. 关键词检索 - 全文搜索
     3. 筛选检索 - 按行业/地区/税种筛选
-    4. 企业匹配 - 根据企业属性推荐政策（集成PolicyAgent + NotificationAgent）
+    4. 企业匹配 - 根据企业属性推荐政策
     """
     
     def __init__(self):
         self.default_top_k = 10
         self.min_score_threshold = 0.5
-        self._initialize_agents()
-    
-    def _initialize_agents(self):
-        """初始化PolicyETLService和NotificationService"""
-        try:
-            from app.services.policy_etl_service import PolicyETLService
-            from app.services.notification_service import NotificationService
-            
-            self.policy_service = PolicyETLService()
-            self.notification_service = NotificationService()
-            
-            logger.info("✅ PolicyRetrievalService: PolicyETLService和NotificationService初始化成功")
-            
-        except Exception as e:
-            logger.warning(f"⚠️ PolicyRetrievalService: Service初始化失败: {e}")
-            self.policy_service = None
-            self.notification_service = None
     
     async def semantic_search(
         self,

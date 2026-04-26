@@ -21,7 +21,9 @@ from .core.base_agent import BaseAgent
 from .core.react_agent import ReActAgent
 from .core.plan_agent import PlanAgent
 from .core.reflect_agent import ReflectAgent
-from .core.output_agent import OutputAgent, OutputReviewResult, OutputAgentPrompts, output_agent
+# OutputAgent 已弃用，使用 ResultSynthesizer 替代
+# from .core.output_agent import OutputAgent, OutputReviewResult
+from .components import ResultSynthesizer
 from app.multi_agent_system.agents.report_generator import ReportGenerator
 from .tools.tool_manager import ToolManager
 from .llm.zhipu_adapter import ZhipuAdapter
@@ -65,11 +67,12 @@ __all__ = [
     "PlanAgent",
     "ReflectAgent",
     
-    # 输出智能体
-    "OutputAgent",
-    "OutputReviewResult",
-    "OutputAgentPrompts",
-    "output_agent",
+    # 输出智能体（已弃用，向后兼容）
+    # "OutputAgent",
+    # "OutputReviewResult",
+    
+    # 智能组件
+    "ResultSynthesizer",
     
     # 报表智能体
     "ReportAgent",

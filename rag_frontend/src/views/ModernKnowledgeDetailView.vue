@@ -327,7 +327,7 @@ function formatDate(dateString: string): string {
             ref="fileInput"
             type="file"
             class="hidden"
-            accept=".pdf,.doc,.docx,.txt,.png"
+            accept=".pdf,.doc,.docx,.txt,.md,.csv,.png,.jpg,.jpeg,.bmp,.tiff"
             @change="handleFileSelect"
           />
 
@@ -335,7 +335,12 @@ function formatDate(dateString: string): string {
             <Upload :size="48" class="mx-auto text-gray-400" />
             <div>
               <p class="text-lg font-medium text-gray-900">选择文件上传</p>
-              <p class="text-sm text-gray-500 mt-1">支持 PDF, DOC, DOCX, TXT, PNG</p>
+              <div class="mt-2 inline-block px-3 py-1.5 bg-orange-50 border border-orange-200 rounded-lg">
+                <p class="text-xs text-orange-700 font-medium">支持文件类型：</p>
+                <p class="text-xs text-orange-600 mt-0.5">
+                  PDF · DOC · DOCX · XLS · XLSX · TXT · MD · CSV · PNG · JPG · JPEG · BMP · TIFF
+                </p>
+              </div>
             </div>
           </div>
 

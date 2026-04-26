@@ -20,7 +20,7 @@ agent_framework/
 │   ├── base_agent.py          # Agent 抽象基类
 │   ├── react_agent.py         # ReAct 模式实现
 │   ├── reflect_agent.py       # Reflect 模式实现
-│   ├── output_agent.py        # 输出质量审查智能体
+│   ├── output_agent.py        # 输出质量审查智能体（已弃用，向后兼容）
 │   ├── reviewed_agent.py      # 带审查的 ReAct Agent
 │   ├── report_agent.py        # 报表生成专用智能体
 │   ├── plan_agent.py          # 规划执行智能体
@@ -166,19 +166,24 @@ agent = ReActAgent(
 **核心思想**: 对输出进行质量审查和改进
 
 ```python
-from app.agent_framework import OutputAgent, output_agent
+from app.agent_framework.components import ResultSynthesizer
 
-# 独立使用
-output_agent_instance = OutputAgent(llm_adapter)
-result = await output_agent_instance.review_output(
-    original_output="生成的报表内容",
-    context="用户请求生成销售报表"
+# 创建结果合成器
+synthesizer = ResultSynthesizer(llm_adapter)
+
+# 添加输入
+synthesizer.add_input(
+    task_id="task_001",
+    source_agent="TaxSpecialist",
+    source_type="tax",
+    content={"增值税": "13%", "企业所得税": "25%"},
+    confidence=0.9
 )
 
-# 或使用便捷函数
-reviewed = await output_agent.review_and_improve(
-    content="待审查内容",
-    task_type="report"
+# 执行合成
+result = await synthesizer.synthesize(
+    user_query="分析企业税务情况",
+    strategy=SynthesisStrategy.NARRATIVE
 )
 ```
 

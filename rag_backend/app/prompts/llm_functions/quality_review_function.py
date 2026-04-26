@@ -5,6 +5,8 @@
 这是一个轻量级的 LLM 调用，不需要完整的 Agent 架构。
 """
 
+import os
+import re
 from app.utils.json_compat import json
 import logging
 from typing import Dict, Any, Optional, List
@@ -38,13 +40,35 @@ class QualityScore:
         }
 
 
-QUALITY_REVIEW_PROMPT = """你是一个专业的质量审查员。请评估以下回答的质量。
+def _load_quality_review_prompt() -> str:
+    """从文件加载质量审查提示词"""
+    prompt_file = os.path.join(
+        os.path.dirname(__file__),
+        "quality_review.md"
+    )
+    
+    if os.path.exists(prompt_file):
+        with open(prompt_file, "r", encoding="utf-8") as f:
+            template = f.read()
+        logger.info(f"✅ [QualityReview] 从文件加载提示词: {prompt_file}")
+        return template
+    else:
+        logger.warning(f"⚠️ [QualityReview] 提示词文件不存在，使用内置提示词: {prompt_file}")
+        return _get_default_quality_review_prompt()
+
+
+def _get_default_quality_review_prompt() -> str:
+    """获取默认质量审查提示词"""
+    return """你是一个专业的质量审查员。请评估以下回答的质量。
 
 ## 用户问题
 {user_question}
 
 ## AI 回答
 {ai_answer}
+
+## 数据来源说明
+{data_source_info}
 
 ## 评估维度
 1. **准确性** (0-1): 回答是否正确？有无误判或错误信息？
@@ -53,43 +77,65 @@ QUALITY_REVIEW_PROMPT = """你是一个专业的质量审查员。请评估以�
 4. **可读性** (0-1): 表达是否清晰？格式是否良好？
 5. **实用性** (0-1): 回答是否有帮助？是否可操作？
 
+## 重要评估原则
+1. **数据真实性判断**：
+   - 如果回答中使用了标注为"来自真实数据库"的数据，这是真实数据，不是虚构的
+   - 只有在没有数据来源标注时，才能判断为"虚构数据"
+2. **基于数据的分析**：
+   - 如果系统查询到了真实财务数据并进行了分析，这是合格的
+   - 质疑数据真实性前，请先检查 `data_source_info` 部分
+3. **阈值标准**：
+   - overall score >= 0.6 时，`is_quality_acceptable` 应为 true
+   - 不要因为数据"看似极端"就判定为虚构（可能是企业真实数据）
+
 ## 输出要求
 请以JSON格式输出：
-{{
+{
   "is_quality_acceptable": true/false,
-  "scores": {{
+  "scores": {
     "accuracy": 0.0-1.0,
     "completeness": 0.0-1.0,
     "logic": 0.0-1.0,
     "readability": 0.0-1.0,
     "practicality": 0.0-1.0,
     "overall": 0.0-1.0
-  }},
+  },
   "issues": [
-    {{
+    {
       "dimension": "accuracy/completeness/logic/readability/practicality",
       "severity": "minor/moderate/severe",
       "description": "问题描述",
       "suggestion": "改进建议"
-    }}
+    }
   ],
   "improved_answer": "改进后的回答（如果需要改进）",
   "summary": "总体评价（50字内）"
-}}
-"""
+}"""
+
+
+QUALITY_REVIEW_PROMPT = _load_quality_review_prompt()
 
 
 class QualityReviewFunction:
     """质量审查函数"""
 
-    def __init__(self, llm_adapter: Optional[LLMAdapter] = None, quality_threshold: float = 0.7):
+    def __init__(self, llm_adapter: Optional[LLMAdapter] = None, quality_threshold: float = 0.6):
         self.llm_adapter = llm_adapter or create_llm_adapter()
         self.quality_threshold = quality_threshold
+        self._prompt_template = None
+
+    @property
+    def prompt_template(self) -> str:
+        """延迟加载提示词模板"""
+        if self._prompt_template is None:
+            self._prompt_template = _load_quality_review_prompt()
+        return self._prompt_template
 
     async def review(
         self,
         user_question: str,
-        ai_answer: str
+        ai_answer: str,
+        data_source_info: str = "无数据来源信息"
     ) -> Dict[str, Any]:
         """
         审查回答质量
@@ -97,13 +143,15 @@ class QualityReviewFunction:
         Args:
             user_question: 用户问题
             ai_answer: AI 回答
+            data_source_info: 数据来源信息（如"来自企业数据库"）
 
         Returns:
             审查结果
         """
-        prompt = QUALITY_REVIEW_PROMPT.format(
+        prompt = self.prompt_template.format(
             user_question=user_question,
-            ai_answer=ai_answer
+            ai_answer=ai_answer,
+            data_source_info=data_source_info
         )
 
         try:
@@ -111,7 +159,8 @@ class QualityReviewFunction:
             result = self._parse_response(response.content)
 
             is_acceptable = result.get("is_quality_acceptable", False)
-            logger.info(f"🔍 [QualityReview] 审查完成: acceptable={is_acceptable}, score={result.get('scores', {}).get('overall', 0):.2f}")
+            score = result.get('scores', {}).get('overall', result.get('score', 0.0))
+            logger.info(f"🔍 [QualityReview] 审查完成: acceptable={is_acceptable}, score={score:.2f}")
 
             return result
 
@@ -239,6 +288,7 @@ def get_quality_review_function() -> QualityReviewFunction:
 async def review_quality(
     user_question: str,
     ai_answer: str,
+    data_source_info: str = "无数据来源信息",
     with_improvement: bool = False
 ) -> Dict[str, Any]:
     """
@@ -247,6 +297,7 @@ async def review_quality(
     Args:
         user_question: 用户问题
         ai_answer: AI 回答
+        data_source_info: 数据来源信息
         with_improvement: 是否自动改进
 
     Returns:
@@ -257,7 +308,7 @@ async def review_quality(
     if with_improvement:
         return await review_fn.review_with_improvement(user_question, ai_answer)
     else:
-        return await review_fn.review(user_question, ai_answer)
+        return await review_fn.review(user_question, ai_answer, data_source_info)
 
 
 async def batch_review(

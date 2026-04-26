@@ -6,6 +6,7 @@ from .image_parser import ImageParser
 from .structured_pdf_parser import StructuredPDFParser
 from .structured_word_parser import StructuredWordParser
 from .structured_markdown_parser import StructuredMarkdownParser
+from .structured_excel_parser import StructuredExcelParser
 
 
 class FileParserFactory:
@@ -38,6 +39,7 @@ class FileParserFactory:
         cls.register_parser(StructuredPDFParser())
         cls.register_parser(StructuredWordParser())
         cls.register_parser(StructuredMarkdownParser())
+        cls.register_parser(StructuredExcelParser())
         
         cls._initialized = True
     

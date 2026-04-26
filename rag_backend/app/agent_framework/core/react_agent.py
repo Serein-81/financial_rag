@@ -82,6 +82,8 @@ class ReActAgent(BaseAgent):
                 self.current_trace_id = await self.tracer.start_trace(
                     agent_type="ReAct",
                     user_query=user_input,
+                    user_id=kwargs.get("user_id") or "unknown",
+                    tenant_id=kwargs.get("tenant_id") or "unknown",
                     session_id=kwargs.get("session_id"),
                     message_id=kwargs.get("message_id")
                 )
@@ -245,20 +247,22 @@ class ReActAgent(BaseAgent):
                         self._update_history(response)
                         
                         # 检查循环（使用语义嵌入）
-                        loop_check = await self._check_loop_detection(response)
+                        loop_check = await self._check_loop_detection(response.content if hasattr(response, 'content') else response)
                         if loop_check["should_stop"]:
                             self._log_action("🛑 检测到思考循环", {"reason": loop_check["reason"]})
                             final_answer = self._generate_fallback_answer()
                             break
                         
                         # 纯思考，继续等待行动或最终答案
-                        current_prompt = current_prompt + response + "\n"
+                        response_text = response.content if hasattr(response, 'content') else response
+                        current_prompt = current_prompt + response_text + "\n"
                         self._log_action("💭 继续思考")
                     
                     else:
                         # 无法解析，尝试引导
+                        response_text = response.content if hasattr(response, 'content') else response
                         guidance = "\n请按照格式继续：\nThought: [你的思考]\nAction: [工具名] 或 Final Answer: [最终答案]"
-                        current_prompt = current_prompt + response + guidance
+                        current_prompt = current_prompt + response_text + guidance
                         self._log_action("❓ 响应格式不正确，添加引导")
                 
                 except (ValueError, KeyError) as e:
@@ -332,7 +336,7 @@ class ReActAgent(BaseAgent):
                 # 是否应该流式输出内容（无工具调用时）
                 should_stream_output = True
                 # 缓冲区的最小长度（达到后才开始流式输出，避免过早输出被截断）
-                # 优化：降低到3个字符，实现更流畅的逐字显示效果
+                # 优化：保持3个字符的最小缓冲，与后端 BUFFER_SIZE=5 配合实现流畅打字机效果
                 MIN_BUFFER_FOR_STREAM = 3
 
                 async for chunk in self.llm.stream_generate(current_prompt, temperature=0.1):
@@ -874,19 +878,27 @@ class ReActAgent(BaseAgent):
         user_input_lower = user_input.lower().strip()
         return any(keyword.lower() in user_input_lower for keyword in simple_keywords)
     
-    def _parse_response(self, response: str) -> Dict[str, any]:
+    def _parse_response(self, response) -> Dict[str, any]:
         """
         解析 LLM 响应
         
         Args:
-            response: LLM 的响应文本
+            response: LLM 的响应（可能是字符串或 LLMResponse 对象）
             
         Returns:
             解析结果
         """
+        # 处理 LLMResponse 对象
+        if hasattr(response, 'content'):
+            response_text = response.content
+        elif isinstance(response, str):
+            response_text = response
+        else:
+            response_text = str(response)
+        
         # 检查是否包含最终答案
-        if "Final Answer" in response or "final answer" in response:
-            final_answer = self._extract_final_answer(response)
+        if "Final Answer" in response_text or "final answer" in response_text:
+            final_answer = self._extract_final_answer(response_text)
             if final_answer:
                 return {
                     "type": "final_answer",
@@ -894,7 +906,7 @@ class ReActAgent(BaseAgent):
                 }
         
         # 检查是否包含工具调用
-        tool_call = self.tool_manager.parse_tool_call_from_text(response)
+        tool_call = self.tool_manager.parse_tool_call_from_text(response_text)
         if tool_call:
             return {
                 "type": "tool_call",
@@ -905,7 +917,7 @@ class ReActAgent(BaseAgent):
         # 默认为思考状态
         return {
             "type": "thinking",
-            "content": response
+            "content": response_text
         }
     
     def _extract_final_answer(self, text: str) -> Optional[str]:
@@ -935,19 +947,27 @@ class ReActAgent(BaseAgent):
         
         return None
     
-    def _extract_thought_from_response(self, response: str) -> Optional[str]:
+    def _extract_thought_from_response(self, response) -> Optional[str]:
         """
         从响应中提取思考内容
         
         Args:
-            response: LLM响应文本
+            response: LLM响应（可能是字符串或 LLMResponse 对象）
             
         Returns:
             思考内容，如果没有找到则返回 None
         """
+        # 处理 LLMResponse 对象
+        if hasattr(response, 'content'):
+            response_text = response.content
+        elif isinstance(response, str):
+            response_text = response
+        else:
+            response_text = str(response)
+        
         # 匹配 Thought: 到 Action: 之间的内容
         pattern = r'Thought:\s*(.*?)(?=Action:|$)'
-        match = re.search(pattern, response, re.DOTALL | re.IGNORECASE)
+        match = re.search(pattern, response_text, re.DOTALL | re.IGNORECASE)
         
         if match:
             thought = match.group(1).strip()
@@ -1023,24 +1043,32 @@ class ReActAgent(BaseAgent):
             self._log_action("⚠️ 嵌入相似度计算失败，降级为字符串匹配", {"error": str(e)})
             return self._calculate_similarity(text1, text2)
     
-    def _generate_response_hash(self, response: str) -> str:
+    def _generate_response_hash(self, response) -> str:
         """
         生成响应的哈希值用于快速比较
         
         Args:
-            response: 响应文本
+            response: 响应（可能是字符串或 LLMResponse 对象）
             
         Returns:
             哈希值
         """
+        # 处理 LLMResponse 对象
+        if hasattr(response, 'content'):
+            response_text = response.content
+        elif isinstance(response, str):
+            response_text = response
+        else:
+            response_text = str(response)
+        
         # 🔧 Bug6修复：提取关键部分：Action、Action Input 和 Thought（前50字符）
         action_pattern = r'Action:\s*(\w+)'
         input_pattern = r'Action Input:\s*(\{.*?\})'
         thought_pattern = r'Thought:\s*(.*?)(?=\nAction:|$)'
         
-        action_match = re.search(action_pattern, response, re.IGNORECASE)
-        input_match = re.search(input_pattern, response, re.DOTALL)
-        thought_match = re.search(thought_pattern, response, re.DOTALL | re.IGNORECASE)
+        action_match = re.search(action_pattern, response_text, re.IGNORECASE)
+        input_match = re.search(input_pattern, response_text, re.DOTALL)
+        thought_match = re.search(thought_pattern, response_text, re.DOTALL | re.IGNORECASE)
         
         key_content = ""
         if action_match:
@@ -1053,23 +1081,31 @@ class ReActAgent(BaseAgent):
         
         return hashlib.md5(key_content.encode()).hexdigest()
     
-    def _extract_latest_tool_call(self, response: str) -> Optional[Dict[str, str]]:
+    def _extract_latest_tool_call(self, response) -> Optional[Dict[str, str]]:
         """
         从响应中提取最后一个工具调用部分（用于循环检测）
         
         Args:
-            response: LLM 响应文本
+            response: LLM 响应（可能是字符串或 LLMResponse 对象）
             
         Returns:
             包含 Thought 和 Action 的字典，如果没有则返回 None
         """
+        # 处理 LLMResponse 对象
+        if hasattr(response, 'content'):
+            response_text = response.content
+        elif isinstance(response, str):
+            response_text = response
+        else:
+            response_text = str(response)
+        
         thought_pattern = r'Thought:\s*(.*?)(?=\nAction:|\nObservation:|\Z)'
         action_pattern = r'Action:\s*(\w+)'
         input_pattern = r'Action Input:\s*(\{[\s\S]*?\})'
         
-        thought_match = re.search(thought_pattern, response, re.DOTALL | re.IGNORECASE)
-        action_match = re.search(action_pattern, response, re.IGNORECASE)
-        input_match = re.search(input_pattern, response, re.DOTALL)
+        thought_match = re.search(thought_pattern, response_text, re.DOTALL | re.IGNORECASE)
+        action_match = re.search(action_pattern, response_text, re.IGNORECASE)
+        input_match = re.search(input_pattern, response_text, re.DOTALL)
         
         if action_match:
             result = {
@@ -1389,13 +1425,13 @@ class ReActAgent(BaseAgent):
                 "3. 或者稍后再试")
     
     def _get_synthesizer(self):
-        """延迟获取结果合成器（使用统一的 OutputAgent）"""
+        """延迟获取结果合成器（使用统一的 ResultSynthesizer）"""
         if self._result_synthesizer is None:
-            from app.agent_framework.core.output_agent import (
-                OutputAgent,
+            from app.agent_framework.components import (
+                ResultSynthesizer,
                 SynthesisStrategy
             )
-            self._result_synthesizer = OutputAgent(
+            self._result_synthesizer = ResultSynthesizer(
                 llm_adapter=self.llm,
                 default_strategy=SynthesisStrategy.NARRATIVE
             )
@@ -1460,7 +1496,7 @@ class ReActAgent(BaseAgent):
         Returns:
             合成的最终答案
         """
-        from app.agent_framework.core.output_agent import SynthesisStrategy
+        from app.agent_framework.components import SynthesisStrategy
         
         self._log_action("🧩 启动结果合成器", {
             "tool_results_count": len(self.tool_result_history),
@@ -1555,35 +1591,35 @@ class ReActAgent(BaseAgent):
         # 如果没有有效工具结果，返回默认消息
         if not valid_tool_results:
             # 🔧 修复：当没有工具调用时，检查是否有 LLM 的 Final Answer 或错误信息
-            logger.info("🔍 [OutputAgent] 没有工具结果，检查 LLM 响应是否包含 Final Answer")
-            logger.info(f"🔍 [OutputAgent] self.last_responses 数量: {len(self.last_responses)}")
+            logger.info("🔍 [ResultSynthesizer] 没有工具结果，检查 LLM 响应是否包含 Final Answer")
+            logger.info(f"🔍 [ResultSynthesizer] self.last_responses 数量: {len(self.last_responses)}")
             
             if self.last_responses:
                 for idx, (resp, _) in enumerate(reversed(self.last_responses)):
-                    logger.info(f"🔍 [OutputAgent] 检查响应 {idx}, 长度: {len(resp)}")
+                    logger.info(f"🔍 [ResultSynthesizer] 检查响应 {idx}, 长度: {len(resp)}")
                     if resp:
-                        logger.info(f"🔍 [OutputAgent] 响应内容前100字符: {resp[:100]}")
+                        logger.info(f"🔍 [ResultSynthesizer] 响应内容前100字符: {resp[:100]}")
                     
                     # 🔧 修复：检查是否包含错误信息
                     if "[错误]" in resp:
                         error_match = re.search(r'\[错误\]\s*(.+?)\n', resp, re.DOTALL)
                         if error_match:
                             error_msg = error_match.group(1).strip()
-                            logger.error(f"🔍 [OutputAgent] LLM 返回错误: {error_msg}")
+                            logger.error(f"🔍 [ResultSynthesizer] LLM 返回错误: {error_msg}")
                             return f"抱歉，处理过程中遇到问题：{error_msg}"
                     
                     # 🔧 修复：检查是否包含 Final Answer（支持 Markdown 格式）
                     if "Final Answer" in resp or "final answer" in resp:
-                        logger.info("✅ [OutputAgent] 找到 'Final Answer' 字样")
+                        logger.info("✅ [ResultSynthesizer] 找到 'Final Answer' 字样")
                         answer = self._extract_final_answer(resp)
-                        logger.info(f"🔍 [OutputAgent] 提取的 answer: {answer}, 长度: {len(answer) if answer else 0}")
+                        logger.info(f"🔍 [ResultSynthesizer] 提取的 answer: {answer}, 长度: {len(answer) if answer else 0}")
                         
                         if answer and len(answer) > 10:
-                            logger.info(f"✅ [OutputAgent] Final Answer 有效，长度 {len(answer)}, 内容: {answer[:50]}...")
+                            logger.info(f"✅ [ResultSynthesizer] Final Answer 有效，长度 {len(answer)}, 内容: {answer[:50]}...")
                             cleaned = self._prepare_answer_for_output(answer)
                             return cleaned
                         else:
-                            logger.warning(f"⚠️ [OutputAgent] 提取的 answer 无效或太短: '{answer}'")
+                            logger.warning(f"⚠️ [ResultSynthesizer] 提取的 answer 无效或太短: '{answer}'")
             
             return "抱歉，在处理您的问题时遇到了一些困难，没有找到相关的信息。"
         
@@ -1602,17 +1638,25 @@ class ReActAgent(BaseAgent):
         # 返回合成结果
         return self._prepare_answer_for_output(synthesis_result.final_response)
     
-    def _update_history(self, response: str, tool_call: Dict = None):
+    def _update_history(self, response, tool_call: Dict = None):
         """
         更新历史记录
         
         Args:
-            response: 当前响应
+            response: 当前响应（可能是字符串或 LLMResponse 对象）
             tool_call: 工具调用信息
         """
+        # 处理 LLMResponse 对象
+        if hasattr(response, 'content'):
+            response_text = response.content
+        elif isinstance(response, str):
+            response_text = response
+        else:
+            response_text = str(response)
+        
         # 更新响应历史
-        response_hash = self._generate_response_hash(response)
-        self.last_responses.append((response, response_hash))
+        response_hash = self._generate_response_hash(response_text)
+        self.last_responses.append((response_text, response_hash))
         
         # 只保留最近5次响应
         if len(self.last_responses) > 5:
@@ -1627,7 +1671,7 @@ class ReActAgent(BaseAgent):
         # 更新迭代历史
         self.iteration_history.append({
             "iteration": self.current_iteration,
-            "response": response[:200],  # 只保留前200字符
+            "response": response_text[:200],  # 只保留前200字符
             "tool_call": tool_call,
             "timestamp": time.time()
         })

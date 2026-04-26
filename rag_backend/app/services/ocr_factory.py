@@ -9,6 +9,11 @@ from .ocr_adapters.base_ocr import BaseOCRAdapter
 from .ocr_adapters.mineru_adapter import MinerUAdapter
 from .ocr_adapters.paddleocr_adapter import PaddleOCRAdapter
 from .ocr_adapters.tesseract_adapter import TesseractAdapter
+try:
+    from .ocr_adapters.unstructured_adapter import UnstructuredAdapter
+    HAS_UNSTRUCTURED = True
+except ImportError:
+    HAS_UNSTRUCTURED = False
 
 
 class OCRFactory:
@@ -35,16 +40,18 @@ class OCRFactory:
     def _initialize_adapters(self):
         """初始化所有适配器"""
         ocr_config = {
-            "mineru_api": os.getenv("MINERU_APISERVER", ""),
+            "mineru_api": os.getenv("MINERU_API_KEY", ""),
             "mineru_output_dir": os.getenv("MINERU_OUTPUT_DIR", "/tmp/mineru_output"),
             "mineru_backend": os.getenv("MINERU_BACKEND", "pipeline"),
-            "mineru_server_url": os.getenv("MINERU_SERVER_URL", ""),
+            "mineru_server_url": os.getenv("UNSTRUCTURED_API_URL", ""),
             "mineru_delete_output": os.getenv("MINERU_DELETE_OUTPUT", "1") == "1",
             "paddleocr_api_url": os.getenv("PADDLEOCR_API_URL", ""),
             "paddleocr_algorithm": os.getenv("PADDLEOCR_ALGORITHM", "PaddleOCR-VL"),
             "paddleocr_access_token": os.getenv("PADDLEOCR_ACCESS_TOKEN", ""),
+            "unstructured_api_url": os.getenv("UNSTRUCTURED_API_URL", ""),
         }
         
+        self._adapters["unstructured"] = UnstructuredAdapter(ocr_config)
         self._adapters["mineru"] = MinerUAdapter(ocr_config)
         self._adapters["paddleocr"] = PaddleOCRAdapter(ocr_config)
         self._adapters["tesseract"] = TesseractAdapter()
@@ -52,7 +59,7 @@ class OCRFactory:
         self._select_best_adapter()
     
     def _select_best_adapter(self):
-        """自动选择最健康的适配器"""
+        """自动选择最健康的适配器（优先选择 docker-compose 中的服务）"""
         available_adapters = []
         
         for name, adapter in self._adapters.items():
@@ -68,7 +75,7 @@ class OCRFactory:
             self._active_adapter = available_adapters[0][2]
             self._logger.info(f"自动选择OCR引擎: {self._active_adapter.engine_name}")
         else:
-            self._logger.error("没有可用的OCR引擎！")
+            self._logger.error("没有可用的 OCR 引擎！")
     
     @property
     def active_engine(self) -> Optional[str]:
@@ -77,9 +84,22 @@ class OCRFactory:
     
     @property
     def available_engines(self) -> List[str]:
-        """获取所有可用的引擎列表"""
-        return [name for name, adapter in self._adapters.items() 
-                if adapter.check_health()[0]]
+        """获取所有可用的引擎列表（按优先级排序）"""
+        available = []
+        priority_map = {
+            'unstructured': 1,
+            'mineru': 2,
+            'paddleocr': 3,
+            'tesseract': 4
+        }
+        
+        for name, adapter in self._adapters.items():
+            if adapter.check_health()[0]:
+                available.append(name)
+        
+        # 按优先级排序，Unstructured API 优先
+        available.sort(key=lambda x: priority_map.get(x, 99))
+        return available
     
     def get_adapter(self, engine: str = None) -> Optional[BaseOCRAdapter]:
         """获取指定引擎的适配器"""

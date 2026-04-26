@@ -85,6 +85,9 @@ export interface Document {
   created_at: string
   error_msg: string | null
   chunk_count: number
+  processing_state?: string
+  processing_progress?: number
+  processing_message?: string
 }
 
 export interface UploadResponse {

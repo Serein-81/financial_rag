@@ -530,7 +530,7 @@ watch(newPassword, checkPasswordStrength)
             <User v-if="tab === 'profile'" :size="18" />
             <Shield v-if="tab === 'security'" :size="18" />
             <Building2 v-if="tab === 'enterprise'" :size="18" />
-            <span>{{ tab === 'profile' ? '基本信息' : tab === 'security' ? '安全设置' : '企业管理' }}</span>
+            <span>{{ tab === 'profile' ? '基本信息' : tab === 'security' ? '安全设置' : '企业归属' }}</span>
           </div>
         </button>
       </div>

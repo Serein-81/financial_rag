@@ -1,6 +1,6 @@
 # app/schemas/auth_request.py
 """认证请求相关的Schema模型"""
-from pydantic import BaseModel, EmailStr, Field, validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional
 import re
 
@@ -16,14 +16,14 @@ class UserRegister(BaseModel):
     password: str = Field(..., min_length=6, description="密码，至少6位")
     nickname: Optional[str] = Field(None, max_length=50, description="昵称")
     
-    @validator('phone')
+    @field_validator('phone')
     def validate_phone(cls, v):
         """验证手机号格式"""
         if v and not re.match(r'^1[3-9]\d{9}$', v):
             raise ValueError('手机号格式不正确')
         return v
     
-    @validator('password')
+    @field_validator('password')
     def validate_password(cls, v):
         """验证密码强度"""
         if len(v) < 6:
@@ -40,14 +40,14 @@ class AdminRegister(BaseModel):
     company_position: Optional[str] = Field(None, max_length=100, description="职位")
     nickname: Optional[str] = Field(None, max_length=50, description="昵称")
     
-    @validator('phone')
+    @field_validator('phone')
     def validate_phone(cls, v):
         """验证手机号格式"""
         if v and not re.match(r'^1[3-9]\d{9}$', v):
             raise ValueError('手机号格式不正确')
         return v
     
-    @validator('password')
+    @field_validator('password')
     def validate_password(cls, v):
         """验证密码强度"""
         if len(v) < 6:
@@ -60,7 +60,7 @@ class ChangePasswordRequest(BaseModel):
     old_password: str = Field(..., description="旧密码")
     new_password: str = Field(..., min_length=6, description="新密码，至少6位")
     
-    @validator('new_password')
+    @field_validator('new_password')
     def validate_new_password(cls, v):
         """验证新密码强度"""
         if len(v) < 6:
@@ -72,7 +72,7 @@ class UpdatePhoneRequest(BaseModel):
     """更新手机号请求模型"""
     phone: str = Field(..., description="新手机号")
     
-    @validator('phone')
+    @field_validator('phone')
     def validate_phone(cls, v):
         """验证手机号格式"""
         if not re.match(r'^1[3-9]\d{9}$', v):

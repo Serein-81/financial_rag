@@ -3,6 +3,7 @@
 实现查询改写、多查询生成和 MMR 重排序
 """
 import logging
+import os
 from typing import List, Dict, Any, Optional
 from app.services.llm_service import llm_service
 
@@ -11,6 +12,19 @@ logger = logging.getLogger(__name__)
 
 class QueryOptimizer:
     """查询优化器"""
+    
+    def __init__(self):
+        """初始化查询优化器"""
+        self.enable_mmr = os.getenv('ENABLE_MMR', 'true').lower() == 'true'
+        self.mmr_lambda_param = float(os.getenv('MMR_LAMBDA', '0.9'))
+        self.mmr_max_results = int(os.getenv('MMR_MAX_RESULTS', '20'))
+        
+        logger.info(
+            f"🔧 查询优化器配置: "
+            f"MMR={'开启' if self.enable_mmr else '关闭'}, "
+            f"lambda={self.mmr_lambda_param}, "
+            f"max_results={self.mmr_max_results}"
+        )
     
     async def rewrite_query(self, query: str, num_variants: int = 3) -> List[str]:
         """
@@ -110,12 +124,60 @@ class QueryOptimizer:
             logger.error(f"❌ HyDE 生成失败: {e}")
             return query  # 失败时返回原始查询
     
+    async def detect_query_intent(self, query: str) -> Dict[str, Any]:
+        """
+        检测查询意图
+        
+        用于判断是否需要启用 MMR 多样性优化
+        
+        Args:
+            query: 用户查询
+            
+        Returns:
+            意图检测结果
+        """
+        diversity_keywords = [
+            "不同", "各种", "多种", "多样化", "相关", "例子",
+            "案例", "文章", "材料", "文档", "资料",
+            "有没有", "都有哪些", "分别有哪些"
+        ]
+        
+        precision_keywords = [
+            "规定", "条款", "第", "条", "税率", "公式",
+            "计算", "如何", "怎样", "步骤", "流程",
+            "具体", "准确", "正确", "哪个"
+        ]
+        
+        query_lower = query.lower()
+        
+        diversity_score = sum(1 for kw in diversity_keywords if kw in query_lower)
+        precision_score = sum(1 for kw in precision_keywords if kw in query_lower)
+        
+        if diversity_score > precision_score:
+            intent_type = "diversity"
+            needs_mmr = True
+            suggested_lambda = 0.6
+        else:
+            intent_type = "precision"
+            needs_mmr = False
+            suggested_lambda = 0.95
+        
+        return {
+            "type": intent_type,
+            "needs_more_context": diversity_score > 0,
+            "needs_mmr": needs_mmr,
+            "suggested_lambda": suggested_lambda,
+            "suggested_top_k": 5 if precision_score > diversity_score else 10,
+            "suggested_threshold": 0.5 if precision_score > diversity_score else 0.3
+        }
+    
     def mmr_rerank(
         self,
         results: List[Dict[str, Any]],
         query_embedding: List[float],
-        lambda_param: float = 0.5,
-        top_k: Optional[int] = None
+        lambda_param: float = None,
+        top_k: Optional[int] = None,
+        force_diversity: bool = False
     ) -> List[Dict[str, Any]]:
         """
         MMR (Maximal Marginal Relevance) 重排序
@@ -125,7 +187,9 @@ class QueryOptimizer:
             results: 检索结果列表，每个结果需要有 'embedding' 和 'score'
             query_embedding: 查询向量
             lambda_param: 平衡参数 (0-1)，越大越重视相关性，越小越重视多样性
+                          默认使用配置值（精确场景为 0.9，多样性场景为 0.6）
             top_k: 返回结果数量
+            force_diversity: 强制启用多样性模式
             
         Returns:
             重排序后的结果
@@ -133,67 +197,150 @@ class QueryOptimizer:
         if not results:
             return []
         
+        if lambda_param is None:
+            lambda_param = self.mmr_lambda_param
+        
+        if not force_diversity and lambda_param >= 0.9:
+            logger.info(f"🎯 高精度模式 (λ={lambda_param})，跳过 MMR 多样性筛选，直接按相关性排序")
+            sorted_results = sorted(results, key=lambda x: x.get('score', 0), reverse=True)
+            return sorted_results[:top_k] if top_k else sorted_results
+        
         try:
-            import math
+            import numpy as np
             
-            # 如果结果没有 embedding，直接返回
-            if not all('embedding' in r for r in results):
-                logger.warning("⚠️ 结果缺少 embedding，跳过 MMR 重排")
-                return results[:top_k] if top_k else results
+            query_emb = np.array(query_embedding, dtype=np.float32)
+            query_norm = np.linalg.norm(query_emb)
+            if query_norm > 0:
+                query_emb = query_emb / query_norm
+            
+            embeddings = []
+            for r in results:
+                emb = r.get('embedding')
+                if emb:
+                    if isinstance(emb, list):
+                        embeddings.append(np.array(emb, dtype=np.float32))
+                    else:
+                        embeddings.append(emb)
+                else:
+                    embeddings.append(None)
+            
+            relevance_scores = []
+            for emb in embeddings:
+                if emb is not None:
+                    emb_norm = np.linalg.norm(emb)
+                    if emb_norm > 0:
+                        emb = emb / emb_norm
+                    score = np.dot(query_emb, emb)
+                    relevance_scores.append(float(score))
+                else:
+                    relevance_scores.append(r.get('score', 0))
             
             selected = []
-            remaining = results.copy()
+            remaining_indices = list(range(len(results)))
             
-            # 计算余弦相似度
-            def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
-                dot_product = sum(a * b for a, b in zip(vec1, vec2))
-                norm1 = math.sqrt(sum(a * a for a in vec1))
-                norm2 = math.sqrt(sum(b * b for b in vec2))
-                if norm1 == 0 or norm2 == 0:
-                    return 0.0
-                return dot_product / (norm1 * norm2)
+            first_idx = max(remaining_indices, key=lambda i: relevance_scores[i])
+            selected.append(first_idx)
+            remaining_indices.remove(first_idx)
             
-            # 选择第一个（最相关的）
-            if remaining:
-                first = max(remaining, key=lambda x: x.get('score', 0))
-                selected.append(first)
-                remaining.remove(first)
-            
-            # 迭代选择剩余结果
-            target_count = top_k if top_k else len(results)
-            while remaining and len(selected) < target_count:
+            target_count = min(top_k if top_k else len(results), len(results))
+            while remaining_indices and len(selected) < target_count:
                 best_score = -float('inf')
-                best_item = None
+                best_idx = None
                 
-                for item in remaining:
-                    # 相关性分数
-                    relevance = cosine_similarity(query_embedding, item['embedding'])
+                for idx in remaining_indices:
+                    relevance = relevance_scores[idx]
                     
-                    # 多样性分数（与已选择结果的最大相似度）
-                    max_similarity = max(
-                        cosine_similarity(item['embedding'], s['embedding'])
-                        for s in selected
-                    )
+                    max_similarity = 0.0
+                    if selected and embeddings[idx] is not None:
+                        sims = []
+                        for sel_idx in selected:
+                            if embeddings[sel_idx] is not None:
+                                sim = np.dot(embeddings[idx], embeddings[sel_idx])
+                                sims.append(sim)
+                        if sims:
+                            max_similarity = max(sims)
                     
-                    # MMR 分数
                     mmr_score = lambda_param * relevance - (1 - lambda_param) * max_similarity
                     
                     if mmr_score > best_score:
                         best_score = mmr_score
-                        best_item = item
+                        best_idx = idx
                 
-                if best_item:
-                    selected.append(best_item)
-                    remaining.remove(best_item)
+                if best_idx is not None:
+                    selected.append(best_idx)
+                    remaining_indices.remove(best_idx)
                 else:
                     break
             
-            logger.info(f"🎯 MMR 重排: {len(selected)} 个结果 (λ={lambda_param})")
-            return selected
+            selected_results = [results[i] for i in selected]
             
+            logger.info(f"🎯 MMR 重排: {len(selected_results)} 个结果 (λ={lambda_param}, 模式={'多样性' if force_diversity else '自适应'})")
+            return selected_results
+            
+        except ImportError:
+            logger.warning("⚠️ NumPy 不可用，使用纯 Python 实现")
+            return self._mmr_rerank_python(results, query_embedding, lambda_param, top_k)
         except Exception as e:
             logger.error(f"❌ MMR 重排失败: {e}")
             return results[:top_k] if top_k else results
+    
+    def _mmr_rerank_python(
+        self,
+        results: List[Dict[str, Any]],
+        query_embedding: List[float],
+        lambda_param: float,
+        top_k: Optional[int]
+    ) -> List[Dict[str, Any]]:
+        """
+        纯 Python 实现的 MMR（备用）
+        注意：性能较差，生产环境建议安装 NumPy
+        """
+        import math
+        
+        def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
+            dot_product = sum(a * b for a, b in zip(vec1, vec2))
+            norm1 = math.sqrt(sum(a * a for a in vec1))
+            norm2 = math.sqrt(sum(b * b for b in vec2))
+            if norm1 == 0 or norm2 == 0:
+                return 0.0
+            return dot_product / (norm1 * norm2)
+        
+        selected = []
+        remaining = results.copy()
+        
+        if remaining:
+            first = max(remaining, key=lambda x: x.get('score', 0))
+            selected.append(first)
+            remaining.remove(first)
+        
+        target_count = top_k if top_k else len(results)
+        while remaining and len(selected) < target_count:
+            best_score = -float('inf')
+            best_item = None
+            
+            for item in remaining:
+                relevance = cosine_similarity(query_embedding, item['embedding'])
+                
+                max_similarity = 0.0
+                if selected:
+                    for s in selected:
+                        sim = cosine_similarity(item['embedding'], s['embedding'])
+                        if sim > max_similarity:
+                            max_similarity = sim
+                
+                mmr_score = lambda_param * relevance - (1 - lambda_param) * max_similarity
+                
+                if mmr_score > best_score:
+                    best_score = mmr_score
+                    best_item = item
+            
+            if best_item:
+                selected.append(best_item)
+                remaining.remove(best_item)
+            else:
+                break
+        
+        return selected
     
     async def optimize_context(
         self,

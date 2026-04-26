@@ -29,6 +29,20 @@ class Neo4jManager:
         if settings.ENABLE_KNOWLEDGE_GRAPH:
             self._connect()
 
+    def _serialize_value(self, value: Any) -> Any:
+        """将 Neo4j 类型序列化为 JSON 兼容的类型"""
+        if value is None:
+            return None
+        if isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, (list, tuple)):
+            return [self._serialize_value(v) for v in value]
+        if isinstance(value, dict):
+            return {k: self._serialize_value(v) for k, v in value.items()}
+        if hasattr(value, 'isoformat'):
+            return value.isoformat()
+        return str(value)
+
     def _connect(self):
         """建立连接"""
         if not NEO4J_AVAILABLE:
@@ -260,8 +274,23 @@ class Neo4jManager:
                 nodes = record["nodes"] or []
                 edges = record["edges"] or []
                 for node in nodes:
+                    node["id"] = str(node["id"])
+                    if isinstance(node.get("properties"), str):
+                        node["properties"] = json.loads(node["properties"])
                     if node.get("properties") is None:
                         node["properties"] = {}
+                    node["properties"] = self._serialize_value(node.get("properties"))
+                for edge in edges:
+                    edge["id"] = str(edge["id"])
+                    edge["source"] = str(edge["source"])
+                    edge["target"] = str(edge["target"])
+                    if edge.get("type") is None:
+                        edge["type"] = "RELATED"
+                    if isinstance(edge.get("properties"), str):
+                        edge["properties"] = json.loads(edge["properties"])
+                    if edge.get("properties") is None:
+                        edge["properties"] = {}
+                    edge["properties"] = self._serialize_value(edge.get("properties"))
                 return {"nodes": nodes, "edges": edges}
             return {"nodes": [], "edges": []}
 
@@ -297,10 +326,27 @@ class Neo4jManager:
 
             record = result.single()
             if record:
-                return {
-                    "nodes": record["nodes"] or [],
-                    "edges": record["edges"] or []
-                }
+                nodes = record["nodes"] or []
+                edges = record["edges"] or []
+                for node in nodes:
+                    node["id"] = str(node["id"])
+                    if isinstance(node.get("properties"), str):
+                        node["properties"] = json.loads(node["properties"])
+                    if node.get("properties") is None:
+                        node["properties"] = {}
+                    node["properties"] = self._serialize_value(node.get("properties"))
+                for edge in edges:
+                    edge["id"] = str(edge["id"])
+                    edge["source"] = str(edge["source"])
+                    edge["target"] = str(edge["target"])
+                    if edge.get("type") is None:
+                        edge["type"] = "RELATED"
+                    if isinstance(edge.get("properties"), str):
+                        edge["properties"] = json.loads(edge["properties"])
+                    if edge.get("properties") is None:
+                        edge["properties"] = {}
+                    edge["properties"] = self._serialize_value(edge.get("properties"))
+                return {"nodes": nodes, "edges": edges}
             return {"nodes": [], "edges": []}
 
     def get_all_entities(self, tenant_id: str, limit: int = 200, 

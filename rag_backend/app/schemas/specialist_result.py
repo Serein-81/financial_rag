@@ -4,7 +4,7 @@
 """
 
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from datetime import datetime
 from enum import Enum
 
@@ -47,8 +47,8 @@ class FinanceFinding(BaseFinding):
     variance_percentage: Optional[float] = Field(default=None, description="偏差百分比")
     affected_statements: Optional[List[str]] = Field(default=None, description="影响的财务报表")
     
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "id": "fin_001",
                 "agent_name": "finance_agent",
@@ -66,6 +66,7 @@ class FinanceFinding(BaseFinding):
                 "affected_statements": ["资产负债表"]
             }
         }
+    )
 
 
 class TaxFinding(BaseFinding):
@@ -76,8 +77,8 @@ class TaxFinding(BaseFinding):
     compliance_status: Optional[str] = Field(default=None, description="合规状态")
     related_regulations: Optional[List[str]] = Field(default=None, description="相关法规")
     
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "id": "tax_001",
                 "agent_name": "tax_agent",
@@ -96,6 +97,7 @@ class TaxFinding(BaseFinding):
                 "related_regulations": ["增值税暂行条例第2条"]
             }
         }
+    )
 
 
 class LegalFinding(BaseFinding):
@@ -106,8 +108,8 @@ class LegalFinding(BaseFinding):
     compliance_level: Optional[str] = Field(default=None, description="合规等级")
     potential_liability: Optional[str] = Field(default=None, description="潜在责任")
     
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "id": "leg_001",
                 "agent_name": "legal_agent",
@@ -126,6 +128,7 @@ class LegalFinding(BaseFinding):
                 "potential_liability": "违约风险"
             }
         }
+    )
 
 
 class SpecialistResult(BaseModel):
@@ -153,8 +156,8 @@ class SpecialistResult(BaseModel):
     execution_time: float = Field(..., description="执行时间(秒)")
     created_at: datetime = Field(default_factory=datetime.utcnow, description="创建时间")
     
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "task_id": "audit_123",
                 "tenant_id": "tenant_001",
@@ -173,6 +176,7 @@ class SpecialistResult(BaseModel):
                 "execution_time": 45.2
             }
         }
+    )
 
 
 class CombinedAuditResult(BaseModel):
@@ -198,8 +202,8 @@ class CombinedAuditResult(BaseModel):
     total_execution_time: float = Field(..., description="总执行时间(秒)")
     created_at: datetime = Field(default_factory=datetime.utcnow, description="创建时间")
     
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "task_id": "audit_123",
                 "tenant_id": "tenant_001",
@@ -214,17 +218,18 @@ class CombinedAuditResult(BaseModel):
                 "total_execution_time": 120.5
             }
         }
+    )
 
 
 class AuditRequest(BaseModel):
     """审查请求"""
     tenant_id: str = Field(..., description="租户ID")
-    audit_type: str = Field(..., description="审查类型", regex="^(finance|tax|legal|comprehensive)$")
+    audit_type: str = Field(..., description="审查类型", pattern="^(finance|tax|legal|comprehensive)$")
     documents: List[Dict[str, Any]] = Field(..., description="待审查文档")
     options: Optional[Dict[str, Any]] = Field(default_factory=dict, description="审查选项")
     
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "tenant_id": "tenant_001",
                 "audit_type": "comprehensive",
@@ -238,6 +243,7 @@ class AuditRequest(BaseModel):
                 }
             }
         }
+    )
 
 
 class AuditResponse(BaseModel):
@@ -248,8 +254,8 @@ class AuditResponse(BaseModel):
     result: Optional[CombinedAuditResult] = Field(default=None, description="审查结果")
     error: Optional[str] = Field(default=None, description="错误信息")
     
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "success": True,
                 "task_id": "audit_123",
@@ -258,3 +264,4 @@ class AuditResponse(BaseModel):
                 "error": None
             }
         }
+    )

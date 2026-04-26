@@ -75,13 +75,18 @@ class SiliconFlowEmbeddingAdapter(BaseEmbeddingAdapter):
         Returns:
             文本的向量表示
         """
+        self.logger.debug(f"[SiliconFlow] _encode_single 调用 | task_type={task_type} | text长度={len(text) if text else 0}")
+        
         if not isinstance(text, str):
+            self.logger.error(f"[SiliconFlow] text 不是字符串: {type(text)}")
             raise ValueError(f"Expected str, got {type(text)}: {text}")
         
+        original_text = text
         text = self.truncate_text(text, self.max_length)
+        self.logger.debug(f"[SiliconFlow] truncate 后 | 原始长度={len(original_text) if original_text else 0} | truncate后长度={len(text) if text else 0}")
         
         if not text or len(text.strip()) == 0:
-            self.logger.warning("文本为空，跳过编码")
+            self.logger.warning(f"[SiliconFlow] 文本为空 (original='{original_text[:50]}...'), 跳过编码")
             return [0.0] * 1024
         
         payload = {

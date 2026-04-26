@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { multiAgentApi, type HITLApproval, type UserRole, type RBACPolicy, ApprovalStatus, PermissionLevel } from '@/api/multi-agent'
+import { reviewApiClient, type ReviewRequest, type ReviewStatusEnum as ReviewStatus, ReviewTypeEnum } from '@/api/review'
 import {
   Shield,
   CheckCircle2,
@@ -18,6 +19,7 @@ import {
   Settings,
   Key,
   AlertCircle,
+  ClipboardList,
 } from 'lucide-vue-next'
 
 const authStore = useAuthStore()
@@ -35,6 +37,35 @@ const pendingApprovals = ref<HITLApproval[]>([])
 const approvalHistory = ref<HITLApproval[]>([])
 const userRoles = ref<UserRole[]>([])
 const rbacPolicies = ref<RBACPolicy[]>([])
+const taxReviews = ref<ReviewRequest[]>([])
+
+function getReviewTypeLabel(type: ReviewTypeEnum | string): string {
+  const typeMap = {
+    [ReviewTypeEnum.TAX]: '税务',
+    [ReviewTypeEnum.FINANCE]: '财务',
+    [ReviewTypeEnum.LEGAL]: '法务',
+    [ReviewTypeEnum.COMPLIANCE]: '合规',
+    'tax': '税务',
+    'finance': '财务',
+    'legal': '法务',
+    'compliance': '合规'
+  }
+  return typeMap[type] || '其他'
+}
+
+function getReviewTypeTagType(type: ReviewTypeEnum | string): string {
+  const typeMap = {
+    [ReviewTypeEnum.TAX]: 'warning',
+    [ReviewTypeEnum.FINANCE]: 'success',
+    [ReviewTypeEnum.LEGAL]: 'danger',
+    [ReviewTypeEnum.COMPLIANCE]: 'info',
+    'tax': 'warning',
+    'finance': 'success',
+    'legal': 'danger',
+    'compliance': 'info'
+  }
+  return typeMap[type] || 'info'
+}
 
 const selectedApproval = ref<HITLApproval | null>(null)
 const reviewNotes = ref('')
@@ -66,6 +97,18 @@ async function fetchData() {
     approvalHistory.value = history
     userRoles.value = roles
     rbacPolicies.value = policies
+    
+    try {
+      const response = await reviewApiClient.list({ 
+        page_size: 100,
+        status: 'pending'  // 只查询待处理的审核请求
+      })
+      taxReviews.value = response.items || []
+      console.log('📋 待处理税务审核请求:', taxReviews.value)
+    } catch (reviewError: any) {
+      console.error('获取税务审核请求失败:', reviewError)
+      taxReviews.value = []
+    }
   } catch (error) {
     console.error('获取HITL数据失败:', error)
   } finally {
@@ -134,6 +177,39 @@ function getPermissionLabel(level: PermissionLevel): string {
 
 function getPolicyForRole(roleId: string) {
   return rbacPolicies.value.find(p => p.role === roleId)
+}
+
+const selectedTaxReview = ref<ReviewRequest | null>(null)
+const taxReviewDetailVisible = ref(false)
+
+async function handleTaxReview(review: ReviewRequest) {
+  selectedTaxReview.value = review
+  taxReviewDetailVisible.value = true
+}
+
+async function submitTaxReview(decision: 'approved' | 'rejected') {
+  if (!selectedTaxReview.value) return
+  
+  try {
+    const comments = prompt(`请输入审核意见：`)
+    
+    await reviewApiClient.update(selectedTaxReview.value.id, {
+      status: decision === 'approved' ? 'completed' : 'rejected',
+      review_result: { 
+        decision,
+        reviewed_by: 'admin',
+        comments 
+      },
+      review_comments: comments || ''
+    })
+    
+    alert(`税务发票审核已${decision === 'approved' ? '通过' : '驳回'}！`)
+    taxReviewDetailVisible.value = false
+    await fetchData()
+  } catch (error) {
+    console.error('税务审核操作失败:', error)
+    alert('操作失败，请重试')
+  }
 }
 
 onMounted(() => {
@@ -212,7 +288,50 @@ onMounted(() => {
 
       <template v-else>
         <template v-if="activeTab === 'pending'">
-          <div v-if="pendingApprovals.length === 0" class="bg-white rounded-2xl p-16 border border-gray-100 text-center shadow-lg shadow-gray-100/50">
+          <!-- 人工审核请求 -->
+          <div v-if="taxReviews.length > 0" class="mb-6">
+            <h3 class="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+              <ClipboardList :size="20" class="text-emerald-600" />
+              待审核请求 ({{ taxReviews.length }})
+            </h3>
+            <div class="space-y-4">
+              <div
+                v-for="review in taxReviews"
+                :key="review.id"
+                class="bg-gradient-to-r from-amber-50 to-orange-50 rounded-2xl border border-amber-200 overflow-hidden shadow-sm hover:shadow-lg transition-all duration-300"
+              >
+                <div class="p-6">
+                  <div class="flex items-start justify-between">
+                    <div class="flex-1">
+                      <div class="flex items-center gap-3 mb-3">
+                        <el-tag :type="getReviewTypeTagType(review.review_type)" size="small">
+                          {{ getReviewTypeLabel(review.review_type) }}审核
+                        </el-tag>
+                        <el-tag :type="review.priority === 'high' || review.priority === 'urgent' ? 'danger' : 'info'" size="small">
+                          {{ review.priority }}
+                        </el-tag>
+                      </div>
+                      <p class="font-semibold text-gray-900 text-lg mb-1">{{ review.title }}</p>
+                      <p class="text-sm text-gray-500 mb-2">{{ review.description }}</p>
+                      <div class="text-xs text-gray-400">
+                        触发原因: {{ review.trigger_reason || '未指定' }}
+                      </div>
+                    </div>
+                    <div class="flex flex-col items-end gap-2">
+                      <el-button type="primary" size="small" @click="handleTaxReview(review)">
+                        审核
+                      </el-button>
+                      <el-button type="info" size="small" @click="handleTaxReview(review)" plain>
+                        查看详情
+                      </el-button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="pendingApprovals.length === 0 && taxReviews.length === 0" class="bg-white rounded-2xl p-16 border border-gray-100 text-center shadow-lg shadow-gray-100/50">
             <div class="w-20 h-20 mx-auto mb-6 bg-gradient-to-br from-green-100 to-emerald-100 rounded-full flex items-center justify-center">
               <CheckCircle2 :size="40" class="text-emerald-600" />
             </div>
@@ -328,6 +447,7 @@ onMounted(() => {
                   <th class="px-6 py-4 text-left text-sm font-bold text-gray-700">风险等级</th>
                   <th class="px-6 py-4 text-left text-sm font-bold text-gray-700">状态</th>
                   <th class="px-6 py-4 text-left text-sm font-bold text-gray-700">申请人</th>
+                  <th class="px-6 py-4 text-left text-sm font-bold text-gray-700">审核意见</th>
                   <th class="px-6 py-4 text-left text-sm font-bold text-gray-700">处理时间</th>
                 </tr>
               </thead>
@@ -354,6 +474,12 @@ onMounted(() => {
                   </td>
                   <td class="px-6 py-4">
                     <span class="text-sm text-gray-600 font-mono bg-gray-50 px-2 py-1 rounded">{{ approval.user_id.slice(0, 8) }}...</span>
+                  </td>
+                  <td class="px-6 py-4">
+                    <p v-if="approval.reviewer_notes" class="text-sm text-gray-700 max-w-xs truncate" :title="approval.reviewer_notes">
+                      {{ approval.reviewer_notes }}
+                    </p>
+                    <p v-else class="text-sm text-gray-400 italic">无意见</p>
                   </td>
                   <td class="px-6 py-4 text-sm text-gray-500">
                     {{ approval.reviewed_at ? formatDate(approval.reviewed_at) : formatDate(approval.created_at) }}
@@ -523,6 +649,138 @@ onMounted(() => {
           </div>
         </template>
       </template>
+
+      <!-- 税务审核详情对话框 -->
+      <el-dialog
+        v-model="taxReviewDetailVisible"
+        :title="`税务发票审核详情 - ${selectedTaxReview?.title || ''}`"
+        width="800px"
+        :close-on-click-modal="false"
+      >
+        <div v-if="selectedTaxReview">
+          <el-descriptions :column="2" border class="mb-4">
+            <el-descriptions-item label="提交时间">
+              <span class="text-sm">{{ selectedTaxReview.created_at ? formatDate(selectedTaxReview.created_at) : '未记录' }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="优先级">
+              <el-tag :type="selectedTaxReview.priority === 'high' || selectedTaxReview.priority === 'urgent' ? 'danger' : 'info'">
+                {{ selectedTaxReview.priority }}
+              </el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="状态">
+              <el-tag type="warning">{{ selectedTaxReview.status }}</el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="审核时长">
+              <span class="text-sm text-gray-600">{{ selectedTaxReview.age_hours ? `${selectedTaxReview.age_hours.toFixed(1)} 小时` : '处理中' }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="SLA截止">
+              <span :class="selectedTaxReview.is_overdue ? 'text-red-600 font-semibold' : 'text-gray-600'">
+                {{ selectedTaxReview.sla_deadline ? formatDate(selectedTaxReview.sla_deadline) : '无限制' }}
+                <el-tag v-if="selectedTaxReview.is_overdue" type="danger" size="small" class="ml-1">已超时</el-tag>
+              </span>
+            </el-descriptions-item>
+            <el-descriptions-item label="触发原因" :span="2">
+              {{ selectedTaxReview.trigger_reason || '未指定' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="描述" :span="2">
+              {{ selectedTaxReview.description || '无' }}
+            </el-descriptions-item>
+          </el-descriptions>
+
+          <div v-if="selectedTaxReview.trigger_details" class="mb-4">
+            <h4 class="font-semibold text-gray-800 mb-2 flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+              AI 提取信息
+            </h4>
+            <el-card shadow="never" class="bg-gradient-to-r from-emerald-50 to-teal-50 border-emerald-100">
+              <el-descriptions :column="2" size="small">
+                <el-descriptions-item label="置信度">
+                  <span :class="(selectedTaxReview.trigger_details as any).confidence >= 0.8 ? 'text-green-600 font-semibold' : 'text-orange-600 font-semibold'">
+                    {{ ((selectedTaxReview.trigger_details as any).confidence * 100).toFixed(1) || 'N/A' }}%
+                  </span>
+                </el-descriptions-item>
+                <el-descriptions-item label="发票金额">
+                  <span class="text-lg font-bold text-emerald-700">
+                    {{ (selectedTaxReview.trigger_details as any).amount ? `¥${(selectedTaxReview.trigger_details as any).amount.toLocaleString()}` : 'N/A' }}
+                  </span>
+                </el-descriptions-item>
+                <el-descriptions-item label="税额">
+                  <span class="text-orange-600 font-semibold">
+                    {{ (selectedTaxReview.trigger_details as any).tax_amount ? `¥${(selectedTaxReview.trigger_details as any).tax_amount.toLocaleString()}` : 'N/A' }}
+                  </span>
+                </el-descriptions-item>
+                <el-descriptions-item label="税率">
+                  <el-tag :type="(selectedTaxReview.trigger_details as any).tax_rate === 0.13 ? 'success' : 'warning'" size="small">
+                    {{ (selectedTaxReview.trigger_details as any).tax_rate ? `${(selectedTaxReview.trigger_details as any).tax_rate * 100}%` : 'N/A' }}
+                  </el-tag>
+                </el-descriptions-item>
+                <el-descriptions-item label="发票号码" :span="2">
+                  <code class="bg-gray-100 px-2 py-1 rounded text-sm">{{ (selectedTaxReview.trigger_details as any).invoice_number || 'N/A' }}</code>
+                </el-descriptions-item>
+                <el-descriptions-item label="发票类型" :span="2">
+                  {{ (selectedTaxReview.trigger_details as any).invoice_type || 'N/A' }}
+                </el-descriptions-item>
+                <el-descriptions-item label="开票日期">
+                  {{ (selectedTaxReview.trigger_details as any).invoice_date || (selectedTaxReview.trigger_details as any).date || 'N/A' }}
+                </el-descriptions-item>
+              </el-descriptions>
+              
+              <div v-if="(selectedTaxReview.trigger_details as any).seller" class="mt-3 pt-3 border-t border-emerald-200">
+                <div class="grid grid-cols-2 gap-4">
+                  <div>
+                    <span class="text-xs text-gray-500">销售方</span>
+                    <p class="font-medium text-gray-800">{{ (selectedTaxReview.trigger_details as any).seller }}</p>
+                  </div>
+                  <div>
+                    <span class="text-xs text-gray-500">购买方</span>
+                    <p class="font-medium text-gray-800">{{ (selectedTaxReview.trigger_details as any).buyer }}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div v-if="(selectedTaxReview.trigger_details as any).semantic_suspicion?.length > 0" class="mt-3 pt-3 border-t border-emerald-200">
+                <h5 class="font-medium text-gray-700 mb-2 flex items-center gap-2">
+                  <AlertTriangle :size="14" class="text-orange-500" />
+                  语义可疑点 ({{ (selectedTaxReview.trigger_details as any).semantic_suspicion.length }})
+                </h5>
+                <el-tag v-for="(suspicion, idx) in (selectedTaxReview.trigger_details as any).semantic_suspicion" 
+                  :key="idx" 
+                  type="warning" 
+                  class="mr-2 mb-2">
+                  {{ suspicion }}
+                </el-tag>
+              </div>
+
+              <div v-if="(selectedTaxReview.trigger_details as any).trigger_reasons?.length > 0" class="mt-3 pt-3 border-t border-emerald-200">
+                <h5 class="font-medium text-gray-700 mb-2 flex items-center gap-2">
+                  <AlertCircle :size="14" class="text-red-500" />
+                  触发规则 ({{ (selectedTaxReview.trigger_details as any).trigger_reasons.length }})
+                </h5>
+                <ul class="list-disc list-inside text-sm text-gray-600 space-y-1">
+                  <li v-for="(reason, idx) in (selectedTaxReview.trigger_details as any).trigger_reasons" :key="idx" class="text-red-600">
+                    {{ reason }}
+                  </li>
+                </ul>
+              </div>
+            </el-card>
+          </div>
+
+          <div v-if="selectedTaxReview.content" class="mb-4">
+            <h4 class="font-semibold text-gray-800 mb-2">原始内容</h4>
+            <el-card shadow="never" class="bg-gray-50">
+              <pre class="text-xs text-gray-600 overflow-auto max-h-60">{{ JSON.stringify(selectedTaxReview.content, null, 2) }}</pre>
+            </el-card>
+          </div>
+        </div>
+
+        <template #footer>
+          <div class="flex justify-end gap-2">
+            <el-button @click="taxReviewDetailVisible = false">取消</el-button>
+            <el-button type="danger" @click="submitTaxReview('rejected')">驳回</el-button>
+            <el-button type="success" @click="submitTaxReview('approved')">通过</el-button>
+          </div>
+        </template>
+      </el-dialog>
     </div>
   </div>
 </template>

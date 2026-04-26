@@ -180,14 +180,19 @@ class TaxSubmissionWorkflow:
         
         compiled = self.compile()
         
-        final_state = None
-        async for state in compiled.astream(initial_state, config=config):
-            final_state = state
-            current_step = state.get("current_step", 0)
-            current_status = state.get("current_status", "unknown")
-            logger.debug(f"📍 步骤 {current_step}: {current_status}")
-        
-        logger.info(f"✅ 税务提交工作流完成: {session_id}")
+        try:
+            final_state = await compiled.ainvoke(initial_state, config=config)
+            logger.info(f"✅ 税务提交工作流完成: {session_id}")
+            logger.info(f"📊 [DEBUG] 最终状态 - tax_calculations: {len(final_state.get('tax_calculations', []))} 项")
+            logger.info(f"📊 [DEBUG] 最终状态 - total_tax_burden: ¥{final_state.get('total_tax_burden', 0):,.2f}")
+            logger.info(f"📊 [DEBUG] 最终状态 - overall_risk_score: {final_state.get('overall_risk_score')}")
+            logger.info(f"📊 [DEBUG] 最终状态 - high_risk_count: {final_state.get('high_risk_count')}")
+            logger.info(f"📊 [DEBUG] 最终状态 - risk_items count: {len(final_state.get('risk_items', []))}")
+        except Exception as e:
+            logger.error(f"❌ 税务提交工作流执行失败: {e}", exc_info=True)
+            final_state = initial_state
+            final_state["errors"] = final_state.get("errors", [])
+            final_state["errors"].append(f"工作流执行失败: {str(e)}")
         
         return final_state
     

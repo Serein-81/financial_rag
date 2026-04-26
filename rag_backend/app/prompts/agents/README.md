@@ -37,7 +37,7 @@ prompts/
 │   │   ├── system.md
 │   │   └── skills/
 │   │
-│   ├── output_agent/               # 输出格式化智能体
+│   ├── output_agent/               # 输出格式化智能体（已弃用，向后兼容）
 │   │   ├── agent.yaml
 │   │   ├── system.md
 │   │   └── skills/

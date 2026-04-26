@@ -11,6 +11,9 @@ RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debia
     curl \
     build-essential \
     libtesseract-dev \
+    libmupdf-dev \
+    mupdf \
+    libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 # 安装极速包管理器 uv
@@ -31,6 +34,9 @@ FROM python:3.11-slim AS runner
 WORKDIR /app
 
 # 安装运行时必需的系统动态库（补齐了 OpenCV 和 OCR 需要的底层库）
+# libgl1, libglib2.0-0: OpenCV/Camelot 依赖
+# ghostscript: Camelot PDF表格提取必需
+# tesseract-ocr*: 图片OCR识别
 RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources && \
     apt-get update && apt-get install -y --no-install-recommends \
     curl \
@@ -40,8 +46,9 @@ RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debia
     libtesseract5 \
     libgl1 \
     libglib2.0-0 \
+    ghostscript \
     && rm -rf /var/lib/apt/lists/*\
-    && apt-get clean  #  apt-get clean 彻底清空缓存，进一步瘦身镜像！
+    && apt-get clean
 
 # 【核心操作】直接把第一阶段编译好的纯净依赖库搬过来！
 COPY --from=builder /opt/venv /opt/venv

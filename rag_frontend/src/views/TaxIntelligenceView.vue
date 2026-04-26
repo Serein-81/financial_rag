@@ -1,11 +1,8 @@
 <script setup lang="ts">
-
 import { ref, computed, onMounted } from 'vue'
-
 import { useRouter } from 'vue-router'
-
 import { taxIntelligenceApi, type TaxAnalysisResult, type TaxReport } from '@/api/tax-intelligence'
-
+import { financialDataApiClient, type FinancialDataResponse } from '@/api/financial-data'
 import {
   FileBarChart,
   TrendingUp,
@@ -24,78 +21,78 @@ import {
   Shield,
   Info,
   X,
-  Users
+  Users,
+  MessageSquare,
+  Sparkles,
+  TrendingUp as TrendingUpIcon,
+  Building2,
+  Calendar,
+  FileText
 } from 'lucide-vue-next'
-
-
 
 const router = useRouter()
 
-
-
 const isLoading = ref(false)
-
 const isExporting = ref(false)
+const isExplaining = ref(false)
+const isQueryingPolicies = ref(false)
 
 const activeTab = ref<'dashboard' | 'history' | 'detail'>('dashboard')
 
 const selectedAnalysis = ref<TaxAnalysisResult | null>(null)
-
 const analysisHistory = ref<TaxReport[]>([])
-
 const historyTotal = ref(0)
-
 const currentPage = ref(1)
-
 const pageSize = ref(10)
 
-
-
-const showAnalysisModal = ref(false)
-
-const analysisRequest = ref({
-
-  fiscal_year: new Date().getFullYear(),
-
-  fiscal_period: 'Q4',
-
-  tax_type: '',
-
-  company_name: '',
-
-  financial_data: {} as Record<string, any>
-
+const statistics = ref({
+  total_analyses: 0,
+  current_quarter_analyses: 0,
+  high_risk_count: 0,
+  compliance_rate: 0.985
 })
 
+const financialDataList = ref<FinancialDataResponse[]>([])
+const selectedFinancialData = ref<FinancialDataResponse | null>(null)
+const showFinancialDataDrawer = ref(false)
 
+const showAnalysisModal = ref(false)
+const analysisRequest = ref({
+  fiscal_year: new Date().getFullYear(),
+  fiscal_period: 'Q4',
+  tax_type: '',
+  company_name: '',
+  financial_data: {} as Record<string, any>
+})
+
+const showExplanationPanel = ref(false)
+const explanationInput = ref('')
+const explanationResult = ref<string>('')
+const explanationLoading = ref(false)
+
+const showPolicyDialog = ref(false)
+const policyQueryInput = ref('')
+const matchedPolicies = ref<Array<{
+  policy_name: string
+  policy_content: string
+  match_level: string
+  applicable_conditions: string[]
+  potential_savings: number
+}>>([])
 
 const riskLevelColors = {
-
   low: 'text-emerald-500 bg-emerald-50',
-
   medium: 'text-amber-500 bg-amber-50',
-
   high: 'text-orange-500 bg-orange-50',
-
   critical: 'text-red-500 bg-red-50'
-
 }
-
-
 
 const riskLevelBgColors = {
-
   low: 'bg-emerald-500',
-
   medium: 'bg-amber-500',
-
   high: 'bg-orange-500',
-
   critical: 'bg-red-500'
-
 }
-
-
 
 const severityIcons = {
 
@@ -249,54 +246,54 @@ async function exportPdf(analysisId: string) {
 
 
 
-function formatCurrency(value: number): string {
-
-  return new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY' }).format(value)
-
+function formatCurrency(value: any): string {
+  const num = Number(value)
+  if (isNaN(num)) return '¥0.00'
+  return new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY' }).format(num)
 }
 
 
 
-function formatPercent(value: number): string {
+function formatPercent(value: any): string {
+  const num = Number(value)
+  if (isNaN(num)) return '0.00%'
+  return (num * 100).toFixed(2) + '%'
+}
 
-  return (value * 100).toFixed(2) + '%'
 
+
+function formatRiskScorePercent(value: any): string {
+  const num = Number(value)
+  if (isNaN(num)) return '0.0%'
+  return (num * 100).toFixed(1) + '%'
 }
 
 
 
 function formatDate(dateStr: string): string {
-
   return new Date(dateStr).toLocaleString('zh-CN')
-
 }
 
 
 
-function getRiskScoreColor(score: number): string {
-
-  if (score < 0.3) return 'text-emerald-500'
-
-  if (score < 0.6) return 'text-amber-500'
-
-  if (score < 0.8) return 'text-orange-500'
-
+function getRiskScoreColor(score: any): string {
+  const num = Number(score)
+  if (isNaN(num)) return 'text-slate-500'
+  if (num < 0.3) return 'text-emerald-500'
+  if (num < 0.6) return 'text-amber-500'
+  if (num < 0.8) return 'text-orange-500'
   return 'text-red-500'
-
 }
 
 
 
-function getRiskScoreBg(score: number): string {
-
-  if (score < 0.3) return 'bg-emerald-500'
-
-  if (score < 0.6) return 'bg-amber-500'
-
-  if (score < 0.8) return 'bg-orange-500'
-
+function getRiskScoreBg(score: any): string {
+  const num = Number(score)
+  if (isNaN(num)) return 'bg-slate-500'
+  if (num < 0.3) return 'bg-emerald-500'
+  if (num < 0.6) return 'bg-amber-500'
+  if (num < 0.8) return 'bg-orange-500'
   return 'bg-red-500'
-
 }
 
 
@@ -328,9 +325,8 @@ interface FilingRecommendation {
 
 
 function calculateTotalSavings(): number {
-
-  return getApplicablePolicies().reduce((sum, policy) => sum + policy.savings, 0)
-
+  const policies = matchedPolicies.length > 0 ? matchedPolicies : getApplicablePolicies()
+  return policies.reduce((sum, policy) => sum + (policy.potential_savings || policy.savings || 0), 0)
 }
 
 
@@ -534,15 +530,105 @@ function getFilingRecommendations(): FilingRecommendation[] {
   
 
   return recommendations
-
 }
 
+async function loadStatistics() {
+  try {
+    const stats = await taxIntelligenceApi.getStatistics()
+    statistics.value = stats
+  } catch (e: any) {
+    console.error('Failed to load statistics:', e)
+    statistics.value.high_risk_count = analysisHistory.value.filter(a => a.risk_score > 0.7).length
+  }
+}
 
+async function loadFinancialData() {
+  try {
+    const result = await financialDataApiClient.list({ page_size: 100 })
+    financialDataList.value = result.items
+  } catch (e: any) {
+    console.error('Failed to load financial data:', e)
+  }
+}
+
+function openFinancialDataDrawer() {
+  showFinancialDataDrawer.value = true
+  loadFinancialData()
+}
+
+function selectFinancialData(data: FinancialDataResponse) {
+  selectedFinancialData.value = data
+  analysisRequest.value.financial_data = {
+    total_revenue: data.total_revenue,
+    total_expenses: data.total_expenses,
+    taxable_sales: data.taxable_sales,
+    input_tax: data.input_tax,
+    output_tax: data.output_tax,
+    taxable_income: data.taxable_income,
+    is_small_enterprise: data.is_small_enterprise
+  }
+  analysisRequest.value.fiscal_year = data.fiscal_year
+  showFinancialDataDrawer.value = false
+  showAnalysisModal.value = true
+}
+
+async function queryPoliciesFromBackend() {
+  if (!policyQueryInput.value.trim()) return
+  
+  isQueryingPolicies.value = true
+  try {
+    const result = await taxIntelligenceApi.queryPolicies({
+      query: policyQueryInput.value,
+      top_k: 5
+    })
+    matchedPolicies.value = result.policies
+    showPolicyDialog.value = true
+  } catch (e: any) {
+    console.error('Failed to query policies:', e)
+  } finally {
+    isQueryingPolicies.value = false
+  }
+}
+
+async function explainReport() {
+  if (!selectedAnalysis.value || !explanationInput.value.trim()) return
+  
+  explanationLoading.value = true
+  try {
+    const result = await taxIntelligenceApi.explainReport(
+      selectedAnalysis.value.analysis_id,
+      { question: explanationInput.value }
+    )
+    explanationResult.value = result.explanation
+  } catch (e: any) {
+    console.error('Failed to explain report:', e)
+    explanationResult.value = '解释生成失败，请稍后重试'
+  } finally {
+    explanationLoading.value = false
+  }
+}
+
+async function generateGeneralExplanation() {
+  if (!selectedAnalysis.value) return
+  
+  explanationLoading.value = true
+  try {
+    const result = await taxIntelligenceApi.explainReport(
+      selectedAnalysis.value.analysis_id,
+      {}
+    )
+    explanationResult.value = result.explanation
+    showExplanationPanel.value = true
+  } catch (e: any) {
+    console.error('Failed to generate explanation:', e)
+  } finally {
+    explanationLoading.value = false
+  }
+}
 
 onMounted(() => {
-
   loadHistory()
-
+  loadStatistics()
 })
 
 </script>
@@ -705,7 +791,7 @@ onMounted(() => {
 
                   <p class="text-sm text-slate-500">分析记录</p>
 
-                  <p class="text-2xl font-bold text-slate-900 mt-1">{{ historyTotal }}</p>
+                  <p class="text-2xl font-bold text-slate-900 mt-1">{{ statistics.total_analyses }}</p>
 
                 </div>
 
@@ -727,7 +813,7 @@ onMounted(() => {
 
                   <p class="text-sm text-slate-500">本季度分析</p>
 
-                  <p class="text-2xl font-bold text-slate-900 mt-1">{{ analysisHistory.filter(a => a.fiscal_period === 'Q4').length }}</p>
+                  <p class="text-2xl font-bold text-slate-900 mt-1">{{ statistics.current_quarter_analyses }}</p>
 
                 </div>
 
@@ -749,7 +835,7 @@ onMounted(() => {
 
                   <p class="text-sm text-slate-500">高风险项</p>
 
-                  <p class="text-2xl font-bold text-slate-900 mt-1">0</p>
+                  <p class="text-2xl font-bold text-slate-900 mt-1">{{ statistics.high_risk_count }}</p>
 
                 </div>
 
@@ -771,7 +857,7 @@ onMounted(() => {
 
                   <p class="text-sm text-slate-500">合规</p>
 
-                  <p class="text-2xl font-bold text-emerald-600 mt-1">98.5%</p>
+                  <p class="text-2xl font-bold text-emerald-600 mt-1">{{ (statistics.compliance_rate * 100).toFixed(1) }}%</p>
 
                 </div>
 
@@ -845,85 +931,93 @@ onMounted(() => {
 
             </div>
 
-
-
             <div class="bg-white rounded-xl border border-slate-200">
 
-              <div class="px-5 py-4 border-b border-slate-200">
+              <div class="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
 
-                <h3 class="font-semibold text-slate-900">快速分析</h3>
+                <h3 class="font-semibold text-slate-900">快捷操作</h3>
 
               </div>
 
-              <div class="p-5">
+              <div class="p-5 space-y-3">
 
-                <div class="grid grid-cols-2 gap-3">
+                <button
 
-                  <button
+                  @click="openFinancialDataDrawer"
 
-                    @click="analysisRequest.tax_type = '企业所得税'; showAnalysisModal = true"
+                  class="w-full p-4 border border-emerald-200 rounded-lg hover:border-emerald-500 hover:bg-emerald-50 transition-colors text-left flex items-center gap-3"
 
-                    class="p-4 border border-slate-200 rounded-lg hover:border-emerald-500 hover:bg-emerald-50 transition-colors text-left"
+                >
 
-                  >
+                  <div class="w-10 h-10 bg-emerald-100 rounded-lg flex items-center justify-center">
 
-                    <DollarSign :size="20" class="text-emerald-600 mb-2" />
+                    <TrendingUpIcon :size="20" class="text-emerald-600" />
 
-                    <p class="font-medium text-slate-900">企业所得税</p>
+                  </div>
 
-                    <p class="text-xs text-slate-500 mt-1">年度汇算清缴分析</p>
+                  <div class="flex-1">
 
-                  </button>
+                    <p class="font-medium text-slate-900">从财务数据发起分析</p>
 
-                  <button
+                    <p class="text-xs text-slate-500 mt-1">选择已录入的财务数据，一键开始智能分析</p>
 
-                    @click="analysisRequest.tax_type = '增值税'; showAnalysisModal = true"
+                  </div>
 
-                    class="p-4 border border-slate-200 rounded-lg hover:border-emerald-500 hover:bg-emerald-50 transition-colors text-left"
+                  <ChevronRight :size="16" class="text-slate-400" />
 
-                  >
+                </button>
 
-                    <PieChart :size="20" class="text-blue-600 mb-2" />
+                <button
 
-                    <p class="font-medium text-slate-900">增值税</p>
+                  @click="policyQueryInput = '研发费用加计扣除'; queryPoliciesFromBackend()"
 
-                    <p class="text-xs text-slate-500 mt-1">进项销项分析</p>
+                  class="w-full p-4 border border-blue-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-colors text-left flex items-center gap-3"
 
-                  </button>
+                >
 
-                  <button
+                  <div class="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
 
-                    @click="analysisRequest.tax_type = '个人所得税'; showAnalysisModal = true"
+                    <Sparkles :size="20" class="text-blue-600" />
 
-                    class="p-4 border border-slate-200 rounded-lg hover:border-emerald-500 hover:bg-emerald-50 transition-colors text-left"
+                  </div>
 
-                  >
+                  <div class="flex-1">
 
-                    <Users :size="20" class="text-purple-600 mb-2" />
+                    <p class="font-medium text-slate-900">查询研发优惠政策</p>
 
-                    <p class="font-medium text-slate-900">个人所得税</p>
+                    <p class="text-xs text-slate-500 mt-1">智能匹配企业适用的研发税收优惠</p>
 
-                    <p class="text-xs text-slate-500 mt-1">代扣代缴分析</p>
+                  </div>
 
-                  </button>
+                  <ChevronRight :size="16" class="text-slate-400" />
 
-                  <button
+                </button>
 
-                    @click="analysisRequest.tax_type = '全税种'; showAnalysisModal = true"
+                <button
 
-                    class="p-4 border border-slate-200 rounded-lg hover:border-emerald-500 hover:bg-emerald-50 transition-colors text-left"
+                  @click="policyQueryInput = '小微企业优惠'; queryPoliciesFromBackend()"
 
-                  >
+                  class="w-full p-4 border border-purple-200 rounded-lg hover:border-purple-500 hover:bg-purple-50 transition-colors text-left flex items-center gap-3"
 
-                    <Shield :size="20" class="text-amber-600 mb-2" />
+                >
 
-                    <p class="font-medium text-slate-900">全税种体检</p>
+                  <div class="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
 
-                    <p class="text-xs text-slate-500 mt-1">综合风险评估</p>
+                    <Shield :size="20" class="text-purple-600" />
 
-                  </button>
+                  </div>
 
-                </div>
+                  <div class="flex-1">
+
+                    <p class="font-medium text-slate-900">查询小微企业优惠</p>
+
+                    <p class="text-xs text-slate-500 mt-1">查询小规模纳税人适用的税收优惠政策</p>
+
+                  </div>
+
+                  <ChevronRight :size="16" class="text-slate-400" />
+
+                </button>
 
               </div>
 
@@ -981,17 +1075,17 @@ onMounted(() => {
 
                   <div class="flex items-center gap-4">
 
-                    <div :class="['w-3 h-3 rounded-full', getRiskScoreBg(item.risk_score)]" />
+                      <div :class="['w-3 h-3 rounded-full', getRiskScoreBg(item.risk_score)]" />
 
-                    <div>
+                      <div>
 
-                      <p class="font-medium text-slate-900">{{ item.analysis_type }} - {{ item.fiscal_year }}年{{ item.fiscal_period }}</p>
+                        <p class="font-medium text-slate-900">{{ item.analysis_type }} - {{ item.fiscal_year }}年{{ item.fiscal_period }}</p>
 
-                      <p class="text-sm text-slate-500 mt-1">风险评分: {{ (item.risk_score * 100).toFixed(1) }}%</p>
+                        <p class="text-sm text-slate-500 mt-1">风险评分: {{ formatRiskScorePercent(item.risk_score) }}</p>
+
+                      </div>
 
                     </div>
-
-                  </div>
 
                   <div class="flex items-center gap-4">
 
@@ -1026,6 +1120,22 @@ onMounted(() => {
             </div>
 
             <div class="flex gap-2">
+
+              <button
+
+                @click="showExplanationPanel = true; generateGeneralExplanation()"
+
+                :disabled="explanationLoading"
+
+                class="px-4 py-2 border border-blue-200 rounded-lg hover:bg-blue-50 flex items-center gap-2 transition-colors disabled:opacity-50"
+
+              >
+
+                <Sparkles :size="16" class="text-blue-600" />
+
+                AI智能解读
+
+              </button>
 
               <button
 
@@ -1196,61 +1306,36 @@ onMounted(() => {
                 <div class="p-5 space-y-3">
 
                   <div
-
-                    v-for="(policy, index) in getApplicablePolicies()"
-
+                    v-for="(policy, index) in matchedPolicies.length > 0 ? matchedPolicies : getApplicablePolicies()"
                     :key="index"
-
                     class="p-4 bg-gradient-to-r from-emerald-50 to-teal-50 rounded-lg border border-emerald-100"
-
                   >
-
                     <div class="flex items-start justify-between">
-
                       <div class="flex-1">
-
                         <div class="flex items-center gap-2 mb-2">
-
                           <CheckCircle :size="16" class="text-emerald-600" />
-
-                          <h4 class="font-medium text-slate-900">{{ policy.name }}</h4>
-
+                          <h4 class="font-medium text-slate-900">{{ policy.policy_name || policy.name }}</h4>
                         </div>
-
-                        <p class="text-sm text-slate-600 mb-2">{{ policy.description }}</p>
-
+                        <p class="text-sm text-slate-600 mb-2">{{ policy.policy_content || policy.description }}</p>
                         <div class="flex items-center gap-4 text-xs">
-
-                          <span class="text-slate-500">适用条件：{{ policy.condition }}</span>
-
+                          <span v-if="policy.applicable_conditions?.length || policy.condition" class="text-slate-500">
+                            适用条件：{{ (policy.applicable_conditions || [policy.condition]).join(', ') }}
+                          </span>
                         </div>
-
                       </div>
-
                       <div class="text-right ml-4">
-
-                        <p class="text-lg font-bold text-emerald-600">{{ formatCurrency(policy.savings) }}</p>
-
+                        <p class="text-lg font-bold text-emerald-600">{{ formatCurrency(policy.potential_savings || policy.savings) }}</p>
                         <p class="text-xs text-slate-500">节省金额</p>
-
                       </div>
-
                     </div>
-
                   </div>
 
-                  <div v-if="getApplicablePolicies().length === 0" class="text-center py-6 text-slate-500">
-
+                  <div v-if="matchedPolicies.length === 0 && getApplicablePolicies().length === 0" class="text-center py-6 text-slate-500">
                     <AlertTriangle :size="24" class="mx-auto mb-2 text-amber-500" />
-
                     <p>暂未匹配到适用的税收优惠政策</p>
-
                     <p class="text-xs mt-1">建议关注最新政策动态或调整企业经营范围</p>
-
                   </div>
-
                 </div>
-
               </div>
 
 
@@ -1684,6 +1769,145 @@ onMounted(() => {
       </div>
 
     </div>
+
+    <el-drawer
+      v-model="showFinancialDataDrawer"
+      title="选择财务数据"
+      size="500px"
+      direction="rtl"
+    >
+      <div class="p-4">
+        <div v-if="financialDataList.length === 0" class="text-center py-8 text-slate-500">
+          暂无财务数据记录
+        </div>
+        <div v-else class="space-y-3">
+          <div
+            v-for="item in financialDataList"
+            :key="item.id"
+            @click="selectFinancialData(item)"
+            class="p-4 border border-slate-200 rounded-lg hover:border-emerald-500 hover:bg-emerald-50 cursor-pointer transition-colors"
+          >
+            <div class="flex justify-between items-center">
+              <div>
+                <p class="font-medium text-slate-900">{{ item.fiscal_year }}年 {{ item.period_type }}</p>
+                <p class="text-sm text-slate-500 mt-1">收入: {{ formatCurrency(item.total_revenue) }}</p>
+              </div>
+              <div class="text-right">
+                <p class="text-sm text-slate-500">利润</p>
+                <p class="font-medium" :class="item.taxable_income > 0 ? 'text-emerald-600' : 'text-red-600'">
+                  {{ formatCurrency(item.taxable_income) }}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </el-drawer>
+
+    <el-dialog
+      v-model="showExplanationPanel"
+      title="AI智能解读"
+      width="600px"
+      :close-on-click-modal="false"
+    >
+      <div class="space-y-4">
+        <div class="flex gap-2">
+          <input
+            v-model="explanationInput"
+            type="text"
+            placeholder="输入您的问题，如：为什么我的企业所得税偏高？"
+            class="flex-1 px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            @keyup.enter="explainReport"
+          />
+          <button
+            @click="explainReport"
+            :disabled="explanationLoading || !explanationInput.trim()"
+            class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
+          >
+            <Loader2 v-if="explanationLoading" :size="16" class="animate-spin" />
+            提问
+          </button>
+        </div>
+        <div v-if="explanationResult" class="p-4 bg-blue-50 rounded-lg border border-blue-100">
+          <div class="flex items-start gap-2">
+            <MessageSquare :size="20" class="text-blue-600 mt-1 flex-shrink-0" />
+            <div class="text-sm text-slate-700 whitespace-pre-wrap">{{ explanationResult }}</div>
+          </div>
+        </div>
+        <div v-else-if="explanationLoading" class="text-center py-8">
+          <Loader2 :size="32" class="animate-spin text-blue-600 mx-auto" />
+          <p class="text-sm text-slate-500 mt-2">正在生成解读...</p>
+        </div>
+      </div>
+    </el-dialog>
+
+    <el-dialog
+      v-model="showPolicyDialog"
+      title="匹配的税收优惠政策"
+      width="800px"
+    >
+      <div class="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
+        <div
+          v-for="(policy, index) in matchedPolicies"
+          :key="index"
+          class="bg-white rounded-xl p-4 border border-gray-200 hover:shadow-md hover:border-emerald-300 transition-all"
+        >
+          <div class="flex items-start justify-between mb-3">
+            <div class="flex-1">
+              <h4 class="font-semibold text-gray-900 text-lg mb-1">{{ policy.policy_name }}</h4>
+              <div class="flex items-center gap-3 text-xs text-gray-500">
+                <span v-if="policy.source_name" class="flex items-center gap-1 text-blue-600">
+                  <Shield :size="12" />
+                  {{ policy.source_name }}
+                </span>
+                <span v-if="policy.effective_date" class="flex items-center gap-1">
+                  <Calendar :size="12" />
+                  生效: {{ formatDate(policy.effective_date) }}
+                </span>
+              </div>
+            </div>
+            <span :class="[
+              'px-3 py-1 text-xs rounded-lg font-medium',
+              policy.match_level === 'high' ? 'bg-emerald-100 text-emerald-700' :
+              policy.match_level === 'medium' ? 'bg-blue-100 text-blue-700' :
+              'bg-gray-100 text-gray-600'
+            ]">
+              {{ policy.match_level === 'high' ? '高匹配' : policy.match_level === 'medium' ? '中匹配' : '低匹配' }}
+            </span>
+          </div>
+          <p class="text-sm text-gray-600 mb-3 line-clamp-3">{{ policy.policy_content }}</p>
+          <div class="flex flex-wrap gap-2 mb-3">
+            <span
+              v-for="(condition, ci) in policy.applicable_conditions"
+              :key="ci"
+              class="px-2 py-1 bg-gray-100 text-gray-600 text-xs rounded border border-gray-200"
+            >
+              {{ condition }}
+            </span>
+          </div>
+          <div class="flex items-center justify-between pt-3 border-t border-gray-100">
+            <div class="flex items-center gap-4 text-xs text-gray-500">
+              <span v-if="policy.tax_types?.length" class="flex items-center gap-1">
+                <DollarSign :size="12" />
+                {{ policy.tax_types.slice(0, 2).join(', ') }}
+              </span>
+              <span v-if="policy.industries?.length" class="flex items-center gap-1">
+                <Building2 :size="12" />
+                {{ policy.industries.slice(0, 2).join(', ') }}
+              </span>
+            </div>
+            <div v-if="policy.potential_savings > 0" class="text-right">
+              <span class="text-xl font-bold text-emerald-600">{{ formatCurrency(policy.potential_savings) }}</span>
+              <span class="text-xs text-gray-500 ml-1">预计节省</span>
+            </div>
+          </div>
+        </div>
+        <div v-if="matchedPolicies.length === 0 && !isQueryingPolicies" class="text-center py-12">
+          <FileText :size="40" class="mx-auto mb-3 text-gray-300" />
+          <p class="text-gray-500">未找到匹配的优惠政策</p>
+        </div>
+      </div>
+    </el-dialog>
 
   </div>
 

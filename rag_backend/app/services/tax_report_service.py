@@ -262,6 +262,8 @@ class TaxReportService:
         limit: int = 20,
         status: str = None,
         tax_type: str = None,
+        start_date: str = None,
+        end_date: str = None,
     ) -> tuple:
         """
         获取税务报告列表
@@ -273,11 +275,25 @@ class TaxReportService:
             limit: 返回的记录数
             status: 状态过滤
             tax_type: 税种类型过滤
+            start_date: 开始日期 (YYYY-MM-DD格式)
+            end_date: 结束日期 (YYYY-MM-DD格式)
             
         Returns:
             (报告列表, 总数)
         """
         try:
+            from datetime import datetime
+            from sqlalchemy import and_, between
+            
+            # 构建查询条件
+            filters = {}
+            if user_id:
+                filters['user_id'] = user_id
+            if status:
+                filters['status'] = status
+            if tax_type:
+                filters['tax_type'] = tax_type
+            
             # 使用 Repository 获取列表
             reports = await self.repository.list(
                 tenant_id=tenant_id,
@@ -285,18 +301,40 @@ class TaxReportService:
                 limit=limit,
                 order_by='created_at',
                 order_desc=True,
-                user_id=user_id if user_id else None,
-                status=status if status else None,
-                tax_type=tax_type if tax_type else None,
+                **filters
             )
             
-            # 获取总数
+            # 应用日期过滤（如果提供了日期参数）
+            if start_date or end_date:
+                filtered_reports = []
+                for report in reports:
+                    report_date = report.created_at.date()
+                    
+                    # 检查是否在日期范围内
+                    in_range = True
+                    if start_date:
+                        start = datetime.strptime(start_date, "%Y-%m-%d").date()
+                        if report_date < start:
+                            in_range = False
+                    if end_date:
+                        end = datetime.strptime(end_date, "%Y-%m-%d").date()
+                        if report_date > end:
+                            in_range = False
+                    
+                    if in_range:
+                        filtered_reports.append(report)
+                
+                reports = filtered_reports
+            
+            # 获取总数（考虑日期过滤）
             total = await self.repository.count(
                 tenant_id=tenant_id,
-                user_id=user_id if user_id else None,
-                status=status if status else None,
-                tax_type=tax_type if tax_type else None,
+                **filters
             )
+            
+            # 如果应用了日期过滤，需要重新计算总数
+            if start_date or end_date:
+                total = len(reports)
             
             # 转换为字典列表
             report_list = []
@@ -425,3 +463,324 @@ class TaxReportService:
         except Exception as e:
             print(f"❌ [税务报告服务] 更新状态失败: {str(e)}")
             return None
+    
+    async def get_statistics(self, tenant_id: str, user_id: str = None) -> Dict[str, Any]:
+        """
+        获取税务报告统计信息
+        
+        Args:
+            tenant_id: 租户ID（显式传递）
+            user_id: 用户ID（可选）
+            
+        Returns:
+            统计信息字典，包含：
+            - total_reports: 总报告数
+            - by_status: 按状态统计
+            - by_tax_type: 按税种类型统计
+            - by_risk_level: 按风险等级统计
+            - needs_review_count: 需要审核的报告数
+            - recent_activity: 最近活动统计
+        """
+        try:
+            from datetime import datetime, timedelta, timezone
+            
+            # 获取所有报告
+            filters = {}
+            if user_id:
+                filters['user_id'] = user_id
+            
+            reports = await self.repository.list(
+                tenant_id=tenant_id,
+                skip=0,
+                limit=1000,  # 获取足够多的报告进行统计
+                order_by='created_at',
+                order_desc=True,
+                **filters
+            )
+            
+            if not reports:
+                return {
+                    "total_reports": 0,
+                    "by_status": {},
+                    "by_tax_type": {},
+                    "by_risk_level": {},
+                    "needs_review_count": 0,
+                    "recent_activity": {
+                        "last_7_days": 0,
+                        "last_30_days": 0,
+                        "today": 0
+                    }
+                }
+            
+            # 计算统计信息
+            total_reports = len(reports)
+            
+            # 按状态统计
+            by_status = {}
+            for report in reports:
+                status = report.status or "unknown"
+                by_status[status] = by_status.get(status, 0) + 1
+            
+            # 按税种类型统计
+            by_tax_type = {}
+            for report in reports:
+                tax_type = report.tax_type or "unknown"
+                by_tax_type[tax_type] = by_tax_type.get(tax_type, 0) + 1
+            
+            # 按风险等级统计
+            by_risk_level = {}
+            for report in reports:
+                risk_level = report.risk_level or "unknown"
+                by_risk_level[risk_level] = by_risk_level.get(risk_level, 0) + 1
+            
+            # 需要审核的报告数
+            needs_review_count = sum(
+                1 for report in reports 
+                if report.needs_human_review == "true"
+            )
+            
+            # 最近活动统计 - 使用 timezone-aware datetime 以匹配数据库字段
+            now = datetime.now(timezone.utc)
+            last_7_days = now - timedelta(days=7)
+            last_30_days = now - timedelta(days=30)
+            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            
+            recent_7_days = 0
+            recent_30_days = 0
+            today_count = 0
+            
+            for report in reports:
+                if report.created_at:
+                    report_date = report.created_at
+                    
+                    # 确保 report_date 也是 offset-aware
+                    if report_date.tzinfo is None:
+                        report_date = report_date.replace(tzinfo=timezone.utc)
+                    
+                    if report_date >= last_7_days:
+                        recent_7_days += 1
+                    
+                    if report_date >= last_30_days:
+                        recent_30_days += 1
+                    
+                    if report_date >= today_start:
+                        today_count += 1
+            
+            return {
+                "total_reports": total_reports,
+                "by_status": by_status,
+                "by_tax_type": by_tax_type,
+                "by_risk_level": by_risk_level,
+                "needs_review_count": needs_review_count,
+                "recent_activity": {
+                    "last_7_days": recent_7_days,
+                    "last_30_days": recent_30_days,
+                    "today": today_count
+                }
+            }
+            
+        except Exception as e:
+            print(f"❌ [税务报告服务] 获取统计信息失败: {str(e)}")
+            return {
+                "total_reports": 0,
+                "by_status": {},
+                "by_tax_type": {},
+                "by_risk_level": {},
+                "needs_review_count": 0,
+                "recent_activity": {
+                    "last_7_days": 0,
+                    "last_30_days": 0,
+                    "today": 0
+                },
+                "error": str(e)
+            }
+    
+    async def create_manual_tax_report(
+        self,
+        user_id: str,
+        tenant_id: str,
+        input_data: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        创建手动录入的税务报告
+        
+        支持管理员直接录入财务数据创建税务报告
+        
+        Args:
+            user_id: 用户ID
+            tenant_id: 租户ID
+            input_data: 手动录入的数据
+            
+        Returns:
+            创建的报告信息
+        """
+        try:
+            report_id = str(uuid.uuid4())
+            
+            tax_type = input_data.get("tax_type", "vat")
+            fiscal_year = input_data.get("fiscal_year", datetime.now().year)
+            fiscal_period = input_data.get("fiscal_period")
+            
+            revenue = input_data.get("revenue", 0)
+            taxable_sales = input_data.get("taxable_sales", 0)
+            input_tax = input_data.get("input_tax", 0)
+            output_tax = input_data.get("output_tax", 0)
+            vat_rate = input_data.get("vat_rate", 0.13)
+            
+            key_metrics = {
+                "revenue": revenue,
+                "taxable_sales": taxable_sales,
+                "input_tax": input_tax,
+                "output_tax": output_tax,
+                "vat_rate": vat_rate,
+                "total_invoices": input_data.get("total_invoices", 0),
+            }
+            
+            report = await self.repository.create_report(
+                user_id=user_id,
+                tenant_id=tenant_id,
+                filename=f"manual_{report_id}.json",
+                original_filename=f"手动录入_{fiscal_year}_{fiscal_period or ''}.json",
+                file_type="manual",
+                file_size=len(str(input_data)),
+                minio_path=f"{tenant_id}/{user_id}/tax-report/{report_id}/manual.json",
+                tax_type=tax_type,
+                tax_period_year=fiscal_year,
+                tax_period_month=int(fiscal_period.split("-")[1]) if fiscal_period and "-" in fiscal_period else None,
+                status="pending",
+                processing_message="手动录入税务报告，待处理",
+                needs_human_review="false",
+                pii_anonymized="true",
+                key_metrics=key_metrics,
+            )
+            
+            print(f"✅ [税务报告服务] 手动录入报告创建成功: {report_id}")
+            
+            return {
+                "id": str(report.id),
+                "tenant_id": str(report.tenant_id),
+                "user_id": str(report.user_id),
+                "filename": report.filename,
+                "original_filename": report.original_filename,
+                "file_type": report.file_type,
+                "tax_type": report.tax_type,
+                "status": report.status,
+                "key_metrics": key_metrics,
+                "created_at": report.created_at,
+            }
+            
+        except Exception as e:
+            print(f"❌ [税务报告服务] 手动录入报告创建失败: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+    
+    async def process_tax_report_background(
+        self,
+        report_id: str,
+        user_id: str,
+        tenant_id: str
+    ):
+        """
+        后台处理税务报告（占位方法）
+        
+        注意：实际处理逻辑已移至 _process_tax_report_async
+        此方法保留用于兼容现有调用
+        
+        Args:
+            report_id: 报告ID
+            user_id: 用户ID
+            tenant_id: 租户ID
+        """
+        print(f"ℹ️ [税务报告服务] process_tax_report_background 被调用，但实际处理已在 _process_tax_report_async 中完成")
+    
+    async def delete_tax_report(
+        self,
+        report_id: str,
+        tenant_id: str,
+        user_id: str = None
+    ) -> bool:
+        """
+        删除税务报告（租户+用户双重隔离）
+        
+        同时删除数据库记录和物理文件
+        
+        Args:
+            report_id: 报告ID
+            tenant_id: 租户ID
+            user_id: 用户ID（可选，如果提供则仅删除自己的报告）
+            
+        Returns:
+            bool: 是否成功删除
+        """
+        import os
+        from pathlib import Path
+        
+        try:
+            existing = await self.repository.get_by_id(report_id, tenant_id=tenant_id)
+            
+            if not existing:
+                print(f"⚠️ [税务报告服务] 报告不存在: {report_id}")
+                return False
+            
+            if user_id and str(existing.user_id) != user_id:
+                print(f"⚠️ [税务报告服务] 用户无权删除此报告: {report_id}")
+                return False
+            
+            file_path = Path("uploads/tax_reports") / existing.filename
+            
+            if file_path.exists():
+                try:
+                    os.remove(str(file_path))
+                    print(f"✅ [税务报告服务] 删除物理文件: {file_path}")
+                except OSError as e:
+                    print(f"⚠️ [税务报告服务] 删除物理文件失败: {e}")
+            
+            deleted = await self.repository.delete(
+                id=report_id,
+                tenant_id=tenant_id
+            )
+            
+            if deleted:
+                print(f"✅ [税务报告服务] 删除报告成功: {report_id}")
+                
+                try:
+                    from app.models.review_request import ReviewRequest
+                    from sqlalchemy import delete, and_
+                    from uuid import UUID
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    
+                    try:
+                        report_uuid = UUID(report_id)
+                    except ValueError:
+                        logger.error(f"❌ [税务报告服务] report_id格式无效: {report_id}")
+                        return True
+                    
+                    delete_stmt = delete(ReviewRequest).where(
+                        and_(
+                            ReviewRequest.task_id == report_uuid,
+                            ReviewRequest.tenant_id == tenant_id
+                        )
+                    )
+                    
+                    result = await self.db.execute(delete_stmt)
+                    await self.db.commit()
+                    
+                    if result.rowcount > 0:
+                        logger.info(f"✅ [税务报告服务] 删除审核请求成功: {result.rowcount}条, report_id={report_id}")
+                        print(f"✅ [税务报告服务] 同步删除审核请求完成: {report_id}")
+                    else:
+                        logger.warning(f"⚠️ [税务报告服务] 未找到对应审核请求: {report_id}")
+                except Exception as review_error:
+                    logger.error(f"❌ [税务报告服务] 同步删除审核请求失败: {review_error}", exc_info=True)
+                    print(f"⚠️ [税务报告服务] 同步删除审核请求失败: {review_error}")
+            else:
+                print(f"⚠️ [税务报告服务] 删除报告失败: {report_id}")
+            
+            return deleted
+            
+        except Exception as e:
+            print(f"❌ [税务报告服务] 删除报告失败: {str(e)}")
+            return False

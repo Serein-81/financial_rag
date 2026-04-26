@@ -13,6 +13,7 @@
 
 import math
 import uuid
+import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 from sqlalchemy import select, update, func
@@ -20,6 +21,8 @@ from .base_memory import BaseMemory, MemoryItem
 from app.db import AsyncSessionLocal
 from app.models.chat import ChatMessage, ChatSession
 from app.services.embedding_service import embedding_service
+
+logger = logging.getLogger(__name__)
 
 
 def _is_valid_uuid(val: str) -> bool:
@@ -57,7 +60,7 @@ class EpisodicMemory(BaseMemory):
         self.session_id = session_id
         self.user_id = user_id
         self.loaded = False
-        print(f"📚 [情景记忆] 初始化 | Session: {session_id[:8]}... | User: {user_id}")
+        logger.info(f"[情景记忆] 初始化 | Session: {session_id[:8]}... | User: {user_id}")
     
     async def load_from_db(self) -> None:
         """从数据库加载会话历史"""
@@ -90,7 +93,7 @@ class EpisodicMemory(BaseMemory):
                 self.memories.append(item)
             
             self.loaded = True
-            print(f"📥 [情景记忆] 从数据库加载 {len(messages)} 条记忆")
+            logger.info(f"[情景记忆] 从数据库加载 {len(messages)} 条记忆")
 
     async def _ensure_session_exists(self) -> bool:
         """
@@ -100,11 +103,11 @@ class EpisodicMemory(BaseMemory):
             会话是否存在或创建成功
         """
         if not _is_valid_uuid(self.session_id):
-            print(f"⚠️ [情景记忆] session_id 不是有效的UUID: {self.session_id}")
+            logger.warning(f"[情景记忆] session_id 不是有效的UUID: {self.session_id}")
             return False
 
         if not _is_valid_uuid(self.user_id):
-            print(f"⚠️ [情景记忆] user_id 不是有效的UUID: {self.user_id}")
+            logger.warning(f"[情景记忆] user_id 不是有效的UUID: {self.user_id}")
             return False
 
         try:
@@ -125,17 +128,17 @@ class EpisodicMemory(BaseMemory):
                     )
                     db.add(new_session)
                     await db.commit()
-                    print(f"✅ [情景记忆] 创建会话: {self.session_id[:8]}...")
+                    logger.info(f"[情景记忆] 创建会话: {self.session_id[:8]}...")
                 return True
 
         except (ValueError, KeyError) as e:
-            print(f"❌ [情景记忆] 会话创建数据错误: {e}")
+            logger.error(f"[情景记忆] 会话创建数据错误: {e}")
             return False
         except (OSError, IOError) as e:
-            print(f"❌ [情景记忆] 会话创建IO错误: {e}")
+            logger.error(f"[情景记忆] 会话创建IO错误: {e}")
             return False
         except Exception as e:
-            print(f"❌ [情景记忆] 会话创建失败: {e}")
+            logger.error(f"[情景记忆] 会话创建失败: {e}")
             return False
 
     async def add(self, item: MemoryItem) -> None:
@@ -152,11 +155,11 @@ class EpisodicMemory(BaseMemory):
         """
         # 1. 输入验证
         if not item or not item.content or not item.content.strip():
-            print("⚠️ [情景记忆] 跳过空内容记忆")
+            logger.warning("[情景记忆] 跳过空内容记忆")
             return
         
         if item.role not in ["user", "assistant", "system"]:
-            print(f"⚠️ [情景记忆] 无效角色: {item.role}，设置为 'user'")
+            logger.warning(f"[情景记忆] 无效角色: {item.role}，设置为 'user'")
             item.role = "user"
         
         # 2. 确保已加载历史记忆
@@ -167,15 +170,15 @@ class EpisodicMemory(BaseMemory):
         if item.embedding is None or len(item.embedding) == 0:
             try:
                 item.embedding = await embedding_service.get_embedding(item.content.strip())
-                print("🔮 [情景记忆] 生成向量嵌入")
+                logger.debug("[情景记忆] 生成向量嵌入")
             except (ValueError, KeyError) as e:
-                print(f"⚠️ [情景记忆] 向量生成数据错误: {e}")
+                logger.warning(f"[情景记忆] 向量生成数据错误: {e}")
                 item.embedding = None
             except (OSError, IOError) as e:
-                print(f"⚠️ [情景记忆] 向量生成IO错误: {e}")
+                logger.warning(f"[情景记忆] 向量生成IO错误: {e}")
                 item.embedding = None
             except Exception as e:
-                print(f"⚠️ [情景记忆] 向量生成失败: {e}")
+                logger.warning(f"[情景记忆] 向量生成失败: {e}")
                 item.embedding = None
 
         # 4. 计算重要性评分
@@ -210,15 +213,14 @@ class EpisodicMemory(BaseMemory):
                     # 更新 item 的 id
                     item.id = str(db_message.id)
 
-                print(f"💾 [情景记忆] 保存记忆到数据库 | ID: {item.id} | 重要性: {item.importance:.2f}")
+                logger.debug(f"[情景记忆] 保存记忆 | ID: {item.id[:8]}...")
 
             except (ValueError, KeyError) as e:
-                print(f"❌ [情景记忆] 数据库保存数据错误: {e}")
+                logger.error(f"[情景记忆] 数据库保存数据错误: {e}")
             except (OSError, IOError) as e:
-                print(f"❌ [情景记忆] 数据库保存IO错误: {e}")
+                logger.error(f"[情景记忆] 数据库保存IO错误: {e}")
             except Exception as e:
-                print(f"❌ [情景记忆] 数据库保存失败: {e}")
-                # 如果数据库保存失败，继续添加到内存（内存模式）
+                logger.error(f"[情景记忆] 数据库保存失败: {e}")
                 session_exists = False
 
         # 6. 添加到内存（即使数据库保存失败也添加到内存）
@@ -296,7 +298,7 @@ class EpisodicMemory(BaseMemory):
         # 更新访问统计
         await self._update_access_stats([m.id for m in results])
 
-        print(f"🎯 [情景记忆] 智能检索完成 | 候选: {len(scored_memories)} | 返回: {len(results)}")
+        logger.debug(f"[情景记忆] 检索完成 | 候选: {len(scored_memories)} | 返回: {len(results)}")
         return results
 
     def _calculate_cosine_similarity(self, vec1: List[float], vec2: List[float]) -> float:
@@ -396,14 +398,14 @@ class EpisodicMemory(BaseMemory):
                     if memory.id in memory_ids:
                         memory.access()
 
-                print(f"📊 [情景记忆] 更新访问统计: {len(memory_ids)} 条")
+                logger.debug(f"[情景记忆] 更新访问统计: {len(memory_ids)} 条")
 
         except (ValueError, KeyError) as e:
-            print(f"⚠️ [情景记忆] 访问统计更新数据错误: {e}")
+            logger.warning(f"[情景记忆] 访问统计更新数据错误: {e}")
         except (OSError, IOError) as e:
-            print(f"⚠️ [情景记忆] 访问统计更新IO错误: {e}")
+            logger.warning(f"[情景记忆] 访问统计更新IO错误: {e}")
         except Exception as e:
-            print(f"⚠️ [情景记忆] 访问统计更新失败: {e}")
+            logger.warning(f"[情景记忆] 访问统计更新失败: {e}")
 
     async def update(self, item_id: str, updates: Dict[str, Any]) -> bool:
         """更新记忆项"""
@@ -447,7 +449,7 @@ class EpisodicMemory(BaseMemory):
                         await db.delete(db_message)
                         await db.commit()
 
-                print(f"🗑️ [情景记忆] 删除记忆: {item_id}")
+                logger.debug(f"[情景记忆] 删除记忆: {item_id}")
                 return True
         return False
 
@@ -484,7 +486,7 @@ class EpisodicMemory(BaseMemory):
         # 更新记忆列表
         self.memories = recent_memories
 
-        print(f"🗜️ [情景记忆] 压缩完成 | 原始: {total} → 压缩后: {len(self.memories)}")
+        logger.info(f"[情景记忆] 压缩完成 | 原始: {total} → 压缩后: {len(self.memories)}")
 
     async def consolidate(self) -> None:
         """

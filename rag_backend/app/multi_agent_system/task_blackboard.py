@@ -300,6 +300,145 @@ class TaskBlackboard:
             
             return task
     
+    async def execute_task_with_wrapper(
+        self,
+        task_id: str,
+        agent,
+        use_wrapper: bool = True,
+        max_retries: Optional[int] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        使用容错 Wrapper 执行任务
+        
+        集成 AgentWrapper 实现"鞭打机制"：
+        - 当 LLM 输出格式错误时，自动重试
+        - 重试 max_retries 次后仍失败，才标记为 FAILED
+        
+        Args:
+            task_id: 任务ID
+            agent: Agent 实例
+            use_wrapper: 是否使用容错 wrapper
+            max_retries: 最大重试次数（覆盖 task.max_retries）
+            
+        Returns:
+            执行结果字典，包含：
+            - success: 是否成功
+            - result: 解析后的 JSON
+            - attempts: 尝试次数
+            - final_error: 最终错误信息（如果有）
+        """
+        task = await self.get_task(task_id)
+        if not task:
+            logger.error(f"❌ [TaskBlackboard] 任务不存在: {task_id}")
+            return None
+        
+        await self.update_task(task_id, status=TaskStatus.RUNNING)
+        
+        task_context = {
+            "task_id": task_id,
+            "retry_count": task.retry_count,
+            "max_retries": max_retries or task.max_retries
+        }
+        
+        try:
+            if use_wrapper:
+                from app.agent_framework.core.agent_wrapper import wrap_agent
+                
+                wrapped_agent = wrap_agent(agent, max_retries=task.max_retries)
+                result = await wrapped_agent.run_with_retry(
+                    user_input=task.description,
+                    history=None,
+                    task_context=task_context,
+                    input_data=task.input_data
+                )
+            else:
+                response = await agent.run(
+                    task.description,
+                    input_data=task.input_data
+                )
+                
+                from app.agent_framework.core.agent_wrapper import AgentResponseValidator
+                is_valid, parsed_json, errors = AgentResponseValidator.validate(response)
+                
+                result = {
+                    "success": is_valid,
+                    "result": parsed_json,
+                    "attempts": 1,
+                    "final_error": None if is_valid else str(errors)
+                }
+            
+            if result["success"]:
+                blackboard_action = result["result"].get("blackboard_action", {})
+                output_data = blackboard_action.get("output_data", {})
+                status_str = blackboard_action.get("status", "COMPLETED")
+                
+                status_map = {
+                    "COMPLETED": TaskStatus.COMPLETED,
+                    "FAILED": TaskStatus.FAILED,
+                    "WAITING_DEPENDENCY": TaskStatus.WAITING_DEPENDENCY
+                }
+                status = status_map.get(status_str, TaskStatus.COMPLETED)
+                
+                await self.update_task(
+                    task_id,
+                    status=status,
+                    output_data=output_data,
+                    metadata={
+                        "attempts": result["attempts"],
+                        "thought_process": result["result"].get("thought_process", "")
+                    }
+                )
+                
+                new_sub_tasks = blackboard_action.get("new_sub_tasks", [])
+                created_tasks = []
+                for sub_task_spec in new_sub_tasks:
+                    sub_task = await self.create_task(
+                        task_type=sub_task_spec.get("task_type", "general"),
+                        description=sub_task_spec.get("description", ""),
+                        priority=TaskPriority(sub_task_spec.get("priority", TaskPriority.NORMAL.value)),
+                        created_by=f"parent:{task_id}",
+                        input_data=sub_task_spec.get("input_data", {}),
+                        dependencies=[task_id]
+                    )
+                    created_tasks.append(sub_task)
+                    logger.info(f"🔗 [TaskBlackboard] 创建子任务: {sub_task.task_id} (父任务: {task_id})")
+                
+                return {
+                    **result,
+                    "created_sub_tasks": [t.task_id for t in created_tasks]
+                }
+            else:
+                await self.update_task(
+                    task_id,
+                    status=TaskStatus.FAILED,
+                    error=result["final_error"],
+                    metadata={
+                        "attempts": result["attempts"],
+                        "error_type": "VALIDATION_FAILED"
+                    }
+                )
+                
+                logger.error(f"❌ [TaskBlackboard] 任务执行失败: {task_id}, 错误: {result['final_error']}")
+                
+                return result
+                
+        except Exception as e:
+            logger.error(f"❌ [TaskBlackboard] 任务执行异常: {task_id}, 错误: {str(e)}", exc_info=True)
+            
+            await self.update_task(
+                task_id,
+                status=TaskStatus.FAILED,
+                error=str(e),
+                metadata={"error_type": "EXECUTION_EXCEPTION"}
+            )
+            
+            return {
+                "success": False,
+                "result": None,
+                "attempts": 1,
+                "final_error": str(e)
+            }
+    
     async def get_task(self, task_id: str) -> Optional[TaskContext]:
         """获取任务上下文"""
         async with self._lock:
@@ -462,7 +601,36 @@ class TaskBlackboard:
                 tasks.append(task)
             
             return sorted(tasks, key=lambda t: t.priority.value)
-    
+
+    async def get_tasks_by_status(self, status: TaskStatus) -> List[TaskContext]:
+        """
+        获取指定状态的所有任务
+
+        Args:
+            status: 任务状态
+
+        Returns:
+            任务列表
+        """
+        async with self._lock:
+            task_ids = self._tasks_by_status.get(status, [])
+            tasks = []
+            for task_id in task_ids:
+                task = self._tasks.get(task_id)
+                if task:
+                    tasks.append(task)
+            return tasks
+
+    async def get_all_tasks(self) -> List[TaskContext]:
+        """
+        获取所有任务
+
+        Returns:
+            任务列表
+        """
+        async with self._lock:
+            return list(self._tasks.values())
+
     # =========================================================================
     # 智能体管理
     # =========================================================================
@@ -560,20 +728,77 @@ class TaskBlackboard:
     # 共享数据管理
     # =========================================================================
     
+    # shared_data 使用约束
+    MAX_SHARED_DATA_SIZE = 10 * 1024  # 10KB，最大单条数据大小
+    RECOMMENDED_DATA_TYPES = {
+        "metadata": "元数据（如 company_id, tax_rate_confirmed）",
+        "conclusion": "最终结论（如分析结果、决策建议）",
+        "reference": "引用信息（如政策编号、法规条款）",
+        "status": "状态信息（如任务进度、处理结果）"
+    }
+    FORBIDDEN_DATA_TYPES = {
+        "raw_text": "原始长文本（如 PDF 内容、报告全文）",
+        "raw_content": "未处理的文档内容",
+        "large_blob": "大型二进制数据"
+    }
+    
     async def write_shared_data(self, key: str, value: Any, ttl: int = 0) -> None:
         """
         写入共享数据
         
+        ⚠️ 重要：shared_data 设计原则
+        
+        黑板是用来传递**指令和状态**的，绝不是用来堆放垃圾的。
+        
+        ✅ 正确使用：
+        - 元数据（metadata）：如 company_id, tax_rate_confirmed
+        - 最终结论（conclusion）：如分析结果、决策建议
+        - 引用信息（reference）：如政策编号、法规条款
+        - 状态信息（status）：如任务进度、处理结果
+        
+        ❌ 错误使用：
+        - 原始长文本（如 10 万字的财报 PDF）
+        - 未处理的文档内容
+        - 大型二进制数据
+        
+        如果 Agent 需要查阅原文，应该通过工具（Tools）拿着 company_id 
+        去向量数据库里现查，而不是把原文塞进 shared_data。
+        
         Args:
-            key: 数据键
-            value: 数据值
+            key: 数据键（建议使用有意义的键名，如 "company:A123:tax_result"）
+            value: 数据值（必须是轻量级数据，不超过 10KB）
             ttl: 生存时间（秒），0表示永不过期
+            
+        Raises:
+            ValueError: 如果数据过大或类型不正确
         """
+        import sys
+        
+        # 数据大小检查
+        try:
+            value_str = str(value)
+            data_size = sys.getsizeof(value_str)
+            
+            if data_size > self.MAX_SHARED_DATA_SIZE:
+                logger.warning(
+                    f"⚠️ [TaskBlackboard] shared_data 数据过大: {key} "
+                    f"({data_size} bytes > {self.MAX_SHARED_DATA_SIZE} bytes)。"
+                    f"建议：只存储元数据和结论，不要存储原始文本。"
+                )
+                raise ValueError(
+                    f"shared_data 数据过大 ({data_size} bytes)。"
+                    f"只允许存储元数据和结论（最大 {self.MAX_SHARED_DATA_SIZE} bytes）。"
+                    f"如果需要存储大量数据，请使用向量数据库。"
+                )
+        except (TypeError, AttributeError):
+            pass
+        
         async with self._lock:
             self._shared_data[key] = {
                 "value": value,
                 "timestamp": datetime.now(),
-                "ttl": ttl
+                "ttl": ttl,
+                "size": sys.getsizeof(str(value))
             }
             
             await self._emit_event(
@@ -581,7 +806,10 @@ class TaskBlackboard:
                     event_id=str(uuid.uuid4()),
                     event_type="shared_data_updated",
                     source="blackboard",
-                    data={"key": key}
+                    data={
+                        "key": key,
+                        "size": sys.getsizeof(str(value))
+                    }
                 )
             )
     

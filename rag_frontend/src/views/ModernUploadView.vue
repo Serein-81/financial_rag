@@ -345,7 +345,7 @@ function getVisibilityColor(visibility: VisibilityType): string {
             ref="fileInput"
             type="file"
             class="hidden"
-            accept=".pdf,.doc,.docx,.txt,.png"
+            accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.md,.csv,.png,.jpg,.jpeg,.bmp,.tiff"
             @change="handleFileSelect"
           />
 
@@ -356,7 +356,12 @@ function getVisibilityColor(visibility: VisibilityType): string {
             <div class="space-y-2">
               <h3 class="text-xl font-bold text-gray-900">拖拽文件到这里</h3>
               <p class="text-gray-600">或点击选择文件</p>
-              <p class="text-sm text-gray-500">支持 PDF, DOC, DOCX, TXT, PNG</p>
+              <div class="inline-block px-4 py-2 bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg border border-green-200">
+                <p class="text-sm text-green-700 font-medium">支持文件类型：</p>
+                <p class="text-xs text-green-600 mt-1">
+                  PDF · DOC · DOCX · XLS · XLSX · TXT · MD · CSV · PNG · JPG · JPEG · BMP · TIFF
+                </p>
+              </div>
             </div>
           </div>
 

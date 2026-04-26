@@ -3,20 +3,35 @@
 
 集成向量搜索、同义词扩展、PostgreSQL全文搜索的混合检索服务
 用于提升检索的召回率和精确率
+
+融合策略：
+- RRF（倒数排名融合）：默认推荐，只依赖排名不依赖绝对分数
+- 加权融合：需要分数归一化后才能使用
 """
 import time
 import logging
 import re
+import os
 from typing import List, Optional, Dict, Any
+from enum import Enum
+from collections import defaultdict
 from sqlalchemy import text, select, func
 from app.db import AsyncSessionLocal
 from app.services.embedding_service import embedding_service
 from app.services.synonym_service import synonym_service
+from app.services.rerank_service import rerank_service
 from app.schemas.chat import SearchResultItem
 from app.models.search_log import SearchLog
 from app.models.knowledge_base import KnowledgeBase
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+class FusionStrategy(Enum):
+    """融合策略枚举"""
+    RRF = "rrf"           # 倒数排名融合（默认）
+    WEIGHTED = "weighted"  # 加权融合（需要归一化）
 
 
 class HybridSearchService:
@@ -39,7 +54,11 @@ class HybridSearchService:
         synonym_weight: float = 0.3,
         fulltext_weight: float = 0.2,
         enable_synonym: bool = True,
-        enable_fulltext: bool = True
+        enable_fulltext: bool = True,
+        fusion_strategy: str = None,
+        rrf_k: int = 60,
+        enable_rerank: bool = None,
+        rerank_top_k: int = None
     ):
         """
         初始化混合搜索服务
@@ -50,20 +69,45 @@ class HybridSearchService:
             fulltext_weight: 全文搜索权重
             enable_synonym: 是否启用同义词扩展
             enable_fulltext: 是否启用全文搜索
+            fusion_strategy: 融合策略，"rrf"（默认）或 "weighted"
+            rrf_k: RRF 融合参数（默认60），越大各路结果越均衡
+            enable_rerank: 是否启用 Cross-Encoder Rerank，None 使用配置默认值
+            rerank_top_k: Rerank 返回结果数量
         """
         self.vector_weight = vector_weight
         self.synonym_weight = synonym_weight
         self.fulltext_weight = fulltext_weight
         self.enable_synonym = enable_synonym
         self.enable_fulltext = enable_fulltext
+        self.rrf_k = rrf_k
         
-        self._normalize_weights()
+        if enable_rerank is None:
+            enable_rerank = settings.ENABLE_RERANK
+        self.enable_rerank = enable_rerank and bool(settings.SILICONFLOW_API_KEY)
+        
+        if rerank_top_k is None:
+            rerank_top_k = settings.RERANK_TOP_K
+        self.rerank_top_k = rerank_top_k
+        
+        if fusion_strategy is None:
+            fusion_strategy = os.getenv('HYBRID_FUSION_STRATEGY', 'rrf')
+        
+        self.fusion_strategy = FusionStrategy(fusion_strategy)
+        
+        if self.fusion_strategy == FusionStrategy.RRF:
+            self.vector_weight = 0.0
+            self.synonym_weight = 0.0
+            self.fulltext_weight = 0.0
         
         logger.info(
             f"🔧 混合搜索配置: "
+            f"融合策略={self.fusion_strategy.value}, "
             f"向量={self.vector_weight}, "
             f"同义词={self.synonym_weight}, "
             f"全文={self.fulltext_weight}, "
+            f"RRF_k={self.rrf_k}, "
+            f"Rerank={'开启' if self.enable_rerank else '关闭'}, "
+            f"Rerank_top_k={self.rerank_top_k}, "
             f"同义词扩展={'开启' if enable_synonym else '关闭'}, "
             f"全文搜索={'开启' if enable_fulltext else '关闭'}"
         )
@@ -155,19 +199,44 @@ class HybridSearchService:
             )
 
             results = self._rerank_results(merged, query_vector, top_k)
+            
+            if self.enable_rerank and results:
+                try:
+                    rerank_candidates = [r.get('content', '') for r in results[:self.rerank_top_k * 3]]
+                    if rerank_candidates:
+                        reranked = await rerank_service.rerank(
+                            query=query,
+                            documents=rerank_candidates,
+                            top_k=self.rerank_top_k,
+                            max_chars_per_doc=settings.RERANK_MAX_CHARS
+                        )
+                        
+                        if reranked:
+                            rerank_map = {r.index: r for r in reranked}
+                            reranked_results = []
+                            
+                            for i, result in enumerate(results):
+                                rrf_score = result.get('combined_score', 0)
+                                rerank_score = rerank_map[i].relevance_score if i in rerank_map else rrf_score
+                                
+                                combined_score = self._compute_hybrid_score(rrf_score, rerank_score)
+                                
+                                reranked_result = result.copy()
+                                reranked_result['combined_score'] = combined_score
+                                reranked_result['rerank_score'] = rerank_score
+                                reranked_result['rrf_score'] = rrf_score
+                                reranked_results.append(reranked_result)
+                            
+                            reranked_results.sort(key=lambda x: x['combined_score'], reverse=True)
+                            results = reranked_results
+                            
+                            top_score = reranked[0].relevance_score if reranked else 0
+                            logger.info(f"🎯 Cross-Encoder Rerank 完成: {len(reranked)} 个结果 | 最高分: {top_score:.4f}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Rerank 失败，使用融合结果: {e}")
 
-            final_results = []
-            for r in results:
-                if r['combined_score'] >= score_threshold:
-                    final_results.append(SearchResultItem(
-                        chunk_id=str(r['chunk_id']),
-                        document_id=str(r['document_id']),
-                        score=round(r['combined_score'], 4),
-                        content=r['content'],
-                        source_file=r['source_file'],
-                        page_number=r.get('page_number')
-                    ))
-
+            final_results = self._apply_adaptive_threshold(results, score_threshold)
+            
             return final_results
 
         except Exception as e:
@@ -542,13 +611,118 @@ class HybridSearchService:
         
         return list(set(phrases))
     
+    def _normalize_scores(self, results: List[Dict], score_key: str) -> List[Dict]:
+        """
+        归一化分数到 [0, 1] 范围
+        
+        Args:
+            results: 结果列表
+            score_key: 分数字段名
+            
+        Returns:
+            归一化后的结果
+        """
+        if not results:
+            return results
+        
+        scores = [r.get(score_key, 0) for r in results]
+        max_score = max(scores) if scores else 1
+        min_score = min(scores) if scores else 0
+        score_range = max_score - min_score
+        
+        if score_range > 0:
+            for r in results:
+                raw_score = r.get(score_key, 0)
+                r[score_key] = (raw_score - min_score) / score_range
+        else:
+            for r in results:
+                r[score_key] = 0.0 if max_score == 0 else 1.0
+        
+        return results
+    
+    def _rrf_fusion(
+        self,
+        vector_results: List[Dict],
+        synonym_results: List[Dict],
+        fulltext_results: List[Dict],
+        top_k: int
+    ) -> List[Dict]:
+        """
+        RRF（倒数排名融合）
+        
+        RRF_score(d) = Σ 1/(k + rank_i(d))
+        
+        优点：
+        - 只依赖排名，不依赖绝对分数
+        - 自然归一化，无需处理不同量纲问题
+        - 简单高效，无需调参
+        
+        Args:
+            vector_results: 向量检索结果
+            synonym_results: 同义词检索结果
+            fulltext_results: 全文检索结果
+            top_k: 返回结果数量
+            
+        Returns:
+            融合后的结果
+        """
+        scores: Dict[str, Dict[str, Any]] = defaultdict(lambda: {
+            "rrf_score": 0.0,
+            "source": None,
+            "best_rank": float('inf')
+        })
+        
+        all_results = [
+            (vector_results, "vector"),
+            (synonym_results, "synonym"),
+            (fulltext_results, "fulltext")
+        ]
+        
+        for result_list, source_name in all_results:
+            for rank, result in enumerate(result_list, start=1):
+                chunk_id = result["chunk_id"]
+                rrf_contribution = 1.0 / (self.rrf_k + rank)
+                
+                scores[chunk_id]["rrf_score"] += rrf_contribution
+                scores[chunk_id]["best_rank"] = min(scores[chunk_id]["best_rank"], rank)
+                scores[chunk_id]["source"] = result
+        
+        sorted_scores = sorted(
+            scores.items(),
+            key=lambda x: (x[1]["rrf_score"], -x[1]["best_rank"]),
+            reverse=True
+        )
+        
+        final_results = []
+        for chunk_id, score_info in sorted_scores[:top_k]:
+            result = score_info["source"].copy()
+            result["combined_score"] = score_info["rrf_score"]
+            result["best_rank"] = score_info["best_rank"]
+            result["fusion_method"] = "rrf"
+            final_results.append(result)
+        
+        logger.info(f"🔄 RRF 融合: 向量={len(vector_results)}, 同义词={len(synonym_results)}, 全文={len(fulltext_results)} → {len(final_results)}")
+        return final_results
+    
     def _merge_results(
         self,
         vector_results: List[Dict],
         synonym_results: List[Dict],
         fulltext_results: List[Dict]
     ) -> Dict[str, Dict[str, Any]]:
-        """合并搜索结果"""
+        """合并搜索结果（支持 RRF 和加权两种策略）"""
+        
+        if self.fusion_strategy == FusionStrategy.RRF:
+            merged = {}
+            all_results = vector_results + synonym_results + fulltext_results
+            for result in all_results:
+                chunk_id = result["chunk_id"]
+                if chunk_id not in merged:
+                    merged[chunk_id] = result
+                    merged[chunk_id]["source_list"] = []
+                merged[chunk_id]["source_list"].append(result)
+            return merged
+        
         merged = {}
         
         for result in vector_results:
@@ -598,6 +772,30 @@ class HybridSearchService:
         top_k: int
     ) -> List[Dict]:
         """重排序结果"""
+        
+        if self.fusion_strategy == FusionStrategy.RRF:
+            vector_results = []
+            synonym_results = []
+            fulltext_results = []
+            
+            for chunk_id, result in merged.items():
+                source_list = result.get("source_list", [])
+                for src in source_list:
+                    src_copy = src.copy()
+                    src_copy["chunk_id"] = chunk_id
+                    if src_copy.get("vector_score", 0) > 0:
+                        vector_results.append(src_copy)
+                    elif src_copy.get("synonym_score", 0) > 0:
+                        synonym_results.append(src_copy)
+                    elif src_copy.get("fulltext_score", 0) > 0:
+                        fulltext_results.append(src_copy)
+            
+            vector_results.sort(key=lambda x: x.get("vector_score", 0), reverse=True)
+            synonym_results.sort(key=lambda x: x.get("synonym_score", 0), reverse=True)
+            fulltext_results.sort(key=lambda x: x.get("fulltext_score", 0), reverse=True)
+            
+            return self._rrf_fusion(vector_results, synonym_results, fulltext_results, top_k)
+        
         sorted_results = sorted(
             merged.values(),
             key=lambda x: x["combined_score"],
@@ -605,6 +803,109 @@ class HybridSearchService:
         )
         
         return sorted_results[:top_k]
+    
+    def _compute_hybrid_score(self, rrf_score: float, rerank_score: float) -> float:
+        """
+        计算混合分数：RRF分数 + Rerank分数加权融合
+        
+        融合策略：
+        - RRF分数代表多路召回的排名信息（0.0 ~ 0.05）
+        - Rerank分数代表语义相关性（0.0 ~ 1.0）
+        - 当Rerank分数过低时，更信任RRF的排名结果
+        
+        Args:
+            rrf_score: RRF融合分数
+            rerank_score: Rerank相关性分数
+            
+        Returns:
+            混合分数 [0, 1]
+        """
+        if rerank_score <= 0 and rrf_score <= 0:
+            return 0.0
+        
+        if rerank_score <= 0:
+            return min(rrf_score * 20, 1.0)
+        
+        if rrf_score <= 0:
+            return rerank_score
+        
+        rrf_normalized = min(rrf_score * 20, 1.0)
+        
+        if rerank_score >= 0.5:
+            hybrid_score = rrf_normalized * 0.3 + rerank_score * 0.7
+        elif rerank_score >= 0.2:
+            hybrid_score = rrf_normalized * 0.5 + rerank_score * 0.5
+        else:
+            hybrid_score = rrf_normalized * 0.8 + rerank_score * 0.2
+        
+        return min(hybrid_score, 1.0)
+    
+    def _apply_adaptive_threshold(
+        self,
+        results: List[Dict],
+        base_threshold: float
+    ) -> List[SearchResultItem]:
+        """
+        自适应阈值过滤：根据结果质量动态调整阈值
+        
+        策略：
+        1. 如果 top 结果分数都很低（< 0.4），降低阈值确保召回
+        2. 如果有高质量结果（> 0.6），使用严格阈值
+        3. 始终返回至少 1 个结果（如果有候选的话）
+        
+        Args:
+            results: 排序后的结果列表
+            base_threshold: 基础阈值
+            
+        Returns:
+            过滤后的 SearchResultItem 列表
+        """
+        if not results:
+            return []
+        
+        final_results = []
+        top_scores = [r.get('combined_score', 0) for r in results[:5]]
+        top_score = max(top_scores) if top_scores else 0
+        
+        if top_score >= 0.6:
+            effective_threshold = max(base_threshold, 0.5)
+            logger.info(f"📊 自适应阈值: 高质量结果(top={top_score:.4f})，使用严格阈值 {effective_threshold}")
+        elif top_score >= 0.4:
+            effective_threshold = max(base_threshold, 0.35)
+            logger.info(f"📊 自适应阈值: 中等质量结果(top={top_score:.4f})，使用适中阈值 {effective_threshold}")
+        elif top_score > 0:
+            effective_threshold = max(base_threshold, 0.25)
+            logger.info(f"📊 自适应阈值: 低质量结果(top={top_score:.4f})，降低阈值 {effective_threshold}")
+        else:
+            effective_threshold = base_threshold
+            logger.warning(f"⚠️ 所有结果分数接近0，可能检索失败")
+        
+        for r in results:
+            if r['combined_score'] >= effective_threshold:
+                final_results.append(SearchResultItem(
+                    chunk_id=str(r['chunk_id']),
+                    document_id=str(r['document_id']),
+                    score=round(r['combined_score'], 4),
+                    content=r['content'],
+                    source_file=r['source_file'],
+                    page_number=r.get('page_number')
+                ))
+        
+        if not final_results and results:
+            logger.warning(f"⚠️ 阈值{effective_threshold}过滤后无结果，强制返回top候选")
+            top_candidates = min(len(results), 3)
+            for r in results[:top_candidates]:
+                final_results.append(SearchResultItem(
+                    chunk_id=str(r['chunk_id']),
+                    document_id=str(r['document_id']),
+                    score=round(r['combined_score'], 4),
+                    content=r['content'],
+                    source_file=r['source_file'],
+                    page_number=r.get('page_number')
+                ))
+        
+        logger.info(f"📊 最终结果: {len(final_results)} 条 (阈值: {effective_threshold})")
+        return final_results
     
     async def _save_search_log(
         self,

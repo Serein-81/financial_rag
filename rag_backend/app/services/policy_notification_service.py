@@ -1,36 +1,85 @@
 """
-政策通知服务
-自动匹配并推送政策给企业用户
+政策通知服务 (Policy Notification Service)
+
+统一管理政策通知全流程：
+1. 政策匹配 - 基于规则和 LLM 的智能匹配
+2. 通知生成 - 个性化通知文案生成
+3. 事件发布 - 通过事件系统推送通知
+4. 订阅管理 - 企业订阅和通知追踪
+
+整合了以下能力：
+- PolicyNotificationAgent (LLM 智能匹配和生成)
+- PolicyEventService (事件发布)
+- 规则引擎 (降级方案)
+
+提示词来源：app/prompts/agents/policy_notification/system.md
 """
 
 import logging
-from typing import List, Dict, Any, Optional
+from typing import Dict, List, Any, Optional
 from datetime import datetime
 from uuid import UUID
 
 from app.models.enterprise_policy_match import EnterprisePolicyMatch, NotificationStatus, MatchStatus
 from app.db.session import SessionLocal
 from sqlalchemy import select, and_
-from app.services.policy_event_service import policy_event_service
 
 logger = logging.getLogger(__name__)
 
 
 class PolicyNotificationService:
     """
-    政策通知服务
+    统一政策通知服务
     
     功能：
-    1. 监控新政策入库
-    2. 自动匹配企业用户
-    3. 生成并发送通知
-    4. 追踪通知状态
+    1. 智能匹配 - LLM + 规则引擎双重匹配
+    2. 通知生成 - 个性化通知文案
+    3. 事件发布 - SSE 实时推送
+    4. 状态追踪 - 通知状态管理
     """
-    
+
     def __init__(self):
         self.match_threshold = 0.6
         self.batch_size = 100
-    
+        self._llm_agent = None
+        self._use_llm = False
+        
+        self._initialize_llm_agent()
+
+    def _initialize_llm_agent(self):
+        """初始化 LLM Agent"""
+        try:
+            from app.agent_framework.llm.factory import LLMAdapterFactory
+            from app.agent_framework.tools.tool_manager import ToolManager
+            from app.multi_agent_system.agents.policy_notification_agent import (
+                PolicyNotificationAgent,
+                EnterpriseProfile
+            )
+            from app.core.config import settings
+            
+            try:
+                default_provider = settings.get_llm_provider_for_agent("chat")
+                llm_adapter = LLMAdapterFactory.create_adapter(default_provider)
+                tool_manager = ToolManager()
+                
+                self._llm_agent = PolicyNotificationAgent(
+                    llm_adapter=llm_adapter,
+                    tool_manager=tool_manager
+                )
+                self._use_llm = True
+                logger.info("✅ PolicyNotificationService: LLM Agent 初始化成功")
+                
+            except Exception as e:
+                logger.warning(f"⚠️ PolicyNotificationService: LLM Agent 初始化失败: {e}")
+                self._use_llm = False
+                
+        except ImportError as e:
+            logger.warning(f"⚠️ PolicyNotificationService: 缺少必要依赖: {e}")
+            self._use_llm = False
+        except Exception as e:
+            logger.warning(f"⚠️ PolicyNotificationService: Agent 初始化异常: {e}")
+            self._use_llm = False
+
     async def on_policy_added(
         self,
         policy_id: UUID,
@@ -46,35 +95,25 @@ class PolicyNotificationService:
         logger.info(f"📋 触发政策匹配: {policy_id}")
         
         try:
-            from .policy_retrieval_service import policy_retrieval_service
+            from app.services.policy_service import policy_service
             
-            policy_data = await policy_retrieval_service.get_policy_by_id(policy_id)
+            policy_data = await policy_service.get_policy_by_id(policy_id)
             
             if not policy_data:
                 logger.warning(f"⚠️ 未找到政策: {policy_id}")
                 return
             
             if enterprise_ids:
-                await self._match_specific_enterprises(
-                    policy_data,
-                    enterprise_ids
-                )
+                await self._match_specific_enterprises(policy_data, enterprise_ids)
             else:
                 await self._match_all_enterprises(policy_data)
             
             logger.info(f"✅ 政策匹配完成: {policy_id}")
             
-        except (ValueError, KeyError) as e:
-            logger.error(f"❌ 政策匹配数据错误: {e}", exc_info=True)
-        except (OSError, IOError) as e:
-            logger.error(f"❌ 政策匹配IO错误: {e}", exc_info=True)
         except Exception as e:
             logger.error(f"❌ 政策匹配失败: {e}", exc_info=True)
-    
-    async def _match_all_enterprises(
-        self,
-        policy_data: Dict[str, Any]
-    ):
+
+    async def _match_all_enterprises(self, policy_data: Dict[str, Any]):
         """
         匹配所有企业
         
@@ -93,21 +132,29 @@ class PolicyNotificationService:
             for tenant in tenants:
                 enterprise_profile = self._get_enterprise_profile(tenant)
                 
-                match_score = self._calculate_match_score(
-                    policy_data,
-                    enterprise_profile
-                )
+                if self._use_llm and self._llm_agent:
+                    match_result = await self._llm_match(
+                        policy_data,
+                        enterprise_profile
+                    )
+                else:
+                    match_result = self._rule_based_match(
+                        policy_data,
+                        enterprise_profile
+                    )
+                
+                match_score = match_result.get("match_score", 0)
                 
                 if match_score >= self.match_threshold:
                     await self._create_match_and_notification(
                         str(tenant.id),
                         policy_data,
-                        match_score
+                        match_result
                     )
-            
+                    
         finally:
             db.close()
-    
+
     async def _match_specific_enterprises(
         self,
         policy_data: Dict[str, Any],
@@ -122,32 +169,146 @@ class PolicyNotificationService:
         """
         for enterprise_id in enterprise_ids:
             try:
-                enterprise_profile = await self._get_enterprise_profile_by_id(
-                    enterprise_id
-                )
+                enterprise_profile = await self._get_enterprise_profile_by_id(enterprise_id)
                 
                 if not enterprise_profile:
                     continue
                 
-                match_score = self._calculate_match_score(
-                    policy_data,
-                    enterprise_profile
-                )
+                if self._use_llm and self._llm_agent:
+                    match_result = await self._llm_match(
+                        policy_data,
+                        enterprise_profile
+                    )
+                else:
+                    match_result = self._rule_based_match(
+                        policy_data,
+                        enterprise_profile
+                    )
+                
+                match_score = match_result.get("match_score", 0)
                 
                 if match_score >= self.match_threshold:
                     await self._create_match_and_notification(
                         enterprise_id,
                         policy_data,
-                        match_score
+                        match_result
                     )
                     
-            except (ValueError, KeyError) as e:
-                logger.error(f"❌ 匹配企业数据错误 [{enterprise_id}]: {e}")
-            except (OSError, IOError) as e:
-                logger.error(f"❌ 匹配企业IO错误 [{enterprise_id}]: {e}")
             except Exception as e:
                 logger.error(f"❌ 匹配企业失败 [{enterprise_id}]: {e}")
-    
+
+    async def _llm_match(
+        self,
+        policy_data: Dict[str, Any],
+        enterprise_profile: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        LLM 智能匹配
+        
+        Args:
+            policy_data: 政策数据
+            enterprise_profile: 企业画像
+            
+        Returns:
+            Dict: 匹配结果
+        """
+        try:
+            from app.multi_agent_system.agents.policy_notification_agent import (
+                EnterpriseProfile as AgentProfile
+            )
+            
+            agent_profile = AgentProfile(
+                enterprise_id=str(enterprise_profile.get("enterprise_id", "")),
+                name=enterprise_profile.get("name", "未知企业"),
+                industry=enterprise_profile.get("industry"),
+                region=enterprise_profile.get("region"),
+                scale=enterprise_profile.get("scale"),
+                tax_types=enterprise_profile.get("tax_types", []),
+                keywords=enterprise_profile.get("keywords", []),
+                business_scope=enterprise_profile.get("business_scope"),
+                recent_interests=enterprise_profile.get("recent_interests", []),
+                preferences=enterprise_profile.get("preferences", {})
+            )
+            
+            match_score, reasons, understanding = await self._llm_agent.match_enterprise_policy(
+                policy=policy_data,
+                enterprise_profile=agent_profile
+            )
+            
+            return {
+                "match_score": match_score.total_score,
+                "semantic_score": match_score.semantic_score,
+                "industry_score": match_score.industry_score,
+                "region_score": match_score.region_score,
+                "scale_score": match_score.scale_score,
+                "tax_type_score": match_score.tax_type_score,
+                "urgency_score": match_score.urgency_score,
+                "match_reasons": [
+                    {"category": r.category, "reason": r.reason}
+                    for r in reasons
+                ],
+                "policy_understanding": {
+                    "summary": understanding.summary,
+                    "core_objectives": understanding.core_objectives,
+                    "impact_level": understanding.impact_level
+                } if understanding else None,
+                "use_llm": True
+            }
+            
+        except Exception as e:
+            logger.warning(f"⚠️ LLM 匹配失败，降级到规则引擎: {e}")
+            return self._rule_based_match(policy_data, enterprise_profile)
+
+    def _rule_based_match(
+        self,
+        policy_data: Dict[str, Any],
+        enterprise_profile: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        规则引擎匹配（降级方案）
+        
+        Args:
+            policy_data: 政策数据
+            enterprise_profile: 企业画像
+            
+        Returns:
+            Dict: 匹配结果
+        """
+        score = 0.0
+        reasons = []
+        
+        if policy_data.get("industries") and enterprise_profile.get("industry"):
+            if enterprise_profile["industry"] in policy_data["industries"]:
+                score += 0.4
+                reasons.append(f"行业匹配: {enterprise_profile['industry']}")
+        
+        if policy_data.get("regions") and enterprise_profile.get("region"):
+            if enterprise_profile["region"] in policy_data["regions"]:
+                score += 0.2
+                reasons.append(f"地区匹配: {enterprise_profile['region']}")
+        
+        if policy_data.get("tax_types") and enterprise_profile.get("tax_types"):
+            matching = set(policy_data["tax_types"]) & set(enterprise_profile["tax_types"])
+            if matching:
+                score += 0.3
+                reasons.append(f"税种匹配: {', '.join(list(matching)[:3])}")
+        
+        if policy_data.get("scales") and enterprise_profile.get("scale"):
+            if enterprise_profile["scale"] in policy_data["scales"]:
+                score += 0.1
+                reasons.append(f"规模匹配: {enterprise_profile['scale']}")
+        
+        if policy_data.get("priority") in ["critical", "high"]:
+            score += 0.1
+        
+        score = min(1.0, score)
+        
+        return {
+            "match_score": score,
+            "match_reasons": [{"category": "rule", "reason": r} for r in reasons],
+            "use_llm": False
+        }
+
     async def _get_enterprise_profile_by_id(
         self,
         enterprise_id: str
@@ -177,7 +338,7 @@ class PolicyNotificationService:
             
         finally:
             db.close()
-    
+
     def _get_enterprise_profile(self, tenant) -> Dict[str, Any]:
         """
         从租户获取企业画像
@@ -189,6 +350,8 @@ class PolicyNotificationService:
             Dict: 企业画像
         """
         profile = {
+            "enterprise_id": str(getattr(tenant, "id", "")),
+            "name": getattr(tenant, "name", "未知企业"),
             "industry": getattr(tenant, "industry", None),
             "region": getattr(tenant, "region", None),
             "scale": getattr(tenant, "scale", None),
@@ -200,59 +363,12 @@ class PolicyNotificationService:
             profile["keywords"] = tenant.meta_info.get("keywords", [])
         
         return profile
-    
-    def _calculate_match_score(
-        self,
-        policy_data: Dict[str, Any],
-        enterprise_profile: Dict[str, Any]
-    ) -> float:
-        """
-        计算匹配分数
-        
-        Args:
-            policy_data: 政策数据
-            enterprise_profile: 企业画像
-            
-        Returns:
-            float: 匹配分数
-        """
-        score = 0.0
-        factors = 0
-        
-        if policy_data.get("industries") and enterprise_profile.get("industry"):
-            if enterprise_profile["industry"] in policy_data["industries"]:
-                score += 0.4
-            factors += 1
-        
-        if policy_data.get("regions") and enterprise_profile.get("region"):
-            if enterprise_profile["region"] in policy_data["regions"]:
-                score += 0.2
-            factors += 1
-        
-        if policy_data.get("tax_types") and enterprise_profile.get("tax_types"):
-            matching = set(policy_data["tax_types"]) & set(enterprise_profile["tax_types"])
-            if matching:
-                score += 0.3
-            factors += 1
-        
-        if policy_data.get("scales") and enterprise_profile.get("scale"):
-            if enterprise_profile["scale"] in policy_data["scales"]:
-                score += 0.1
-            factors += 1
-        
-        if policy_data.get("priority") in ["critical", "high"]:
-            score += 0.1
-        
-        if factors > 0:
-            score = min(1.0, score)
-        
-        return score
-    
+
     async def _create_match_and_notification(
         self,
         enterprise_id: str,
         policy_data: Dict[str, Any],
-        match_score: float
+        match_result: Dict[str, Any]
     ):
         """
         创建匹配记录和通知
@@ -260,38 +376,43 @@ class PolicyNotificationService:
         Args:
             enterprise_id: 企业ID
             policy_data: 政策数据
-            match_score: 匹配分数
+            match_result: 匹配结果
         """
         db = SessionLocal()
         
         try:
+            policy_id = policy_data.get("policy_id") or policy_data.get("id", "")
+            
             existing = db.execute(
                 select(EnterprisePolicyMatch).where(
                     and_(
                         EnterprisePolicyMatch.enterprise_id == enterprise_id,
-                        EnterprisePolicyMatch.policy_id == policy_data["policy_id"]
+                        EnterprisePolicyMatch.policy_id == str(policy_id)
                     )
                 )
             ).scalar_one_or_none()
             
             if existing:
-                logger.debug(f"⏭️ 跳过已有匹配: {enterprise_id} - {policy_data['policy_id']}")
+                logger.debug(f"⏭️ 跳过已有匹配: {enterprise_id} - {policy_id}")
                 return
+            
+            match_reasons = [
+                r.get("reason", "")
+                for r in match_result.get("match_reasons", [])
+            ]
             
             match = EnterprisePolicyMatch(
                 enterprise_id=enterprise_id,
-                policy_id=policy_data["policy_id"],
-                match_score=match_score,
+                policy_id=str(policy_id),
+                match_score=match_result.get("match_score", 0),
                 match_status=MatchStatus.MATCHED,
                 notification_status=NotificationStatus.PENDING,
-                match_reasons=self._generate_match_reasons(
-                    policy_data,
-                    enterprise_id
-                ),
+                match_reasons=match_reasons,
                 meta_info={
-                    "policy_title": policy_data["title"],
+                    "policy_title": policy_data.get("title", ""),
                     "priority": policy_data.get("priority"),
-                    "source": policy_data.get("source_name")
+                    "source": policy_data.get("source_name"),
+                    "use_llm": match_result.get("use_llm", False)
                 }
             )
             
@@ -300,135 +421,240 @@ class PolicyNotificationService:
             
             logger.info(
                 f"📬 创建匹配: {enterprise_id} - "
-                f"{policy_data['title'][:30]}... (分数: {match_score:.2f})"
+                f"{policy_data.get('title', '')[:30]}... "
+                f"(分数: {match_result.get('match_score', 0):.2f})"
             )
             
-            await self._publish_policy_matched_event(
+            await self._emit_notification_event(
                 enterprise_id=enterprise_id,
                 policy_data=policy_data,
-                match_score=match_score,
+                match_result=match_result,
                 match_id=str(match.id)
             )
             
-            await self._send_notification(match, policy_data)
+            await self._update_notification_status(match.id)
             
-        except (ValueError, KeyError) as e:
-            logger.error(f"❌ 创建匹配数据错误: {e}", exc_info=True)
-            await db.rollback()
-        except (OSError, IOError) as e:
-            logger.error(f"❌ 创建匹配IO错误: {e}", exc_info=True)
-            await db.rollback()
         except Exception as e:
             logger.error(f"❌ 创建匹配失败: {e}", exc_info=True)
             await db.rollback()
         finally:
             db.close()
-    
-    def _generate_match_reasons(
+
+    async def _emit_notification_event(
         self,
+        enterprise_id: str,
         policy_data: Dict[str, Any],
-        enterprise_id: str
-    ) -> List[str]:
-        """
-        生成匹配原因
-        
-        Args:
-            policy_data: 政策数据
-            enterprise_id: 企业ID
-            
-        Returns:
-            List[str]: 匹配原因列表
-        """
-        reasons = []
-        
-        if policy_data.get("industries"):
-            reasons.append(f"适用于行业: {', '.join(policy_data['industries'][:3])}")
-        
-        if policy_data.get("regions"):
-            reasons.append(f"适用地区: {', '.join(policy_data['regions'][:3])}")
-        
-        if policy_data.get("tax_types"):
-            reasons.append(f"涉及税种: {', '.join(policy_data['tax_types'][:3])}")
-        
-        if policy_data.get("priority") in ["critical", "high"]:
-            reasons.append("⚠️ 高优先级政策")
-        
-        return reasons
-    
-    async def _send_notification(
-        self,
-        match: EnterprisePolicyMatch,
-        policy_data: Dict[str, Any]
+        match_result: Dict[str, Any],
+        match_id: str
     ):
         """
-        发送通知
+        发布通知事件
         
         Args:
-            match: 匹配记录
+            enterprise_id: 企业ID
             policy_data: 政策数据
+            match_result: 匹配结果
+            match_id: 匹配记录ID
         """
         try:
-            logger.info(f"📨 发送通知: {match.id}")
+            from app.services.policy_event_service import policy_event_service
             
-            match.notification_status = NotificationStatus.SENT
-            match.notified_at = datetime.now()
+            policy_id = policy_data.get("policy_id") or policy_data.get("id", "")
             
-            db = SessionLocal()
-            try:
-                await db.commit()
-            finally:
-                db.close()
+            impact_level = "low"
+            priority = policy_data.get("priority", "medium")
+            if priority == "critical":
+                impact_level = "high"
+            elif priority == "high":
+                impact_level = "medium"
             
-        except (ValueError, KeyError) as e:
-            logger.error(f"❌ 发送通知数据错误: {e}", exc_info=True)
-            match.notification_status = NotificationStatus.FAILED
-        except (OSError, IOError) as e:
-            logger.error(f"❌ 发送通知IO错误: {e}", exc_info=True)
-            match.notification_status = NotificationStatus.FAILED
+            notification_content = await self.generate_notification(
+                policy_data,
+                {"enterprise_id": enterprise_id},
+                match_result
+            )
+            
+            match_details = {
+                "match_id": match_id,
+                "policy_id": policy_id,
+                "title": policy_data.get("title", ""),
+                "industries": policy_data.get("industries", []),
+                "regions": policy_data.get("regions", []),
+                "tax_types": policy_data.get("tax_types", []),
+                "priority": priority,
+                "source": policy_data.get("source_name"),
+                "notification_title": notification_content.get("title"),
+                "notification_content": notification_content.get("content"),
+                "key_points": notification_content.get("key_points", []),
+                "urgency_level": notification_content.get("urgency_level", "medium"),
+                "use_llm": match_result.get("use_llm", False)
+            }
+            
+            await policy_event_service.emit_policy_matched(
+                enterprise_id=enterprise_id,
+                policy_id=str(policy_id),
+                policy_title=policy_data.get("title", ""),
+                match_score=match_result.get("match_score", 0),
+                impact_level=impact_level,
+                match_details=match_details
+            )
+            
+            logger.info(f"📤 通知事件已发布: {enterprise_id} - {policy_data.get('title', '')[:30]}...")
+            
         except Exception as e:
-            logger.error(f"❌ 发送通知失败: {e}", exc_info=True)
-            match.notification_status = NotificationStatus.FAILED
-    
-    async def batch_process_pending_notifications(
+            logger.error(f"❌ 发布通知事件失败: {e}", exc_info=True)
+
+    async def generate_notification(
         self,
-        limit: int = 100
-    ) -> int:
+        policy_data: Dict[str, Any],
+        enterprise_profile: Dict[str, Any],
+        match_result: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """
-        批量处理待发送的通知
+        生成个性化通知
         
         Args:
-            limit: 处理数量限制
+            policy_data: 政策数据
+            enterprise_profile: 企业画像
+            match_result: 匹配结果
             
         Returns:
-            int: 处理的邮件数量
+            Dict: 通知内容
+        """
+        if self._use_llm and self._llm_agent:
+            try:
+                from app.multi_agent_system.agents.policy_notification_agent import (
+                    EnterpriseProfile as AgentProfile,
+                    PolicyUnderstanding,
+                    MatchScore,
+                    NotificationContent
+                )
+                
+                enterprise_id = enterprise_profile.get("enterprise_id", "")
+                
+                agent_profile = AgentProfile(
+                    enterprise_id=enterprise_id,
+                    name=enterprise_profile.get("name", "未知企业"),
+                    industry=enterprise_profile.get("industry"),
+                    region=enterprise_profile.get("region"),
+                    scale=enterprise_profile.get("scale"),
+                    tax_types=enterprise_profile.get("tax_types", []),
+                    keywords=enterprise_profile.get("keywords", []),
+                    business_scope=enterprise_profile.get("business_scope"),
+                    recent_interests=enterprise_profile.get("recent_interests", []),
+                    preferences=enterprise_profile.get("preferences", {})
+                )
+                
+                understanding_data = match_result.get("policy_understanding")
+                if understanding_data:
+                    understanding = PolicyUnderstanding(
+                        policy_id=policy_data.get("policy_id", ""),
+                        title=policy_data.get("title", ""),
+                        summary=understanding_data.get("summary", ""),
+                        core_objectives=understanding_data.get("core_objectives", []),
+                        applicable_conditions=[],
+                        key_requirements=[],
+                        deadlines=[],
+                        opportunities=[],
+                        risks=[],
+                        impact_level=understanding_data.get("impact_level", "medium")
+                    )
+                else:
+                    understanding = PolicyUnderstanding(
+                        policy_id=policy_data.get("policy_id", ""),
+                        title=policy_data.get("title", ""),
+                        summary=policy_data.get("summary", ""),
+                        impact_level="medium"
+                    )
+                
+                match_score = MatchScore(
+                    total_score=match_result.get("match_score", 0.5),
+                    semantic_score=match_result.get("semantic_score", 0.5),
+                    industry_score=match_result.get("industry_score", 0.5),
+                    region_score=match_result.get("region_score", 0.5),
+                    scale_score=match_result.get("scale_score", 0.5),
+                    tax_type_score=match_result.get("tax_type_score", 0.5),
+                    urgency_score=match_result.get("urgency_score", 0.5)
+                )
+                
+                content = await self._llm_agent.generate_personalized_notification(
+                    policy=policy_data,
+                    enterprise=agent_profile,
+                    understanding=understanding,
+                    match_score=match_score
+                )
+                
+                return {
+                    "title": content.title,
+                    "content": content.content,
+                    "key_points": content.key_points,
+                    "action_items": content.action_items,
+                    "urgency_level": content.urgency_level,
+                    "recommended_actions": content.recommended_actions,
+                    "risk_warnings": content.risk_warnings,
+                    "related_policies": content.related_policies,
+                    "call_to_action": content.call_to_action,
+                    "use_llm": True
+                }
+                
+            except Exception as e:
+                logger.warning(f"⚠️ LLM 通知生成失败，使用规则引擎: {e}")
+                return self._rule_based_notification(policy_data, match_result)
+        else:
+            return self._rule_based_notification(policy_data, match_result)
+
+    def _rule_based_notification(
+        self,
+        policy_data: Dict[str, Any],
+        match_result: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        规则引擎通知生成（降级方案）
+        
+        Args:
+            policy_data: 政策数据
+            match_result: 匹配结果
+            
+        Returns:
+            Dict: 通知内容
+        """
+        return {
+            "title": f"政策通知: {policy_data.get('title', '未知政策')}",
+            "content": f"有一条新的政策与您相关，请及时查看。匹配度：{match_result.get('match_score', 0):.0%}",
+            "key_points": [r.get("reason", "") for r in match_result.get("match_reasons", [])[:3]],
+            "action_items": ["查看政策详情", "评估适用性"],
+            "urgency_level": policy_data.get("priority", "medium"),
+            "recommended_actions": ["了解政策详情", "准备申报材料"],
+            "risk_warnings": [],
+            "related_policies": [],
+            "call_to_action": "查看详情",
+            "use_llm": False
+        }
+
+    async def _update_notification_status(self, match_id):
+        """
+        更新通知状态
+        
+        Args:
+            match_id: 匹配记录ID
         """
         db = SessionLocal()
         
         try:
-            pending = db.execute(
-                select(EnterprisePolicyMatch).where(
-                    EnterprisePolicyMatch.notification_status == NotificationStatus.PENDING
-                ).limit(limit)
-            ).scalars().all()
+            match = db.execute(
+                select(EnterprisePolicyMatch).where(EnterprisePolicyMatch.id == match_id)
+            ).scalar_one_or_none()
             
-            count = 0
-            for match in pending:
-                try:
-                    await self._send_notification(match, {})
-                    count += 1
-                except (ValueError, KeyError) as e:
-                    logger.error(f"❌ 处理通知数据错误 [{match.id}]: {e}")
-                except (OSError, IOError) as e:
-                    logger.error(f"❌ 处理通知IO错误 [{match.id}]: {e}")
-                except Exception as e:
-                    logger.error(f"❌ 处理通知失败 [{match.id}]: {e}")
-            
-            logger.info(f"✅ 批量处理完成: {count}/{len(pending)}")
-            return count
-            
+            if match:
+                match.notification_status = NotificationStatus.SENT
+                match.notified_at = datetime.now()
+                await db.commit()
+                
+        except Exception as e:
+            logger.error(f"❌ 更新通知状态失败: {e}", exc_info=True)
         finally:
             db.close()
-    
+
     async def get_enterprise_notifications(
         self,
         enterprise_id: str,
@@ -482,54 +708,86 @@ class PolicyNotificationService:
             
         finally:
             db.close()
-    
-    async def _publish_policy_matched_event(
+
+    async def prioritize_policies(
         self,
-        enterprise_id: str,
-        policy_data: Dict[str, Any],
-        match_score: float,
-        match_id: str
-    ):
+        policies: List[Dict[str, Any]],
+        enterprise_profile: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
         """
-        发布政策匹配事件
+        智能优先级排序
         
         Args:
-            enterprise_id: 企业ID
-            policy_data: 政策数据
-            match_score: 匹配分数
-            match_id: 匹配记录ID
+            policies: 政策列表
+            enterprise_profile: 企业画像
+            
+        Returns:
+            List[Dict]: 排序后的政策
         """
-        try:
-            impact_level = "low"
-            if policy_data.get("priority") == "critical":
-                impact_level = "high"
-            elif policy_data.get("priority") == "high":
-                impact_level = "medium"
+        if not policies:
+            return []
+        
+        if len(policies) == 1:
+            return policies
+        
+        if self._use_llm and self._llm_agent:
+            try:
+                from app.multi_agent_system.agents.policy_notification_agent import (
+                    EnterpriseProfile as AgentProfile
+                )
+                
+                agent_profile = AgentProfile(
+                    enterprise_id=str(enterprise_profile.get("enterprise_id", "")),
+                    name=enterprise_profile.get("name", "未知企业"),
+                    industry=enterprise_profile.get("industry"),
+                    region=enterprise_profile.get("region"),
+                    scale=enterprise_profile.get("scale"),
+                    tax_types=enterprise_profile.get("tax_types", []),
+                    keywords=enterprise_profile.get("keywords", []),
+                    business_scope=enterprise_profile.get("business_scope"),
+                    recent_interests=enterprise_profile.get("recent_interests", []),
+                    preferences=enterprise_profile.get("preferences", {})
+                )
+                
+                return await self._llm_agent.prioritize_policies(
+                    policies=policies,
+                    enterprise=agent_profile
+                )
+                
+            except Exception as e:
+                logger.warning(f"⚠️ LLM 优先级排序失败，使用规则引擎: {e}")
+                return self._rule_based_priority(policies)
+        else:
+            return self._rule_based_priority(policies)
+
+    def _rule_based_priority(
+        self,
+        policies: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        规则引擎优先级排序（降级方案）
+        
+        Args:
+            policies: 政策列表
             
-            match_details = {
-                "match_id": match_id,
-                "policy_id": policy_data["policy_id"],
-                "title": policy_data["title"],
-                "industries": policy_data.get("industries", []),
-                "regions": policy_data.get("regions", []),
-                "tax_types": policy_data.get("tax_types", []),
-                "priority": policy_data.get("priority"),
-                "source": policy_data.get("source_name")
-            }
-            
-            await policy_event_service.emit_policy_matched(
-                enterprise_id=enterprise_id,
-                policy_id=policy_data["policy_id"],
-                policy_title=policy_data["title"],
-                match_score=match_score,
-                impact_level=impact_level,
-                match_details=match_details
-            )
-            
-            logger.info(f"📤 政策匹配事件已发布: {enterprise_id} - {policy_data['policy_id']}")
-            
-        except Exception as e:
-            logger.error(f"❌ 发布政策匹配事件失败: {e}", exc_info=True)
+        Returns:
+            List[Dict]: 排序后的政策
+        """
+        priority_map = {
+            "critical": 3,
+            "high": 2,
+            "medium": 1,
+            "low": 0
+        }
+        
+        return sorted(
+            policies,
+            key=lambda p: (
+                priority_map.get(p.get("priority", "medium").lower(), 1),
+                p.get("match_score", 0)
+            ),
+            reverse=True
+        )
 
 
 policy_notification_service = PolicyNotificationService()

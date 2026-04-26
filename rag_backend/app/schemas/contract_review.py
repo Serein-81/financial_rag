@@ -5,7 +5,7 @@
 
 from typing import List, Dict, Any, Optional
 from datetime import datetime, date
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from enum import Enum
 
 
@@ -121,8 +121,9 @@ class ContractAnalysisRequest(BaseModel):
     include_risk_assessment: bool = Field(default=True, description="是否包含风险评估")
     include_suggestions: bool = Field(default=True, description="是否包含修改建议")
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
             "example": {
                 "tenant_id": "tenant-456",
                 "user_id": "user-123",
@@ -135,6 +136,7 @@ class ContractAnalysisRequest(BaseModel):
                 "include_risk_assessment": True
             }
         }
+    )
 
 
 class ContractAnalysisResponse(BaseModel):
@@ -167,8 +169,9 @@ class DeepClauseAnalysisRequest(BaseModel):
     clause_type: ClauseType = Field(..., description="条款类型")
     context: Optional[str] = Field(None, description="上下文信息")
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
             "example": {
                 "tenant_id": "tenant-456",
                 "user_id": "user-123",
@@ -176,6 +179,7 @@ class DeepClauseAnalysisRequest(BaseModel):
                 "clause_type": "delivery"
             }
         }
+    )
 
 
 class DeepClauseAnalysisResponse(BaseModel):
@@ -207,8 +211,9 @@ class ContractComparisonRequest(BaseModel):
     contract2_content: Optional[str] = Field(None, description="合同2 内容")
     compare_type: str = Field(default="both", description="对比类型：both/standards/versions")
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
             "example": {
                 "tenant_id": "tenant-456",
                 "user_id": "user-123",
@@ -217,6 +222,7 @@ class ContractComparisonRequest(BaseModel):
                 "contract2_id": "contract-002"
             }
         }
+    )
 
 
 class ContractComparisonResponse(BaseModel):

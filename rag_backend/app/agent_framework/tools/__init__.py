@@ -58,6 +58,14 @@ __all__ = [
     "LaborComplianceChecker",
     "IPRiskChecker",
     
+    # 法律增强工具
+    "ContractComplianceDeadlineTool",
+    "ContractTemplateMatcher",
+    "DisputeResolutionAdvisor",
+    "ContractRiskTrendAnalyzer",
+    "EnterprisePolicyMatchReader",
+    "EnterprisePolicyMatcher",
+    
     # 文档检索工具
     "DocumentChunkRetrievalTool",
 ]

@@ -8,7 +8,7 @@ interface EnterpriseTheme {
   secondary_color: string
 }
 
-const enterpriseTheme = ref<EnterpriseTheme>({
+export const enterpriseTheme = ref<EnterpriseTheme>({
   primary_color: '#1890ff',
   secondary_color: '#ffffff'
 })

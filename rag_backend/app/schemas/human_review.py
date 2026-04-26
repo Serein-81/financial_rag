@@ -6,7 +6,7 @@
 
 from datetime import datetime
 from typing import Optional, List, Any, Dict
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field,ConfigDict
 from enum import Enum
 
 
@@ -165,8 +165,9 @@ class ReviewCommentResponse(BaseModel):
     attachments: Optional[List[Dict[str, Any]]] = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(
+        from_attributes=True
+    )
 
 
 class ReviewActionRequest(BaseModel):
@@ -183,10 +184,13 @@ class ReviewActionResponse(BaseModel):
     user_name: Optional[str] = None
     action: str
     action_details: Optional[Dict[str, Any]] = None
+    old_value: Optional[Dict[str, Any]] = None
+    new_value: Optional[Dict[str, Any]] = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(
+        from_attributes=True
+    )
 
 
 class ReviewRequestAction(BaseModel):
@@ -198,8 +202,9 @@ class ReviewRequestAction(BaseModel):
     action_details: Optional[Dict[str, Any]] = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(
+        from_attributes=True
+    )
 
 
 class BatchUpdateStatusRequest(BaseModel):

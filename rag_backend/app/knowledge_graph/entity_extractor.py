@@ -3,7 +3,6 @@ import json
 import asyncio
 import logging
 from typing import List, Dict, Optional, Callable, Any
-from app.services.llm_service import llm_service
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -123,6 +122,7 @@ class EntityExtractor:
 返回：[{{"name":"苹果","type":"ORGANIZATION","confidence":0.95,"disambiguated_name":"苹果公司"}},{{"name":"手机","type":"PRODUCT","confidence":0.9}}]
 """
 
+        from app.services.llm_service import llm_service
         logger.info(f"调用 LLM 提取实体，使用模型: {self.model}...")
         response = await llm_service.get_answer(
             query=prompt,
@@ -331,6 +331,7 @@ class EntityExtractor:
 """
 
         try:
+            from app.services.llm_service import llm_service
             description = await llm_service.get_answer(
                 query=prompt,
                 context_chunks=[],
@@ -422,6 +423,7 @@ class EntityExtractor:
 """
 
         try:
+            from app.services.llm_service import llm_service
             summary = await llm_service.get_answer(
                 query=prompt,
                 context_chunks=[],

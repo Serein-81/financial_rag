@@ -1180,7 +1180,13 @@ class ReportGenerator(BaseAgent):
         yield self._to_markdown(report)
     
     def set_output_agent(self, output_agent) -> None:
-        """设置输出审查智能体（兼容 ReportAgent 接口）"""
+        """设置输出审查智能体（兼容 ReportAgent 接口，已弃用）"""
+        import warnings
+        warnings.warn(
+            "set_output_agent 方法已弃用，请直接使用 ResultSynthesizer",
+            DeprecationWarning,
+            stacklevel=2
+        )
         self.output_agent = output_agent
     
     def recognize_report_type(self, user_input: str) -> Optional[str]:

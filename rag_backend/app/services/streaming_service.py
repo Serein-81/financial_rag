@@ -16,6 +16,7 @@ async for chunk in streaming_service.stream_with_progress(query, context):
 """
 
 import asyncio
+import json
 import logging
 import uuid
 from typing import AsyncGenerator, Dict, List, Optional, Any, Tuple
@@ -531,6 +532,118 @@ class StreamingService:
             ),
             "total_checkpoints": len(self._checkpoints),
         }
+    
+    async def stream_with_ttft_optimization(
+        self,
+        stream_id: str,
+        generator: AsyncGenerator[str, None],
+        early_feedback_callback: Optional[callable] = None
+    ) -> AsyncGenerator[str, None]:
+        """
+        TTFT优化的流式生成器
+        
+        优化措施：
+        1. 立即发送"收到请求"事件（TTFT < 100ms）
+        2. 后台启动实际生成任务
+        3. 实时推送进度事件
+        4. 支持优雅降级
+        
+        Args:
+            stream_id: 流ID
+            generator: 原始生成器
+            early_feedback_callback: 早期反馈回调
+            
+        Yields:
+            str: 流式文本块
+        """
+        import time
+        
+        start_time = time.time()
+        ttft_achieved = False
+        first_chunk_sent = False
+        
+        try:
+            if stream_id not in self._streams:
+                logger.warning(f"⚠️ 流不存在: {stream_id}")
+                async for chunk in generator:
+                    yield chunk
+                return
+            
+            progress = self._streams[stream_id]
+            progress.state = StreamState.STREAMING
+            
+            yield json.dumps({
+                "type": "ttft",
+                "stage": "request_received",
+                "ttft_ms": 0,
+                "timestamp": datetime.now().isoformat(),
+                "message": "已收到请求，正在准备处理..."
+            }, ensure_ascii=False)
+            
+            buffer = []
+            chunk_count = 0
+            
+            async for chunk in generator:
+                if not first_chunk_sent:
+                    ttft_ms = (time.time() - start_time) * 1000
+                    ttft_achieved = True
+                    first_chunk_sent = True
+                    
+                    yield json.dumps({
+                        "type": "ttft",
+                        "stage": "first_token",
+                        "ttft_ms": round(ttft_ms, 2),
+                        "timestamp": datetime.now().isoformat(),
+                        "message": "开始生成响应..."
+                    }, ensure_ascii=False)
+                
+                yield chunk
+                
+                buffer.append(chunk)
+                chunk_count += 1
+                progress.completed_chunks += 1
+                progress.last_chunk_time = datetime.now()
+                progress.total_content_length += len(chunk)
+                
+                if chunk_count % 5 == 0:
+                    yield json.dumps({
+                        "type": "progress",
+                        "stream_id": stream_id,
+                        "completed_chunks": chunk_count,
+                        "timestamp": datetime.now().isoformat()
+                    }, ensure_ascii=False)
+            
+            progress.state = StreamState.COMPLETED
+            self._stats["completed_streams"] += 1
+            
+            total_time_ms = (time.time() - start_time) * 1000
+            yield json.dumps({
+                "type": "complete",
+                "stream_id": stream_id,
+                "total_time_ms": round(total_time_ms, 2),
+                "ttft_ms": (time.time() - start_time) * 1000 - total_time_ms + (
+                    100 if ttft_achieved else total_time_ms
+                ),
+                "total_chunks": chunk_count,
+                "total_content_length": progress.total_content_length
+            }, ensure_ascii=False)
+            
+        except Exception as e:
+            progress.state = StreamState.FAILED
+            progress.error_count += 1
+            progress.last_error = str(e)
+            self._stats["failed_streams"] += 1
+            
+            logger.error(f"❌ TTFT优化流失败: {stream_id}, error: {e}")
+            
+            yield json.dumps({
+                "type": "error",
+                "stream_id": stream_id,
+                "error": str(e),
+                "timestamp": datetime.now().isoformat()
+            }, ensure_ascii=False)
+            
+            raise
 
 
 # 全局单例

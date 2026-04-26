@@ -3,7 +3,7 @@
 用于 API 请求/响应的数据验证
 """
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from datetime import datetime
 
 
@@ -25,8 +25,9 @@ class EntityResponse(EntityBase):
     id: Optional[str] = Field(None, description="Neo4j 节点 ID")
     created_at: Optional[datetime] = None
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(
+        from_attributes=True
+    )
 
 
 # ============ 关系相关 ============
@@ -48,8 +49,9 @@ class RelationResponse(RelationBase):
     id: Optional[str] = Field(None, description="Neo4j 关系 ID")
     created_at: Optional[datetime] = None
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(
+        from_attributes=True
+    )
 
 
 # ============ 图构建相关 ============

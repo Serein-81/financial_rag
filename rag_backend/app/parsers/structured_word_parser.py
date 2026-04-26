@@ -39,43 +39,49 @@ class StructuredWordParser(FileParserStrategy):
             print(f"[WordParser] 文件验证失败: file_bytes={len(file_bytes)}", file=sys.stderr)
             raise ValueError("Word文件为空或无效")
         
-        # Word解析是CPU密集型操作，放到线程池执行
-        structured_content = await asyncio.to_thread(
+        structured_content, extracted_images = await asyncio.to_thread(
             self._extract_structured_content, file_bytes
         )
         
         if not structured_content.strip():
             raise ValueError("Word文件内容为空")
         
+        if extracted_images:
+            print(f"[WordParser] 检测到 {len(extracted_images)} 张图片，开始VLM识别...", file=sys.stderr)
+            structured_content = await self._process_images_with_vlm(
+                structured_content, extracted_images
+            )
+        
         return structured_content.strip()
     
-    def _extract_structured_content(self, file_bytes: bytes) -> str:
+    def _extract_structured_content(self, file_bytes: bytes) -> tuple:
         """同步结构化内容提取（在线程池中运行）"""
         import sys
+        import zipfile
         try:
             file_stream = io.BytesIO(file_bytes)
             doc = DocxDocument(file_stream)
             
-            # 输出文档基本信息
+            self._file_bytes = file_bytes
+            
             print(f"[WordParser] 文档段落总数: {len(doc.paragraphs)}", file=sys.stderr)
             print(f"[WordParser] 文档表格总数: {len(doc.tables)}", file=sys.stderr)
             
-            # 1. 分析样式层级
             style_hierarchy = self._analyze_style_hierarchy(doc)
             print(f"[WordParser] 检测到的样式层级: {style_hierarchy}", file=sys.stderr)
             
-            # 2. 提取结构化内容
-            structured_blocks = self._extract_structured_blocks(doc, style_hierarchy)
+            structured_blocks, extracted_images = self._extract_structured_blocks(doc, style_hierarchy)
             
-            # 3. 构建Markdown格式
             markdown_content = self._build_markdown(structured_blocks)
             
-            # 输出最终统计
             total_chars = len(markdown_content)
             total_words = len(markdown_content.split())
             print(f"[WordParser] 提取完成 - 总字符数: {total_chars}, 总词数: {total_words}", file=sys.stderr)
+            print(f"[WordParser] 提取图片数: {len(extracted_images)}", file=sys.stderr)
             
-            return markdown_content
+            del self._file_bytes
+            
+            return markdown_content, extracted_images
             
         except (ValueError, KeyError) as e:
             raise Exception(f"结构化Word解析数据错误: {str(e)}")
@@ -173,62 +179,99 @@ class StructuredWordParser(FileParserStrategy):
         
         return style_hierarchy
     
-    def _extract_structured_blocks(self, doc, style_hierarchy: Dict[str, int]) -> List[Dict[str, Any]]:
+    def _extract_structured_blocks(self, doc, style_hierarchy: Dict[str, int]) -> tuple:
         """
         提取结构化文档块
         
         Returns:
-            List[Dict]: 结构化块列表
+            tuple: (structured_blocks, extracted_images)
         """
         import sys
         
         structured_blocks = []
+        extracted_images = []
         empty_paragraphs = 0
         paragraphs_with_images = 0
         
-        # 处理段落
         for paragraph in doc.paragraphs:
             text = paragraph.text.strip()
             style_name = paragraph.style.name
             
-            # 检查段落是否包含图片
             has_images = False
+            image_index = 0
             for run in paragraph.runs:
                 if run._element.xpath('.//w:drawing') or run._element.xpath('.//w:pict'):
                     has_images = True
                     break
+                image_index += 1
             
             if not text and not has_images:
                 empty_paragraphs += 1
                 continue
             
-            if has_images and not text:
-                # 只有图片的段落，记录但不添加
+            image_placeholder = ""
+            image_bytes = None
+            if has_images:
+                try:
+                    image_placeholder, image_bytes = self._extract_image_content_from_paragraph(paragraph)
+                    if image_bytes:
+                        placeholder_idx = len(extracted_images)
+                        extracted_images.append({
+                            "id": placeholder_idx,
+                            "bytes": image_bytes,
+                            "placeholder": f"[IMAGE OCR PLACEHOLDER_{placeholder_idx}]"
+                        })
+                        image_placeholder = f"\n\n{extracted_images[-1]['placeholder']}\n"
+                        print(f"[WordParser] 检测到图片，已提取字节数据，大小: {len(image_bytes)} bytes", file=sys.stderr)
+                except Exception as e:
+                    print(f"[WordParser] 图片提取失败: {e}", file=sys.stderr)
+                    image_placeholder = ""
+                    image_bytes = None
+            
+            combined_content = text
+            if image_placeholder:
+                if combined_content:
+                    combined_content += f"\n\n{image_placeholder}"
+                else:
+                    combined_content = image_placeholder
+            
+            if not combined_content.strip():
                 paragraphs_with_images += 1
                 continue
             
-            # 判断是否为标题
             if style_name in style_hierarchy:
-                structured_blocks.append({
+                block = {
                     "type": "heading",
                     "level": style_hierarchy[style_name],
-                    "content": text
-                })
+                    "content": combined_content
+                }
+                if image_bytes:
+                    block["has_image"] = True
+                structured_blocks.append(block)
             else:
-                # 检查是否为列表项
                 if self._is_list_paragraph(paragraph):
-                    structured_blocks.append({
+                    block = {
                         "type": "list_item",
-                        "content": text
-                    })
+                        "content": combined_content
+                    }
+                    if image_bytes:
+                        block["has_image"] = True
+                    structured_blocks.append(block)
                 else:
-                    # 普通段落
-                    structured_blocks.append({
+                    block = {
                         "type": "paragraph",
-                        "content": text
-                    })
+                        "content": combined_content
+                    }
+                    if image_bytes:
+                        block["has_image"] = True
+                    structured_blocks.append(block)
         
-        # 处理表格
+        image_blocks, standalone_images = self._extract_standalone_images(doc)
+        if image_blocks:
+            structured_blocks.extend(image_blocks)
+            extracted_images.extend(standalone_images)
+            print(f"[WordParser] 提取独立图片块: {len(image_blocks)}", file=sys.stderr)
+        
         for table in doc.tables:
             table_content = self._extract_table_content(table)
             if table_content:
@@ -237,13 +280,327 @@ class StructuredWordParser(FileParserStrategy):
                     "content": table_content
                 })
         
-        # 输出详细统计信息
         print(f"[WordParser] 空段落数: {empty_paragraphs}", file=sys.stderr)
         print(f"[WordParser] 只含图片段落数: {paragraphs_with_images}", file=sys.stderr)
         print(f"[WordParser] 段落总数: {len(doc.paragraphs)}", file=sys.stderr)
         print(f"[WordParser] 提取的块数: {len(structured_blocks)}", file=sys.stderr)
+        print(f"[WordParser] 处理图片数: {len(extracted_images)}", file=sys.stderr)
         
-        return structured_blocks
+        return structured_blocks, extracted_images
+    
+    def _extract_image_content_from_paragraph(self, paragraph) -> tuple:
+        """
+        从段落中提取图片内容
+        
+        Args:
+            paragraph: Word段落对象
+            
+        Returns:
+            tuple: (placeholder_text, image_bytes or None)
+        """
+        import sys
+        import zipfile
+        import os
+        
+        try:
+            image_count = 0
+            image_descriptions = []
+            image_bytes = None
+            
+            for run in paragraph.runs:
+                drawings = run._element.xpath('.//w:drawing')
+                for drawing in drawings:
+                    image_count += 1
+                    
+                    extent = drawing.find('.//a:ext', namespaces={
+                        'a': 'http://schemas.openxmlformats.org/drawingml/2006/main'
+                    })
+                    
+                    size_info = ""
+                    if extent is not None:
+                        cx = extent.get('cx', '0')
+                        cy = extent.get('cy', '0')
+                        try:
+                            width_inches = int(cx) / 914400
+                            height_inches = int(cy) / 914400
+                            size_info = f"({width_inches:.1f}\" x {height_inches:.1f}\")"
+                        except (ValueError, TypeError):
+                            size_info = ""
+                    
+                    alt_text = ""
+                    cNvPr = drawing.find('.//p:cNvPr', namespaces={
+                        'p': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
+                        'a': 'http://schemas.openxmlformats.org/drawingml/2006/main'
+                    })
+                    if cNvPr is not None:
+                        alt_text = cNvPr.get('descr', '') or cNvPr.get('name', '')
+                    
+                    desc = f"[图片 {image_count}]"
+                    if alt_text:
+                        desc = f"[图片: {alt_text}]"
+                    elif size_info:
+                        desc = f"[图片 {size_info}]"
+                    
+                    image_descriptions.append(desc)
+                    
+                    if image_bytes is None:
+                        image_bytes = self._extract_image_from_drawing(drawing)
+                
+                picts = run._element.xpath('.//w:pict')
+                for pict in picts:
+                    image_count += 1
+                    image_descriptions.append(f"[图片 {image_count}]")
+                    if image_bytes is None:
+                        image_bytes = self._extract_image_from_pict(pict)
+            
+            if not image_descriptions:
+                return "", None
+            
+            placeholder = "\n\n[IMAGE CONTENT]\n"
+            for desc in image_descriptions:
+                placeholder += f"- {desc}\n"
+            
+            return placeholder, image_bytes
+            
+        except Exception as e:
+            print(f"[WordParser] 图片提取异常: {e}", file=sys.stderr)
+            return "", None
+    
+    def _extract_image_from_drawing(self, drawing) -> bytes:
+        """从w:drawing元素提取图片字节"""
+        import sys
+        
+        try:
+            blip = drawing.find('.//a:blip', namespaces={
+                'a': 'http://schemas.openxmlformats.org/drawingml/2006/main',
+                'r': 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+            })
+            
+            if blip is not None:
+                embed_id = blip.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed')
+                if embed_id:
+                    return self._get_image_from_relationship(embed_id)
+            
+            inline = drawing.find('.//wp:inline', namespaces={
+                'wp': 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing'
+            })
+            if inline is not None:
+                blip = inline.find('.//a:blip', namespaces={
+                    'a': 'http://schemas.openxmlformats.org/drawingml/2006/main'
+                })
+                if blip is not None:
+                    embed_id = blip.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed')
+                    if embed_id:
+                        return self._get_image_from_relationship(embed_id)
+            
+            anchor = drawing.find('.//wp:anchor', namespaces={
+                'wp': 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing'
+            })
+            if anchor is not None:
+                blip = anchor.find('.//a:blip', namespaces={
+                    'a': 'http://schemas.openxmlformats.org/drawingml/2006/main'
+                })
+                if blip is not None:
+                    embed_id = blip.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed')
+                    if embed_id:
+                        return self._get_image_from_relationship(embed_id)
+            
+            return None
+            
+        except Exception as e:
+            print(f"[WordParser] drawing图片提取失败: {e}", file=sys.stderr)
+            return None
+    
+    def _extract_image_from_pict(self, pict) -> bytes:
+        """从w:pict元素提取图片字节"""
+        import sys
+        
+        try:
+            shapetype = pict.find('.//v:shapetype')
+            if shapetype is not None:
+                pass
+            
+            image_elem = pict.find('.//v:image', namespaces={
+                'v': 'urn:schemas-microsoft-com:vml'
+            })
+            if image_elem is not None:
+                olink = image_elem.get('{urn:schemas-microsoft-com:office:office}link')
+                if olink:
+                    return self._get_image_from_ole(olink)
+            
+            return None
+            
+        except Exception as e:
+            print(f"[WordParser] pict图片提取失败: {e}", file=sys.stderr)
+            return None
+    
+    def _get_image_from_relationship(self, embed_id: str) -> bytes:
+        """从文档关系中获取图片字节"""
+        import sys
+        import zipfile
+        import io
+        
+        try:
+            file_bytes = getattr(self, '_file_bytes', None)
+            if file_bytes is None:
+                return None
+            
+            with zipfile.ZipFile(io.BytesIO(file_bytes), 'r') as zf:
+                doc_xml = zf.read('word/_rels/document.xml.rels')
+                
+                import re
+                pattern = f'Id="{embed_id}"[^>]*Target="([^"]*)"'
+                match = re.search(pattern, doc_xml.decode('utf-8'))
+                
+                if match:
+                    image_path = 'word/' + match.group(1)
+                    if image_path.startswith('word/'):
+                        image_path = image_path[5:]
+                    image_path = 'word/' + image_path
+                    
+                    try:
+                        return zf.read(image_path)
+                    except KeyError:
+                        return None
+                
+                return None
+            
+        except Exception as e:
+            print(f"[WordParser] 图片关系提取失败: {e}", file=sys.stderr)
+            return None
+    
+    def _get_image_from_ole(self, olink: str) -> bytes:
+        """从OLE链接获取图片"""
+        return None
+    
+    def _get_doc_part(self):
+        """获取文档part"""
+        try:
+            return self._doc_part
+        except AttributeError:
+            return None
+    
+    def _extract_standalone_images(self, doc) -> tuple:
+        """
+        提取文档中独立的图片（不在任何文本段落中的图片）
+        
+        Args:
+            doc: Word文档对象
+            
+        Returns:
+            tuple: (image_blocks, extracted_images)
+        """
+        import sys
+        
+        image_blocks = []
+        extracted_images = []
+        
+        try:
+            for para_idx, para in enumerate(doc.paragraphs):
+                text = para.text.strip()
+                has_images = False
+                image_bytes = None
+                
+                for run in para.runs:
+                    if run._element.xpath('.//w:drawing') or run._element.xpath('.//w:pict'):
+                        has_images = True
+                        break
+                
+                if has_images and not text:
+                    image_block = {
+                        "type": "paragraph",
+                        "content": f"[IMAGE: 文档中的嵌入图片 {para_idx + 1}]"
+                    }
+                    image_blocks.append(image_block)
+                    
+                    for run in para.runs:
+                        drawings = run._element.xpath('.//w:drawing')
+                        for drawing in drawings:
+                            if image_bytes is None:
+                                image_bytes = self._extract_image_from_drawing(drawing)
+                                if image_bytes:
+                                    placeholder_idx = len(extracted_images)
+                                    extracted_images.append({
+                                        "id": placeholder_idx,
+                                        "bytes": image_bytes,
+                                        "placeholder": f"[IMAGE OCR PLACEHOLDER_{placeholder_idx}]"
+                                    })
+                                    print(f"[WordParser] 检测到独立图片，字节数据，大小: {len(image_bytes)} bytes", file=sys.stderr)
+                                    break
+                        if image_bytes:
+                            break
+                    
+                    print(f"[WordParser] 检测到独立图片块，段落索引: {para_idx + 1}", file=sys.stderr)
+            
+            return image_blocks, extracted_images
+            
+        except Exception as e:
+            print(f"[WordParser] 独立图片提取异常: {e}", file=sys.stderr)
+            return [], []
+    
+    async def _process_images_with_vlm(
+        self, 
+        markdown_content: str, 
+        extracted_images: List[Dict[str, Any]]
+    ) -> str:
+        """
+        使用VLM处理图片，生成描述并替换占位符
+        
+        Args:
+            markdown_content: Markdown格式的文档内容
+            extracted_images: 提取的图片列表
+            
+        Returns:
+            str: 替换图片占位符后的内容
+        """
+        import sys
+        
+        if not extracted_images:
+            return markdown_content
+        
+        try:
+            from app.services.vlm_service import vlm_service
+            
+            if not vlm_service.is_enabled:
+                print("[WordParser] VLM服务未启用，跳过图片OCR", file=sys.stderr)
+                return markdown_content
+            
+            print(f"[WordParser] 开始VLM处理 {len(extracted_images)} 张图片...", file=sys.stderr)
+            
+            processed_content = markdown_content
+            
+            for img_info in extracted_images:
+                placeholder = img_info.get("placeholder", "")
+                image_bytes = img_info.get("bytes")
+                
+                if not placeholder or not image_bytes:
+                    continue
+                
+                try:
+                    print(f"[WordParser] 处理图片 {img_info['id'] + 1}/{len(extracted_images)}...", file=sys.stderr)
+                    
+                    image_description = await vlm_service.describe_image(image_bytes)
+                    
+                    replacement = f"\n\n[图片内容说明]:\n{image_description}\n\n"
+                    
+                    processed_content = processed_content.replace(placeholder, replacement)
+                    
+                    print(f"[WordParser] 图片 {img_info['id'] + 1} 处理完成，描述长度: {len(image_description)}", file=sys.stderr)
+                    
+                except Exception as e:
+                    print(f"[WordParser] 图片 {img_info['id']} VLM处理失败: {e}", file=sys.stderr)
+                    replacement = f"\n\n[图片内容 - VLM处理失败]\n\n"
+                    processed_content = processed_content.replace(placeholder, replacement)
+            
+            print(f"[WordParser] VLM图片处理完成", file=sys.stderr)
+            return processed_content
+            
+        except ImportError:
+            print("[WordParser] VLM服务导入失败，跳过图片OCR", file=sys.stderr)
+            return markdown_content
+        except Exception as e:
+            print(f"[WordParser] VLM处理异常: {e}", file=sys.stderr)
+            return markdown_content
     
     def _is_list_paragraph(self, paragraph) -> bool:
         """判断段落是否为列表项"""

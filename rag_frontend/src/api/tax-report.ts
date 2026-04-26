@@ -454,19 +454,53 @@ export const taxReportApiClient = {
    * 获取税务报告统计信息
    */
   async statistics(): Promise<{
-    total: number
+    total_reports: number
+    total?: number  // 兼容旧字段名
     by_status: {
-      pending: number
-      processing: number
-      completed: number
-      failed: number
+      pending?: number
+      processing?: number
+      completed?: number
+      failed?: number
       pending_review?: number
-      [key: string]: number
+      [key: string]: number | undefined
     }
     by_tax_type: Record<string, number>
-    needs_review: number
+    by_risk_level?: Record<string, number>
+    needs_review_count: number
+    needs_review?: number  // 兼容旧字段名
+    recent_activity?: {
+      last_7_days: number
+      last_30_days: number
+      today: number
+    }
   }> {
     const response = await taxReportApi.get('/tax-reports/statistics')
+    return response.data
+  },
+
+  /**
+   * 获取税务报告的AI智能解释
+   */
+  async explainReport(
+    analysisId: string,
+    question?: string
+  ): Promise<{
+    report_id: string
+    question?: string
+    explanation: string
+    report_summary?: {
+      tax_type?: string
+      total_tax_burden?: number
+      risk_score?: number
+      confidence_score?: number
+    }
+    generated_at: string
+    success?: boolean
+  }> {
+    const response = await taxReportApi.post(
+      `/tax-intelligence/report/${analysisId}/explain`,
+      question ? { question } : null  // 修复：发送 null 而不是空对象
+    )
     return response.data
   }
 }

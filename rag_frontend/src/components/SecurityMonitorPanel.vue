@@ -55,13 +55,38 @@
     <el-card class="mb-4">
       <el-tabs v-model="activeTab">
         <el-tab-pane label="租户管理" name="tenants">
+          <el-alert
+            type="info"
+            description="💡 点击租户ID或用户ID可显示/隐藏敏感信息"
+            :closable="false"
+            show-icon
+            class="mb-3"
+          />
           <div class="space-y-4">
             <div v-for="tenant in tenants" :key="tenant.tenant_id" class="border border-slate-200 rounded-lg p-4">
               <div class="flex items-center justify-between mb-3">
                 <div>
-                  <div class="font-semibold text-lg">{{ tenant.tenant_id }}</div>
+                  <div class="font-semibold text-lg">
+                    {{ tenant.metadata?.company_name || tenant.tenant_id }}
+                  </div>
                   <div class="text-sm text-slate-500">
-                    用户: {{ tenant.user_id || 'N/A' }} | 角色: {{ tenant.roles.join(', ') }}
+                    租户ID: 
+                    <span 
+                      class="cursor-pointer hover:text-indigo-600" 
+                      @click="toggleSensitiveInfo"
+                      :title="showSensitiveInfo ? '点击隐藏' : '点击显示'"
+                    >
+                      {{ showSensitiveInfo ? tenant.tenant_id : '******' }}
+                    </span>
+                     | 用户: 
+                    <span 
+                      class="cursor-pointer hover:text-indigo-600"
+                      @click="toggleSensitiveInfo"
+                      :title="showSensitiveInfo ? '点击隐藏' : '点击显示'"
+                    >
+                      {{ showSensitiveInfo ? (tenant.user_id || 'N/A') : '******' }}
+                    </span>
+                     | 角色: {{ tenant.roles.join(', ') }}
                   </div>
                 </div>
                 <el-tag :type="tenant.isolation_level === 'strict' ? 'success' : 'warning'">
@@ -160,6 +185,13 @@
 
             <div>
               <h3 class="font-semibold mb-3">测试查询</h3>
+              <el-alert
+                type="info"
+                description="⚠️ 此功能仅用于测试 Cypher 查询的安全性，不会实际执行查询"
+                :closable="false"
+                show-icon
+                class="mb-3"
+              />
               <div class="flex gap-2">
                 <input
                   v-model="testQuery"
@@ -255,6 +287,11 @@ const cypherStats = ref<CypherValidatorStats | null>(null)
 const recentEvents = ref<SecurityEvent[]>([])
 const testQuery = ref('')
 const validationResult = ref<ValidationResult | null>(null)
+const showSensitiveInfo = ref(false)
+
+function toggleSensitiveInfo() {
+  showSensitiveInfo.value = !showSensitiveInfo.value
+}
 
 function getTenantQuota(tenantId: string): TenantQuota | undefined {
   return tenantQuotas.value.get(tenantId)

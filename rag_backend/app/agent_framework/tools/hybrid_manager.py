@@ -7,11 +7,14 @@
 from typing import Dict, Any, Optional, List, AsyncGenerator, TYPE_CHECKING
 import re
 import time
+import logging
 from .tool_chain import ToolChainManager, ToolChain
 from .tool_manager import ToolManager
 
 if TYPE_CHECKING:
     from ..core.base_agent import BaseAgent
+
+logger = logging.getLogger(__name__)
 
 
 class ExecutionMode:
@@ -81,7 +84,7 @@ class HybridToolManager:
         research_chain = self._create_comprehensive_research_chain()
         self.chain_manager.register_chain(research_chain)
         
-        print(f"✅ 已注册 {len(self.chain_manager.chains)} 个默认工具链")
+        logger.info(f"已注册 {len(self.chain_manager.chains)} 个默认工具链")
     
     def _create_weather_chain(self) -> ToolChain:
         """创建天气查询工具链"""
@@ -362,21 +365,30 @@ class HybridToolManager:
         
         result = await self.chain_manager.execute_chain(chain_name, user_input, context)
         
-        # 格式化输出
-        if result["success"] and "output" in result:
-            formatted_output = result["output"]
-        elif "final_result" in result["context"]:
-            formatted_output = result["context"]["final_result"]
-        elif "formatted_result" in result["context"]:
-            formatted_output = result["context"]["formatted_result"]
+        # 安全地格式化输出
+        formatted_output = "工具链执行完成，但未获得预期结果。"
+        success = False
+        
+        if isinstance(result, dict):
+            success = result.get("success", False)
+            
+            if success and "output" in result:
+                formatted_output = result["output"]
+            elif "context" in result and isinstance(result["context"], dict):
+                context_data = result["context"]
+                if "final_result" in context_data:
+                    formatted_output = context_data["final_result"]
+                elif "formatted_result" in context_data:
+                    formatted_output = context_data["formatted_result"]
         else:
-            formatted_output = "工具链执行完成，但未获得预期结果。"
+            # 如果result不是字典，尝试将其转换为字符串
+            formatted_output = str(result) if result else "工具链执行完成，但返回了无效的结果格式。"
         
         return {
-            "success": result["success"],
+            "success": success,
             "output": formatted_output,
             "chain_used": chain_name,
-            "execution_log": result.get("execution_log", [])
+            "execution_log": result.get("execution_log", []) if isinstance(result, dict) else []
         }
     
     async def _execute_agent_mode(
@@ -391,12 +403,16 @@ class HybridToolManager:
         # 从上下文提取历史记录
         history = context.get("history", [])
         kb_id = context.get("kb_id", "default")
+        user_id = context.get("user_id")
+        tenant_id = context.get("tenant_id")
         
         # 调用Agent
         agent_result = await self.agent.run(
             user_input=user_input,
             history=history,
-            kb_id=kb_id
+            kb_id=kb_id,
+            user_id=user_id,
+            tenant_id=tenant_id
         )
         
         return {

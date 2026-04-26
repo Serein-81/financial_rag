@@ -10,9 +10,11 @@ import {
   Delete,
   View,
   Upload,
-  Edit
+  Edit,
+  ChatDotRound,
+  QuestionFilled
 } from '@element-plus/icons-vue'
-import { AlertTriangle, FileText as FileTextIcon, Edit as EditIcon } from 'lucide-vue-next'
+import { AlertTriangle, FileText as FileTextIcon, Edit as EditIcon, Bot, MessageSquare, BookOpen } from 'lucide-vue-next'
 import { taxReportApiClient } from '@/api/tax-report'
 import type { TaxReport, DuplicateFileResponse } from '@/types/tax'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -36,6 +38,16 @@ const uploadLoading = ref(false)
 const detailDialogVisible = ref(false)
 const currentReport = ref<TaxReport | null>(null)
 const detailLoading = ref(false)
+
+const showAIExplanation = ref(false)
+const explanationLoading = ref(false)
+const explanationText = ref('')
+const userQuestion = ref('')
+const explanationHistory = ref<Array<{
+  question?: string
+  explanation: string
+  generated_at: string
+}>>([])
 
 const selectedFiles = ref<File[]>([])
 const isDragging = ref(false)
@@ -447,11 +459,20 @@ const loadStatistics = async () => {
   try {
     const stats = await taxReportApiClient.statistics()
     
-    statistics.value.total = stats.total
-    statistics.value.pending = stats.by_status.pending || 0
-    statistics.value.processing = stats.by_status.processing || 0
-    statistics.value.completed = stats.by_status.completed || 0
-    statistics.value.needs_review = stats.needs_review || 0
+    // 修复字段映射: 后端返回 total_reports 和 needs_review_count
+    statistics.value.total = stats.total_reports || stats.total || 0
+    statistics.value.pending = stats.by_status?.pending || 0
+    statistics.value.processing = stats.by_status?.processing || 0
+    statistics.value.completed = stats.by_status?.completed || 0
+    statistics.value.needs_review = stats.needs_review_count || stats.needs_review || 0
+    
+    console.log('✅ 统计数据加载成功:', {
+      total: statistics.value.total,
+      pending: statistics.value.pending,
+      processing: statistics.value.processing,
+      completed: statistics.value.completed,
+      needs_review: statistics.value.needs_review
+    })
   } catch (error) {
     console.error('加载统计数据失败:', error)
   }
@@ -463,11 +484,57 @@ const handleViewDetail = async (report: TaxReport) => {
     const details = await taxReportApiClient.get(report.id)
     currentReport.value = details
     detailDialogVisible.value = true
+    
+    // 重置AI解释相关状态
+    showAIExplanation.value = false
+    explanationText.value = ''
+    userQuestion.value = ''
+    explanationHistory.value = []
   } catch (error) {
     ElMessage.error('加载报告详情失败')
   } finally {
     detailLoading.value = false
   }
+}
+
+const handleGetAIExplanation = async (question?: string) => {
+  if (!currentReport.value) return
+  
+  try {
+    explanationLoading.value = true
+    const result = await taxReportApiClient.explainReport(
+      currentReport.value.id,
+      question || undefined
+    )
+    
+    explanationText.value = result.explanation
+    
+    // 保存到历史记录
+    explanationHistory.value.unshift({
+      question: question || undefined,
+      explanation: result.explanation,
+      generated_at: result.generated_at
+    })
+    
+    // 显示解释面板
+    showAIExplanation.value = true
+    
+    ElMessage.success('AI解释生成成功')
+  } catch (error: any) {
+    ElMessage.error(`生成解释失败: ${error.response?.data?.detail || error.message}`)
+  } finally {
+    explanationLoading.value = false
+  }
+}
+
+const handleAskQuestion = () => {
+  if (!userQuestion.value.trim()) {
+    ElMessage.warning('请输入问题')
+    return
+  }
+  
+  handleGetAIExplanation(userQuestion.value)
+  userQuestion.value = ''
 }
 
 const handleDelete = async (report: TaxReport) => {
@@ -732,6 +799,28 @@ onMounted(() => {
                 :closable="false"
                 class="mt-4"
               />
+
+              <el-alert
+                type="info"
+                :closable="false"
+                class="mt-4"
+              >
+                <template #title>
+                  <div class="ocr-info-title">
+                    <span>📋 文档识别技术说明</span>
+                  </div>
+                </template>
+                <div class="ocr-info-content">
+                  <p class="ocr-info-primary">本系统使用多层级 OCR 识别技术自动解析您的税务文档：</p>
+                  <ul class="ocr-info-list">
+                    <li><strong>Unstructured API</strong>（Docker 服务）：专业文档解析微服务，集成 YOLOX 和 Detectron2 版面分析模型，支持高分辨率表格识别。<em>需通过 <code>--profile heavy</code> 或 <code>--profile full</code> 启动服务</em></li>
+                    <li><strong> MinerU</strong>（云端 API）：如果配置了 API Key，将使用 MinerU 云端服务进行文档解析</li>
+                    <li><strong>PaddleOCR</strong>（本地/云端）：如果配置了 PaddleOCR 服务，将使用 PaddleOCR 进行文字识别</li>
+                    <li><strong>Tesseract</strong>（本地备选）：开源 OCR 引擎，作为最后的备选方案</li>
+                  </ul>
+                  <p class="ocr-info-note">💡 系统会自动选择可用的最优引擎进行处理，无需手动配置。</p>
+                </div>
+              </el-alert>
 
               <div v-if="showWorkflowProgress" class="workflow-progress mt-4">
                 <el-card shadow="hover" class="workflow-card intelligent-card scan-effect">
@@ -1105,7 +1194,111 @@ onMounted(() => {
         </div>
 
         <template #footer>
-          <el-button @click="detailDialogVisible = false">关闭</el-button>
+          <div class="dialog-footer">
+            <el-button 
+              type="primary" 
+              @click="handleGetAIExplanation()"
+              :loading="explanationLoading"
+              :disabled="!currentReport || currentReport.status !== 'completed'"
+            >
+              <el-icon><ChatDotRound /></el-icon>
+              AI解释报告
+            </el-button>
+            <el-button @click="detailDialogVisible = false">关闭</el-button>
+          </div>
+        </template>
+      </el-dialog>
+
+      <el-dialog
+        v-model="showAIExplanation"
+        title="AI智能解释"
+        width="800px"
+        :close-on-click-modal="false"
+        class="explanation-dialog"
+      >
+        <div v-loading="explanationLoading" class="explanation-content">
+          <div v-if="explanationText" class="explanation-main">
+            <div class="explanation-header">
+              <Bot class="text-blue-500" size="24" />
+              <h3>AI解释</h3>
+              <el-tag type="success" size="small" v-if="currentReport">
+                基于 {{ getTaxTypeLabel(currentReport.tax_type) }} 报告
+              </el-tag>
+            </div>
+            
+            <div class="explanation-text">
+              {{ explanationText }}
+            </div>
+            
+            <div class="explanation-actions">
+              <el-button 
+                type="primary" 
+                size="small"
+                @click="handleGetAIExplanation()"
+                :loading="explanationLoading"
+              >
+                <el-icon><Refresh /></el-icon>
+                重新生成
+              </el-button>
+            </div>
+          </div>
+          
+          <div class="explanation-question-section">
+            <h4 class="question-title">
+              <MessageSquare class="text-green-500" size="20" />
+              询问AI
+            </h4>
+            <div class="question-input-group">
+              <el-input
+                v-model="userQuestion"
+                placeholder="输入您的问题，例如：为什么我的风险评分这么高？"
+                type="textarea"
+                :rows="2"
+                class="question-input"
+                @keyup.enter="handleAskQuestion"
+              />
+              <el-button
+                type="primary"
+                @click="handleAskQuestion"
+                :loading="explanationLoading"
+                class="question-button"
+              >
+                <el-icon><QuestionFilled /></el-icon>
+                提问
+              </el-button>
+            </div>
+            <p class="question-hint">
+              您可以询问关于税务计算、风险因素、优化建议等问题
+            </p>
+          </div>
+          
+          <div v-if="explanationHistory.length > 0" class="explanation-history">
+            <h4 class="history-title">
+              <el-icon><Clock /></el-icon>
+              解释历史
+            </h4>
+            <div class="history-list">
+              <div
+                v-for="(item, index) in explanationHistory"
+                :key="index"
+                class="history-item"
+              >
+                <div class="history-question" v-if="item.question">
+                  <strong>Q:</strong> {{ item.question }}
+                </div>
+                <div class="history-answer">
+                  <strong>A:</strong> {{ item.explanation }}
+                </div>
+                <div class="history-time">
+                  {{ new Date(item.generated_at).toLocaleString('zh-CN') }}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <template #footer>
+          <el-button @click="showAIExplanation = false">关闭</el-button>
         </template>
       </el-dialog>
 
@@ -2400,5 +2593,39 @@ onMounted(() => {
     rgba(96, 165, 250, 0.3) 50%,
     rgba(96, 165, 250, 0.1) 100%
   );
+}
+
+.ocr-info-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.ocr-info-content {
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.ocr-info-primary {
+  margin: 0 0 8px 0;
+}
+
+.ocr-info-list {
+  margin: 0 0 8px 0;
+  padding-left: 20px;
+}
+
+.ocr-info-list li {
+  margin-bottom: 4px;
+}
+
+.ocr-info-list li em {
+  font-size: 12px;
+  color: #909399;
+}
+
+.ocr-info-note {
+  margin: 0;
+  font-size: 12px;
+  color: #67c23a;
 }
 </style>

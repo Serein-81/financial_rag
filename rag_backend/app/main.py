@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from starlette.requests import Request
 from contextlib import asynccontextmanager
+import logging
 from sqlalchemy import text
 from app.core.config import settings
 from app.db.session import engine
@@ -12,8 +13,9 @@ from app.core.resource_manager import make_resource_manager, RedisConnectionPool
 # ➕ 2. 必须导入 models 里的文件！
 # 只有导入了 document，SQLAlchemy 才知道 "哦，原来有一个叫 Document 的子类要建表"
 # 如果不导入这行，Base.metadata 里面是空的，就不会建表。
-from app.models import tax_report, user_financial_data, tenant_settings, policy, financial_health, contract_review
-from app.api.v1.endpoints import document as document_router, search, chat, auth, session, knowledge, agent_trace, tool_trace, prompt_optimization, memory, knowledge_graph, audit, invite_code, enterprise, logs, chat_logs, tax_report, human_review, multi_agent, group_chat, user_financial_data, tenant_settings, policy, rate_limit, streaming, snapshot, suggestion, tax_intelligence, financial_health, policy_tracking, contract_review, task_manager, agent_llm_config, agent_discovery, financial_tools_test, workflow_events, policy_notifications, policy_agent, workflow
+from app.models import tax_report, user_financial_data, tenant_settings, policy, financial_health, contract_review, agent_task
+from app.api.v1.endpoints import document as document_router, search, chat, auth, session, knowledge, agent_trace, tool_trace, prompt_optimization, memory, knowledge_graph, audit, invite_code, enterprise, logs, chat_logs, tax_report, human_review, multi_agent, group_chat, user_financial_data, tenant_settings, policy, rate_limit, streaming, snapshot, suggestion, tax_intelligence, financial_health, policy_tracking, contract_review, task_manager, agent_llm_config, agent_discovery, financial_tools_test, workflow_events, policy_notifications, policy_agent, workflow, security
+from app.api.v1.endpoints import agent_task as agent_task_endpoint
 from app.api.v1.endpoints import circuit_breaker_router
 
 # 🔒 导入租户中间件
@@ -43,6 +45,10 @@ async def lifespan(app: FastAPI):
         format_type=LogFormat.DETAILED
     )
     
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    
     logger.info(f"🚀 {settings.PROJECT_NAME} 正在启动...")
 
     logger.info("正在尝试连接数据库...")
@@ -67,8 +73,8 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(cleanup_expired_presence_task())
         logger.info("✅ 在线状态清理任务已启动")
 
-        from app.services.policy_scheduler_service import policy_sync_scheduler
-        asyncio.create_task(policy_sync_scheduler.start())
+        from app.services.policy_service import policy_service
+        asyncio.create_task(policy_service.start_scheduler())
         logger.info("✅ 政策同步调度器已启动（定时从官方渠道同步）")
         
         from app.services.task_scheduler import task_scheduler
@@ -126,6 +132,20 @@ async def lifespan(app: FastAPI):
             logger.warning(f"⚠️ CircuitBreaker Manager 运行时错误: {e}")
         except Exception as e:
             logger.warning(f"⚠️ CircuitBreaker Manager 初始化失败: {e}")
+        
+        try:
+            from app.tasks.arq_worker import ARQWorker
+            worker = ARQWorker()
+            await worker.initialize()
+            asyncio.create_task(worker.run())
+            app.state.arq_worker = worker
+            logger.info("✅ ARQ Worker 已启动（后台任务队列）")
+        except ImportError as e:
+            logger.warning(f"⚠️ ARQ Worker 导入失败: {e}")
+        except RuntimeError as e:
+            logger.warning(f"⚠️ ARQ Worker 运行时错误: {e}")
+        except Exception as e:
+            logger.warning(f"⚠️ ARQ Worker 启动失败: {e}")
         
         yield
 
@@ -254,6 +274,7 @@ app.include_router(policy_tracking.router, prefix="/api/v1", tags=["Policy Track
 app.include_router(contract_review.router, prefix="/api/v1", tags=["Contract Review"]) # 🆕 合同审核
 app.include_router(human_review.router, prefix="/api/v1/human-review", tags=["Human Review"]) # 🆕 人工审核
 app.include_router(multi_agent.router, prefix="/api/v1/multi-agent", tags=["Multi-Agent System"]) # 🆕 多智能体系统
+app.include_router(security.router, prefix="/api/v1", tags=["Security Monitor"]) # 🆕 安全监控
 app.include_router(user_financial_data.router, prefix="/api/v1", tags=["Financial Data Management"]) # 🆕 财务数据管理
 
 try:
@@ -306,6 +327,9 @@ app.include_router(circuit_breaker_router, prefix="/api/v1", tags=["Circuit Brea
 # 政策通知 SSE 推送
 app.include_router(policy_notifications.router, prefix="/api/v1", tags=["Policy Notifications"]) # 🆕 政策通知实时推送
 app.include_router(policy_agent.router, prefix="/api/v1", tags=["Policy Notification Agent"]) # 🆕 政策通知智能体
+
+# Agent 任务状态 API（用于前端水合）
+app.include_router(agent_task_endpoint.router, prefix="/api/v1", tags=["Agent Task Status"]) # 🆕 任务状态持久化与恢复
 
 @app.get("/")
 def root():

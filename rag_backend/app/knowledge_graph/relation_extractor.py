@@ -3,7 +3,6 @@ import json
 import asyncio
 import logging
 from typing import List, Dict, Optional, Callable, Any
-from app.services.llm_service import llm_service
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -107,6 +106,7 @@ class RelationExtractor:
 返回：[{{"source":"张三","target":"阿里巴巴","type":"工作于","confidence":0.95}},{{"source":"阿里巴巴","target":"北京","type":"位于","confidence":0.9}}]
 """
 
+        from app.services.llm_service import llm_service
         logger.info(f"调用 LLM 提取关系，使用模型: {self.model}...")
         response = await llm_service.get_answer(
             query=prompt,
@@ -307,6 +307,7 @@ class RelationExtractor:
 """
 
         try:
+            from app.services.llm_service import llm_service
             description = await llm_service.get_answer(
                 query=prompt,
                 context_chunks=[],

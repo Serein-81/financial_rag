@@ -704,6 +704,108 @@ class SearchService:
         except Exception as e:
             logger.warning(f"搜索服务健康检查失败: {e}")
             return False
+    
+    async def search_with_vector(
+            self,
+            query_vector: List[float],
+            top_k: int = 5,
+            score_threshold: float = 0.6,
+            tenant_id: str = None,
+            user_id: str = None
+    ) -> List[SearchResultItem]:
+        """
+        使用外部传入的向量进行搜索（避免重复生成 embedding）
+        
+        Args:
+            query_vector: 已生成的查询向量
+            top_k: 返回结果数量
+            score_threshold: 相似度阈值
+            tenant_id: 租户ID
+            user_id: 用户ID
+            
+        Returns:
+            搜索结果列表
+        """
+        start_time = time.time()
+        results = []
+
+        try:
+            if not tenant_id:
+                raise ValueError("租户隔离失败：缺少 tenant_id")
+            
+            if not query_vector or len(query_vector) == 0:
+                logger.warning("⚠️ [search_with_vector] 传入的向量为空")
+                return []
+
+            async with AsyncSessionLocal() as db:
+                # 动态组装 WHERE 条件
+                where_clauses = ["(1 - (CAST(c.embedding AS vector) <=> CAST(:vector AS vector))) >= :threshold"]
+                where_clauses.append("d.tenant_id = :tenant_id")
+
+                if user_id:
+                    where_clauses.append("""
+                        (
+                            (UPPER(kb.visibility) = 'ENTERPRISE' OR (UPPER(kb.visibility) = 'PRIVATE' AND kb.user_id = CAST(:user_id AS UUID)))
+                        )
+                        AND
+                        (
+                            (UPPER(d.visibility) = 'PUBLIC' OR d.user_id = CAST(:user_id AS UUID))
+                        )
+                    """)
+
+                where_sql = " AND ".join(where_clauses)
+
+                query_sql = text(f"""
+                    SELECT
+                        c.id as chunk_id,
+                        c.document_id,
+                        c.content,
+                        d.filename as source_file,
+                        d.file_type as doc_type,
+                        (1 - (CAST(c.embedding AS vector) <=> CAST(:vector AS vector))) as score
+                    FROM document_chunks c
+                    JOIN documents d ON c.document_id = d.id
+                    JOIN knowledge_bases kb ON d.kb_id = kb.id
+                    WHERE {where_sql}
+                    ORDER BY c.embedding <=> CAST(:vector AS vector)
+                    LIMIT :limit
+                """)
+
+                params = {
+                    "vector": "[" + ",".join(map(str, query_vector)) + "]",
+                    "threshold": float(score_threshold),
+                    "limit": int(top_k),
+                    "tenant_id": tenant_id
+                }
+                if user_id:
+                    params["user_id"] = str(user_id)
+
+                result = await db.execute(query_sql, params)
+                rows = result.fetchall()
+
+                results = [
+                    SearchResultItem(
+                        chunk_id=str(row.chunk_id),
+                        document_id=str(row.document_id),
+                        content=row.content,
+                        source_file=row.source_file,
+                        doc_type=row.doc_type,
+                        score=float(row.score)
+                    )
+                    for row in rows
+                ]
+
+                elapsed_ms = (time.time() - start_time) * 1000
+                logger.info(f"🔍 [search_with_vector] 搜索完成 | 耗时: {elapsed_ms:.1f}ms | 结果: {len(results)}")
+
+                return results
+
+        except ValueError as e:
+            logger.error(f"❌ [search_with_vector] 值错误: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"❌ [search_with_vector] 搜索失败: {e}")
+            return []
 
 
 search_service = SearchService()

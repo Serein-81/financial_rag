@@ -12,7 +12,7 @@ from app.api import deps
 from app.models.user import User
 from app.services.policy_retrieval_service import policy_retrieval_service
 from app.services.policy_notification_service import policy_notification_service
-from app.services.policy_scheduler import policy_scheduler, SchedulerConfig, UpdateFrequency
+from app.services.policy_service import policy_service, SchedulerConfig, UpdateFrequency
 from app.services.policy_collector import policy_collector
 
 router = APIRouter()
@@ -149,17 +149,13 @@ async def sync_policies(
     从官方渠道采集最新政策入库
     """
     try:
-        from app.services.policy_scheduler_service import policy_sync_scheduler
-
-        await policy_sync_scheduler.sync_now()
-        return {"message": "政策同步任务已触发", "status": "success"}
+        result = await policy_service.sync_now()
+        return result
 
     except (ValueError, KeyError) as e:
         raise HTTPException(status_code=400, detail=f"同步数据错误: {str(e)}")
     except (OSError, IOError) as e:
         raise HTTPException(status_code=500, detail=f"同步IO错误: {str(e)}")
-    except (OSError, IOError) as e:
-        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"同步失败: {str(e)}")
 
@@ -268,7 +264,7 @@ async def trigger_policy_collection(
     ⚠️ 需要管理员权限
     """
     try:
-        result = await policy_scheduler.trigger_manual_update(keywords)
+        result = await policy_service.trigger_manual_update(keywords)
         
         return {
             "status": "completed",
@@ -279,8 +275,6 @@ async def trigger_policy_collection(
         raise HTTPException(status_code=400, detail=f"采集数据错误: {str(e)}")
     except (OSError, IOError) as e:
         raise HTTPException(status_code=500, detail=f"采集IO错误: {str(e)}")
-    except (OSError, IOError) as e:
-        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"采集失败: {str(e)}")
 
@@ -293,15 +287,13 @@ async def get_scheduler_status(
     获取调度器状态
     """
     try:
-        status = policy_scheduler.get_status()
+        status = policy_service.get_scheduler_status()
         return SchedulerStatusResponse(**status)
         
     except (ValueError, KeyError) as e:
         raise HTTPException(status_code=400, detail=f"获取状态数据错误: {str(e)}")
     except (OSError, IOError) as e:
         raise HTTPException(status_code=500, detail=f"获取状态IO错误: {str(e)}")
-    except (OSError, IOError) as e:
-        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取状态失败: {str(e)}")
 
@@ -324,19 +316,22 @@ async def configure_scheduler(
             time_of_day=config.time_of_day
         )
         
-        policy_scheduler.configure(scheduler_config)
+        policy_service.configure_scheduler(scheduler_config)
         
         return {
             "status": "configured",
-            "config": scheduler_config.__dict__
+            "config": {
+                "frequency": scheduler_config.frequency.value,
+                "keywords": scheduler_config.keywords,
+                "enabled_sources": scheduler_config.enabled_sources,
+                "time_of_day": scheduler_config.time_of_day
+            }
         }
         
     except (ValueError, KeyError) as e:
         raise HTTPException(status_code=400, detail=f"配置数据错误: {str(e)}")
     except (OSError, IOError) as e:
         raise HTTPException(status_code=500, detail=f"配置IO错误: {str(e)}")
-    except (OSError, IOError) as e:
-        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"配置失败: {str(e)}")
 
@@ -351,7 +346,7 @@ async def start_scheduler(
     ⚠️ 需要管理员权限
     """
     try:
-        await policy_scheduler.start()
+        await policy_service.start_scheduler()
         
         return {
             "status": "started",
@@ -362,8 +357,6 @@ async def start_scheduler(
         raise HTTPException(status_code=400, detail=f"启动数据错误: {str(e)}")
     except (OSError, IOError) as e:
         raise HTTPException(status_code=500, detail=f"启动IO错误: {str(e)}")
-    except (OSError, IOError) as e:
-        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"启动失败: {str(e)}")
 
@@ -378,7 +371,7 @@ async def stop_scheduler(
     ⚠️ 需要管理员权限
     """
     try:
-        await policy_scheduler.stop()
+        await policy_service.stop_scheduler()
         
         return {
             "status": "stopped",
@@ -389,8 +382,6 @@ async def stop_scheduler(
         raise HTTPException(status_code=400, detail=f"停止数据错误: {str(e)}")
     except (OSError, IOError) as e:
         raise HTTPException(status_code=500, detail=f"停止IO错误: {str(e)}")
-    except (OSError, IOError) as e:
-        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"停止失败: {str(e)}")
 

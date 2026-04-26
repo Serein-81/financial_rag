@@ -32,6 +32,7 @@ from app.multi_agent_system.agents.tax_specialist import TaxSpecialist
 from app.agent_framework.llm.factory import LLMAdapterFactory
 from app.agent_framework.tools.tool_manager import ToolManager
 from app.langgraph.tax_workflow import TaxSubmissionWorkflow
+from app.services.hybrid_agent_service import hybrid_agent_service
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,8 @@ class TaxIntelligenceService:
         self.agent_tracer = AgentTracer()
         self.notification_service = AdminNotificationService()
         
+        self._analysis_cache: Dict[str, TaxAnalysisResult] = {}
+        
         self._initialize_llm_components()
         self._initialize_langgraph_workflow()
         
@@ -74,6 +77,23 @@ class TaxIntelligenceService:
             self.report_generator = None
         
         logger.info("✅ 税务智能服务初始化完成")
+    
+    def _cache_analysis_result(self, result: TaxAnalysisResult):
+        """缓存分析结果"""
+        try:
+            self._analysis_cache[result.analysis_id] = result
+            logger.info(f"💾 [CACHE] 缓存分析结果: {result.analysis_id}")
+            
+            if len(self._analysis_cache) > 100:
+                oldest_key = next(iter(self._analysis_cache))
+                del self._analysis_cache[oldest_key]
+                logger.info(f"🗑️ [CACHE] 清理过期缓存: {oldest_key}")
+        except Exception as e:
+            logger.warning(f"⚠️ [CACHE] 缓存分析结果失败: {e}")
+    
+    def _get_cached_analysis(self, analysis_id: str) -> Optional[TaxAnalysisResult]:
+        """获取缓存的分析结果"""
+        return self._analysis_cache.get(analysis_id)
     
     def _initialize_langgraph_workflow(self):
         """初始化 LangGraph 税务提交工作流"""
@@ -162,6 +182,8 @@ class TaxIntelligenceService:
             trace_id = await self.agent_tracer.start_trace(
                 agent_type="tax_intelligence",
                 user_query=f"税务分析 - {request.analysis_type.value}",
+                user_id=request.user_id,
+                tenant_id=request.tenant_id,
                 message_id=analysis_id
             )
             
@@ -223,8 +245,11 @@ class TaxIntelligenceService:
             logger.info(f"✅ 税务分析工作流完成: {analysis_id}")
             logger.info(f"   - 总税负: ¥{result.total_tax_burden:,.2f}")
             logger.info(f"   - 税负率: {result.tax_burden_rate:.2f}%")
-            logger.info(f"   - 风险评分: {result.overall_risk_score}")
+            logger.info(f"   - 风险评分: {result.overall_risk_score} (类型: {type(result.overall_risk_score)})")
+            logger.info(f"   - 高风险项: {result.high_risk_count}")
             logger.info(f"   - 预估节省: ¥{result.total_potential_savings:,.2f}")
+            
+            self._cache_analysis_result(result)
             
             return result
             
@@ -283,6 +308,13 @@ class TaxIntelligenceService:
             include_risk_assessment=request.include_risk_assessment
         )
         
+        logger.info(f"📊 [DEBUG] LangGraph workflow_state keys: {list(workflow_state.keys())}")
+        logger.info(f"📊 [DEBUG] tax_calculations: {workflow_state.get('tax_calculations')}")
+        logger.info(f"📊 [DEBUG] total_tax_burden: {workflow_state.get('total_tax_burden')}")
+        logger.info(f"📊 [DEBUG] overall_risk_score from workflow: {workflow_state.get('overall_risk_score')}")
+        logger.info(f"📊 [DEBUG] high_risk_count from workflow: {workflow_state.get('high_risk_count')}")
+        logger.info(f"📊 [DEBUG] risk_items count: {len(workflow_state.get('risk_items', []))}")
+        
         formatted_period = self._format_period(request)
         
         result = TaxAnalysisResult(
@@ -302,12 +334,22 @@ class TaxIntelligenceService:
         result.tax_burden_rate = workflow_state.get("tax_burden_rate", 0.0)
         
         result.risk_assessment = workflow_state.get("risk_items", [])
-        result.overall_risk_score = workflow_state.get("overall_risk_score", 0.0)
-        result.high_risk_count = workflow_state.get("high_risk_count", 0)
+        
+        workflow_risk_score = workflow_state.get("overall_risk_score")
+        workflow_high_risk_count = workflow_state.get("high_risk_count")
+        
+        logger.info(f"📊 [DEBUG] Setting result.overall_risk_score: {workflow_risk_score}")
+        result.overall_risk_score = float(workflow_risk_score) if workflow_risk_score is not None else 0.0
+        logger.info(f"📊 [DEBUG] Setting result.high_risk_count: {workflow_high_risk_count}")
+        result.high_risk_count = int(workflow_high_risk_count) if workflow_high_risk_count is not None else 0
+        
+        logger.info(f"📊 [DEBUG] result.overall_risk_score after set: {result.overall_risk_score}")
         
         result.summary = workflow_state.get("final_summary", "")
         
         logger.info(f"✅ LangGraph 工作流执行完成: {analysis_id}")
+        
+        self._cache_analysis_result(result)
         
         return result
     
@@ -781,20 +823,26 @@ class TaxIntelligenceService:
             
             policies = []
             for policy in policy_results:
-                policies.append(PolicyBenefitItem(
-                    policy_id=policy.get("policy_id"),
-                    policy_title=policy.get("title", ""),
-                    policy_source=policy.get("source_name", ""),
-                    match_level=PolicyMatchLevel.PARTIAL,
-                    applicability=policy.get("score", 0.5),
-                    conditions=self._extract_policy_conditions(policy)
-                ))
+                policies.append({
+                    "policy_id": policy.get("policy_id", ""),
+                    "policy_name": policy.get("title", ""),
+                    "policy_content": policy.get("content", ""),
+                    "match_level": "medium",
+                    "applicable_conditions": self._extract_policy_conditions(policy),
+                    "potential_savings": policy.get("potential_savings", 0),
+                    "source_url": policy.get("source_url", ""),
+                    "source_name": policy.get("source_name", ""),
+                    "industries": policy.get("industries", []),
+                    "regions": policy.get("regions", []),
+                    "tax_types": policy.get("tax_types", []),
+                    "effective_date": policy.get("effective_date", ""),
+                    "expiry_date": policy.get("expiry_date", "")
+                })
             
             return {
                 "query": request.query,
-                "total_results": len(policies),
-                "policies": policies,
-                "timestamp": datetime.now()
+                "total_count": len(policies),
+                "policies": policies
             }
             
         except (ValueError, KeyError) as e:
@@ -855,6 +903,33 @@ class TaxIntelligenceService:
         try:
             logger.info(f"📋 获取税务分析报告: {analysis_id}")
             
+            cached_result = self._get_cached_analysis(analysis_id)
+            if cached_result:
+                logger.info(f"📦 [CACHE] 从缓存获取报告: {analysis_id}")
+                return {
+                    "analysis_id": str(cached_result.analysis_id),
+                    "analysis_type": str(cached_result.analysis_type.value) if hasattr(cached_result.analysis_type, 'value') else str(cached_result.analysis_type),
+                    "fiscal_year": int(cached_result.fiscal_year) if cached_result.fiscal_year else 2024,
+                    "fiscal_period": str(cached_result.fiscal_period) if cached_result.fiscal_period else "未知期间",
+                    "status": str(cached_result.status.value) if hasattr(cached_result.status, 'value') else str(cached_result.status),
+                    "financial_summary": cached_result.financial_summary or {},
+                    "tax_calculations": [calc.model_dump() if hasattr(calc, 'model_dump') else calc for calc in cached_result.tax_calculations] if cached_result.tax_calculations else [],
+                    "total_tax_burden": float(cached_result.total_tax_burden) if cached_result.total_tax_burden is not None else 0.0,
+                    "tax_burden_rate": float(cached_result.tax_burden_rate) if cached_result.tax_burden_rate is not None else 0.0,
+                    "policy_benefits": [],
+                    "total_potential_savings": float(cached_result.total_potential_savings) if cached_result.total_potential_savings else 0.0,
+                    "risk_assessment": [risk.model_dump() if hasattr(risk, 'model_dump') else risk for risk in cached_result.risk_assessment] if cached_result.risk_assessment else [],
+                    "risk_score": float(cached_result.overall_risk_score) if cached_result.overall_risk_score is not None else 0.0,
+                    "overall_risk_score": float(cached_result.overall_risk_score) if cached_result.overall_risk_score is not None else 0.0,
+                    "high_risk_count": int(cached_result.high_risk_count) if cached_result.high_risk_count is not None else 0,
+                    "optimization_suggestions": [],
+                    "summary": str(cached_result.summary) if cached_result.summary else "",
+                    "confidence": 1.0 - float(cached_result.overall_risk_score) if cached_result.overall_risk_score is not None else 1.0,
+                    "created_at": cached_result.created_at,
+                    "completed_at": cached_result.completed_at,
+                    "processing_time": None
+                }
+            
             from app.db.session import AsyncSessionLocal
             from app.models.tax_report import TaxReport
             from sqlalchemy import select
@@ -868,12 +943,14 @@ class TaxIntelligenceService:
                     logger.warning(f"⚠️ 未找到报告: {analysis_id}")
                     return None
                 
+                db_risk_score = float(report.risk_score) if report.risk_score is not None and report.risk_score != '' else 0.0
+                
                 report_dict = {
                     "analysis_id": str(report.id),
-                    "analysis_type": report.tax_type or "comprehensive",
-                    "fiscal_year": report.tax_period_year or 2024,
+                    "analysis_type": str(report.tax_type) if report.tax_type else "comprehensive",
+                    "fiscal_year": int(report.tax_period_year) if report.tax_period_year else 2024,
                     "fiscal_period": f"{report.tax_period_year}年" if report.tax_period_year else "未知期间",
-                    "status": report.status or "completed",
+                    "status": str(report.status) if report.status else "completed",
                     "financial_summary": {
                         "revenue": report.key_metrics.get("taxable_sales", 0) if report.key_metrics else 0,
                         "expenses": 0,
@@ -881,15 +958,17 @@ class TaxIntelligenceService:
                         "total_revenue": report.key_metrics.get("taxable_sales", 0) if report.key_metrics else 0
                     },
                     "tax_calculations": report.processing_result.get("tax_calculations", []) if report.processing_result else [],
-                    "total_tax_burden": report.processing_result.get("total_tax", 0) if report.processing_result else 0,
-                    "tax_burden_rate": report.processing_result.get("tax_rate", 0) if report.processing_result else 0,
+                    "total_tax_burden": float(report.processing_result.get("total_tax", 0)) if report.processing_result else 0.0,
+                    "tax_burden_rate": float(report.processing_result.get("tax_rate", 0)) if report.processing_result else 0.0,
                     "policy_benefits": [],
                     "total_potential_savings": 0.0,
                     "risk_assessment": [],
-                    "overall_risk_score": report.risk_score or 0,
+                    "risk_score": db_risk_score,
+                    "overall_risk_score": db_risk_score,
                     "high_risk_count": 0,
                     "optimization_suggestions": [],
                     "summary": f"税务报告分析完成，置信度: {float(report.confidence_score or 0):.2%}",
+                    "confidence": float(report.confidence_score) if report.confidence_score else 1.0,
                     "created_at": report.created_at,
                     "completed_at": report.updated_at,
                     "processing_time": None
@@ -907,6 +986,176 @@ class TaxIntelligenceService:
         except Exception as e:
             logger.error(f"❌ 获取报告失败: {e}", exc_info=True)
             return None
+
+    async def explain_tax_report(
+        self,
+        analysis_id: str,
+        question: Optional[str] = None,
+        user_id: Optional[str] = None,
+        tenant_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        使用AI智能解释税务报告
+        
+        Args:
+            analysis_id: 分析报告ID
+            question: 用户的具体问题（如未提供，则生成通用解释）
+            user_id: 用户ID
+            tenant_id: 租户ID
+            
+        Returns:
+            包含AI解释的字典
+        """
+        try:
+            logger.info(f"🤖 开始解释税务报告: {analysis_id}, 问题: {question or '默认解释'}")
+            
+            # 1. 先尝试从缓存获取分析结果
+            cached_result = self._get_cached_analysis(analysis_id)
+            if cached_result:
+                logger.info(f"📦 [CACHE] 从缓存获取分析结果: {analysis_id}")
+                report = {
+                    "analysis_id": cached_result.analysis_id,
+                    "analysis_type": cached_result.analysis_type.value if hasattr(cached_result.analysis_type, 'value') else cached_result.analysis_type,
+                    "fiscal_year": cached_result.fiscal_year,
+                    "fiscal_period": cached_result.fiscal_period,
+                    "status": cached_result.status.value if hasattr(cached_result.status, 'value') else cached_result.status,
+                    "financial_summary": cached_result.financial_summary,
+                    "tax_calculations": [calc.model_dump() if hasattr(calc, 'model_dump') else calc for calc in cached_result.tax_calculations] if cached_result.tax_calculations else [],
+                    "risk_assessment": [risk.model_dump() if hasattr(risk, 'model_dump') else risk for risk in cached_result.risk_assessment] if cached_result.risk_assessment else [],
+                    "overall_risk_score": cached_result.overall_risk_score,
+                    "high_risk_count": cached_result.high_risk_count,
+                    "summary": cached_result.summary,
+                    "total_tax_burden": cached_result.total_tax_burden,
+                    "tax_burden_rate": cached_result.tax_burden_rate,
+                    "created_at": cached_result.created_at
+                }
+            else:
+                # 2. 如果缓存中没有，则从数据库获取
+                logger.info(f"🔍 [DB] 从数据库查询分析结果: {analysis_id}")
+                report = await self.get_report_by_id(analysis_id)
+                if not report:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"未找到税务报告: {analysis_id}"
+                    )
+            
+            # 3. 准备提示词
+            if question:
+                prompt = f"""
+                请基于以下税务报告内容，回答用户的问题：
+                
+                用户问题：{question}
+                
+                税务报告摘要：
+                - 报告ID：{report.get('id', '未知')}
+                - 税种：{report.get('tax_type', '未知')}
+                - 总税负：{report.get('total_tax_burden', 0):.2f}
+                - 风险评分：{report.get('overall_risk_score', 0)}
+                - 置信度：{report.get('confidence_score', 0)}
+                - 创建时间：{report.get('created_at', '未知')}
+                
+                请用简洁明了的中文回答，重点解释税务计算逻辑、风险因素和优化建议。
+                """
+            else:
+                prompt = f"""
+                请解释以下税务报告，帮助用户理解：
+                
+                税务报告摘要：
+                - 报告ID：{report.get('id', '未知')}
+                - 税种：{report.get('tax_type', '未知')}
+                - 总税负：{report.get('total_tax_burden', 0):.2f}
+                - 风险评分：{report.get('overall_risk_score', 0)}
+                - 置信度：{report.get('confidence_score', 0)}
+                - 创建时间：{report.get('created_at', '未知')}
+                
+                请用简洁明了的中文解释：
+                1. 这份报告的主要内容是什么？
+                2. 税务计算的关键点是什么？
+                3. 有哪些需要注意的风险点？
+                4. 可能的优化建议是什么？
+                """
+            
+            # 3. 使用 TaxSpecialist 智能体进行解释
+            explanation_text = None
+            if self.tax_specialist:
+                try:
+                    logger.info(f"🤖 [TaxSpecialist] 开始生成税务报告解释")
+                    
+                    tax_specialist_result = await self.tax_specialist.run(
+                        user_input=prompt,
+                        history=[],
+                        context={
+                            "report_data": report,
+                            "task": "explain_tax_report",
+                            "analysis_id": analysis_id
+                        }
+                    )
+                    
+                    if tax_specialist_result.get("success"):
+                        explanation_text = tax_specialist_result.get("analysis_report") or tax_specialist_result.get("analysis", {}).get("description", "")
+                        if not explanation_text:
+                            recommendations = tax_specialist_result.get("recommendations", [])
+                            if recommendations:
+                                explanation_text = "\n".join([f"{i+1}. {r}" for i, r in enumerate(recommendations)])
+                        logger.info(f"✅ [TaxSpecialist] 解释生成成功")
+                    else:
+                        logger.warning(f"⚠️ [TaxSpecialist] 解释生成失败: {tax_specialist_result.get('error')}")
+                except Exception as e:
+                    logger.error(f"❌ [TaxSpecialist] 解释生成异常: {e}", exc_info=True)
+            
+            # 如果 TaxSpecialist 失败或未初始化，尝试使用混合智能体服务
+            if not explanation_text:
+                try:
+                    logger.info(f"🔄 [HybridAgent] 回退使用混合智能体服务")
+                    explanation_result = await hybrid_agent_service.chat(
+                        user_input=prompt,
+                        kb_id="tax_knowledge_base",
+                        session_id=f"tax_explanation_{analysis_id}",
+                        history=[],
+                        user_id=user_id,
+                        tenant_id=tenant_id
+                    )
+                    
+                    if isinstance(explanation_result, str):
+                        explanation_text = explanation_result
+                    elif hasattr(explanation_result, 'content'):
+                        explanation_text = explanation_result.content
+                    elif isinstance(explanation_result, dict):
+                        explanation_text = explanation_result.get("response", str(explanation_result))
+                    else:
+                        explanation_text = str(explanation_result)
+                except Exception as e:
+                    logger.error(f"❌ [HybridAgent] 解释生成失败: {e}", exc_info=True)
+            
+            # 4. 格式化响应
+            if not explanation_text or explanation_text == "None":
+                explanation_text = "抱歉，暂时无法生成解释，请稍后重试。"
+            
+            if not explanation_text or explanation_text == "None":
+                explanation_text = "抱歉，暂时无法生成解释，请稍后重试。"
+            
+            return {
+                "report_id": analysis_id,
+                "question": question,
+                "explanation": explanation_text,
+                "report_summary": {
+                    "tax_type": report.get("tax_type"),
+                    "total_tax_burden": report.get("total_tax_burden"),
+                    "risk_score": report.get("overall_risk_score"),
+                    "confidence_score": report.get("confidence_score")
+                },
+                "generated_at": datetime.now().isoformat(),
+                "success": True
+            }
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"❌ 解释税务报告失败: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"生成解释失败: {str(e)}"
+            )
 
     async def get_analysis_history(
         self,
@@ -955,22 +1204,59 @@ class TaxIntelligenceService:
 
                 items = []
                 for report in reports:
-                    processing_result = report.processing_result or {}
-                    risk_score = report.risk_score or 0
-                    
-                    items.append({
-                        "id": str(report.id),
-                        "analysis_id": str(report.id),
-                        "analysis_type": report.tax_type or "comprehensive",
-                        "fiscal_year": report.tax_period_year or 2024,
-                        "fiscal_period": f"{report.tax_period_year}年" if report.tax_period_year else "未知期间",
-                        "overall_risk_score": risk_score,
-                        "total_tax_burden": processing_result.get("total_tax", 0.0),
-                        "tax_type": report.tax_type,
-                        "status": report.status,
-                        "confidence_score": float(report.confidence_score or 0),
-                        "created_at": report.created_at.isoformat() if report.created_at else None
-                    })
+                    try:
+                        processing_result = report.processing_result or {}
+                        risk_score = report.risk_score or 0
+                        
+                        cached = self._get_cached_analysis(str(report.id))
+                        if cached:
+                            cached_risk_score = float(cached.overall_risk_score) if cached.overall_risk_score is not None else 0.0
+                            items.append({
+                                "id": str(report.id),
+                                "analysis_id": str(report.id),
+                                "analysis_type": str(cached.analysis_type.value) if hasattr(cached.analysis_type, 'value') else str(cached.analysis_type),
+                                "fiscal_year": int(cached.fiscal_year) if cached.fiscal_year else 2024,
+                                "fiscal_period": str(cached.fiscal_period) if cached.fiscal_period else "未知期间",
+                                "risk_score": cached_risk_score,
+                                "overall_risk_score": cached_risk_score,
+                                "total_tax_burden": float(cached.total_tax_burden) if cached.total_tax_burden is not None else 0.0,
+                                "tax_type": str(cached.analysis_type.value) if hasattr(cached.analysis_type, 'value') else str(cached.analysis_type),
+                                "status": str(cached.status.value) if hasattr(cached.status, 'value') else str(cached.status),
+                                "confidence_score": cached_risk_score * 100 if cached_risk_score is not None else 0.0,
+                                "created_at": cached.created_at.isoformat() if hasattr(cached.created_at, 'isoformat') and cached.created_at else None
+                            })
+                        else:
+                            db_risk_score = float(risk_score) if risk_score is not None and risk_score != '' else 0.0
+                            items.append({
+                                "id": str(report.id),
+                                "analysis_id": str(report.id),
+                                "analysis_type": str(report.tax_type) if report.tax_type else "comprehensive",
+                                "fiscal_year": int(report.tax_period_year) if report.tax_period_year else 2024,
+                                "fiscal_period": f"{report.tax_period_year}年" if report.tax_period_year else "未知期间",
+                                "risk_score": db_risk_score,
+                                "overall_risk_score": db_risk_score,
+                                "total_tax_burden": float(processing_result.get("total_tax", 0.0)),
+                                "tax_type": str(report.tax_type) if report.tax_type else "comprehensive",
+                                "status": str(report.status) if report.status else "completed",
+                                "confidence_score": float(report.confidence_score or 0),
+                                "created_at": report.created_at.isoformat() if report.created_at else None
+                            })
+                    except Exception as e:
+                        logger.warning(f"⚠️ [History] 处理报告 {report.id} 时出错: {e}")
+                        items.append({
+                            "id": str(report.id),
+                            "analysis_id": str(report.id),
+                            "analysis_type": "comprehensive",
+                            "fiscal_year": 2024,
+                            "fiscal_period": "未知期间",
+                            "risk_score": 0.0,
+                            "overall_risk_score": 0.0,
+                            "total_tax_burden": 0.0,
+                            "tax_type": "comprehensive",
+                            "status": "completed",
+                            "confidence_score": 0.0,
+                            "created_at": report.created_at.isoformat() if report.created_at else None
+                        })
 
                 return {
                     "analyses": items,

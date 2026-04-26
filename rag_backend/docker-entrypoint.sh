@@ -5,6 +5,29 @@ set -e
 echo "🐳 RAG Backend 容器启动中..."
 
 # ---------------------------------------------------------
+# 第零步：修复上传目录权限（确保 appuser 可写）
+# ---------------------------------------------------------
+echo "🔧 检查并修复上传目录权限..."
+mkdir -p /app/uploads/tax_reports
+mkdir -p /app/uploads/chat_files
+mkdir -p /app/uploads/avatars
+mkdir -p /app/uploads/documents
+mkdir -p /app/logs
+
+# 如果目录属于 root，将其所有权改为 appuser
+if [ "$(stat -c '%U' /app/uploads 2>/dev/null)" = "root" ]; then
+    echo "   将 /app/uploads 目录权限从 root 改为 appuser..."
+    chown -R appuser:appuser /app/uploads 2>/dev/null || true
+    chmod -R 755 /app/uploads 2>/dev/null || true
+fi
+
+if [ -d "/app/logs" ] && [ "$(stat -c '%U' /app/logs 2>/dev/null)" = "root" ]; then
+    echo "   将 /app/logs 目录权限从 root 改为 appuser..."
+    chown -R appuser:appuser /app/logs 2>/dev/null || true
+    chmod -R 755 /app/logs 2>/dev/null || true
+fi
+
+# ---------------------------------------------------------
 # 第一步：数据库/索引初始化 (带重试机制)
 # ---------------------------------------------------------
 echo "📊 检查并创建向量索引 (最多重试 3 次)..."
@@ -41,9 +64,9 @@ exec uvicorn app.main:app \
     --port 8000 \
     --loop uvloop \
     --http h11 \
-    --reload \
-    --reload-dir app \
-    --reload-dir tests
+    # --reload \
+    # --reload-dir app \
+    # --reload-dir tests
 
 # ---------------------------------------------------------
 # 【后续扩容建议：生产/多核模式】

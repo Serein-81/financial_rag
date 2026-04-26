@@ -4,7 +4,7 @@
  * 提供追踪、指标和日志的统一接口
  */
 
-import { request } from '@/utils/request'
+import { request, get } from '@/utils/request'
 
 // ==================== 追踪相关类型 ====================
 
@@ -123,15 +123,15 @@ export const observabilityApi = {
     operation_name?: string
     limit?: number
   }): Promise<TraceInfo[]> {
-    return request.get('/api/observability/traces', { params })
+    return get('/api/observability/traces', { params })
   },
 
   async getTrace(trace_id: string): Promise<TraceInfo> {
-    return request.get(`/api/observability/traces/${trace_id}`)
+    return get(`/api/observability/traces/${trace_id}`)
   },
 
   async getSpan(trace_id: string, span_id: string): Promise<SpanContext> {
-    return request.get(`/api/observability/traces/${trace_id}/spans/${span_id}`)
+    return get(`/api/observability/traces/${trace_id}/spans/${span_id}`)
   },
 
   // 指标相关
@@ -139,29 +139,29 @@ export const observabilityApi = {
     service_name?: string
     metric_type?: string
   }): Promise<MetricsSummary> {
-    return request.get('/api/observability/metrics', { params })
+    return get('/api/observability/metrics', { params })
   },
 
   async getPrometheusMetrics(): Promise<string> {
-    return request.get('/api/observability/metrics/prometheus', {
+    return get('/api/observability/metrics/prometheus', {
       responseType: 'text'
     })
   },
 
   // 日志相关
   async getLogs(params: LogQuery): Promise<LogEntry[]> {
-    return request.get('/api/observability/logs', { params })
+    return get('/api/observability/logs', { params })
   },
 
   async searchLogs(query: string, params?: Partial<LogQuery>): Promise<LogEntry[]> {
-    return request.get('/api/observability/logs/search', {
+    return get('/api/observability/logs/search', {
       params: { query, ...params }
     })
   },
 
   // 健康检查
   async getHealth(): Promise<HealthReport> {
-    return request.get('/api/observability/health')
+    return get('/api/observability/health')
   },
 
   // 统计信息
@@ -172,7 +172,7 @@ export const observabilityApi = {
     total_logs: number
     active_traces: number
   }> {
-    return request.get('/api/observability/statistics')
+    return get('/api/observability/statistics')
   }
 }
 

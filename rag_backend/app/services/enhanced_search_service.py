@@ -12,6 +12,7 @@ from app.db import AsyncSessionLocal
 from app.services.embedding_service import embedding_service
 from app.services.tavily_service import tavily_service
 from app.services.query_optimizer import query_optimizer
+from app.services.rerank_service import rerank_service
 from app.schemas.chat import SearchResultItem
 from app.schemas.search import WebSearchResult, HybridSearchResponse
 from app.models.search_log import SearchLog
@@ -42,8 +43,10 @@ class EnhancedSearchService:
         - ENABLE_QUERY_REWRITE: 是否启用查询改写（默认: true）
         - ENABLE_HYDE: 是否启用HyDE假设文档生成（默认: false）
         - ENABLE_MMR: 是否启用MMR重排序（默认: true）
+        - ENABLE_RERANK: 是否启用 Cross-Encoder Rerank（默认: true）
         """
         import os
+        from app.core.config import settings
         
         # 查询改写配置
         # 功能：将单一查询改写为多个不同角度的问题
@@ -66,9 +69,19 @@ class EnhancedSearchService:
         # 推荐：生产环境开启
         self.enable_mmr = os.getenv('ENABLE_MMR', 'true').lower() == 'true'
         
+        # Cross-Encoder Rerank 配置
+        # 功能：使用硅基流动的 Cross-Encoder 模型进行精确重排序
+        # 效果：排序精确度大幅提升，基于注意力机制逐字比对
+        # 成本：响应时间 +0.3s（候选文档数量较少时）
+        # 推荐：生产环境开启
+        self.enable_rerank = os.getenv('ENABLE_RERANK', 'true').lower() == 'true' and bool(settings.SILICONFLOW_API_KEY)
+        self.rerank_top_k = settings.RERANK_TOP_K
+        self.rerank_max_chars = settings.RERANK_MAX_CHARS
+        
         # 打印当前配置
         logger.info(f"🔧 增强搜索配置: 查询改写={self.enable_query_rewrite}, "
-                   f"HyDE={self.enable_hyde}, MMR={self.enable_mmr}")
+                   f"HyDE={self.enable_hyde}, MMR={self.enable_mmr}, "
+                   f"Rerank={'开启' if self.enable_rerank else '关闭'}")
     
     async def search(
         self,
@@ -175,12 +188,27 @@ class EnhancedSearchService:
                                 })
                         
                         if results_with_embedding:
-                            reranked = query_optimizer.mmr_rerank(
-                                results_with_embedding,
-                                main_query_embedding,
-                                lambda_param=0.6,  # 60% 相关性，40% 多样性
-                                top_k=top_k
-                            )
+                            suggested_lambda = intent.get('suggested_lambda', query_optimizer.mmr_lambda_param)
+                            needs_mmr = intent.get('needs_mmr', False)
+                            
+                            if needs_mmr:
+                                reranked = query_optimizer.mmr_rerank(
+                                    results_with_embedding,
+                                    main_query_embedding,
+                                    lambda_param=suggested_lambda,
+                                    top_k=top_k,
+                                    force_diversity=True
+                                )
+                                logger.info(f"🎯 MMR 多样性重排: λ={suggested_lambda}")
+                            else:
+                                reranked = query_optimizer.mmr_rerank(
+                                    results_with_embedding,
+                                    main_query_embedding,
+                                    lambda_param=suggested_lambda,
+                                    top_k=top_k
+                                )
+                                logger.info(f"🎯 MMR 精确排序: λ={suggested_lambda}")
+                            
                             unique_results = reranked
                             logger.info(f"🎯 MMR 重排: 保留 {len(unique_results)} 个结果")
                         else:
@@ -197,7 +225,35 @@ class EnhancedSearchService:
             else:
                 unique_results = unique_results[:top_k]
             
-            # 7. 转换为 SearchResultItem
+            # 7. Cross-Encoder Rerank（可选）
+            if self.enable_rerank and unique_results and len(unique_results) > 1:
+                try:
+                    rerank_candidates = [r.get('content', '') for r in unique_results[:self.rerank_top_k * 2]]
+                    if rerank_candidates:
+                        reranked = await rerank_service.rerank(
+                            query=query,
+                            documents=rerank_candidates,
+                            top_k=self.rerank_top_k,
+                            max_chars_per_doc=self.rerank_max_chars
+                        )
+                        
+                        if reranked:
+                            rerank_map = {r.index: r for r in reranked}
+                            reranked_results = []
+                            for i, result in enumerate(unique_results):
+                                rerank_score = rerank_map[i].relevance_score if i in rerank_map else result.get('score', 0)
+                                reranked_result = result.copy()
+                                reranked_result['score'] = rerank_score
+                                reranked_result['rerank_score'] = rerank_score
+                                reranked_results.append(reranked_result)
+                            
+                            unique_results = sorted(reranked_results, key=lambda x: x['score'], reverse=True)[:top_k]
+                            top_score = reranked[0].relevance_score if reranked else 0
+                            logger.info(f"🎯 Cross-Encoder Rerank: {len(reranked)} 个结果 | 最高分: {top_score:.4f}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Rerank 失败，使用 MMR 结果: {e}")
+            
+            # 8. 转换为 SearchResultItem
             final_results = []
             for r in unique_results:
                 final_results.append(SearchResultItem(
@@ -576,12 +632,27 @@ class EnhancedSearchService:
                                 })
                         
                         if results_with_embedding:
-                            reranked = query_optimizer.mmr_rerank(
-                                results_with_embedding,
-                                main_query_embedding,
-                                lambda_param=0.6,
-                                top_k=top_k
-                            )
+                            suggested_lambda = intent.get('suggested_lambda', query_optimizer.mmr_lambda_param)
+                            needs_mmr = intent.get('needs_mmr', False)
+                            
+                            if needs_mmr:
+                                reranked = query_optimizer.mmr_rerank(
+                                    results_with_embedding,
+                                    main_query_embedding,
+                                    lambda_param=suggested_lambda,
+                                    top_k=top_k,
+                                    force_diversity=True
+                                )
+                                logger.info(f"🎯 MMR 多样性重排: λ={suggested_lambda}")
+                            else:
+                                reranked = query_optimizer.mmr_rerank(
+                                    results_with_embedding,
+                                    main_query_embedding,
+                                    lambda_param=suggested_lambda,
+                                    top_k=top_k
+                                )
+                                logger.info(f"🎯 MMR 精确排序: λ={suggested_lambda}")
+                            
                             unique_results = reranked
                             logger.info(f"🎯 MMR 重排: 保留 {len(unique_results)} 个结果")
                         else:
@@ -598,7 +669,37 @@ class EnhancedSearchService:
             else:
                 unique_results = unique_results[:top_k]
             
-            # 7. 转换为 SearchResultItem
+            # 7. Cross-Encoder Rerank（可选）
+            if self.enable_rerank and unique_results and len(unique_results) > 1:
+                try:
+                    await self._emit_callback(callback, "🎯 正在进行 Cross-Encoder Rerank...", "info", 0.7)
+                    
+                    rerank_candidates = [r.get('content', '') for r in unique_results[:self.rerank_top_k * 2]]
+                    if rerank_candidates:
+                        reranked = await rerank_service.rerank(
+                            query=query,
+                            documents=rerank_candidates,
+                            top_k=self.rerank_top_k,
+                            max_chars_per_doc=self.rerank_max_chars
+                        )
+                        
+                        if reranked:
+                            rerank_map = {r.index: r for r in reranked}
+                            reranked_results = []
+                            for i, result in enumerate(unique_results):
+                                rerank_score = rerank_map[i].relevance_score if i in rerank_map else result.get('score', 0)
+                                reranked_result = result.copy()
+                                reranked_result['score'] = rerank_score
+                                reranked_result['rerank_score'] = rerank_score
+                                reranked_results.append(reranked_result)
+                            
+                            unique_results = sorted(reranked_results, key=lambda x: x['score'], reverse=True)[:top_k]
+                            top_score = reranked[0].relevance_score if reranked else 0
+                            await self._emit_callback(callback, f"🎯 Rerank 完成: {len(reranked)} 个结果 | 最高分: {top_score:.4f}", "info", 0.75)
+                except Exception as e:
+                    logger.warning(f"⚠️ Rerank 失败: {e}")
+            
+            # 8. 转换为 SearchResultItem
             for r in unique_results:
                 final_results.append(SearchResultItem(
                     chunk_id=r['chunk_id'],
@@ -609,7 +710,7 @@ class EnhancedSearchService:
                     page_number=r.get('page_number')
                 ))
             
-            # 8. Web 搜索（如果启用）
+            # 9. Web 搜索（如果启用）
             web_chunks = []
             if enable_web:
                 await self._emit_callback(callback, "🌐 正在进行 Web 搜索...", "info", 0.8)

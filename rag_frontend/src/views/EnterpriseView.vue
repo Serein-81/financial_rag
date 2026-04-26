@@ -3,6 +3,7 @@ import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
 import { enterpriseApi } from '@/api/enterprise'
 import { tenantSettingsApi, type TenantSettings, type TenantSettingsUpdate } from '@/api/tenant-settings'
 import { useEnterpriseTheme } from '@/composables/useEnterpriseTheme'
+import { useAuthStore } from '@/stores/auth'
 import type { EnterpriseUser, InviteCode, EnterpriseResponse } from '@/api/enterprise'
 import {
   Users,
@@ -37,6 +38,9 @@ import {
   Edit3,
   X
 } from 'lucide-vue-next'
+
+const authStore = useAuthStore()
+const isAdmin = computed(() => authStore.isAdmin || localStorage.getItem('rag_user_role') === 'admin')
 
 const activeTab = ref<'users' | 'invites' | 'settings'>('users')
 const isLoading = ref(false)
@@ -167,15 +171,29 @@ async function loadData() {
     isLoading.value = true
     error.value = ''
 
-    const [info, usersData, codesData] = await Promise.all([
-      enterpriseApi.getEnterprise().catch(() => null),
-      enterpriseApi.getUsers(),
-      enterpriseApi.getInviteCodes()
-    ])
-
-    enterpriseInfo.value = info
-    users.value = usersData
-    inviteCodes.value = codesData
+    if (isAdmin.value) {
+      const [info, usersData, codesData] = await Promise.all([
+        enterpriseApi.getEnterprise().catch(() => null),
+        enterpriseApi.getUsers().catch(err => {
+          console.error('Failed to load users:', err)
+          return []
+        }),
+        enterpriseApi.getInviteCodes().catch(err => {
+          console.error('Failed to load invite codes:', err)
+          return []
+        })
+      ])
+      enterpriseInfo.value = info
+      users.value = usersData
+      inviteCodes.value = codesData
+    } else {
+      enterpriseInfo.value = await enterpriseApi.getEnterprise().catch(err => {
+        console.error('Failed to load enterprise info:', err)
+        return null
+      })
+      users.value = []
+      inviteCodes.value = []
+    }
   } catch (err: any) {
     error.value = err.message || '加载数据失败'
   } finally {
@@ -303,9 +321,13 @@ async function saveTenantSettings() {
     await loadTenantSettings()
     console.log('[TenantSettings] Reload successful')
     
-    const { loadEnterpriseTheme } = useEnterpriseTheme()
-    await loadEnterpriseTheme()
-    console.log('[TenantSettings] Theme applied')
+    const { applyEnterpriseTheme } = useEnterpriseTheme()
+    const newTheme = {
+      primary_color: primaryColor,
+      secondary_color: secondaryColor
+    }
+    applyEnterpriseTheme(newTheme)
+    console.log('[TenantSettings] Theme directly applied:', newTheme)
     
     success.value = '设置保存成功'
     setTimeout(() => success.value = '', 3000)
@@ -578,7 +600,7 @@ watch(() => settingsForm.value.secondary_color, (newVal) => {
       </div>
 
       <!-- Tabs -->
-      <div class="flex gap-4 mt-4">
+      <div v-if="isAdmin" class="flex gap-4 mt-4">
         <button
           @click="activeTab = 'users'"
           :class="[
@@ -616,6 +638,23 @@ watch(() => settingsForm.value.secondary_color, (newVal) => {
           企业设置
         </button>
       </div>
+      
+      <div v-else class="mt-4 bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <div class="flex items-start gap-3">
+          <div class="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+            <Users :size="20" class="text-blue-600" />
+          </div>
+          <div>
+            <h3 class="text-lg font-semibold text-blue-900 mb-2">欢迎加入企业团队</h3>
+            <p class="text-sm text-blue-700 mb-3">您当前是企业成员，可享受企业提供的各项服务。如需管理功能，请联系企业管理员。</p>
+            <div class="flex items-center gap-2 text-sm text-blue-600">
+              <Building2 :size="16" />
+              <span>{{ enterpriseInfo?.name || '加载中...' }}</span>
+              <span v-if="enterpriseInfo?.member_count"> · {{ enterpriseInfo.member_count }} 名成员</span>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Content -->
@@ -633,8 +672,8 @@ watch(() => settingsForm.value.secondary_color, (newVal) => {
         <button @click="success = ''" class="ml-auto text-green-500 hover:text-green-700">×</button>
       </div>
 
-      <!-- Users Tab -->
-      <div v-if="activeTab === 'users'" class="space-y-4">
+      <!-- Users Tab (Admin Only) -->
+      <div v-if="isAdmin && activeTab === 'users'" class="space-y-4">
         <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
           <table class="w-full">
             <thead class="bg-gray-50 border-b border-gray-200">
@@ -724,8 +763,8 @@ watch(() => settingsForm.value.secondary_color, (newVal) => {
         </div>
       </div>
 
-      <!-- Invite Codes Tab -->
-      <div v-if="activeTab === 'invites'" class="space-y-4">
+      <!-- Invite Codes Tab (Admin Only) -->
+      <div v-if="isAdmin && activeTab === 'invites'" class="space-y-4">
         <!-- Statistics Cards -->
         <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div class="bg-white rounded-xl border border-gray-200 p-4">
@@ -986,8 +1025,8 @@ watch(() => settingsForm.value.secondary_color, (newVal) => {
         </div>
       </div>
 
-      <!-- Tenant Settings Tab -->
-      <div v-if="activeTab === 'settings'" class="space-y-6">
+      <!-- Tenant Settings Tab (Admin Only) -->
+      <div v-if="isAdmin && activeTab === 'settings'" class="space-y-6">
         <!-- Loading State -->
         <div v-if="isLoading" class="flex items-center justify-center py-12">
           <Loader2 :size="32" class="animate-spin text-emerald-600" />

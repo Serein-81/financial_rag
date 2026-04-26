@@ -1,10 +1,17 @@
 # app/parsers/structured_pdf_parser.py
 import io
+import os
 import asyncio
 from typing import List, Dict, Any
 import fitz  # PyMuPDF
 from collections import Counter
+import logging
 from .base_parser import FileParserStrategy
+
+logger = logging.getLogger(__name__)
+
+ENABLE_UNSTRUCTURED = os.getenv("ENABLE_UNSTRUCTURED_PARSER", "false").lower() == "true"
+UNSTRUCTURED_API_URL = os.getenv("UNSTRUCTURED_API_URL", "http://unstructured-api:8000")
 
 
 class StructuredPDFParser(FileParserStrategy):
@@ -34,15 +41,96 @@ class StructuredPDFParser(FileParserStrategy):
         if not self.validate_file(file_bytes):
             raise ValueError("PDF文件为空或无效")
         
-        # PDF解析是CPU密集型操作，放到线程池执行
-        structured_content = await asyncio.to_thread(
-            self._extract_structured_content, file_bytes
-        )
+        if ENABLE_UNSTRUCTURED:
+            logger.info(f"🚀 [Parser] 启用重型解析引擎: {UNSTRUCTURED_API_URL}")
+            return await self._parse_with_unstructured(file_bytes)
+        else:
+            logger.info("🟢 [Parser] 启用轻量解析模式 (PyMuPDF + 启发式规则)")
+            structured_content = await asyncio.to_thread(
+                self._extract_structured_content, file_bytes
+            )
+            if not structured_content.strip():
+                raise ValueError("PDF文件内容为空")
+            return structured_content.strip()
+    
+    async def _parse_with_unstructured(self, file_bytes: bytes) -> str:
+        """使用 Unstructured API 进行重型版面解析"""
+        import requests
         
-        if not structured_content.strip():
-            raise ValueError("PDF文件内容为空")
+        try:
+            response = requests.post(
+                f"{UNSTRUCTURED_API_URL}/general/v0/general",
+                files={"files": ("document.pdf", file_bytes, "application/pdf")}
+            )
+            response.raise_for_status()
+            
+            result = response.json()
+            
+            if isinstance(result, list) and len(result) > 0:
+                return self._parse_unstructured_response(result)
+            else:
+                logger.warning("Unstructured API 返回格式异常，fallback 到轻量解析")
+                return await asyncio.to_thread(
+                    self._extract_structured_content, file_bytes
+                )
+                
+        except requests.exceptions.ConnectionError:
+            logger.error(f"无法连接到 Unstructured API: {UNSTRUCTURED_API_URL}")
+            logger.info("降级到轻量解析模式...")
+            return await asyncio.to_thread(
+                self._extract_structured_content, file_bytes
+            )
+        except Exception as e:
+            logger.error(f"Unstructured API 调用失败: {e}")
+            return await asyncio.to_thread(
+                self._extract_structured_content, file_bytes
+            )
+    
+    def _parse_unstructured_response(self, result: List[Dict]) -> str:
+        """解析 Unstructured API 返回的结果"""
+        markdown_blocks = []
         
-        return structured_content.strip()
+        for element in result:
+            element_type = element.get("type", "").lower()
+            text = element.get("text", "")
+            
+            if not text:
+                continue
+            
+            if "title" in element_type or "heading" in element_type:
+                markdown_blocks.append(f"## {text}")
+            elif "NarrativeText" in element_type or "Text" in element_type:
+                markdown_blocks.append(text)
+            elif "Table" in element_type:
+                table_data = element.get("metadata", {}).get("text_as_html", "")
+                if table_data:
+                    markdown_blocks.append(self._html_table_to_markdown(table_data))
+            else:
+                markdown_blocks.append(text)
+            
+            markdown_blocks.append("")
+        
+        return "\n".join(markdown_blocks)
+    
+    def _html_table_to_markdown(self, html_table: str) -> str:
+        """将 HTML 表格转换为 Markdown 格式"""
+        import re
+        
+        rows = re.findall(r'<tr[^>]*>(.*?)</tr>', html_table, re.DOTALL)
+        if not rows:
+            return html_table
+        
+        markdown_rows = []
+        for i, row in enumerate(rows):
+            cells = re.findall(r'<t[dh][^>]*>(.*?)</t[dh]>', row, re.DOTALL)
+            if cells:
+                clean_cells = [re.sub(r'<[^>]+>', '', cell).strip() for cell in cells]
+                markdown_rows.append(f"| {' | '.join(clean_cells)} |")
+                
+                if i == 0:
+                    markdown_rows.append(f"| {' | '.join(['---'] * len(clean_cells))} |")
+        
+        return "\n".join(markdown_rows) if markdown_rows else html_table
     
     def _extract_structured_content(self, file_bytes: bytes) -> str:
         """同步结构化内容提取（在线程池中运行）"""

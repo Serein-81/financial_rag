@@ -4,7 +4,7 @@
 
 from typing import List, Dict, Any, Optional
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from enum import Enum
 
 
@@ -111,8 +111,8 @@ class TaxReportCreate(BaseModel):
     tax_period_month: Optional[int] = Field(None, ge=1, le=12, description="税务月份")
     description: Optional[str] = Field(None, description="报告描述")
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "tax_type": "vat",
                 "tax_period_year": 2024,
@@ -120,6 +120,7 @@ class TaxReportCreate(BaseModel):
                 "description": "2024年3月增值税申报"
             }
         }
+    )
 
 
 class TaxReportUploadResponse(BaseModel):
@@ -133,8 +134,8 @@ class TaxReportUploadResponse(BaseModel):
     created_at: datetime = Field(..., description="创建时间")
     message: Optional[str] = Field(None, description="状态消息")
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "id": "550e8400-e29b-41d4-a716-446655440000",
                 "filename": "税务报告_2024_03.pdf",
@@ -146,6 +147,7 @@ class TaxReportUploadResponse(BaseModel):
                 "message": "文件上传成功，等待处理"
             }
         }
+    )
 
 
 class TaxReportResponse(BaseModel):
@@ -187,8 +189,7 @@ class TaxReportResponse(BaseModel):
     updated_at: datetime = Field(..., description="更新时间")
     completed_at: Optional[datetime] = Field(None, description="完成时间")
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TaxReportListResponse(BaseModel):
@@ -209,8 +210,8 @@ class TaxReportStatusResponse(BaseModel):
     needs_human_review: bool = Field(False, description="是否需要人工审核")
     estimated_completion: Optional[datetime] = Field(None, description="预计完成时间")
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "id": "550e8400-e29b-41d4-a716-446655440000",
                 "status": "processing",
@@ -220,6 +221,7 @@ class TaxReportStatusResponse(BaseModel):
                 "estimated_completion": "2024-03-25T10:05:00Z"
             }
         }
+    )
 
 
 class ManualTaxReportInput(BaseModel):
@@ -256,8 +258,8 @@ class ManualTaxReportInput(BaseModel):
     notes: Optional[str] = Field(None, description="备注")
     run_analysis: bool = Field(True, description="是否立即运行AI分析")
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "tax_type": "vat",
                 "fiscal_year": 2024,
@@ -273,14 +275,15 @@ class ManualTaxReportInput(BaseModel):
                 "financial_data_id": "550e8400-e29b-41d4-a716-446655440000"
             }
         }
+    )
 
 
 class ManualTaxReportCreate(BaseModel):
     """手动创建税务报告请求"""
     input_data: ManualTaxReportInput = Field(..., description="录入数据")
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "input_data": {
                     "tax_type": "vat",
@@ -297,6 +300,7 @@ class ManualTaxReportCreate(BaseModel):
                 }
             }
         }
+    )
 
 
 class TaxReportFilter(BaseModel):

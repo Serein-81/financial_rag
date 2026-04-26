@@ -164,36 +164,87 @@ class ToolManager:
         print(f"   描述: {description}")
         print(f"   参数: {list(params.keys())}")
     
-    def register_langchain_tool(self, langchain_tool):
+    def register_langchain_tool(self, tool):
         """
-        注册 LangChain 工具
+        注册 LangChain 工具或 MCP 装饰器工具
         
         Args:
-            langchain_tool: LangChain 工具对象
+            tool: LangChain 工具对象或使用 @local_tool/@cloud_tool 装饰的函数
         """
         try:
-            name = langchain_tool.name
-            description = langchain_tool.description
+            # 检查是否是 MCP 装饰器工具
+            from app.mcp.decorators import get_tool_metadata, get_tool_source
+            
+            tool_metadata = get_tool_metadata(tool)
+            if tool_metadata:
+                # 这是使用 @local_tool/@cloud_tool 装饰的函数
+                name = tool_metadata.name
+                description = tool_metadata.description
+                func = tool
+                
+                # 提取参数信息
+                import inspect
+                sig = inspect.signature(func)
+                params = {}
+                
+                for param_name, param in sig.parameters.items():
+                    param_info = {
+                        "type": "string",  # 默认类型
+                        "description": "",
+                        "required": param.default == inspect.Parameter.empty
+                    }
+                    
+                    # 尝试从类型注解获取类型
+                    if param.annotation != inspect.Parameter.empty:
+                        if param.annotation is str:
+                            param_info["type"] = "string"
+                        elif param.annotation is int:
+                            param_info["type"] = "integer"
+                        elif param.annotation is float:
+                            param_info["type"] = "number"
+                        elif param.annotation is bool:
+                            param_info["type"] = "boolean"
+                    
+                    params[param_name] = param_info
+                
+                # 注册工具
+                self.tools[name] = {
+                    "func": func,
+                    "description": description,
+                    "parameters": params,
+                    "args_schema": None,
+                    "type": "mcp_decorator",
+                    "original_tool": tool
+                }
+                
+                logger.debug(f"✅ 注册 MCP 装饰器工具: {name}")
+                logger.debug(f"   描述: {description}")
+                logger.debug(f"   参数: {list(params.keys())}")
+                return
+            
+            # 如果是 LangChain 工具对象
+            name = tool.name
+            description = tool.description
             
             # 提取可调用函数，优先级：coroutine > func > _run > invoke
             func = None
-            if hasattr(langchain_tool, 'coroutine') and langchain_tool.coroutine:
-                func = langchain_tool.coroutine
-            elif hasattr(langchain_tool, 'func') and langchain_tool.func:
-                func = langchain_tool.func
-            elif hasattr(langchain_tool, '_run'):
-                func = langchain_tool._run
-            elif hasattr(langchain_tool, 'invoke'):
-                func = langchain_tool.invoke
+            if hasattr(tool, 'coroutine') and tool.coroutine:
+                func = tool.coroutine
+            elif hasattr(tool, 'func') and tool.func:
+                func = tool.func
+            elif hasattr(tool, '_run'):
+                func = tool._run
+            elif hasattr(tool, 'invoke'):
+                func = tool.invoke
             
             if func is None:
                 raise ValueError(f"无法从 LangChain 工具 {name} 中提取可调用函数")
             
             # 提取参数信息
             params = {}
-            if hasattr(langchain_tool, 'args_schema') and langchain_tool.args_schema:
+            if hasattr(tool, 'args_schema') and tool.args_schema:
                 # 从 Pydantic 模型提取参数
-                schema = langchain_tool.args_schema.model_json_schema()
+                schema = tool.args_schema.model_json_schema()
                 if 'properties' in schema:
                     for param_name, param_info in schema['properties'].items():
                         params[param_name] = {
@@ -207,9 +258,9 @@ class ToolManager:
                 "func": func,
                 "description": description,
                 "parameters": params,
-                "args_schema": langchain_tool.args_schema if hasattr(langchain_tool, 'args_schema') else None,
+                "args_schema": tool.args_schema if hasattr(tool, 'args_schema') else None,
                 "type": "langchain",
-                "original_tool": langchain_tool
+                "original_tool": tool
             }
             
             logger.debug(f"✅ 注册 LangChain 工具: {name}")
@@ -217,13 +268,13 @@ class ToolManager:
             logger.debug(f"   参数: {list(params.keys())}")
             
         except (ValueError, KeyError) as e:
-            logger.error(f"❌ 注册 LangChain 工具数据错误: {str(e)}")
+            logger.error(f"❌ 注册工具数据错误: {str(e)}")
             raise
         except (OSError, IOError) as e:
-            logger.error(f"❌ 注册 LangChain 工具IO错误: {str(e)}")
+            logger.error(f"❌ 注册工具IO错误: {str(e)}")
             raise
         except Exception as e:
-            logger.error(f"❌ 注册 LangChain 工具失败: {str(e)}")
+            logger.error(f"❌ 注册工具失败: {str(e)}")
             raise
     
     def register_tool(self, tool: 'ToolBase'):
@@ -404,43 +455,47 @@ class ToolManager:
     def get_tools_description(self) -> str:
         """
         获取所有工具的描述（用于提示词）
-        包含 JSON 调用示例，帮助模型正确格式化 Action Input
+
+        使用标准 MCP JSON Schema 格式，方便 LLM 理解工具结构
         """
         if not self.tools:
-            return "当前没有可用的工具。"
+            return '{"tools": []}'
 
-        descriptions = []
+        tools_list = []
         for name, info in self.tools.items():
-            desc_parts = [f"- {name}: {info['description']}"]
+            properties = {}
+            required = []
 
-            # 添加参数说明
-            if info["parameters"]:
-                required_params = []
-                optional_params = []
-                example_json = {}
-
+            if info.get("parameters"):
                 for param_name, param_info in info["parameters"].items():
-                    param_desc = f"{param_name}({param_info['type']})"
+                    param_type = param_info.get("type", "string")
+                    if param_type == "number":
+                        param_type = "number"
+                    elif param_type == "integer":
+                        param_type = "integer"
+                    elif param_type == "boolean":
+                        param_type = "boolean"
+
+                    properties[param_name] = {
+                        "type": param_type,
+                        "description": param_info.get("description", f"{param_name} 参数")
+                    }
+
                     if param_info.get("required", False):
-                        required_params.append(param_desc)
-                        example_json[param_name] = f"<{param_name}的值>"
-                    else:
-                        optional_params.append(param_desc)
+                        required.append(param_name)
 
-                if required_params:
-                    desc_parts.append(f"  必需参数: {', '.join(required_params)}")
-                if optional_params:
-                    desc_parts.append(f"  可选参数: {', '.join(optional_params)}")
+            tool_def = {
+                "name": name,
+                "description": info["description"],
+                "inputSchema": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": required
+                }
+            }
+            tools_list.append(tool_def)
 
-                # 🔧 新增：展示 JSON 调用格式示例
-                desc_parts.append(
-                    f"  调用示例: Action: {name}\n"
-                    f"           Action Input: {json.dumps(example_json, ensure_ascii=False)}"
-                )
-
-            descriptions.append("\n".join(desc_parts))
-
-        return "\n".join(descriptions)
+        return json.dumps({"tools": tools_list}, ensure_ascii=False, indent=2)
     
     def get_tool_names(self) -> List[str]:
         """
@@ -456,11 +511,10 @@ class ToolManager:
         从文本中解析工具调用
         
         支持多种格式:
-        1. Action: tool_name
-           Action Input: {"param": "value"}
-        
-        2. 使用工具: tool_name
-           参数: {"param": "value"}
+        1. MCP JSON 格式: {"name": "tool_name", "arguments": {...}}
+        2. Action/Action Input 格式
+        3. 使用工具: tool_name + 参数: {...}
+        4. MiniMax XML 格式
         
         Args:
             text: 包含工具调用的文本
@@ -468,6 +522,20 @@ class ToolManager:
         Returns:
             解析出的工具调用信息，如果没有找到则返回 None
         """
+        # 模式0: MCP JSON 格式 {"name": "...", "arguments": {...}}
+        mcp_json_pattern = r'\{\s*"name"\s*:\s*"([^"]+)"\s*,\s*"arguments"\s*:\s*(\{.*?\})\s*\}'
+        mcp_match = re.search(mcp_json_pattern, text, re.DOTALL)
+        if mcp_match:
+            tool_name = mcp_match.group(1)
+            try:
+                params = json.loads(mcp_match.group(2))
+            except json.JSONDecodeError:
+                params = {}
+            return {
+                "tool_name": tool_name,
+                "parameters": params
+            }
+
         # 模式1: Action/Action Input 格式
         action_pattern = r'Action:\s*(\w+)'
         input_pattern = r'Action Input:\s*(\{.*?\})'

@@ -129,7 +129,25 @@ export interface ReviewAction {
   user_id: string
   user_name?: string
   action: string
-  details?: Record<string, any>
+  action_details?: {
+    description?: string
+    comment?: string
+    result?: any
+    priority?: string
+    action_type?: string
+  }
+  old_value?: {
+    status?: string
+    assigned_to?: string
+    review_comments?: string
+    review_result?: any
+  }
+  new_value?: {
+    status?: string
+    assigned_to?: string
+    review_comments?: string
+    review_result?: any
+  }
   created_at: string
 }
 

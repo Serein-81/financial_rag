@@ -2,7 +2,7 @@
 邀请码 API 端点（异步版本）
 """
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -32,7 +32,7 @@ async def validate_invite_code(
 
 @router.post("/validate", response_model=InviteCodeValidationResult)
 async def validate_invite_code_post(
-    code: str,
+    code: str = Body(..., embed=True),
     db: AsyncSession = Depends(get_db)
 ):
     """

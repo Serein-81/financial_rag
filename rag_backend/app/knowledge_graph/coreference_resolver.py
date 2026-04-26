@@ -1,6 +1,5 @@
 """指代消解器 - 将代词替换为具体实体"""
 import logging
-from app.services.llm_service import llm_service
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -56,6 +55,7 @@ class CoreferenceResolver:
 """
         
         try:
+            from app.services.llm_service import llm_service
             logger.info(f"开始指代消解，原文长度: {len(text)}")
             
             response = await llm_service.get_answer(

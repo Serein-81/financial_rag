@@ -5,6 +5,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useSessionStore } from '@/stores/session'
 import { useGroupChatStore } from '@/stores/group-chat'
 import { useEnterpriseTheme } from '@/composables/useEnterpriseTheme'
+import BackgroundTaskIndicator from './BackgroundTaskIndicator.vue'
 import {
   MessageSquare,
   Database,
@@ -94,8 +95,13 @@ const showNotificationPanel = ref(false)
 const expandedGroups = ref<Set<string>>(new Set(['collaboration', 'knowledge', 'finance']))
 
 onMounted(async () => {
-  await groupChatStore.fetchNotifications()
-  groupChatStore.startNotificationPoll()
+  try {
+    await groupChatStore.fetchNotifications()
+    groupChatStore.startNotificationPoll()
+  } catch (error) {
+    console.error('❌ MainLayout mounted hook 错误:', error)
+    // 即使 fetchNotifications 失败，也继续运行，不阻塞整个应用
+  }
 })
 
 onUnmounted(() => {
@@ -505,6 +511,9 @@ function goToProfile() {
         v-model="showNotificationPanel"
       />
     </div>
+
+    <!-- Background Task Indicator -->
+    <BackgroundTaskIndicator />
   </div>
 </template>
 

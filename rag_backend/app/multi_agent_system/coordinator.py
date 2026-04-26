@@ -31,10 +31,11 @@ class AgentCoordinator:
     5. 处理重做逻辑
     """
     
-    def __init__(self, tenant_id: str = None, user_id: str = None, **kwargs):
+    def __init__(self, tenant_id: str = None, user_id: str = None, enable_reflection: bool = True, **kwargs):
         """初始化协调器"""
         self.tenant_id = tenant_id
         self.user_id = user_id
+        self.enable_reflection = enable_reflection
         # 存储其他可能的参数（如db等）
         self.extra_params = kwargs
         
@@ -42,6 +43,9 @@ class AgentCoordinator:
         self.current_state: Optional[AuditState] = None
         self.memory_manager: Optional[MemoryManager] = None
         self.rework_controller = ReworkController(max_rework_count=2)
+        
+        # 状态写入锁 - 用于保护并行 Agent 的状态写入操作
+        self._state_lock = asyncio.Lock()
         
         # 初始化RAG检索器（租户隔离）
         self._initialize_rag_retriever()
@@ -411,7 +415,10 @@ class AgentCoordinator:
                 await self._parallel_audit_phase()
                 
                 # 3.2 反思检查阶段
-                await self._reflection_phase()
+                if self.enable_reflection:
+                    await self._reflection_phase()
+                else:
+                    print("⏭️ [协调器] 跳过反思检查阶段（已禁用）")
                 
                 # 3.3 检查是否需要重做
                 if not self.rework_controller.should_rework(self.current_state):
@@ -773,13 +780,16 @@ class AgentCoordinator:
                 documents=documents
             )
             
-            # 保存到状态
+            # 保存到状态（使用锁保护，防止并发覆写）
             field_name = f"{agent_name}_findings"
-            self.current_state[field_name] = [f.to_dict() for f in findings]
+            async with self._state_lock:
+                self.current_state[field_name] = [f.to_dict() for f in findings]
             
             # 对税务发现进行RAG增强
             if agent_name == "tax" and hasattr(self, 'tax_rag_enhancer'):
-                self.current_state["rag_enhanced_findings"] = await self._enhance_findings_with_rag(findings)
+                rag_enhanced = await self._enhance_findings_with_rag(findings)
+                async with self._state_lock:
+                    self.current_state["rag_enhanced_findings"] = rag_enhanced
             
             print(f"✅ [协调器] {agent_name} Agent 完成，发现 {len(findings)} 个问题")
             return findings
@@ -804,9 +814,10 @@ class AgentCoordinator:
                 recommendations=[f"请检查{agent_name}智能体配置"]
             )
             
-            # 保存错误发现
+            # 保存错误发现（使用锁保护）
             field_name = f"{agent_name}_findings"
-            self.current_state[field_name] = [error_finding.to_dict()]
+            async with self._state_lock:
+                self.current_state[field_name] = [error_finding.to_dict()]
             
             return [error_finding]
     

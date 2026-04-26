@@ -5,7 +5,7 @@
 
 from typing import List, Dict, Optional
 from datetime import datetime, date
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 from enum import Enum
 
 
@@ -149,8 +149,8 @@ class PolicySubscriptionRequest(BaseModel):
     def get_notification_methods(self) -> List[str]:
         return self.notification_methods or self.notification_channels or []
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "enterprise_id": "ent-123",
                 "industry": "technology",
@@ -161,6 +161,7 @@ class PolicySubscriptionRequest(BaseModel):
                 "severity_threshold": 0.6
             }
         }
+    )
 
 
 class PolicySubscriptionResponse(BaseModel):
@@ -220,8 +221,8 @@ class PolicyQueryRequest(BaseModel):
     limit: int = Field(50, ge=1, le=200, description="返回数量")
     offset: int = Field(0, ge=0, description="偏移量")
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "tenant_id": "tenant-456",
                 "keywords": ["增值税", "优惠政策"],
@@ -230,6 +231,7 @@ class PolicyQueryRequest(BaseModel):
                 "limit": 50
             }
         }
+    )
 
 
 class PolicyQueryResponse(BaseModel):

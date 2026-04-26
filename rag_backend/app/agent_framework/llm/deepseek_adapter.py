@@ -5,8 +5,10 @@ DeepSeek 专属适配器 (OpenRouter API)
 
 支持通过 OpenRouter API 调用 DeepSeek 模型
 参考 MiniMax 和智谱适配器的设计实现
+集成 LangSmith 追踪功能（供应商无关）
 """
 
+import os
 from app.utils.json_compat import json
 import logging
 from typing import AsyncGenerator, Dict, Any, Optional, List
@@ -20,26 +22,22 @@ from .errors import ERROR_PREFIX
 
 logger = logging.getLogger(__name__)
 
-_langsmith_tracer = None
 
-
-def _get_langsmith_tracer():
-    """获取 LangSmith 追踪器（延迟初始化）"""
-    global _langsmith_tracer
-    if _langsmith_tracer is None:
-        try:
-            from app.langsmith_integration import get_tracer
-            _langsmith_tracer = get_tracer()
-        except (ValueError, KeyError) as e:
-            logger.warning(f"[DeepSeek] 无法加载 LangSmith 追踪器(数据错误): {e}")
-            _langsmith_tracer = None
-        except (OSError, IOError) as e:
-            logger.warning(f"[DeepSeek] 无法加载 LangSmith 追踪器(IO错误): {e}")
-            _langsmith_tracer = None
-        except Exception as e:
-            logger.warning(f"[DeepSeek] 无法加载 LangSmith 追踪器: {e}")
-            _langsmith_tracer = None
-    return _langsmith_tracer
+def _get_langsmith_traced_client(api_key: str, base_url: str):
+    """
+    获取 LangSmith 追踪客户端（使用统一管理器）
+    
+    使用 LangSmithClientManager 获取追踪客户端，完全解耦供应商逻辑
+    """
+    try:
+        from app.langsmith_integration import get_langsmith_manager
+        manager = get_langsmith_manager()
+        if manager.enabled:
+            return manager.get_traced_client(api_key, base_url)
+    except Exception as e:
+        logger.warning(f"[DeepSeek] 获取 LangSmith 追踪客户端失败: {e}")
+    
+    return None
 
 
 class DeepSeekAdapter(BaseLLMAdapter):
@@ -71,10 +69,19 @@ class DeepSeekAdapter(BaseLLMAdapter):
         """
         super().__init__(model_name=model_name, api_key=api_key, base_url=base_url, **kwargs)
         self.client = None
+        self.langsmith_client = None
+        
+        # 如果启用了 LangSmith，获取追踪客户端
+        if self.enable_langsmith:
+            self.langsmith_client = _get_langsmith_traced_client(api_key, base_url)
+            if self.langsmith_client:
+                logger.info("✅ LangSmith 追踪已启用（供应商无关模式）")
+        
         logger.info("✅ DeepSeek 适配器初始化完成")
         logger.info(f"   - 模型: {self.model_name}")
         logger.info(f"   - Base URL: {self.base_url}")
         logger.info(f"   - API Key: {self.api_key[:12]}...{self.api_key[-4:]}")
+        logger.info(f"   - LangSmith 追踪: {'启用' if self.langsmith_client else '禁用'}")
 
     def _get_client(self) -> httpx.AsyncClient:
         """获取或创建 HTTP 客户端"""
@@ -191,8 +198,6 @@ class DeepSeekAdapter(BaseLLMAdapter):
         Returns:
             LLMResponse 对象
         """
-        client = self._get_client()
-
         gen_conf, request_kwargs = apply_model_family_policies(
             self.model_name,
             {"temperature": temperature, "max_tokens": max_tokens},
@@ -201,28 +206,75 @@ class DeepSeekAdapter(BaseLLMAdapter):
 
         model = kwargs.pop("model", None) or self.model_name
 
-        request_body = {
-            "model": model,
-            "messages": messages,
-            "temperature": gen_conf.get("temperature", temperature),
-            "stream": False,
-        }
-
-        if max_tokens:
-            request_body["max_tokens"] = max_tokens
-
-        if "top_p" in gen_conf:
-            request_body["top_p"] = gen_conf["top_p"]
-        if "stop" in gen_conf:
-            request_body["stop"] = gen_conf["stop"]
-
-        extra_body = kwargs.pop("extra_body", None)
-        if extra_body:
-            request_body["extra_body"] = extra_body
-
-        request_body.update(request_kwargs)
-
         try:
+            # 优先使用 LangSmith 包装的客户端（如果启用）
+            if self.langsmith_client:
+                logger.info("[DeepSeek] 使用 LangSmith 追踪客户端...")
+                response = await self.langsmith_client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=gen_conf.get("temperature", temperature),
+                    max_tokens=max_tokens,
+                    **request_kwargs
+                )
+                
+                # 转换为标准格式
+                result = {
+                    "model": response.model,
+                    "choices": [{
+                        "message": {
+                            "role": response.choices[0].message.role,
+                            "content": response.choices[0].message.content
+                        },
+                        "finish_reason": response.choices[0].finish_reason
+                    }],
+                    "usage": {
+                        "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
+                        "completion_tokens": response.usage.completion_tokens if response.usage else 0,
+                        "total_tokens": response.usage.total_tokens if response.usage else 0
+                    }
+                }
+                
+                content = response.choices[0].message.content
+                finish_reason = response.choices[0].finish_reason
+                
+                logger.info(f"[DeepSeek] LangSmith 追踪响应，长度: {len(content)} 字符")
+                
+                return LLMResponse(
+                    content=content,
+                    model=model,
+                    raw_response=result,
+                    finish_reason=finish_reason,
+                    prompt_tokens=result["usage"]["prompt_tokens"],
+                    completion_tokens=result["usage"]["completion_tokens"],
+                    total_tokens=result["usage"]["total_tokens"]
+                )
+            
+            # 回退到 httpx 客户端
+            logger.info("[DeepSeek] 使用标准 HTTP 客户端...")
+            client = self._get_client()
+
+            request_body = {
+                "model": model,
+                "messages": messages,
+                "temperature": gen_conf.get("temperature", temperature),
+                "stream": False,
+            }
+
+            if max_tokens:
+                request_body["max_tokens"] = max_tokens
+
+            if "top_p" in gen_conf:
+                request_body["top_p"] = gen_conf["top_p"]
+            if "stop" in gen_conf:
+                request_body["stop"] = gen_conf["stop"]
+
+            extra_body = kwargs.pop("extra_body", None)
+            if extra_body:
+                request_body["extra_body"] = extra_body
+
+            request_body.update(request_kwargs)
+
             url = f"{self.base_url}/chat/completions"
             logger.info(f"[DeepSeek] 发起请求: {url}")
 
@@ -234,17 +286,6 @@ class DeepSeekAdapter(BaseLLMAdapter):
             result = response.json()
 
             logger.info(f"[DeepSeek] 响应解析完成，内容长度: {len(str(result))}")
-
-            tracer = _get_langsmith_tracer()
-            if tracer and self.enable_langsmith:
-                try:
-                    await tracer.log_llm_run(
-                        model=self.model_name,
-                        messages=messages,
-                        response=result
-                    )
-                except Exception as e:
-                    logger.warning(f"[DeepSeek] LangSmith 追踪失败: {e}")
 
             if "choices" in result and len(result["choices"]) > 0:
                 choice = result["choices"][0]
@@ -408,11 +449,10 @@ class DeepSeekAdapter(BaseLLMAdapter):
                             chunk_count += 1
                             full_content += content
                             
-                            # 调试：前10个API chunk打印日志
-                            if chunk_count <= 10:
-                                logger.info(f"[DeepSeek] API返回chunk #{chunk_count}: '{content[:30]}...' (累计: {len(full_content)} 字符)")
+                            if chunk_count == 1:
+                                logger.debug(f"[DeepSeek] API开始返回，首chunk: '{content[:20]}...'")
                             elif chunk_count == 11:
-                                logger.info(f"[DeepSeek] API返回完成，共 {chunk_count} 个chunks (总长度: {len(full_content)})")
+                                logger.debug(f"[DeepSeek] API返回chunk #{chunk_count}: (前10个chunk总长: {len(full_content)} 字符)")
                             
                             # 💡 关键优化：如果content较长，逐字符yield实现打字机效果
                             if len(content) > 1:
@@ -428,7 +468,7 @@ class DeepSeekAdapter(BaseLLMAdapter):
                     except json.JSONDecodeError:
                         continue
 
-                logger.info(f"[DeepSeek] 流式响应完成 | API chunks: {chunk_count} | 实际输出: {total_chars_yielded} 字符")
+                logger.debug(f"[DeepSeek] 流式响应完成 | chunks: {chunk_count} | 实际输出: {total_chars_yielded} 字符")
 
         except httpx.HTTPStatusError as e:
             error_msg = f"HTTP {e.response.status_code}: {e.response.text}"

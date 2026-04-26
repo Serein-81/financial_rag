@@ -1,4 +1,4 @@
-import { request } from '@/utils/request'
+import { request, get } from '@/utils/request'
 
 export interface TenantStatistics {
   total_users: number
@@ -75,7 +75,7 @@ export const analyticsApi = {
     end_date?: string
     tenant_id?: string
   }): Promise<TenantStatistics> {
-    return request.get('/chat-logs/statistics/tenant', { params })
+    return get('/chat-logs/statistics/tenant', { params })
   },
 
   async getUserStatistics(
@@ -85,15 +85,15 @@ export const analyticsApi = {
       end_date?: string
     }
   ): Promise<UserStatistics> {
-    return request.get(`/chat-logs/statistics/user/${userId}`, { params })
+    return get(`/chat-logs/statistics/user/${userId}`, { params })
   },
 
   async getGroupStatistics(): Promise<GroupStatistics[]> {
-    return request.get('/groups/statistics')
+    return get('/groups/statistics')
   },
 
   async getActiveUsers(): Promise<{ user_id: string; user_name: string; is_online: boolean }[]> {
-    return request.get('/users/active')
+    return get('/users/active')
   }
 }
 

@@ -98,23 +98,47 @@ rag_frontend/
 │   │   ├── session.ts           # 会话接口
 │   │   ├── search.ts            # 搜索接口
 │   │   ├── multi-agent.ts       # 多智能体接口
-│   │   ├── financial-*.ts      # 财务相关接口
-│   │   ├── policy-*.ts          # 政策相关接口
-│   │   ├── tax-*.ts             # 税务相关接口
-│   │   ├── contract-*.ts        # 合同相关接口
+│   │   ├── agent-discovery.ts   # Agent 发现接口
+│   │   ├── agent-trace.ts       # Agent 追踪接口
+│   │   ├── financial-*.ts        # 财务相关接口
+│   │   ├── policy-*.ts           # 政策相关接口
+│   │   ├── tax-*.ts              # 税务相关接口
+│   │   ├── contract-*.ts         # 合同相关接口
 │   │   ├── audit.ts             # 审计接口
 │   │   ├── enterprise.ts        # 企业管理接口
-│   │   ├── agent-*.ts           # 智能体相关接口
 │   │   ├── observability.ts     # 可观测性接口
 │   │   ├── security.ts          # 安全监控接口
+│   │   ├── analytics.ts        # 分析接口
+│   │   ├── logs.ts             # 日志接口
+│   │   ├── notifications.ts     # 通知接口
+│   │   ├── task-manager.ts      # 任务管理接口
+│   │   ├── workflow-monitor.ts  # 工作流监控接口
+│   │   ├── memory.ts            # 记忆接口
+│   │   ├── langsmith.ts        # LangSmith 追踪接口
+│   │   ├── prompt.ts            # Prompt 管理接口
+│   │   ├── tenant-settings.ts   # 租户设置接口
+│   │   ├── invite-code.ts       # 邀请码接口
 │   │   └── index.ts             # API 统一导出
 │   │
 │   ├── components/              # 通用组件
 │   │   ├── MainLayout.vue       # 主布局组件
 │   │   ├── LoadingIndicator.vue # 加载指示器
-│   │   ├── NotificationBar.vue # 通知栏
+│   │   ├── NotificationBar.vue  # 通知栏
 │   │   ├── HumanReviewDialog.vue # 人工审核对话框
-│   │   ├── TaxWorkflow*.vue     # 税务工作流组件
+│   │   ├── KnowledgeBaseModal.vue # 知识库选择弹窗
+│   │   ├── KnowledgeBaseSelector.vue # 知识库选择器
+│   │   ├── TaxSubmissionWorkflow.vue # 税务申报工作流
+│   │   ├── TaxWorkflowViewer.vue # 税务工作流查看器
+│   │   ├── TaxWorkflowStepData.vue # 税务工作流步骤数据
+│   │   ├── TaxWorkflowCalculations.vue # 税务工作流计算
+│   │   ├── TaxWorkflowRisk.vue  # 税务工作流风险
+│   │   ├── TaxReviewQueue.vue   # 税务审核队列
+│   │   ├── ManualTaxReportDialog.vue # 手动税务报告对话框
+│   │   ├── ObservabilityPanel.vue # 可观测性面板
+│   │   ├── SecurityMonitorPanel.vue # 安全监控面板
+│   │   ├── IssueList.vue        # 问题列表
+│   │   ├── ExportProgressModal.vue # 导出进度弹窗
+│   │   ├── BackgroundTaskIndicator.vue # 后台任务指示器
 │   │   └── *.vue                # 其他业务组件
 │   │
 │   ├── composables/             # 组合式函数
@@ -124,7 +148,13 @@ rag_frontend/
 │   │   ├── useExport.ts         # 导出功能
 │   │   ├── useEnterpriseTheme.ts # 企业主题
 │   │   ├── useUnifiedNotifications.ts # 统一通知
-│   │   └── *.ts                 # 其他工具函数
+│   │   ├── useEnterpriseUsers.ts # 企业用户
+│   │   ├── useLocale.ts         # 国际化
+│   │   ├── usePullRefresh.ts    # 下拉刷新
+│   │   ├── useSSEStreamManager.ts # SSE 流管理
+│   │   ├── useSystemHealth.ts   # 系统健康检查
+│   │   ├── useWordDocument.ts   # Word 文档处理
+│   │   └── useWordGenerator.ts   # Word 生成器
 │   │
 │   ├── config/                  # 配置文件
 │   │   └── api.ts               # API 配置
@@ -144,19 +174,24 @@ rag_frontend/
 │   │   ├── auth.ts              # 认证状态
 │   │   ├── session.ts           # 会话状态
 │   │   ├── knowledge.ts         # 知识库状态
-│   │   └── group-chat.ts        # 群组聊天状态
+│   │   ├── group-chat.ts        # 群组聊天状态
+│   │   ├── multiAgentTask.ts    # 多智能体任务状态
+│   │   └── index.ts             # 统一导出
 │   │
 │   ├── types/                   # TypeScript 类型定义
 │   │   ├── index.ts             # 通用类型
-│   │   ├── review.ts           # 审核类型
-│   │   ├── tax.ts              # 税务类型
-│   │   └── tax-workflow.ts     # 税务工作流类型
+│   │   ├── review.ts            # 审核类型
+│   │   ├── tax.ts               # 税务类型
+│   │   └── tax-workflow.ts      # 税务工作流类型
 │   │
 │   ├── utils/                   # 工具函数
 │   │   ├── request.ts          # HTTP 请求封装
 │   │   ├── markdown.ts         # Markdown 渲染
 │   │   ├── stream.ts           # 流式响应处理
 │   │   └── time.ts             # 时间格式化
+│   │
+│   ├── assets/                  # 静态资源
+│   │   └── markdown.css        # Markdown 样式
 │   │
 │   ├── views/                   # 页面组件
 │   │   ├── auth/               # 认证页面
@@ -199,7 +234,8 @@ rag_frontend/
 │   │   │   ├── TaxUploadDebug.vue
 │   │   │   ├── TaxUploadDiagnostic.vue
 │   │   │   ├── TaxIntelligenceView.vue
-│   │   │   └── TaxReportUploadView.vue
+│   │   │   ├── TaxReportUploadView.vue
+│   │   │   └── TaxWorkflowMonitorView.vue
 │   │   │
 │   │   ├── audit/            # 审计页面
 │   │   │   ├── AuditUploadView.vue
@@ -216,8 +252,7 @@ rag_frontend/
 │   │   ├── agent/           # Agent 页面
 │   │   │   ├── AgentCenterView.vue
 │   │   │   ├── AgentTraceView.vue
-│   │   │   ├── MultiAgentMonitorView.vue
-│   │   │   └── AnimationDemoView.vue
+│   │   │   └── MultiAgentMonitorView.vue
 │   │   │
 │   │   ├── workflow/        # 工作流页面
 │   │   │   ├── WorkflowDashboardView.vue
@@ -230,13 +265,16 @@ rag_frontend/
 │   │   │   ├── AnalyticsDashboard.vue
 │   │   │   └── ReviewDashboard.vue
 │   │   │
-│   │   └── system/        # 系统页面
-│   │       ├── SystemOverviewView.vue
-│   │       ├── LogsView.vue
-│   │       ├── TaskManagementView.vue
-│   │       ├── NotificationCenterView.vue
-│   │       ├── ReviewCenterView.vue
-│   │       └── ModernProfileView.vue
+│   │   ├── system/        # 系统页面
+│   │   │   ├── SystemOverviewView.vue
+│   │   │   ├── LogsView.vue
+│   │   │   ├── TaskManagementView.vue
+│   │   │   ├── NotificationCenterView.vue
+│   │   │   ├── ReviewCenterView.vue
+│   │   │   └── ModernProfileView.vue
+│   │   │
+│   │   └── demo/           # 示例页面
+│   │       └── AnimationDemoView.vue
 │   │
 │   ├── App.vue              # 根组件
 │   ├── main.ts              # 应用入口
@@ -245,11 +283,18 @@ rag_frontend/
 ├── tests/                   # 测试文件
 │   └── multi-agent-features.test.ts
 │
+├── ssl/                    # SSL 证书
+│   ├── .gitkeep
+│   ├── localhost.crt
+│   └── openssl.cnf
+│
 ├── .env.example             # 环境变量示例
 ├── package.json             # 项目配置
 ├── vite.config.ts          # Vite 配置
 ├── tailwind.config.js      # Tailwind 配置
 ├── tsconfig.json           # TypeScript 配置
+├── Dockerfile              # Docker 镜像配置
+├── nginx.conf              # Nginx 配置
 └── README.md               # 项目文档
 ```
 
@@ -280,7 +325,7 @@ VITE_APP_TITLE=RAG 企业智能系统
 npm run dev
 ```
 
-应用将在 `http://localhost:5173` 启动
+应用将在 `http://localhost:5500` 启动
 
 ### 4. 构建生产版本
 
@@ -316,6 +361,7 @@ npm run preview
 | `/knowledge` | 知识库管理 | 知识库列表 |
 | `/knowledge/:id` | 知识库详情 | 单个知识库管理 |
 | `/knowledge-graph` | 知识图谱 | 可视化知识关系 |
+| `/knowledge-graph-editor` | 知识图谱编辑 | 知识关系编辑 |
 | `/documents` | 文档管理 | 文档列表与状态 |
 
 ### 财务模块
@@ -339,6 +385,7 @@ npm run preview
 | `/tax-submission` | 税务申报 | 申报工作流 |
 | `/tax-intelligence` | 税务分析 | 智能税务建议 |
 | `/tax-upload-debug` | 数据导入 | 调试工具 |
+| `/tax-workflow-monitor` | 工作流监控 | 申报进度监控 |
 
 ### 文档处理
 | 路由 | 页面 | 说明 |
@@ -346,20 +393,21 @@ npm run preview
 | `/contract-review` | 合同审查 | 合同风险分析 |
 | `/audit/upload` | 文档审计 | 上传审计文件 |
 | `/audit/result/:id` | 审计结果 | 查看审计报告 |
+| `/security-audit` | 安全审计 | 安全事件监控 |
 
-### 企业管理 (需管理员权限)
+### 企业管理
 | 路由 | 页面 | 说明 |
 |------|------|------|
-| `/enterprise` | 企业管理 | 用户与企业管理 |
+| `/enterprise` | 企业管理 | 用户与企业管理（需管理员权限） |
 | `/enterprise-match` | 企业匹配 | 政策企业匹配 |
 
-### 系统工具 (需管理员权限)
+### 系统工具（需管理员权限）
 | 路由 | 页面 | 说明 |
 |------|------|------|
 | `/agent-center` | Agent 中心 | 智能体监控管理 |
 | `/intent-debug` | 意图分类 | 路由调试工具 |
-| `/security-audit` | 安全审计 | 安全事件监控 |
 | `/hitl-approval` | HITL 审批 | 人工审核队列 |
+| `/test-data-guide` | 测试数据指南 | 测试数据生成 |
 
 ### 工作流与监控
 | 路由 | 页面 | 说明 |
@@ -373,7 +421,13 @@ npm run preview
 |------|------|------|
 | `/profile` | 个人资料 | 用户信息管理 |
 | `/notifications` | 通知中心 | 消息通知 |
-| `/logs` | 运营日志 | 系统日志查看 |
+| `/logs` | 运营日志 | 系统日志查看（需管理员权限） |
+| `/chat-logs` | 聊天日志 | 对话历史查询 |
+
+### 示例页面
+| 路由 | 页面 | 说明 |
+|------|------|------|
+| `/animation-demo` | 动画示例 | 动画效果展示 |
 
 ## 🔌 API 接口
 
@@ -388,6 +442,8 @@ npm run preview
 | 聊天 | `/api/v1/chat/*` | 对话与消息 |
 | 搜索 | `/api/v1/search/*` | 向量检索 |
 | 多智能体 | `/api/v1/multi-agent/*` | Agent 协作 |
+| Agent 发现 | `/api/v1/agent-discovery/*` | Agent 注册与发现 |
+| Agent 追踪 | `/api/v1/agent-trace/*` | Agent 执行追踪 |
 | 财务 | `/api/v1/financial/*` | 财务数据管理 |
 | 政策 | `/api/v1/policy/*` | 政策服务 |
 | 税务 | `/api/v1/tax/*` | 税务工作流 |
@@ -396,6 +452,16 @@ npm run preview
 | 企业 | `/api/v1/enterprise/*` | 企业管理 |
 | 通知 | `/api/v1/notifications/*` | 消息通知 |
 | 监控 | `/api/v1/observability/*` | 系统监控 |
+| 日志 | `/api/v1/logs/*` | 系统日志 |
+| 安全 | `/api/v1/security/*` | 安全监控 |
+| 分析 | `/api/v1/analytics/*` | 数据分析 |
+| 工作流监控 | `/api/v1/workflow-monitor/*` | 工作流监控 |
+| 任务管理 | `/api/v1/task-manager/*` | 任务管理 |
+| 记忆 | `/api/v1/memory/*` | Agent 记忆管理 |
+| Prompt | `/api/v1/prompt/*` | Prompt 管理 |
+| 租户设置 | `/api/v1/tenant-settings/*` | 租户配置 |
+| 邀请码 | `/api/v1/invite-code/*` | 邀请码管理 |
+| 审核 | `/api/v1/review/*` | 人工审核 |
 
 ## 🛡️ 权限控制
 
@@ -427,6 +493,7 @@ meta: { requiresAuth: true, requiresAdmin: true }
 - 打字机效果（AI 回复）
 - 骨架屏加载动画
 - 数字滚动动画（统计面板）
+- 背景粒子效果
 
 ### 自定义 Hook
 ```typescript
@@ -460,7 +527,7 @@ import { enUS } from '@/locales'
 docker build -t rag-frontend:latest .
 
 # 运行容器
-docker run -d -p 5173:80 --name rag-frontend rag-frontend:latest
+docker run -d -p 5173:80 -p 5174:443 --name rag-frontend rag-frontend:latest
 ```
 
 ### Nginx 配置
@@ -474,8 +541,6 @@ docker run -d -p 5173:80 --name rag-frontend rag-frontend:latest
   - 自签名证书（本地测试用）
   - 安全响应头（HSTS, X-Frame-Options 等）
   - TLS 1.2/1.3 协议支持
-
-> ℹ️ **提示**: 详细的 HTTPS 部署指南请查看 [HTTPS_DEPLOYMENT.md](./HTTPS_DEPLOYMENT.md)
 
 ### 环境变量
 
@@ -527,6 +592,12 @@ import MyComponent from './components/MyComponent.vue'
 app.component('MyComponent', MyComponent)
 ```
 
+### 开发服务器代理配置
+
+Vite 配置了 API 代理：
+- `/api` → `http://localhost:8000`
+- `/ws-api` → `http://localhost:8000` (WebSocket)
+
 ## 🧪 测试
 
 运行单元测试：
@@ -571,7 +642,6 @@ MIT License
 
 - 负责人：陈
 - 邮箱：chenjh8181@gmail.com
-
 
 ---
 

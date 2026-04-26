@@ -4,7 +4,7 @@
 
 from typing import List, Dict, Any, Optional
 from datetime import datetime
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 from enum import Enum
 
 
@@ -52,28 +52,23 @@ class AuditTaskCreate(BaseModel):
     priority: Optional[str] = Field("medium", description="任务优先级")
     description: Optional[str] = Field(None, description="任务描述")
     
-    @validator('documents')
+    @field_validator('documents')
     def validate_documents(cls, v):
         if not v:
             raise ValueError("至少需要一个文档")
         return v
     
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "audit_type": "comprehensive",
                 "documents": [
-                    {
-                        "id": "doc_001",
-                        "filename": "财务报表.pdf",
-                        "content": "资产负债表内容...",
-                        "type": "financial_statement"
-                    }
+                    {"id": "doc_001", "content": "财务报表内容..."}
                 ],
-                "priority": "high",
-                "description": "年度财务审查"
+                "priority": "high"
             }
         }
+    )
 
 
 class FindingSchema(BaseModel):
@@ -89,8 +84,9 @@ class FindingSchema(BaseModel):
     legal_basis: Optional[List[str]] = Field(None, description="法律依据")
     recommendations: Optional[List[str]] = Field(None, description="改进建议")
     
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        from_attributes=True,  # 允许从对象属性加载（类似原 ORM 模式）
+        json_schema_extra={
             "example": {
                 "id": "finding_001",
                 "agent_name": "finance_agent",
@@ -110,6 +106,7 @@ class FindingSchema(BaseModel):
                 ]
             }
         }
+    )
 
 
 class ConflictSchema(BaseModel):
@@ -121,8 +118,9 @@ class ConflictSchema(BaseModel):
     severity: str = Field(..., description="严重程度")
     resolution_suggestion: Optional[str] = Field(None, description="解决建议")
     
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
             "example": {
                 "id": "conflict_001",
                 "finding_ids": ["finding_001", "finding_002"],
@@ -132,6 +130,7 @@ class ConflictSchema(BaseModel):
                 "resolution_suggestion": "需要进一步审查以确定准确的风险等级"
             }
         }
+    )
 
 
 class AuditStatistics(BaseModel):
@@ -198,26 +197,34 @@ class AuditTaskResponse(BaseModel):
     completed_at: Optional[datetime] = Field(None, description="完成时间")
     error_message: Optional[str] = Field(None, description="错误信息")
     
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        from_attributes=True,  # 原 orm_mode = True
+        json_schema_extra={
             "example": {
-                "id": "task_001",
-                "tenant_id": "tenant_001", 
-                "user_id": "user_001",
+                "task_id": "task_001",
+                "tenant_id": "tenant_001",
                 "audit_type": "comprehensive",
-                "status": "processing",
-                "documents": [
-                    {
-                        "id": "doc_001",
-                        "filename": "财务报表.pdf",
-                        "type": "financial_statement"
-                    }
+                "findings": [],
+                "conflicts": [],
+                "overall_risk_score": 75.5,
+                "summary": "共发现3个问题，其中高风险1个，中风险2个",
+                "recommendations": [
+                    "建议立即处理高风险问题",
+                    "制定中风险问题的改进计划"
                 ],
-                "created_at": "2024-03-15T10:00:00Z",
-                "completed_at": None,
-                "error_message": None
+                "statistics": {
+                    "total_findings": 3,
+                    "total_conflicts": 0,
+                    "risk_level_distribution": {"high": 1, "medium": 2},
+                    "agent_contribution": {"finance_agent": 2, "tax_agent": 1},
+                    "category_distribution": {"资产负债表": 1, "税务合规": 2},
+                    "average_confidence": 0.87,
+                    "average_risk_score": 0.68
+                },
+                "created_at": "2024-03-15T10:30:00Z"
             }
         }
+    )
 
 
 class AgentCollaborationResponse(BaseModel):
@@ -230,8 +237,9 @@ class AgentCollaborationResponse(BaseModel):
     message_content: Dict[str, Any] = Field(..., description="消息内容")
     timestamp: datetime = Field(..., description="时间戳")
     
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
             "example": {
                 "id": "collab_001",
                 "task_id": "task_001",
@@ -245,6 +253,7 @@ class AgentCollaborationResponse(BaseModel):
                 "timestamp": "2024-03-15T10:15:00Z"
             }
         }
+    )
 
 
 class DocumentAnalysis(BaseModel):
@@ -265,8 +274,9 @@ class TaskDecompositionResponse(BaseModel):
     total_documents: int = Field(..., description="文档总数")
     high_priority_documents: int = Field(..., description="高优先级文档数")
     
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
             "example": {
                 "document_analysis": [
                     {
@@ -287,3 +297,4 @@ class TaskDecompositionResponse(BaseModel):
                 "high_priority_documents": 1
             }
         }
+    )

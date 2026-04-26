@@ -28,6 +28,10 @@ from .report_generator import (
     ReportMetadata,
     AuditReport
 )
+from .orchestrator_agent import (
+    OrchestratorAgent,
+    get_orchestrator_agent
+)
 
 __all__ = [
     "BaseSpecialistAgent",
@@ -45,5 +49,7 @@ __all__ = [
     "ReportType",
     "GeneratedReport",
     "ReportMetadata",
-    "AuditReport"
+    "AuditReport",
+    "OrchestratorAgent",
+    "get_orchestrator_agent"
 ]

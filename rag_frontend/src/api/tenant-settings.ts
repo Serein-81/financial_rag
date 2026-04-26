@@ -1,4 +1,4 @@
-import request from '@/utils/request'
+import request, { get, put } from '@/utils/request'
 
 export interface TenantSettings {
   id?: string
@@ -120,56 +120,56 @@ export interface FeatureToggleRequest {
 
 export const tenantSettingsApi = {
   getMySettings: () => {
-    return request.get<TenantSettings>('/tenant-settings/me')
+    return get<TenantSettings>('/tenant-settings/me')
   },
 
   updateMySettings: (data: TenantSettingsUpdate) => {
-    return request.put<TenantSettings>('/tenant-settings/me', data)
+    return put<TenantSettings>('/tenant-settings/me', data)
   },
 
   getPublicSettings: (tenantId: string) => {
-    return request.get<TenantSettings>(`/tenant-settings/public/${tenantId}`)
+    return get<TenantSettings>(`/tenant-settings/public/${tenantId}`)
   },
 
   getAllSettings: (skip = 0, limit = 20) => {
-    return request.get<TenantSettingsListResponse>('/tenant-settings/', {
+    return get<TenantSettingsListResponse>('/tenant-settings/', {
       params: { skip, limit }
     })
   },
 
   createSettings: (data: TenantSettings) => {
-    return request.post<TenantSettings>('/tenant-settings/', data)
+    return post<TenantSettings>('/tenant-settings/', data)
   },
 
   getSettingsByTenantId: (tenantId: string) => {
-    return request.get<TenantSettings>(`/tenant-settings/${tenantId}`)
+    return get<TenantSettings>(`/tenant-settings/${tenantId}`)
   },
 
   updateSettingsByTenantId: (tenantId: string, data: TenantSettingsUpdate) => {
-    return request.put<TenantSettings>(`/tenant-settings/${tenantId}`, data)
+    return put<TenantSettings>(`/tenant-settings/${tenantId}`, data)
   },
 
   deleteSettings: (tenantId: string) => {
-    return request.delete(`/tenant-settings/${tenantId}`)
+    return del(`/tenant-settings/${tenantId}`)
   },
 
   toggleFeature: (feature: string, enabled: boolean) => {
-    return request.post<TenantSettings>('/tenant-settings/feature-toggle', {
+    return post<TenantSettings>('/tenant-settings/feature-toggle', {
       feature,
       enabled
     } as FeatureToggleRequest)
   },
 
   checkFeatures: () => {
-    return request.get<FeatureCheckResponse>('/tenant-settings/features/check')
+    return get<FeatureCheckResponse>('/tenant-settings/features/check')
   },
 
   checkFeaturesByTenant: (tenantId: string) => {
-    return request.get<FeatureCheckResponse>(`/tenant-settings/features/${tenantId}/check`)
+    return get<FeatureCheckResponse>(`/tenant-settings/features/${tenantId}/check`)
   },
 
   initializeSettings: (companyName: string) => {
-    return request.post<TenantSettings>('/tenant-settings/initialize', null, {
+    return post<TenantSettings>('/tenant-settings/initialize', null, {
       params: { company_name: companyName }
     })
   }

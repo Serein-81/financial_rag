@@ -39,9 +39,13 @@ marked.setOptions({
 
 const renderer = new marked.Renderer()
 renderer.code = function(code: string, lang?: string): string {
-  const language = lang && hljs.getLanguage(lang) ? lang : 'plaintext'
-  const highlighted = hljs.highlight(code, { language }).value
-  return `<pre class="hljs"><div class="code-header"><span class="code-lang">${language}</span><button class="copy-btn" onclick="navigator.clipboard.writeText(this.closest('pre').querySelector('code').textContent)"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg> 复制</button></div><code class="language-${language}">${highlighted}</code></pre>`
+  let displayLang = lang && hljs.getLanguage(lang) ? lang : 'plaintext'
+  const isPlaintext = displayLang === 'plaintext'
+  const highlighted = hljs.highlight(code, { language: displayLang }).value
+  if (isPlaintext) {
+    return `<pre class="plain-text-block"><code class="language-plaintext">${highlighted}</code></pre>`
+  }
+  return `<pre class="hljs"><div class="code-header"><span class="code-lang">${displayLang}</span><button class="copy-btn" onclick="navigator.clipboard.writeText(this.closest('pre').querySelector('code').textContent)"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg> 复制</button></div><code class="language-${displayLang}">${highlighted}</code></pre>`
 }
 marked.use({ renderer })
 
@@ -158,9 +162,24 @@ async function sendMessage() {
         console.log('✅ Agent 回答完成')
       }
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error:', error)
-    sessionStore.updateLastMessage('抱歉，发生了错误，请稍后重试。')
+    
+    let errorMessage = '抱歉，发生了错误，请稍后重试。'
+    
+    if (error.message) {
+      if (error.message.includes('429')) {
+        errorMessage = '请求过于频繁，请稍后再试。如果问题持续存在，请联系管理员调整限流配置。'
+      } else if (error.message.includes('401')) {
+        errorMessage = '登录已过期，请重新登录。'
+      } else if (error.message.includes('403')) {
+        errorMessage = '没有权限访问，请检查您的权限设置。'
+      } else if (error.message.includes('500')) {
+        errorMessage = '服务器错误，请稍后重试。'
+      }
+    }
+    
+    sessionStore.updateLastMessage(errorMessage)
   } finally {
     isLoading.value = false
   }
@@ -839,6 +858,13 @@ function createNewChat() {
 }
 .ai-inline-code {
   @apply bg-gray-100 text-teal-600 px-1.5 py-0.5 rounded text-sm font-mono;
+}
+
+pre.plain-text-block {
+  @apply bg-gray-100 rounded-lg my-3 p-3 text-sm font-mono text-gray-700 overflow-x-auto border border-gray-200;
+}
+pre.plain-text-block code {
+  @apply bg-transparent text-inherit p-0;
 }
 
 pre.hljs {

@@ -11,8 +11,11 @@
 """
 
 import os
+import logging
 from typing import List, Dict, AsyncGenerator
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 # 导入自定义 Agent 框架
 from app.agent_framework import ReActAgent, ZhipuAdapter
@@ -106,13 +109,7 @@ class HybridEnterpriseAgentService:
             enable_fallback=True
         )
         
-        print(f"🛠️ 已注册 {len(self.tool_manager.tools)} 个工具")
-        print(f"🔗 已注册 {len(self.hybrid_manager.list_available_chains())} 个工具链")
-        
-        # 显示工具链信息
-        chains = self.hybrid_manager.list_available_chains()
-        for i, chain in enumerate(chains, 1):
-            print(f"   {i}. {chain['name']}: {chain['description']}")
+        logger.info(f"已注册 {len(self.tool_manager.tools)} 个工具和 {len(self.hybrid_manager.list_available_chains())} 个工具链")
     
     async def chat(
         self, 
@@ -120,7 +117,9 @@ class HybridEnterpriseAgentService:
         kb_id: str, 
         session_id: str = None, 
         history: list = None,
-        preferred_mode: str = None
+        preferred_mode: str = None,
+        user_id: str = None,
+        tenant_id: str = None
     ) -> str:
         """
         非流式对话
@@ -131,6 +130,8 @@ class HybridEnterpriseAgentService:
             session_id: 会话ID
             history: 对话历史
             preferred_mode: 首选执行模式 (chain/agent/hybrid)
+            user_id: 用户ID
+            tenant_id: 租户ID
             
         Returns:
             Agent 回答
@@ -138,7 +139,7 @@ class HybridEnterpriseAgentService:
         if not self.use_hybrid:
             return await self.fallback_service.chat(user_input, kb_id, session_id, history)
         
-        return await self._chat_hybrid(user_input, kb_id, session_id, history, preferred_mode)
+        return await self._chat_hybrid(user_input, kb_id, session_id, history, preferred_mode, user_id, tenant_id)
     
     async def chat_stream(
         self, 
@@ -175,7 +176,9 @@ class HybridEnterpriseAgentService:
         kb_id: str, 
         session_id: str, 
         history: list,
-        preferred_mode: str = None
+        preferred_mode: str = None,
+        user_id: str = None,
+        tenant_id: str = None
     ) -> str:
         """混合框架的非流式对话"""
         print(f"🔀 [混合框架] 开始处理: {user_input[:50]}...")
@@ -184,7 +187,9 @@ class HybridEnterpriseAgentService:
         context = {
             "kb_id": kb_id,
             "session_id": session_id,
-            "history": self._format_history_for_hybrid(history)
+            "history": self._format_history_for_hybrid(history),
+            "user_id": user_id,
+            "tenant_id": tenant_id
         }
         
         try:
@@ -195,19 +200,21 @@ class HybridEnterpriseAgentService:
                 preferred_mode=preferred_mode
             )
             
-            if result["success"]:
-                output = result["output"]
+            if isinstance(result, dict) and result.get("success", False):
+                output = result.get("output")
+                if output is None:
+                    output = "处理完成，但未获得有效输出。"
                 execution_mode = result.get("execution_mode", "unknown")
                 execution_time = result.get("execution_time", 0)
                 
                 print("✅ [混合框架] 处理完成")
                 print(f"   执行模式: {execution_mode}")
                 print(f"   执行时间: {execution_time}s")
-                print(f"   回答长度: {len(output)}")
+                print(f"   回答长度: {len(str(output))}")
                 
                 return output
             else:
-                error_msg = result.get("error", "未知错误")
+                error_msg = result.get("error", "未知错误") if isinstance(result, dict) else "结果格式无效"
                 print(f"❌ [混合框架] 处理失败: {error_msg}")
                 return f"抱歉，处理过程中出现错误：{error_msg}"
         

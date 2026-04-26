@@ -74,4 +74,37 @@ export const knowledgeApi = {
       method: 'DELETE',
     })
   },
+
+  // Pause document processing
+  async pauseDocument(doc_id: string): Promise<{ message: string; processing_state: string; processing_progress: number }> {
+    return request(`/knowledge/documents/${doc_id}/pause`, {
+      method: 'POST',
+    })
+  },
+
+  // Resume document processing
+  async resumeDocument(doc_id: string): Promise<{ message: string; processing_state: string; processing_progress: number }> {
+    return request(`/knowledge/documents/${doc_id}/resume`, {
+      method: 'POST',
+    })
+  },
+
+  // Cancel document processing
+  async cancelDocument(doc_id: string): Promise<{ message: string; processing_state: string }> {
+    return request(`/knowledge/documents/${doc_id}/cancel`, {
+      method: 'POST',
+    })
+  },
+
+  // Get document processing status
+  async getProcessingStatus(doc_id: string): Promise<{
+    document_id: string;
+    processing_state: string;
+    processing_progress: number;
+    processing_message: string;
+    status: string;
+    error_msg?: string;
+  }> {
+    return request(`/knowledge/documents/${doc_id}/processing-status`)
+  },
 }

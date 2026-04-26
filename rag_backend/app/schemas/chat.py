@@ -1,5 +1,5 @@
 # app/schemas/chat.py
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional, Any, Dict, Annotated
 # 假设 SearchResultItem 定义在 app.schemas.search 里
 # 如果找不到，请检查 app/schemas/search.py 是否存在
@@ -50,8 +50,9 @@ class ChatMessageSchema(BaseModel):
     sender_name: Optional[str] = None
     sender_avatar: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(
+        from_attributes=True
+    )
 
 
 class ChatSessionSchema(BaseModel):
@@ -61,5 +62,6 @@ class ChatSessionSchema(BaseModel):
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(
+        from_attributes=True
+    )

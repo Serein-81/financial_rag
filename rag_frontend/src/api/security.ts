@@ -4,7 +4,7 @@
  * 提供租户隔离、权限控制、Cypher 验证的统一接口
  */
 
-import { request } from '@/utils/request'
+import { request, get, post, del } from '@/utils/request'
 
 // ==================== 租户相关类型 ====================
 
@@ -149,11 +149,11 @@ export interface SecurityAuditReport {
 export const securityApi = {
   // 租户管理
   async getTenants(): Promise<TenantContext[]> {
-    return request.get('/api/security/tenants')
+    return get('/security/tenants')
   },
 
   async getTenant(tenant_id: string): Promise<TenantContext> {
-    return request.get(`/api/security/tenants/${tenant_id}`)
+    return get(`/security/tenants/${tenant_id}`)
   },
 
   async registerTenant(data: {
@@ -162,11 +162,11 @@ export const securityApi = {
     roles?: string[]
     metadata?: Record<string, any>
   }): Promise<TenantContext> {
-    return request.post('/api/security/tenants', data)
+    return post('/security/tenants', data)
   },
 
   async getTenantQuota(tenant_id: string): Promise<TenantQuota> {
-    return request.get(`/api/security/tenants/${tenant_id}/quota`)
+    return get(`/security/tenants/${tenant_id}/quota`)
   },
 
   async checkTenantQuota(
@@ -174,7 +174,7 @@ export const securityApi = {
     quota_type: string,
     increment?: number
   ): Promise<{ allowed: boolean; current: number; limit: number }> {
-    return request.post('/api/security/tenants/${tenant_id}/quota/check', {
+    return post(`/security/tenants/${tenant_id}/quota/check`, {
       quota_type,
       increment: increment || 1
     })
@@ -185,7 +185,7 @@ export const securityApi = {
     resource_type: string,
     resource_id: string
   ): Promise<{ allowed: boolean; reason?: string }> {
-    return request.post('/api/security/tenants/validate-access', {
+    return post('/security/tenants/validate-access', {
       tenant_id,
       resource_type,
       resource_id
@@ -193,32 +193,32 @@ export const securityApi = {
   },
 
   async getTenantStatistics(): Promise<TenantStatistics> {
-    return request.get('/api/security/tenants/statistics')
+    return get('/security/tenants/statistics')
   },
 
   // 权限管理
   async getRoles(): Promise<Role[]> {
-    return request.get('/api/security/roles')
+    return get('/security/roles')
   },
 
   async getRole(role_name: string): Promise<Role> {
-    return request.get(`/api/security/roles/${role_name}`)
+    return get(`/security/roles/${role_name}`)
   },
 
   async createRole(data: Omit<Role, 'name'>): Promise<Role> {
-    return request.post('/api/security/roles', data)
+    return post('/security/roles', data)
   },
 
   async getUserRoles(user_id: string): Promise<string[]> {
-    return request.get(`/api/security/users/${user_id}/roles`)
+    return get(`/security/users/${user_id}/roles`)
   },
 
   async assignRole(user_id: string, role_name: string): Promise<void> {
-    return request.post(`/api/security/users/${user_id}/roles`, { role_name })
+    return post(`/security/users/${user_id}/roles`, { role_name })
   },
 
   async revokeRole(user_id: string, role_name: string): Promise<void> {
-    return request.delete(`/api/security/users/${user_id}/roles/${role_name}`)
+    return del(`/security/users/${user_id}/roles/${role_name}`)
   },
 
   async checkPermission(
@@ -227,7 +227,7 @@ export const securityApi = {
     resource_type: string,
     resource_id?: string
   ): Promise<{ allowed: boolean }> {
-    return request.post('/api/security/permissions/check', {
+    return post('/security/permissions/check', {
       user_id,
       permission_type,
       resource_type,
@@ -240,22 +240,22 @@ export const securityApi = {
     permission_type: PermissionType,
     resource_type: string
   ): Promise<string[]> {
-    return request.get('/api/security/users/${user_id}/accessible-resources', {
+    return get(`/security/users/${user_id}/accessible-resources`, {
       params: { permission_type, resource_type }
     })
   },
 
   async getPermissionStatistics(): Promise<PermissionStatistics> {
-    return request.get('/api/security/statistics')
+    return get('/security/statistics')
   },
 
   // Cypher 验证
   async validateCypher(query: string): Promise<ValidationResult> {
-    return request.post('/api/security/cypher/validate', { query })
+    return post('/security/cypher/validate', { query })
   },
 
   async getCypherValidatorStats(): Promise<CypherValidatorStats> {
-    return request.get('/api/security/cypher/statistics')
+    return get('/security/cypher/statistics')
   },
 
   // 安全审计
@@ -265,14 +265,15 @@ export const securityApi = {
     event_type?: string
     limit?: number
   }): Promise<SecurityEvent[]> {
-    return request.get('/api/security/audit/events', { params })
+    const response = await get<{ events: SecurityEvent[]; total: number }>('/security/audit/events', { params })
+    return response.events || []
   },
 
   async getSecurityAuditReport(params?: {
     start_time?: string
     end_time?: string
   }): Promise<SecurityAuditReport> {
-    return request.get('/api/security/audit/report', { params })
+    return get('/security/audit/report', { params })
   }
 }
 

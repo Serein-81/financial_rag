@@ -7,9 +7,13 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import text
+from sqlalchemy import text, select, func, and_
 import uuid
+import json
 from datetime import datetime, timezone
+import logging
+
+logger = logging.getLogger(__name__)
 
 from app.db.session import AsyncSessionLocal
 from app.api import deps
@@ -119,6 +123,8 @@ async def create_review_request(
         )
         
     except (ValueError, KeyError) as e:
+        import traceback
+        logger.error(f"[HumanReview] list_review_requests ValueError: {str(e)}, trace: {traceback.format_exc()}")
         raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
     except (OSError, IOError) as e:
         raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
@@ -128,9 +134,9 @@ async def create_review_request(
 
 @router.get("", response_model=ReviewRequestListResponse)
 async def list_review_requests(
-    status: Optional[ReviewStatusEnum] = None,
-    priority: Optional[ReviewPriorityEnum] = None,
-    review_type: Optional[ReviewTypeEnum] = None,
+    status: Optional[str] = None,
+    priority: Optional[str] = None,
+    review_type: Optional[str] = None,
     assigned_to_me: Optional[bool] = None,
     overdue_only: Optional[bool] = False,
     page: int = Query(1, ge=1),
@@ -143,97 +149,104 @@ async def list_review_requests(
     获取审核请求列表（租户隔离）
     """
     try:
-        query = """
-            SELECT * FROM review_requests 
-            WHERE tenant_id = :tenant_id
-        """
-        params = {"tenant_id": tenant_context['tenant_id']}
+        logger.info(f"[HumanReview] list_review_requests called, tenant={tenant_context.get('tenant_id')}, page={page}, page_size={page_size}")
+        
+        query = select(ReviewRequest).where(ReviewRequest.tenant_id == tenant_context['tenant_id'])
         
         if status:
-            query += " AND status = :status"
-            params["status"] = status.value
+            query = query.where(ReviewRequest.status == status)
         
         if priority:
-            query += " AND priority = :priority"
-            params["priority"] = priority.value
+            query = query.where(ReviewRequest.priority == priority)
         
         if review_type:
-            query += " AND review_type = :review_type"
-            params["review_type"] = review_type.value
+            query = query.where(ReviewRequest.review_type == review_type)
         
         if assigned_to_me:
-            query += " AND assigned_to = :user_id"
-            params["user_id"] = str(current_user.id)
+            query = query.where(ReviewRequest.assigned_to == current_user.id)
         
         if overdue_only:
-            query += " AND sla_deadline < :now AND status != 'completed'"
-            params["now"] = datetime.utcnow()
+            query = query.where(
+                and_(
+                    ReviewRequest.sla_deadline < datetime.utcnow(),
+                    ReviewRequest.status != 'completed'
+                )
+            )
         
-        query += " ORDER BY CASE priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'normal' THEN 3 ELSE 4 END, created_at DESC"
-        query += " LIMIT :limit OFFSET :offset"
-        params["limit"] = page_size
-        params["offset"] = (page - 1) * page_size
+        # 排序
+        from sqlalchemy import case
+        priority_order = case(
+            (ReviewRequest.priority == 'urgent', 1),
+            (ReviewRequest.priority == 'high', 2),
+            (ReviewRequest.priority == 'normal', 3),
+            else_=4
+        )
+        query = query.order_by(priority_order, ReviewRequest.created_at.desc())
         
-        result = await db.execute(text(query), params)
-        requests = result.fetchall()
+        # 分页
+        query = query.limit(page_size).offset((page - 1) * page_size)
+        
+        result = await db.execute(query)
+        requests = result.scalars().all()
         
         # 获取总数
-        count_query = "SELECT COUNT(*) FROM review_requests WHERE tenant_id = :tenant_id"
-        count_params = {"tenant_id": tenant_context['tenant_id']}
-        
+        count_query = select(ReviewRequest).where(ReviewRequest.tenant_id == tenant_context['tenant_id'])
         if status:
-            count_query += " AND status = :status"
-            count_params["status"] = status.value
+            count_query = count_query.where(ReviewRequest.status == status)
         if priority:
-            count_query += " AND priority = :priority"
-            count_params["priority"] = priority.value
+            count_query = count_query.where(ReviewRequest.priority == priority)
         if review_type:
-            count_query += " AND review_type = :review_type"
-            count_params["review_type"] = review_type.value
+            count_query = count_query.where(ReviewRequest.review_type == review_type)
         if assigned_to_me:
-            count_query += " AND assigned_to = :user_id"
-            count_params["user_id"] = str(current_user.id)
-        
-        count_result = await db.execute(text(count_query), count_params)
+            count_query = count_query.where(ReviewRequest.assigned_to == current_user.id)
+        if overdue_only:
+            count_query = count_query.where(
+                and_(
+                    ReviewRequest.sla_deadline < datetime.utcnow(),
+                    ReviewRequest.status != 'completed'
+                )
+            )
+        count_result = await db.execute(
+            select(func.count()).select_from(count_query.subquery())
+        )
         total = count_result.scalar()
         
         items = []
         for req in requests:
-            # 计算 is_overdue（手动计算，因为是属性而非数据库列）
-            is_overdue = False
-            if req.sla_deadline:
-                now = datetime.now(timezone.utc)
-                sla_deadline = req.sla_deadline
-                if req.sla_deadline.tzinfo is None:
-                    sla_deadline = req.sla_deadline.replace(tzinfo=timezone.utc)
-                is_overdue = now > sla_deadline
-
-            # 计算 age_hours（手动计算，因为是属性而非数据库列）
-            age_hours = 0
-            if req.created_at:
-                now = datetime.now(timezone.utc)
-                created_at = req.created_at
-                if req.created_at.tzinfo is None:
-                    created_at = req.created_at.replace(tzinfo=timezone.utc)
-                delta = now - created_at
-                age_hours = int(delta.total_seconds() / 3600)
-
+            is_overdue = req.is_overdue if hasattr(req, 'is_overdue') else False
+            age_hours = req.age_hours if hasattr(req, 'age_hours') else 0
+            
+            try:
+                review_type_enum = ReviewTypeEnum(req.review_type)
+            except (ValueError, KeyError):
+                review_type_enum = ReviewTypeEnum.TAX
+            
+            try:
+                priority_enum = ReviewPriorityEnum(req.priority)
+            except (ValueError, KeyError):
+                priority_enum = ReviewPriorityEnum.NORMAL
+            
+            try:
+                status_enum = ReviewStatusEnum(req.status)
+            except (ValueError, KeyError):
+                status_enum = ReviewStatusEnum.PENDING
+            
             items.append(ReviewRequestResponse(
                 id=str(req.id),
                 task_id=str(req.task_id),
                 tenant_id=req.tenant_id,
                 user_id=str(req.user_id),
-                review_type=ReviewTypeEnum(req.review_type),
-                priority=ReviewPriorityEnum(req.priority),
+                review_type=review_type_enum,
+                priority=priority_enum,
                 trigger_reason=req.trigger_reason,
-                trigger_details=req.trigger_details,
+                trigger_details=json.loads(req.trigger_details) if isinstance(req.trigger_details, str) and req.trigger_details else req.trigger_details,
                 title=req.title,
                 description=req.description,
-                content=req.content,
-                status=ReviewStatusEnum(req.status),
+                content=json.loads(req.content) if isinstance(req.content, str) and req.content else req.content,
+                status=status_enum,
                 assigned_to=str(req.assigned_to) if req.assigned_to else None,
                 assigned_at=req.assigned_at,
-                review_result=req.review_result,
+                review_result=json.loads(req.review_result) if isinstance(req.review_result, str) else req.review_result,
                 review_comments=req.review_comments,
                 reviewed_at=req.reviewed_at,
                 sla_deadline=req.sla_deadline,
@@ -243,7 +256,7 @@ async def list_review_requests(
                 age_hours=age_hours
             ))
         
-        total_pages = (total + page_size - 1) // page_size
+        total_pages = (total + page_size - 1) // page_size if total > 0 else 0
         
         return ReviewRequestListResponse(
             items=items,
@@ -254,6 +267,8 @@ async def list_review_requests(
         )
         
     except (ValueError, KeyError) as e:
+        import traceback
+        logger.error(f"[HumanReview] list_review_requests ValueError: {str(e)}, trace: {traceback.format_exc()}")
         raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
     except (OSError, IOError) as e:
         raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
@@ -386,14 +401,14 @@ async def get_review_request(
             review_type=ReviewTypeEnum(req.review_type),
             priority=ReviewPriorityEnum(req.priority),
             trigger_reason=req.trigger_reason,
-            trigger_details=req.trigger_details,
+            trigger_details=json.loads(req.trigger_details) if isinstance(req.trigger_details, str) and req.trigger_details else req.trigger_details,
             title=req.title,
             description=req.description,
-            content=req.content,
+            content=json.loads(req.content) if isinstance(req.content, str) and req.content else req.content,
             status=ReviewStatusEnum(req.status),
             assigned_to=str(req.assigned_to) if req.assigned_to else None,
             assigned_at=req.assigned_at,
-            review_result=req.review_result,
+            review_result=json.loads(req.review_result) if isinstance(req.review_result, str) else req.review_result,
             review_comments=req.review_comments,
             reviewed_at=req.reviewed_at,
             sla_deadline=req.sla_deadline,
@@ -427,7 +442,7 @@ async def update_review_request(
     """
     try:
         result = await db.execute(
-            "SELECT * FROM review_requests WHERE id = :id AND tenant_id = :tenant_id",
+            text("SELECT * FROM review_requests WHERE id = :id AND tenant_id = :tenant_id"),
             {"id": review_id, "tenant_id": tenant_context['tenant_id']}
         )
         req = result.fetchone()
@@ -438,16 +453,22 @@ async def update_review_request(
         update_dict = {"updated_at": datetime.utcnow()}
         action_type = None
         
-        if update_data.status:
-            update_dict["status"] = update_data.status.value
-            if update_data.status.value == "in_progress" and req.status == "pending":
+        status_str = update_data.status.value if update_data.status else None
+        
+        if status_str:
+            update_dict["status"] = status_str
+            if status_str == "in_progress" and req.status == "pending":
                 action_type = "start"
-            elif update_data.status.value == "completed":
-                update_dict["reviewed_at"] = datetime.utcnow()
-                update_dict["reviewed_by"] = current_user.id
-                update_dict["processing_time_seconds"] = int((datetime.utcnow() - req.created_at).total_seconds())
+            elif status_str == "completed":
+                now = datetime.now(timezone.utc)
+                created_at = req.created_at
+                if created_at.tzinfo is None:
+                    created_at = created_at.replace(tzinfo=timezone.utc)
+                update_dict["reviewed_at"] = now
+                update_dict["reviewed_by"] = str(current_user.id)
+                update_dict["processing_time_seconds"] = int((now - created_at).total_seconds())
                 action_type = "complete"
-            elif update_data.status.value == "rejected":
+            elif status_str == "rejected":
                 action_type = "reject"
         
         if update_data.assigned_to:
@@ -456,22 +477,98 @@ async def update_review_request(
             action_type = "assign"
         
         if update_data.review_result:
-            update_dict["review_result"] = update_data.review_result
+            import json
+            update_dict["review_result"] = json.dumps(update_data.review_result)
         
         if update_data.review_comments:
             update_dict["review_comments"] = update_data.review_comments
         
-        # 构建更新SQL
         set_clause = ", ".join([f"{k} = :{k}" for k in update_dict.keys()])
         update_sql = f"UPDATE review_requests SET {set_clause} WHERE id = :id"
         update_dict["id"] = review_id
         
-        await db.execute(update_sql, update_dict)
+        await db.execute(text(update_sql), update_dict)
         await db.commit()
         
-        # 记录操作
+        task_id = str(req.task_id) if req.task_id else None
+        
+        if action_type == "complete" and task_id:
+            try:
+                from app.models.tax_report import TaxReport
+                from sqlalchemy import update as sql_update
+                await db.execute(
+                    sql_update(TaxReport)
+                    .where(TaxReport.id == task_id)
+                    .values(
+                        status="completed",
+                        updated_at=datetime.utcnow()
+                    )
+                )
+                await db.commit()
+            except Exception as e:
+                logger.warning(f"[HumanReview] 更新 TaxReport 状态失败: {e}")
+                await db.rollback()
+        
+        elif action_type == "reject" and task_id:
+            try:
+                from app.models.tax_report import TaxReport
+                from sqlalchemy import update as sql_update
+                await db.execute(
+                    sql_update(TaxReport)
+                    .where(TaxReport.id == task_id)
+                    .values(
+                        status="failed",
+                        processing_message=f"审核拒绝: {update_data.review_comments or '无'}",
+                        updated_at=datetime.utcnow()
+                    )
+                )
+                await db.commit()
+            except Exception as e:
+                logger.warning(f"[HumanReview] 更新 TaxReport 状态失败: {e}")
+                await db.rollback()
+        
         if action_type:
-            await _log_action(db, review_id, current_user.id, action_type, update_dict)
+            try:
+                import json
+                old_status = req.status
+                new_status = update_dict.get("status", old_status)
+                
+                action_details = {
+                    "description": _get_action_description(action_type, update_data),
+                    "comment": update_data.review_comments or req.review_comments,
+                    "result": update_data.review_result,
+                    "priority": update_data.priority.value if update_data.priority else None,
+                    "action_type": action_type
+                }
+                
+                old_value = {
+                    "status": old_status,
+                    "assigned_to": str(req.assigned_to) if req.assigned_to else None,
+                    "review_comments": req.review_comments,
+                    "review_result": json.loads(req.review_result) if req.review_result else None
+                }
+                
+                new_value = {
+                    "status": new_status,
+                    "assigned_to": update_dict.get("assigned_to"),
+                    "review_comments": update_dict.get("review_comments") or update_data.review_comments,
+                    "review_result": update_dict.get("review_result") or (json.dumps(update_data.review_result) if update_data.review_result else None)
+                }
+                
+                logger.info(f"[HumanReview] 记录操作日志: action={action_type}, details={action_details}, old={old_value}, new={new_value}")
+                
+                await _log_action(
+                    db, 
+                    review_id, 
+                    current_user.id, 
+                    action_type, 
+                    action_details,
+                    old_value=old_value,
+                    new_value=new_value
+                )
+            except Exception as e:
+                import traceback
+                logger.error(f"[HumanReview] 记录操作日志失败: {str(e)}, trace: {traceback.format_exc()}")
         
         # 发布更新事件
         background_tasks.add_task(
@@ -486,10 +583,14 @@ async def update_review_request(
     except HTTPException:
         raise
     except (ValueError, KeyError) as e:
+        import traceback
+        logger.error(f"[HumanReview] update_review_request ValueError: {str(e)}, trace: {traceback.format_exc()}")
         raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
     except (OSError, IOError) as e:
         raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
+        import traceback
+        logger.error(f"[HumanReview] update_review_request 500 error: {str(e)}, trace: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"更新失败: {str(e)}")
 
 
@@ -640,6 +741,8 @@ async def list_review_actions(
                 user_id=str(action.user_id),
                 action=action.action,
                 action_details=action.action_details,
+                old_value=action.old_value,
+                new_value=action.new_value,
                 created_at=action.created_at
             ))
         
@@ -655,24 +758,61 @@ async def list_review_actions(
         raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
 
 
-async def _log_action(db: AsyncSession, review_id: str, user_id: str, action: str, details: dict):
+def _get_action_description(action_type: str, update_data) -> str:
+    """根据操作类型生成操作描述"""
+    descriptions = {
+        "start": "开始处理审核请求",
+        "complete": "批准审核请求",
+        "reject": "驳回审核请求",
+        "assign": "分配审核请求",
+        "cancel": "取消审核请求"
+    }
+    
+    description = descriptions.get(action_type, f"执行了{action_type}操作")
+    
+    if update_data.review_comments:
+        comment_preview = update_data.review_comments[:100] if len(update_data.review_comments) > 100 else update_data.review_comments
+        description += f"：{comment_preview}"
+    
+    return description
+
+
+async def _log_action(
+    db: AsyncSession, 
+    review_id: str, 
+    user_id: str, 
+    action: str, 
+    details: dict,
+    old_value: dict = None,
+    new_value: dict = None
+):
     """记录操作日志"""
     try:
+        logger.info(f"[HumanReview] _log_action: 创建操作记录, action={action}, details={details}, old={old_value}, new={new_value}")
+        
         action_record = ReviewRequestAction(
             id=str(uuid.uuid4()),
             review_request_id=review_id,
             user_id=user_id,
             action=action,
-            action_details=details
+            action_details=details,
+            old_value=old_value,
+            new_value=new_value
         )
         db.add(action_record)
         await db.commit()
+        logger.info(f"[HumanReview] _log_action: 操作记录创建成功")
     except (ValueError, KeyError) as e:
+        import traceback
+        logger.error(f"[HumanReview] _log_action 数据错误: {str(e)}, trace: {traceback.format_exc()}")
         raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
     except (OSError, IOError) as e:
+        import traceback
+        logger.error(f"[HumanReview] _log_action IO错误: {str(e)}, trace: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
-        print(f"⚠️ 记录操作日志失败: {str(e)}")
+        import traceback
+        logger.error(f"[HumanReview] _log_action 失败: {str(e)}, trace: {traceback.format_exc()}")
 
 
 async def _publish_review_event(tenant_id: str, event_type: str, data: dict):

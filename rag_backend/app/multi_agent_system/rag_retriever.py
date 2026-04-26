@@ -414,6 +414,11 @@ class TenantIsolatedRAGRetriever:
         try:
             query_embedding = await self._get_query_embedding(query)
             
+            # 检查embedding是否有效（全零向量表示输入为空）
+            if not query_embedding or all(v == 0.0 for v in query_embedding):
+                logger.warning("⚠️ [RAG检索器] 查询embedding无效（可能查询文本为空），跳过向量搜索")
+                return []
+            
             raw_results = await self._search_vectors(
                 query_embedding=query_embedding,
                 filters=filters,
@@ -554,8 +559,16 @@ class TenantIsolatedRAGRetriever:
     
     async def _get_query_embedding(self, query: str) -> List[float]:
         """获取查询的向量表示"""
+        logger.debug(f"🔍 [_get_query_embedding] 原始查询: '{query}', 长度: {len(query)}")
+        
         if self.embedding_service:
-            return await self.embedding_service.get_embedding(query)
+            embedding = await self.embedding_service.get_embedding(query)
+            if embedding:
+                is_all_zero = all(v == 0.0 for v in embedding)
+                logger.debug(f"🔍 [_get_query_embedding] 获取到 embedding, 长度: {len(embedding)}, 是否全零: {is_all_zero}")
+            else:
+                logger.warning("⚠️ [_get_query_embedding] embedding 为空")
+            return embedding
         else:
             logger.warning("⚠️ [RAG检索器] 未配置嵌入服务，使用空向量")
             return []
@@ -580,12 +593,25 @@ class TenantIsolatedRAGRetriever:
                     logger.warning("⚠️ [RAG检索器] 无法从过滤器提取租户ID")
                     return []
                 
-                results = await self.search_service.search(
-                    query="",
-                    top_k=top_k,
-                    score_threshold=0.5,
-                    tenant_id=tenant_id
-                )
+                logger.info(f"🔍 [_search_vectors] 使用已有embedding搜索, tenant_id={tenant_id}, top_k={top_k}")
+                
+                # 直接使用已有的 query_embedding，不传入空字符串
+                # 调用 search_service 的专用方法 search_with_vector（如果存在）
+                # 否则跳过搜索，让调用方处理空结果
+                try:
+                    # 尝试调用支持外部向量的搜索方法
+                    results = await self.search_service.search_with_vector(
+                        query_vector=query_embedding,
+                        top_k=top_k,
+                        score_threshold=0.5,
+                        tenant_id=tenant_id
+                    )
+                except AttributeError:
+                    # 如果 search_service 没有 search_with_vector，使用带真实查询的 search
+                    # 但这里我们已经有向量了，所以传一个占位符避免重复 embedding
+                    logger.warning("⚠️ [RAG检索器] search_service 不支持外部向量，尝试使用缓存的embedding作为查询")
+                    # 由于无法直接使用外部向量，这里返回空让上层处理
+                    return []
                 
                 return [
                     {

@@ -36,7 +36,11 @@ import {
 
   GitCompare,
 
-  LayoutTemplate
+  LayoutTemplate,
+
+  Upload,
+
+  File
 
 } from 'lucide-vue-next'
 
@@ -45,6 +49,8 @@ import {
 const isLoading = ref(false)
 
 const isExporting = ref(false)
+
+const isUploading = ref(false)
 
 const activeTab = ref<'dashboard' | 'history' | 'detail' | 'compare'>('dashboard')
 
@@ -63,6 +69,8 @@ const pageSize = ref(10)
 const showAnalysisModal = ref(false)
 
 const showCompareModal = ref(false)
+
+const showUploadModal = ref(false)
 
 const comparisonResult = ref<any>(null)
 
@@ -87,6 +95,22 @@ const analysisRequest = ref({
   contract_type: 'other' as const,
 
   counterparty: '',
+
+  contract_value: 0
+
+})
+
+
+
+const uploadRequest = ref({
+
+  file: null as File | null,
+
+  contract_name: '',
+
+  contract_type: 'other' as const,
+
+  counterparty_name: '',
 
   contract_value: 0
 
@@ -412,6 +436,132 @@ onMounted(() => {
 
 })
 
+
+
+async function handleFileUpload(event: Event) {
+
+  const target = event.target as HTMLInputElement
+
+  if (target.files && target.files[0]) {
+
+    uploadRequest.value.file = target.files[0]
+
+  }
+
+}
+
+
+
+async function uploadAndAnalyze() {
+
+  if (!uploadRequest.value.file) {
+
+    alert('请选择要上传的合同文件')
+
+    return
+
+  }
+
+  if (!uploadRequest.value.contract_name) {
+
+    alert('请输入合同名称')
+
+    return
+
+  }
+
+
+
+  isUploading.value = true
+
+  try {
+
+    const formData = new FormData()
+
+    formData.append('file', uploadRequest.value.file)
+
+    formData.append('contract_name', uploadRequest.value.contract_name)
+
+    formData.append('contract_type', uploadRequest.value.contract_type)
+
+    if (uploadRequest.value.counterparty_name) {
+
+      formData.append('counterparty_name', uploadRequest.value.counterparty_name)
+
+    }
+
+    if (uploadRequest.value.contract_value > 0) {
+
+      formData.append('contract_value', uploadRequest.value.contract_value.toString())
+
+    }
+
+
+
+    const result = await contractReviewApi.uploadAndAnalyzeContract(formData)
+
+    
+
+    if (result.success) {
+
+      alert('合同上传并分析成功！')
+
+      showUploadModal.value = false
+
+      await loadHistory()
+
+      
+
+      selectedAnalysis.value = result.result
+
+      activeTab.value = 'detail'
+
+      
+
+      uploadRequest.value = {
+
+        file: null,
+
+        contract_name: '',
+
+        contract_type: 'other',
+
+        counterparty_name: '',
+
+        contract_value: 0
+
+      }
+
+    } else {
+
+      alert('上传失败：' + (result.message || '未知错误'))
+
+    }
+
+  } catch (e: any) {
+
+    console.error('Failed to upload and analyze contract:', e)
+
+    alert('上传失败：' + (e.message || '未知错误'))
+
+  } finally {
+
+    isUploading.value = false
+
+  }
+
+}
+
+
+
+function openUploadModal() {
+
+  showUploadModal.value = true
+
+}
+
+
+
 </script>
 
 
@@ -455,6 +605,20 @@ onMounted(() => {
             <GitCompare :size="16" />
 
             模板对比
+
+          </button>
+
+          <button
+
+            @click="openUploadModal"
+
+            class="px-4 py-2 bg-white border border-purple-300 text-purple-600 rounded-lg hover:bg-purple-50 flex items-center gap-2 transition-colors"
+
+          >
+
+            <Upload :size="16" />
+
+            上传合同
 
           </button>
 
@@ -1649,6 +1813,200 @@ onMounted(() => {
             <Loader2 v-if="isLoading" :size="16" class="animate-spin" />
 
             开始审核          </button>
+
+        </div>
+
+      </div>
+
+    </div>
+
+
+
+
+
+    <div
+
+      v-if="showUploadModal"
+
+      class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+
+      @click.self="showUploadModal = false"
+
+    >
+
+      <div class="bg-white rounded-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-auto">
+
+        <div class="px-5 py-4 border-b border-slate-200 flex items-center justify-between sticky top-0 bg-white">
+
+          <h3 class="font-semibold text-slate-900 flex items-center gap-2">
+
+            <Upload :size="18" />
+
+            上传合同并智能分析
+
+          </h3>
+
+          <button @click="showUploadModal = false" class="p-1 hover:bg-slate-100 rounded">
+
+            <X :size="20" class="text-slate-500" />
+
+          </button>
+
+        </div>
+
+        <div class="p-5 space-y-4">
+
+          <div>
+
+            <label class="block text-sm font-medium text-slate-700 mb-1">合同文件</label>
+
+            <div class="border-2 border-dashed border-slate-300 rounded-lg p-8 text-center hover:border-purple-400 transition-colors">
+
+              <input
+
+                type="file"
+
+                accept=".pdf,.doc,.docx,.txt,.md"
+
+                @change="handleFileUpload"
+
+                class="hidden"
+
+                id="file-upload"
+
+              />
+
+              <label for="file-upload" class="cursor-pointer">
+
+                <Upload :size="32" class="mx-auto text-slate-400 mb-2" />
+
+                <p class="text-sm text-slate-600">点击选择文件或拖拽文件到此处</p>
+
+                <p class="text-xs text-slate-400 mt-1">支持 PDF、Word、文本文件</p>
+
+              </label>
+
+              <div v-if="uploadRequest.file" class="mt-4 flex items-center justify-center gap-2 text-purple-600">
+
+                <File :size="16" />
+
+                <span class="text-sm">{{ uploadRequest.file.name }}</span>
+
+              </div>
+
+            </div>
+
+          </div>
+
+          <div>
+
+            <label class="block text-sm font-medium text-slate-700 mb-1">合同名称</label>
+
+            <input
+
+              v-model="uploadRequest.contract_name"
+
+              type="text"
+
+              placeholder="请输入合同名称"
+
+              class="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+
+            />
+
+          </div>
+
+          <div>
+
+            <label class="block text-sm font-medium text-slate-700 mb-1">合同类型</label>
+
+            <select
+
+              v-model="uploadRequest.contract_type"
+
+              class="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+
+            >
+
+              <option v-for="type in contractTypes" :key="type.value" :value="type.value">
+
+                {{ type.label }}
+
+              </option>
+
+            </select>
+
+          </div>
+
+          <div>
+
+            <label class="block text-sm font-medium text-slate-700 mb-1">对方名称</label>
+
+            <input
+
+              v-model="uploadRequest.counterparty_name"
+
+              type="text"
+
+              placeholder="请输入对方公司/个人名称"
+
+              class="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+
+            />
+
+          </div>
+
+          <div>
+
+            <label class="block text-sm font-medium text-slate-700 mb-1">合同金额</label>
+
+            <input
+
+              v-model.number="uploadRequest.contract_value"
+
+              type="number"
+
+              placeholder="请输入合同金额（可选）"
+
+              class="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+
+            />
+
+          </div>
+
+        </div>
+
+        <div class="px-5 py-4 border-t border-slate-200 flex justify-end gap-3">
+
+          <button
+
+            @click="showUploadModal = false"
+
+            class="px-4 py-2 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
+
+          >
+
+            取消
+
+          </button>
+
+          <button
+
+            @click="uploadAndAnalyze"
+
+            :disabled="isUploading"
+
+            class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50 flex items-center gap-2"
+
+          >
+
+            <Loader2 v-if="isUploading" :size="16" class="animate-spin" />
+
+            <Upload v-else :size="16" />
+
+            {{ isUploading ? '上传并分析中...' : '上传并分析' }}
+
+          </button>
 
         </div>
 

@@ -90,8 +90,8 @@ export const useAuthStore = defineStore('auth', () => {
     await fetchUserProfile()
   }
 
-  async function register(email: string, password: string, full_name: string, invite_code?: string) {
-    const data = await apiRegister(email, password, full_name, invite_code)
+  async function register(email: string, password: string, full_name: string, invite_code?: string, phone?: string) {
+    const data = await apiRegister(email, password, full_name, invite_code, phone)
     token.value = data.access_token
     userName.value = data.user_name || full_name
     userEmail.value = email
@@ -109,8 +109,8 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   // 企业管理员注册
-  async function registerAdmin(email: string, password: string, full_name: string, company_name: string) {
-    const data = await apiRegisterAdmin(email, password, full_name, company_name)
+  async function registerAdmin(email: string, password: string, full_name: string, company_name: string, phone?: string) {
+    const data = await apiRegisterAdmin(email, password, full_name, company_name, phone)
     token.value = data.access_token
     userName.value = data.user_name || full_name
     userEmail.value = email

@@ -1,0 +1,180 @@
+/* Markdown 内容样式 */
+
+.markdown-content {
+  font-size: 0.875rem;
+  line-height: 1.75;
+  color: #374151;
+}
+
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4,
+.markdown-content h5,
+.markdown-content h6 {
+  font-weight: 600;
+  line-height: 1.25;
+  margin-top: 1.5em;
+  margin-bottom: 0.75em;
+  color: #111827;
+}
+
+.markdown-content h1 { font-size: 1.5rem; }
+.markdown-content h2 { font-size: 1.25rem; border-bottom: 1px solid #e5e7eb; padding-bottom: 0.5em; }
+.markdown-content h3 { font-size: 1.125rem; }
+.markdown-content h4 { font-size: 1rem; }
+
+.markdown-content p {
+  margin-top: 1em;
+  margin-bottom: 1em;
+}
+
+.markdown-content ul,
+.markdown-content ol {
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+  padding-left: 1.5em;
+}
+
+.markdown-content li {
+  margin-top: 0.25em;
+  margin-bottom: 0.25em;
+}
+
+.markdown-content ul {
+  list-style-type: disc;
+}
+
+.markdown-content ol {
+  list-style-type: decimal;
+}
+
+.markdown-content code {
+  background-color: #f3f4f6;
+  padding: 0.125em 0.25em;
+  border-radius: 0.25rem;
+  font-size: 0.875em;
+  font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+}
+
+.markdown-content pre {
+  background-color: #1f2937;
+  color: #f9fafb;
+  padding: 1em;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  margin: 1em 0;
+}
+
+.markdown-content pre code {
+  background-color: transparent;
+  padding: 0;
+  color: inherit;
+  font-size: 0.875em;
+}
+
+.markdown-content blockquote {
+  border-left: 4px solid #d1d5db;
+  padding-left: 1em;
+  margin-left: 0;
+  color: #6b7280;
+  font-style: italic;
+}
+
+.markdown-content a {
+  color: #2563eb;
+  text-decoration: underline;
+}
+
+.markdown-content a:hover {
+  color: #1d4ed8;
+}
+
+.markdown-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1em 0;
+}
+
+.markdown-content th,
+.markdown-content td {
+  border: 1px solid #e5e7eb;
+  padding: 0.5em 1em;
+  text-align: left;
+}
+
+.markdown-content th {
+  background-color: #f9fafb;
+  font-weight: 600;
+}
+
+.markdown-content hr {
+  border: none;
+  border-top: 1px solid #e5e7eb;
+  margin: 2em 0;
+}
+
+.markdown-content strong {
+  font-weight: 600;
+  color: #111827;
+}
+
+.markdown-content em {
+  font-style: italic;
+}
+
+/* 特殊元素样式 */
+.markdown-content .mermaid {
+  background-color: #f9fafb;
+  padding: 1em;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+}
+
+/* 代码高亮样式 */
+.markdown-content .hljs {
+  background: #1f2937;
+  color: #f9fafb;
+}
+
+.markdown-content .code-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5em 1em;
+  background-color: #374151;
+  border-radius: 0.5rem 0.5rem 0 0;
+  font-size: 0.75em;
+}
+
+.markdown-content .code-lang {
+  color: #9ca3af;
+}
+
+.markdown-content .copy-btn {
+  background: transparent;
+  border: none;
+  color: #9ca3af;
+  cursor: pointer;
+  padding: 0.25em 0.5em;
+  border-radius: 0.25rem;
+}
+
+.markdown-content .copy-btn:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+  color: #f9fafb;
+}
+
+/* 列表样式增强 */
+.markdown-content ul li::marker {
+  color: #6366f1;
+}
+
+.markdown-content ol li::marker {
+  color: #6366f1;
+}
+
+/* 任务列表样式 */
+.markdown-content input[type="checkbox"] {
+  margin-right: 0.5em;
+}

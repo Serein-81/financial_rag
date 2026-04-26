@@ -1,0 +1,76 @@
+agent:
+  name: "orchestrator"
+  display_name: "协调者智能体"
+  version: "1.0.0"
+  mode: "react"
+  description: |
+    企业智能体系统的唯一"大脑"和"包工头"。
+    直接面对用户，理解宏大目标，拆解任务，协调专家团队，最终交付报告。
+
+prompt:
+  system_file: "system.md"
+  fallback_file: null
+
+tools:
+  - name: "breakdown_task_to_blackboard"
+    description: "将用户宏大目标拆解为 DAG 子任务，写入黑板"
+    parameters:
+      - name: "user_goal"
+        type: "string"
+        required: true
+        description: "用户的宏大目标描述"
+      - name: "required_expertise"
+        type: "array"
+        required: false
+        description: "需要的专业领域列表"
+      - name: "priority_tasks"
+        type: "array"
+        required: false
+        description: "高优先级任务标识"
+
+  - name: "summarize_final_report"
+    description: "收集黑板结论，生成最终交付报告"
+    parameters:
+      - name: "user_query"
+        type: "string"
+        required: true
+        description: "用户原始查询"
+      - name: "report_title"
+        type: "string"
+        required: false
+        description: "报告标题"
+      - name: "include_executive_summary"
+        type: "boolean"
+        required: false
+        default: true
+      - name: "include_recommendations"
+        type: "boolean"
+        required: false
+        default: true
+      - name: "format"
+        type: "string"
+        required: false
+        default: "markdown"
+        enum: ["markdown", "html", "json"]
+
+capabilities:
+  - task_decomposition
+  - dag_planning
+  - multi_agent_coordination
+  - report_summarization
+  - expert_routing
+
+expertise_domains:
+  - coordination
+  - task_planning
+  - report_generation
+
+metadata:
+  created_at: "2024-04-21"
+  author: "backend-team"
+  tags:
+    - orchestrator
+    - coordinator
+    - router
+    - task-decomposition
+    - report-generation

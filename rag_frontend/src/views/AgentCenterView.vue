@@ -252,9 +252,7 @@ async function selectTrace(trace: AgentTrace) {
 async function loadVisualization(traceId: string) {
   try {
     isLoading.value = true
-    const response = await fetch(`/api/v1/agent-trace/traces/${traceId}/visualization`)
-    if (!response.ok) throw new Error('获取可视化数据失败')
-    visualizationData.value = await response.json()
+    visualizationData.value = await agentDiscoveryApi.getTraceVisualization(traceId)
     await nextTick()
     drawFlowChart()
   } catch (err: any) {

@@ -122,6 +122,24 @@ TOOL_ROUTING_CONFIG: Dict[str, Dict] = {
         "input_params": ["contract_text", "law_type"],
         "example": "match_legal_provisions(contract_text='...', law_type='contract')",
     },
+    "extract_contract_clauses": {
+        "category": ToolCategory.MCP,
+        "description": "合同条款精确提取 - 从合同审核报告中提取特定类型的法律条款原文",
+        "input_params": ["tenant_id", "report_id", "clause_category"],
+        "example": "extract_contract_clauses(tenant_id='xxx', report_id='yyy', clause_category='breach_of_contract')",
+    },
+    "verify_compliance_rule": {
+        "category": ToolCategory.MCP,
+        "description": "合规性交叉比对 - 将业务动作与法规库比对，验证合规性",
+        "input_params": ["tenant_id", "action_summary", "domain"],
+        "example": "verify_compliance_rule(tenant_id='xxx', action_summary='收集用户浏览记录', domain='privacy')",
+    },
+    "trace_entity_risk_network": {
+        "category": ToolCategory.MCP,
+        "description": "实体风险网络追踪 - 利用知识图谱进行股权穿透和风险关联分析",
+        "input_params": ["tenant_id", "entity_name", "penetration_depth"],
+        "example": "trace_entity_risk_network(tenant_id='xxx', entity_name='阿里巴巴', penetration_depth=3)",
+    },
     "calculate_asset_liability_ratio": {
         "category": ToolCategory.MCP,
         "description": "资产负债率计算 - 评估企业长期偿债能力和风险水平",

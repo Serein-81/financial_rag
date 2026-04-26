@@ -3,10 +3,11 @@
 from uuid import UUID
 from typing import List, Optional
 from urllib.parse import quote
+import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, Form
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, or_, and_, func as sqlalchemy_func
+from sqlalchemy import select, or_, and_, func as sqlalchemy_func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import (
@@ -264,8 +265,11 @@ async def process_document_task(doc_id: UUID, tenant_id: str):
             )
 
             doc.status = "processing"
+            doc.processing_state = "processing"
+            doc.processing_progress = 0
+            doc.processing_message = "开始解析文件..."
             await db.commit()
-
+            
             print(f"📄 正在解析文件内容: {doc.filename}")
             try:
                 # 🌟 使用结构化文档服务解析 - 使用异步版本避免阻塞
@@ -308,7 +312,49 @@ async def process_document_task(doc_id: UUID, tenant_id: str):
             first_error_msg = None
             
             chunks_to_insert = []
+            total_chunks = len(chunk_results)
             for idx, chunk_result in enumerate(chunk_results):
+                # 检查暂停/取消状态
+                doc = await db.get(Document, doc_id)
+                if doc and doc.processing_state in ["paused", "cancelled"]:
+                    print(f"⏸️ [后台任务] 文档处理已{('暂停' if doc.processing_state == 'paused' else '取消')}")
+                    if doc.processing_state == "paused":
+                        # 暂停等待直到被恢复或取消
+                        while True:
+                            await db.refresh(doc)
+                            if doc.processing_state != "paused":
+                                break
+                            if doc.processing_state == "cancelled":
+                                print(f"❌ [后台任务] 文档处理被取消")
+                                doc.status = "failed"
+                                doc.processing_message = "用户取消"
+                                await db.commit()
+                                return
+                            await asyncio.sleep(1)
+                    else:
+                        doc.status = "failed"
+                        doc.processing_message = "用户取消"
+                        await db.commit()
+                        return
+                
+                # 更新进度
+                progress = int((idx + 1) / total_chunks * 50) + 20  # 解析占20%，向量化占20-70%
+                doc.processing_progress = progress
+                doc.processing_message = f"向量化中... {idx + 1}/{total_chunks}"
+                await db.commit()
+                
+                # 每处理5个分块，执行一次简单查询保持数据库连接活跃
+                if idx > 0 and idx % 5 == 0:
+                    try:
+                        await db.execute(text("SELECT 1"))
+                        await db.flush()
+                    except Exception as e:
+                        print(f"⚠️ [后台任务] 连接保持检查失败: {e}")
+                        try:
+                            await db.rollback()
+                        except Exception:
+                            pass
+                
                 vector = await embedding_service.get_embedding(chunk_result.content)
                 if vector:
                     meta_info = {
@@ -340,17 +386,27 @@ async def process_document_task(doc_id: UUID, tenant_id: str):
             if chunks_to_insert:
                 db.add_all(chunks_to_insert)
 
+            # 最终刷新状态
+            doc = await db.get(Document, doc_id)
             if success_count == 0:
                 doc.status = "failed"
+                doc.processing_state = "failed"
                 doc.error_msg = first_error_msg or "所有切片向量化均失败"
+                doc.processing_message = "向量化失败"
                 print(f"❌ [后台任务] 失败：0/{len(chunk_results)} 成功。")
             elif success_count < len(chunk_results):
                 doc.status = "completed"
+                doc.processing_state = "completed"
                 doc.error_msg = f"部分成功: {success_count}/{len(chunk_results)}"
+                doc.processing_message = "部分完成"
+                doc.processing_progress = 100
                 print(f"⚠️ [后台任务] 部分成功：{success_count}/{len(chunk_results)}")
             else:
                 doc.status = "completed"
+                doc.processing_state = "completed"
                 doc.error_msg = None
+                doc.processing_message = "处理完成"
+                doc.processing_progress = 100
                 print(f"✅ [后台任务] 处理完全成功！ID: {doc_id}")
 
             await db.commit()
@@ -361,8 +417,6 @@ async def process_document_task(doc_id: UUID, tenant_id: str):
         except (OSError, IOError) as e:
             await db.rollback()
             print(f"❌ [后台任务] IO错误: {e}")
-        except (OSError, IOError) as e:
-            raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
         except Exception as e:
             await db.rollback()
             print(f"❌ [后台任务] 严重错误: {e}")
@@ -373,7 +427,9 @@ async def process_document_task(doc_id: UUID, tenant_id: str):
                 error_doc = await error_db.get(Document, doc_id)
                 if error_doc:
                     error_doc.status = "failed"
+                    error_doc.processing_state = "failed"
                     error_doc.error_msg = str(e)[:500]
+                    error_doc.processing_message = f"错误: {str(e)[:100]}"
                     await error_db.commit()
 
 
@@ -759,6 +815,25 @@ async def delete_document(
                 raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
             except Exception as e:
                 print(f"⚠️ MinIO delete warning: {e}")
+        
+        # 如果文档正在处理，先暂停再删除
+        if doc.processing_state in [None, "pending", "processing"]:
+            doc.processing_state = "cancelled"
+            doc.processing_message = "用户删除，停止处理"
+            doc.status = "failed"
+            await db.commit()
+            
+            import asyncio
+            await asyncio.sleep(1)
+        
+        # 删除文档的 chunks
+        from app.models import DocumentChunk
+        chunks_result = await db.execute(
+            select(DocumentChunk).where(DocumentChunk.document_id == doc_id)
+        )
+        chunks = chunks_result.scalars().all()
+        for chunk in chunks:
+            await db.delete(chunk)
         
         await db.delete(doc)
         await db.commit()

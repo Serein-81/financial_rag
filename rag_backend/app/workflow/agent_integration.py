@@ -145,6 +145,8 @@ class AgentWorkflowIntegrator:
         input_data: Optional[Dict[str, Any]] = None,
         agent_type: str = "react",
         user_query: str = "",
+        user_id: str = "",
+        tenant_id: str = "",
         **agent_kwargs
     ) -> tuple[Any, uuid.UUID, uuid.UUID]:
         """
@@ -159,6 +161,8 @@ class AgentWorkflowIntegrator:
             input_data: 节点输入数据
             agent_type: Agent类型
             user_query: 用户查询
+            user_id: 用户ID
+            tenant_id: 租户ID
             **agent_kwargs: 传递给agent_func的其他参数
             
         Returns:
@@ -193,6 +197,8 @@ class AgentWorkflowIntegrator:
             agent_trace_id = await tracer.start_trace(
                 agent_type=agent_type,
                 user_query=user_query,
+                user_id=user_id,
+                tenant_id=tenant_id,
                 session_id=agent_kwargs.get("session_id"),
                 message_id=agent_kwargs.get("message_id")
             )

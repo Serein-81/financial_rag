@@ -37,7 +37,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   let notificationPollTimer: ReturnType<typeof setInterval> | null = null
   let reconnectAttempts = 0
-  let notificationErrorCount = 0
+  const notificationErrorCount = ref(0)
   let currentGroupId: string | null = null
   let currentRequestId: number = 0
   const messageQueue = ref<QueuedMessage[]>([])
@@ -419,17 +419,27 @@ export const useGroupChatStore = defineStore('groupChat', () => {
 
   async function fetchNotifications() {
     try {
-      notifications.value = await groupChatApi.getNotifications({ unread_only: false })
-      unreadCount.value = notifications.value.filter(n => !n.is_read).length
+      const response = await groupChatApi.getNotifications({ unread_only: false })
+      
+      // 强制确保 response 是数组，防止类型错误
+      const notificationsData = Array.isArray(response) ? response : []
+      
+      // 安全地更新状态
+      notifications.value = notificationsData
+      unreadCount.value = notificationsData.filter(n => n && !n.is_read).length
       notificationErrorCount.value = 0
-    } catch (e) {
+      
+    } catch (e: any) {
+      console.error('❌ 获取通知失败:', e)
+      
+      // 确保即使出错也初始化为空数组
+      notifications.value = []
+      unreadCount.value = 0
       notificationErrorCount.value++
 
       if (notificationErrorCount.value >= 3) {
-        console.warn('Notification fetch failed 3 times, pausing polling...')
+        console.warn('⚠️ 通知获取失败3次，暂停轮询...')
         stopNotificationPoll()
-      } else {
-        console.error(`Failed to fetch notifications (attempt ${notificationErrorCount.value}):`, e)
       }
     }
   }

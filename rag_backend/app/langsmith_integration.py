@@ -1,21 +1,130 @@
 """
 LangSmith 集成模块
 
-为原生 httpx LLM 适配器添加 LangSmith 追踪
-
-方案：使用 @traceable 装饰器
-- 优点：无需重构现有代码
-- 缺点：需要手动在关键函数上添加装饰器
+为 LLM 适配器添加 LangSmith 追踪
+支持供应商无关的追踪方案
 """
 
 import os
 import time
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Union
 from functools import wraps
 from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
+
+
+class LangSmithClientManager:
+    """
+    LangSmith 客户端管理器（单例模式）
+    
+    统一管理所有 LLM 供应商的 LangSmith 追踪
+    支持动态包装和解包，不影响原有供应商切换逻辑
+    """
+    
+    _instance = None
+    _initialized = False
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+    
+    def __init__(self):
+        if self._initialized:
+            return
+        
+        self.enabled = False
+        self.tracer = None
+        self._openai_client = None
+        self._init_client()
+        LangSmithClientManager._initialized = True
+    
+    def _init_client(self):
+        """初始化 LangSmith 客户端"""
+        if not self.is_enabled():
+            logger.info("[LangSmithManager] LangSmith 未启用")
+            return
+        
+        try:
+            import openai
+            from langsmith.wrappers import wrap_openai
+            from langsmith import Client
+            
+            # 创建 LangSmith Client
+            api_key = os.getenv("LANGSMITH_API_KEY")
+            endpoint = os.getenv("LANGSMITH_ENDPOINT", "https://api.smith.langchain.com")
+            project = os.getenv("LANGSMITH_PROJECT", "financial_rag")
+            
+            self.client = Client(api_key=api_key, api_url=endpoint)
+            
+            # 创建包装器工厂（使用 AsyncOpenAI 客户端以支持异步）
+            self._client_factory = lambda api_key, base_url: wrap_openai(
+                openai.AsyncOpenAI(
+                    base_url=base_url,
+                    api_key=api_key,
+                    timeout=600.0,
+                    max_retries=5,
+                    default_headers={
+                        "HTTP-Referer": "https://github.com/financial-rag",
+                        "X-Title": "Financial RAG System",
+                    }
+                )
+            )
+            
+            self.enabled = True
+            logger.info(f"[LangSmithManager] 初始化成功 | 项目: {project} | 端点: {endpoint}")
+            
+        except ImportError as e:
+            logger.warning(f"[LangSmithManager] 无法导入 LangSmith 依赖: {e}")
+            self.enabled = False
+        except Exception as e:
+            logger.warning(f"[LangSmithManager] 初始化失败: {e}")
+            self.enabled = False
+    
+    @staticmethod
+    def is_enabled() -> bool:
+        """检查是否启用了 LangSmith"""
+        return (
+            os.getenv("LANGSMITH_TRACING", "false").lower() in ("true", "1", "yes") and
+            bool(os.getenv("LANGSMITH_API_KEY"))
+        )
+    
+    def get_traced_client(self, api_key: str, base_url: str):
+        """
+        获取已包装的 OpenAI 客户端
+        
+        Args:
+            api_key: API 密钥
+            base_url: API 基础 URL
+            
+        Returns:
+            包装后的客户端（已启用追踪）或 None
+        """
+        if not self.enabled:
+            return None
+        
+        if not hasattr(self, '_client_factory'):
+            return None
+        
+        try:
+            return self._client_factory(api_key, base_url)
+        except Exception as e:
+            logger.warning(f"[LangSmithManager] 创建追踪客户端失败: {e}")
+            return None
+
+
+# 全局单例
+_langsmith_manager = None
+
+
+def get_langsmith_manager() -> LangSmithClientManager:
+    """获取 LangSmith 客户端管理器（单例）"""
+    global _langsmith_manager
+    if _langsmith_manager is None:
+        _langsmith_manager = LangSmithClientManager()
+    return _langsmith_manager
 
 
 def setup_langsmith_config():
@@ -24,14 +133,6 @@ def setup_langsmith_config():
     
     在项目启动时调用一次即可
     """
-    # 从 .env 文件读取 LangSmith 配置
-    # LANGSMITH_TRACING=true
-    # LANGSMITH_ENDPOINT=https://api.smith.langchain.com
-    # LANGSMITH_API_KEY=REDACTED_LANGSMITH_KEY
-    # LANGSMITH_PROJECT=financial_rag
-    
-    # 如果 .env 已配置，会自动读取（通过 python-dotenv）
-    # 此函数确保兼容旧版本配置或手动设置
     required_vars = {
         "LANGSMITH_API_KEY": os.getenv("LANGSMITH_API_KEY", ""),
         "LANGSMITH_PROJECT": os.getenv("LANGSMITH_PROJECT", "financial_rag"),
@@ -288,6 +389,10 @@ class LangSmithTracer:
         if not self.client:
             return
         
+        if not parent_run_id:
+            logger.debug(f"[LangSmith] 跳过 Agent 步骤（无 parent_run_id）: {step_type}")
+            return
+        
         try:
             run_type_map = {
                 "thought": "chain",
@@ -321,7 +426,7 @@ class LangSmithTracer:
                     metadata={"duration_ms": duration_ms}
                 )
             
-            logger.debug(f"[LangSmith] 添加 Agent 步骤: {step_type} -> {run.id}")
+            logger.debug(f"[LangSmith] 添加 Agent 步骤: {step_type} -> {run.id if run else 'N/A'}")
             
         except Exception as e:
             logger.error(f"[LangSmith] 添加 Agent 步骤失败: {e}")

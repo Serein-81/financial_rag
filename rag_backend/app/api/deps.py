@@ -85,6 +85,12 @@ async def get_db() -> AsyncSession:
             except Exception:
                 pass
             raise
+        finally:
+            try:
+                if session.is_active:
+                    await session.close()
+            except Exception:
+                pass
 
 
 async def get_current_user_from_token(
@@ -300,10 +306,17 @@ async def get_db_with_tenant_context(
                 logger.error(f"Database session error: {safe_error_str(e)}")
             except Exception:
                 logger.error("Database session error: <failed to format error message>")
-            await session.rollback()
+            try:
+                await session.rollback()
+            except Exception:
+                pass
             raise
         finally:
-            await session.close()
+            try:
+                if session.is_active:
+                    await session.close()
+            except Exception:
+                pass
 
 
 def require_admin_user(

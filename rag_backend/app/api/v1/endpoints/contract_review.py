@@ -4,10 +4,12 @@
 """
 
 import logging
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
-from typing import Optional
+from typing import Optional, List
 from io import BytesIO
+import uuid
+from datetime import datetime
 
 from app.api.deps import get_current_user, CurrentUser
 from app.schemas.contract_review import (
@@ -23,6 +25,8 @@ from app.schemas.contract_review import (
 )
 from app.services.contract_review_service import ContractReviewService
 from app.services.pdf_export_service import pdf_export_service
+from app.services.file_service import file_service
+from app.services.minio_service import minio_service
 
 router = APIRouter(prefix="/contract-review", tags=["合同审核"])
 logger = logging.getLogger(__name__)
@@ -63,6 +67,376 @@ async def analyze_contract(
     except Exception as e:
         logger.error(f"❌ 合同分析失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"分析失败: {str(e)}")
+
+
+@router.post("/upload")
+async def upload_and_analyze_contract(
+    file: UploadFile = File(..., description="合同文件（支持 PDF、Word、文本等格式）"),
+    contract_name: str = Form(..., description="合同名称"),
+    contract_type: ContractType = Form(ContractType.OTHER, description="合同类型"),
+    counterparty_name: Optional[str] = Form(None, description="对方名称"),
+    contract_value: Optional[float] = Form(None, description="合同金额"),
+    effective_date: Optional[str] = Form(None, description="生效日期"),
+    expiration_date: Optional[str] = Form(None, description="到期日期"),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """
+    上传合同并智能分析
+    
+    支持文件上传，自动解析合同内容，调用法务智能体进行深度分析
+    并生成专业的风险评估报告。
+    
+    **功能特点**：
+    - 支持多种文件格式（PDF、Word、文本等）
+    - 自动提取合同文本内容
+    - 调用法务智能体进行专业分析
+    - 生成风险评估报告
+    - 提供修改建议
+    
+    **使用场景**：
+    - 合同签订前审核
+    - 合同条款风险评估
+    - 合同合规性检查
+    - 合同谈判支持
+    """
+    try:
+        # 1. 验证文件类型
+        allowed_types = [
+            "application/pdf",
+            "application/msword",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "text/plain",
+            "text/markdown",
+            "application/octet-stream"
+        ]
+        
+        if file.content_type not in allowed_types:
+            raise HTTPException(
+                status_code=400,
+                detail=f"不支持的文件类型: {file.content_type}。"
+                      f"支持的格式: PDF、Word (.doc, .docx)、文本文件"
+            )
+        
+        # 2. 读取文件内容
+        file_content = await file.read()
+        logger.info(f"📄 接收到合同文件: {file.filename}, 大小: {len(file_content)} bytes")
+        
+        # 3. 生成文件存储路径
+        file_id = str(uuid.uuid4())
+        file_extension = file.filename.split('.')[-1] if '.' in file.filename else 'bin'
+        minio_path = f"contracts/{user.tenant_id}/{file_id}.{file_extension}"
+        
+        # 4. 上传到 MinIO（使用正确的参数）
+        await minio_service.upload_document_async(
+            file_bytes=file_content,
+            object_name=minio_path,
+            content_type=file.content_type,
+            tenant_id=user.tenant_id
+        )
+        logger.info(f"✅ 文件已上传到 MinIO: {minio_path}")
+        
+        # 5. 提取合同文本内容（参考税务提交流程）
+        try:
+            # 先尝试直接解析文件内容
+            contract_text = await _extract_document_text(file_content, file.content_type)
+            
+            if not contract_text or len(contract_text.strip()) < 50:
+                logger.warning("直接解析失败，尝试使用 OCR 服务...")
+                contract_text = await _extract_with_ocr_service(file_content, file.content_type)
+            
+            if not contract_text or len(contract_text.strip()) < 50:
+                raise HTTPException(
+                    status_code=422,
+                    detail="无法从文件中提取文本内容，请确保文件包含可识别的文本。"
+                )
+            
+            logger.info(f"📝 成功提取合同文本，长度: {len(contract_text)} 字符")
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"❌ 文件解析失败: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=422,
+                detail=f"文件解析失败: {str(e)}。请确保文件格式正确且内容可读。"
+            )
+        
+        # 6. 构建分析请求
+        from datetime import date as date_type
+        analysis_request = ContractAnalysisRequest(
+            tenant_id=user.tenant_id,
+            user_id=str(user.id),
+            contract_name=contract_name,
+            contract_type=contract_type,
+            contract_content=contract_text,
+            counterparty_name=counterparty_name,
+            contract_value=contract_value,
+            effective_date=date_type.fromisoformat(effective_date) if effective_date else None,
+            expiration_date=date_type.fromisoformat(expiration_date) if expiration_date else None,
+            include_deep_analysis=True,
+            include_risk_assessment=True,
+            include_suggestions=True
+        )
+        
+        # 7. 调用法务智能体进行深度分析
+        logger.info(f"🔍 正在调用法务智能体分析合同: {contract_name}")
+        result = await contract_review_service.analyze_contract_with_legal_agent(
+            request=analysis_request,
+            user_id=str(user.id),
+            tenant_id=user.tenant_id
+        )
+        
+        # 8. 保存文件元数据
+        file_metadata = {
+            "file_id": file_id,
+            "file_name": file.filename,
+            "minio_path": minio_path,
+            "content_type": file.content_type,
+            "size": len(file_content),
+            "uploaded_by": str(user.id),
+            "uploaded_at": datetime.utcnow().isoformat(),
+            "analysis_id": result.get("analysis_id")
+        }
+        
+        logger.info(f"✅ 合同分析完成，analysis_id: {result.get('analysis_id')}")
+        
+        return {
+            "success": True,
+            "message": "合同上传并分析成功",
+            "analysis_id": result.get("analysis_id"),
+            "file_metadata": file_metadata,
+            "result": result
+        }
+        
+    except HTTPException:
+        raise
+    except (ValueError, KeyError) as e:
+        logger.error(f"❌ 合同上传数据错误: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=f"上传数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        logger.error(f"❌ 合同上传IO错误: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"上传IO错误: {str(e)}")
+    except Exception as e:
+        logger.error(f"❌ 合同上传分析失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"上传分析失败: {str(e)}")
+
+
+async def _extract_document_text(content: bytes, content_type: str) -> str:
+    """
+    从文档中提取文本（参考税务提交流程）
+    
+    Args:
+        content: 文件内容
+        content_type: 文件类型
+    
+    Returns:
+        提取的文本内容
+    """
+    try:
+        # PDF 文件
+        if 'pdf' in content_type.lower() or content[:4] == b'%PDF':
+            return await _extract_pdf_text(content)
+        
+        # Word 文件
+        elif 'wordprocessingml' in content_type.lower() or 'msword' in content_type.lower():
+            return await _extract_word_text(content)
+        
+        # 文本文件
+        elif 'text/plain' in content_type.lower() or 'text/markdown' in content_type.lower():
+            return content.decode('utf-8', errors='ignore')
+        
+        else:
+            # 尝试作为文本解析
+            try:
+                return content.decode('utf-8', errors='ignore')
+            except:
+                return ""
+                
+    except Exception as e:
+        logger.error(f"❌ 文档文本提取失败: {e}", exc_info=True)
+        return ""
+
+
+async def _extract_pdf_text(content: bytes) -> str:
+    """提取 PDF 文本层"""
+    try:
+        try:
+            from pypdf import PdfReader
+            logger.info("使用 pypdf 库提取 PDF 文本")
+        except ImportError:
+            import PyPDF2
+            PdfReader = PyPDF2.PdfReader
+            logger.info("使用 PyPDF2 库提取 PDF 文本")
+        
+        import io
+        pdf_file = io.BytesIO(content)
+        pdf_reader = PdfReader(pdf_file)
+        text_parts = []
+        for page in pdf_reader.pages:
+            page_text = page.extract_text()
+            if page_text and page_text.strip():
+                text_parts.append(page_text)
+        return "\n".join(text_parts)
+    except ImportError:
+        logger.warning("pypdf/PyPDF2 未安装，尝试 pdfplumber")
+        try:
+            import pdfplumber
+            import io
+            with pdfplumber.open(io.BytesIO(content)) as pdf:
+                text_parts = [page.extract_text() for page in pdf.pages if page.extract_text()]
+            return "\n".join(text_parts)
+        except ImportError:
+            logger.error("无法提取 PDF 内容：缺少 pypdf/PyPDF2 或 pdfplumber")
+            return ""
+        except Exception as e:
+            logger.error(f"PDF 文本提取失败: {str(e)}")
+            return ""
+    except Exception as e:
+        logger.error(f"PDF 文本提取失败: {str(e)}")
+        return ""
+
+
+async def _extract_word_text(content: bytes) -> str:
+    """提取 Word 文档文本"""
+    try:
+        import io
+        from docx import Document
+        
+        doc_file = io.BytesIO(content)
+        doc = Document(doc_file)
+        
+        # 提取段落文本
+        paragraphs = [paragraph.text for paragraph in doc.paragraphs if paragraph.text.strip()]
+        
+        # 提取表格文本
+        tables_text = []
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    if cell.text.strip():
+                        tables_text.append(cell.text.strip())
+        
+        full_text = "\n".join(paragraphs)
+        if tables_text:
+            full_text += "\n\n[表格内容]\n" + "\n".join(tables_text)
+        
+        return full_text
+        
+    except ImportError:
+        logger.error("python-docx 未安装，无法解析 Word 文档")
+        return ""
+    except Exception as e:
+        logger.error(f"Word 文档文本提取失败: {str(e)}")
+        return ""
+
+
+async def _extract_with_ocr_service(content: bytes, content_type: str) -> str:
+    """使用 OCR 服务提取文本（扫描件/图片）"""
+    try:
+        from app.services.ocr_factory import OCRFactory
+        
+        ocr_factory = OCRFactory()
+        available_engines = ocr_factory.available_engines
+        
+        logger.info(f"[OCR] 开始 OCR 处理，可用引擎: {available_engines}")
+        
+        if not available_engines:
+            logger.warning("[OCR] 没有可用的 OCR 引擎")
+            return ""
+        
+        # 检测是否为 PDF 文件
+        is_pdf = content[:4] == b'%PDF'
+        
+        if is_pdf:
+            # PDF 文件：先尝试 Unstructured API
+            if 'unstructured' in available_engines:
+                logger.info("[OCR] 尝试使用 Unstructured API")
+                adapter = ocr_factory.get_adapter('unstructured')
+                
+                if adapter and hasattr(adapter, 'extract_text'):
+                    import tempfile
+                    import os
+                    
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp:
+                        tmp.write(content)
+                        tmp_path = tmp.name
+                    
+                    try:
+                        result = await adapter.extract_text(tmp_path)
+                        if result and len(result.strip()) > 50:
+                            logger.info(f"[OCR] Unstructured API 提取成功: {len(result)} 字符")
+                            return result
+                    finally:
+                        try:
+                            os.unlink(tmp_path)
+                        except:
+                            pass
+            
+            # 如果 Unstructured API 失败，尝试 PDF 转图片 OCR
+            logger.info("[OCR] 尝试将 PDF 转换为图片进行 OCR")
+            try:
+                import fitz
+                
+                pdf_doc = fitz.open(stream=content, filetype="pdf")
+                total_pages = len(pdf_doc)
+                
+                all_text = []
+                
+                for page_num in range(total_pages):
+                    page = pdf_doc[page_num]
+                    pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+                    img_bytes = pix.tobytes("png")
+                    
+                    # 对每一页进行 OCR
+                    page_text = await _ocr_image(img_bytes)
+                    if page_text:
+                        all_text.append(page_text)
+                
+                pdf_doc.close()
+                
+                result = "\n\n".join(all_text)
+                logger.info(f"[OCR] PDF OCR 完成，提取 {len(result)} 字符")
+                return result
+                
+            except ImportError:
+                logger.warning("PyMuPDF 未安装")
+                return ""
+        else:
+            # 图片文件直接 OCR
+            return await _ocr_image(content)
+        
+    except Exception as e:
+        logger.error(f"[OCR] OCR 服务处理失败: {e}", exc_info=True)
+        return ""
+
+
+async def _ocr_image(image_bytes: bytes) -> str:
+    """对图片进行 OCR 识别"""
+    try:
+        from app.services.ocr_factory import OCRFactory
+        
+        ocr_factory = OCRFactory()
+        available_engines = ocr_factory.available_engines
+        
+        if not available_engines:
+            return ""
+        
+        # 优先使用 PaddleOCR
+        if 'paddleocr' in available_engines:
+            adapter = ocr_factory.get_adapter('paddleocr')
+            if adapter and hasattr(adapter, 'extract_text'):
+                return await adapter.extract_text(image_bytes)
+        
+        # 其次使用 Tesseract
+        if 'tesseract' in available_engines:
+            adapter = ocr_factory.get_adapter('tesseract')
+            if adapter and hasattr(adapter, 'extract_text'):
+                return await adapter.extract_text(image_bytes)
+        
+        return ""
+        
+    except Exception as e:
+        logger.error(f"[OCR] 图片 OCR 失败: {e}")
+        return ""
 
 
 @router.post("/clause-analysis", response_model=DeepClauseAnalysisResponse)

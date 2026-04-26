@@ -756,7 +756,9 @@ const handleReject = async () => {
 const loadReviewHistory = async (id: string) => {
   try {
     const review = await reviewApiClient.get(id)
-    reviewHistory.value = [
+    const actions = await reviewApiClient.getActions(id)
+    
+    const historyFromReview = [
       {
         timestamp: review.created_at,
         type: 'primary',
@@ -778,10 +780,59 @@ const loadReviewHistory = async (id: string) => {
         title: '任务完成',
         content: `审核结论: ${review.review_result?.decision || '-'}`
       }] : [])
-    ].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+    ]
+    
+    const historyFromActions = actions.map(action => {
+      const actionTypeMap: Record<string, { icon: string; type: string }> = {
+        'create': { icon: 'Plus', type: 'primary' },
+        'start': { icon: 'VideoPlay', type: 'primary' },
+        'assign': { icon: 'User', type: 'warning' },
+        'complete': { icon: 'Check', type: 'success' },
+        'reject': { icon: 'Close', type: 'danger' },
+        'cancel': { icon: 'CloseBold', type: 'info' }
+      }
+      
+      const { icon, type } = actionTypeMap[action.action] || { icon: 'Info', type: 'info' }
+      
+      let content = ''
+      if (action.action_details) {
+        if (action.action_details.description) {
+          content = action.action_details.description
+        }
+        if (action.action_details.comment) {
+          content += content ? `\n意见: ${action.action_details.comment}` : `意见: ${action.action_details.comment}`
+        }
+      }
+      if (!content) {
+        content = `执行了 ${action.action} 操作`
+      }
+      
+      return {
+        timestamp: action.created_at,
+        type,
+        icon,
+        title: getActionTitle(action.action),
+        content
+      }
+    })
+    
+    reviewHistory.value = [...historyFromReview, ...historyFromActions]
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
   } catch (error) {
     console.error('加载历史记录失败:', error)
   }
+}
+
+const getActionTitle = (action: string): string => {
+  const titleMap: Record<string, string> = {
+    'create': '任务创建',
+    'start': '开始处理',
+    'assign': '任务分配',
+    'complete': '审核通过',
+    'reject': '审核驳回',
+    'cancel': '任务取消'
+  }
+  return titleMap[action] || `操作: ${action}`
 }
 
 const addActivity = (type: string, text: string) => {

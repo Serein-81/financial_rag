@@ -81,7 +81,7 @@ class EnhancedContextBuilder:
                 "推荐", "建议", "方案", "策略", "优化"
             ]
         }
-        print("🔧 [上下文构建器] 初始化完成")
+        
     
     def _analyze_query_complexity(self, query: str) -> QueryComplexity:
         """
@@ -215,11 +215,7 @@ class EnhancedContextBuilder:
             }
             max_tokens = int(complexity_budget.get(complexity, max_tokens * 0.7))
             
-            print(f"🏗️ [上下文构建] 模型: {model_name} | 复杂度: {complexity.value} | 预算: {max_tokens} | 查询: {user_query[:50]}...")
-        else:
-            print(f"🏗️ [上下文构建] 使用指定预算 | {max_tokens} | 查询: {user_query[:50]}...")
-
-        print(f"🏗️ [上下文构建] 开始构建 | 查询: {user_query[:50]}...")
+            
 
         # 1. 汇集候选信息
         packets = await self._gather(
@@ -242,7 +238,7 @@ class EnhancedContextBuilder:
         final_tokens = self._count_tokens(final_context)
         compression_ratio = final_tokens / max_tokens if max_tokens > 0 else 1.0
         
-        print(f"✅ [上下文构建] 完成 | Token: {final_tokens}/{max_tokens} ({compression_ratio:.1%})")
+        
         
         self._log_token_usage(
             query=user_query,
@@ -312,13 +308,11 @@ class EnhancedContextBuilder:
                 packets.append(self._memory_to_packet(m, "semantic"))
 
         except (ValueError, KeyError) as e:
-            print(f"⚠️ [上下文构建] 获取语义记忆数据错误: {e}")
+            logger.warning(f"[上下文构建] 获取语义记忆数据错误: {e}")
         except (OSError, IOError) as e:
-            print(f"⚠️ [上下文构建] 获取语义记忆IO错误: {e}")
+            logger.warning(f"[上下文构建] 获取语义记忆IO错误: {e}")
         except Exception as e:
-            # 💡 这里它不仅会打印报错，而且因为被 try-except 抓住了，
-            # 系统不会崩溃，还能带着现有的 packets 继续走。
-            print(f"⚠️ [上下文构建] 记忆检索失败: {e}")
+            logger.warning(f"[上下文构建] 记忆检索失败: {e}")
 
         # 3. 添加知识库上下文
         if knowledge_context:
@@ -345,19 +339,19 @@ class EnhancedContextBuilder:
                     source_type="user_memory",
                     priority=1
                 ))
-                print("👤 [上下文构建] 添加用户记忆上下文")
+                logger.debug("[上下文构建] 添加用户记忆上下文")
         except (ValueError, KeyError) as e:
-            print(f"⚠️ [上下文构建] 获取用户记忆上下文数据错误: {e}")
+            logger.warning(f"[上下文构建] 获取用户记忆上下文数据错误: {e}")
         except (OSError, IOError) as e:
-            print(f"⚠️ [上下文构建] 获取用户记忆上下文IO错误: {e}")
+            logger.warning(f"[上下文构建] 获取用户记忆上下文IO错误: {e}")
         except Exception as e:
-            print(f"⚠️ [上下文构建] 获取用户记忆上下文失败: {e}")
+            logger.warning(f"[上下文构建] 获取用户记忆上下文失败: {e}")
 
         # 5. 添加自定义信息包
         if custom_packets:
             packets.extend(custom_packets)
 
-        print(f"📦 [信息汇集] 汇集了 {len(packets)} 个候选信息包")
+        
         return packets
 
     async def _select(
@@ -393,7 +387,7 @@ class EnhancedContextBuilder:
         remaining_tokens = available_tokens - system_tokens - working_tokens
 
         if remaining_tokens <= 0:
-            print("⚠️ [信息选择] 系统指令已占满所有token预算，保留系统指令和当前对话")
+            
             return system_packets + working_packets
 
         # 3. 为工作记忆设置高优先级（当前会话必须保留）
@@ -409,7 +403,7 @@ class EnhancedContextBuilder:
             if packet.needs_relevance_check:
                 relevance = await self._calculate_relevance(packet.content, user_query)
                 packet.relevance_score = relevance
-                print(f"🔄 [相关性重算] {packet.metadata.get('type', 'unknown')}: {packet.metadata.get('memory_id', '')[:8]}... → {relevance:.2f}")
+                
 
             recency = self._calculate_recency(packet.timestamp)
             priority_boost = max(0, (5 - packet.priority) * 0.1)
@@ -435,16 +429,16 @@ class EnhancedContextBuilder:
                 selected.append(packet)
                 current_tokens += packet.token_count
             else:
-                print("⚠️ [信息选择] 工作记忆超出预算，保留部分当前对话")
+                
 
-        for score, packet in scored_packets:
-            if current_tokens + packet.token_count <= available_tokens:
-                selected.append(packet)
-                current_tokens += packet.token_count
-            else:
-                break
+                for score, packet in scored_packets:
+                    if current_tokens + packet.token_count <= available_tokens:
+                        selected.append(packet)
+                        current_tokens += packet.token_count
+                    else:
+                        break
 
-        print(f"🎯 [信息选择] 系统:{len(system_packets)} 工作:{len(working_packets)} 其他:{len([p for p in selected if p not in system_packets and p not in working_packets])} 共{current_tokens} tokens")
+        
         
         # 🆕 去重处理：移除重复的内容（基于内容和来源类型）
         selected = self._deduplicate_packets(selected)
@@ -554,7 +548,7 @@ class EnhancedContextBuilder:
         if current_tokens <= max_tokens:
             return context
 
-        print(f"🗜️ [上下文压缩] 开始压缩 ({current_tokens} > {max_tokens})")
+        
 
         sections = context.split("\n\n")
 
@@ -571,7 +565,7 @@ class EnhancedContextBuilder:
         remaining_tokens = max_tokens - critical_tokens
 
         if remaining_tokens <= 0:
-            print("⚠️ [上下文压缩] 关键结构已占满预算，仅保留核心内容")
+            
             compressed_context = "\n\n".join(critical_sections)
         else:
             compressed_sections = critical_sections.copy()
@@ -605,7 +599,7 @@ class EnhancedContextBuilder:
             compressed_context = "\n\n".join(compressed_sections)
 
         final_tokens = self._count_tokens(compressed_context)
-        print(f"✅ [上下文压缩] 完成: {current_tokens} -> {final_tokens} tokens")
+        
 
         return compressed_context
 
@@ -951,9 +945,9 @@ class EnhancedContextBuilder:
         result = self._semantic_deduplicate(result)
         
         if len(packets) != len(result):
-            print(f"🔄 [上下文去重] 精确去重: {len(packets) - len(seen_content)} | 语义去重后: {len(result)}")
+            
         
-        return result
+            return result
     
     def _semantic_deduplicate(self, packets: List[ContextPacket]) -> List[ContextPacket]:
         """
@@ -1049,10 +1043,7 @@ class EnhancedContextBuilder:
                         # 替换为更好的
                         unique_packets.remove(existing_packet)
                         unique_packets.append(packet)
-                        print("🧠 [语义去重] 合并相似内容")
-                        print(f"   移除: {existing_packet.content[:50]}...")
-                        print(f"   保留: {packet.content[:50]}...")
-                        print(f"   相似度: {similarity:.2f}")
+                        
                     
                     is_duplicate = True
                     break

@@ -6,7 +6,7 @@
 
 from datetime import datetime
 from typing import Optional, Dict, Any, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 from app.models.system_log import LogLevel, LogCategory
 
@@ -51,8 +51,9 @@ class SystemLogResponse(BaseModel):
     stack_trace: Optional[str] = None
     is_sensitive: bool = False
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(
+        from_attributes=True
+    )
 
 
 class UserActionLogResponse(BaseModel):
@@ -76,8 +77,9 @@ class UserActionLogResponse(BaseModel):
     after_data: Optional[Dict[str, Any]] = None
     extra_info: Optional[Dict[str, Any]] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(
+        from_attributes=True
+    )
 
 
 class LogStatisticsResponse(BaseModel):
@@ -91,8 +93,9 @@ class LogStatisticsResponse(BaseModel):
     error_count: int
     total_logs: int
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(
+        from_attributes=True
+    )
 
 
 class LogsListResponse(BaseModel):
@@ -103,8 +106,9 @@ class LogsListResponse(BaseModel):
     offset: int
     has_more: bool
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(
+        from_attributes=True
+    )
 
 
 class UserActionLogsListResponse(BaseModel):
@@ -115,5 +119,6 @@ class UserActionLogsListResponse(BaseModel):
     offset: int
     has_more: bool
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(
+        from_attributes=True
+    )

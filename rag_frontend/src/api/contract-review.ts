@@ -114,6 +114,31 @@ export const contractReviewApi = {
     })
   },
 
+  uploadAndAnalyzeContract: async (formData: FormData): Promise<{
+    success: boolean
+    message: string
+    analysis_id: string
+    file_metadata: {
+      file_id: string
+      file_name: string
+      minio_path: string
+      content_type: string
+      size: number
+      uploaded_by: string
+      uploaded_at: string
+      analysis_id: string
+    }
+    result: ContractAnalysisResult
+  }> => {
+    return request('/contract-review/upload', {
+      method: 'POST',
+      data: formData,
+      headers: {
+        'Content-Type': 'multipart/form-data'
+      }
+    })
+  },
+
   analyzeDeepClause: async (params: {
     contract_id: string
     clause_type: string

@@ -232,19 +232,6 @@ def setup_logging(
             
             root_logger.addHandler(file_handler)
         except (PermissionError, OSError, IOError) as e:
-            console_handler = logging.StreamHandler(sys.stdout)
-            console_handler.setLevel(getattr(logging, log_level.upper()))
-            console_handler.setFormatter(
-                logging.Formatter("[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s")
-            )
-            console_handler.setLevel(logging.WARNING)
-            warning_handler = logging.StreamHandler(sys.stderr)
-            warning_handler.setLevel(logging.WARNING)
-            warning_handler.setFormatter(
-                logging.Formatter("[%(asctime)s] [WARNING] [%(name)s] 日志文件写入失败: %(message)s")
-            )
-            root_logger.addHandler(console_handler)
-            root_logger.addHandler(warning_handler)
             root_logger.warning(
                 f"无法创建日志文件 {log_dir}/{log_file}: {e}。"
                 f"日志将仅输出到控制台。"

@@ -5,7 +5,7 @@
 
 from typing import List, Dict, Optional
 from datetime import datetime, date
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from enum import Enum
 
 
@@ -123,8 +123,9 @@ class FinancialHealthMonitorRequest(BaseModel):
     include_trend_analysis: bool = Field(default=True, description="是否包含趋势分析")
     include_benchmark: bool = Field(default=False, description="是否包含行业基准对比")
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
             "example": {
                 "period_start": "2024-01-01",
                 "period_end": "2024-03-31",
@@ -132,6 +133,7 @@ class FinancialHealthMonitorRequest(BaseModel):
                 "include_trend_analysis": True
             }
         }
+    )
 
 
 class FinancialHealthMonitorResponse(BaseModel):
@@ -153,8 +155,9 @@ class AnomalyQueryRequest(BaseModel):
     end_date: Optional[date] = Field(None, description="结束日期")
     limit: int = Field(50, ge=1, le=200, description="返回数量")
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
             "example": {
                 "tenant_id": "tenant-456",
                 "anomaly_types": ["revenue_drop", "cost_surge"],
@@ -162,6 +165,7 @@ class AnomalyQueryRequest(BaseModel):
                 "limit": 50
             }
         }
+    )
 
 
 class AnomalyQueryResponse(BaseModel):
@@ -195,8 +199,9 @@ class TrendAnalysisRequest(BaseModel):
     lookback_periods: int = Field(default=12, ge=3, le=36, description="回溯期数")
     include_forecast: bool = Field(default=True, description="是否包含预测")
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
             "example": {
                 "tenant_id": "tenant-456",
                 "user_id": "user-123",
@@ -206,6 +211,7 @@ class TrendAnalysisRequest(BaseModel):
                 "include_forecast": True
             }
         }
+    )
 
 
 class TrendPoint(BaseModel):
@@ -255,8 +261,9 @@ class AlertSubscriptionRequest(BaseModel):
     notification_webhook: Optional[str] = Field(None, description="通知Webhook")
     frequency: MonitoringFrequency = Field(default=MonitoringFrequency.DAILY, description="通知频率")
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
             "example": {
                 "tenant_id": "tenant-456",
                 "user_id": "user-123",
@@ -267,6 +274,7 @@ class AlertSubscriptionRequest(BaseModel):
                 "frequency": "daily"
             }
         }
+    )
 
 
 class AlertSubscriptionResponse(BaseModel):

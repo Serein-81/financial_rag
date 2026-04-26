@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from 'vue'
+import { ref, onMounted, computed, watch, nextTick } from 'vue'
 import { useKnowledgeStore } from '@/stores/knowledge'
 import { knowledgeGraphApi } from '@/api/knowledge-graph'
 import type { KnowledgeGraphEntity, KnowledgeGraphRelation } from '@/api/knowledge-graph'
@@ -14,8 +14,10 @@ import {
   Trash2,
   Loader2,
   AlertCircle,
-  CheckCircle
+  CheckCircle,
+  Globe
 } from 'lucide-vue-next'
+import * as d3 from 'd3'
 
 const SESSION_KEY = 'knowledge_graph_state'
 
@@ -65,7 +67,7 @@ function clearSessionState() {
 
 const knowledgeStore = useKnowledgeStore()
 
-const activeTab = ref<'build' | 'query' | 'visualize'>('build')
+const activeTab = ref<'build' | 'query' | 'visualize' | 'overview'>('build')
 const isLoading = ref(false)
 const error = ref('')
 const success = ref('')
@@ -81,6 +83,14 @@ const buildResult = ref<{
 
 const searchResults = ref<any[]>([])
 const queryResult = ref<any | null>(null)
+
+const wholeGraphData = ref<{
+  nodes: any[]
+  edges: any[]
+} | null>(null)
+const wholeGraphLimit = ref(50)
+const graphContainer = ref<HTMLElement | null>(null)
+const graphStats = ref<{ nodes: number; edges: number }>({ nodes: 0, edges: 0 })
 
 const selectedKB = computed(() => knowledgeStore.selectedKnowledgeBase)
 
@@ -182,6 +192,203 @@ function getEntityTypeColor(type: string): string {
   }
   return colors[type] || colors.default
 }
+
+async function loadWholeGraph() {
+  try {
+    isLoading.value = true
+    error.value = ''
+    const result = await knowledgeGraphApi.visualize({
+      max_depth: 1,
+      limit: wholeGraphLimit.value
+    })
+
+    wholeGraphData.value = {
+      nodes: result.nodes,
+      edges: result.edges
+    }
+    graphStats.value = {
+      nodes: result.nodes.length,
+      edges: result.edges.length
+    }
+    success.value = `已加载图谱概览：${result.nodes.length} 个节点，${result.edges.length} 条边`
+
+    nextTick(() => {
+      renderGraph()
+    })
+  } catch (err: any) {
+    error.value = err.message || '加载图谱概览失败'
+    wholeGraphData.value = null
+  } finally {
+    isLoading.value = false
+  }
+}
+
+let currentSvg: any = null
+let currentSimulation: any = null
+let currentZoom: any = null
+let currentG: any = null
+let currentNodes: any[] = []
+let currentLinks: any[] = []
+let currentLinkSel: any = null
+let currentNodeSel: any = null
+
+function renderGraph() {
+  if (!graphContainer.value || !wholeGraphData.value) {
+    return
+  }
+
+  if (currentSvg) {
+    currentSvg.remove()
+    currentSvg = null
+  }
+  if (currentSimulation) {
+    currentSimulation.stop()
+    currentSimulation = null
+  }
+
+  const container = graphContainer.value
+  container.innerHTML = ''
+
+  const width = container.clientWidth || 800
+  const height = 500
+
+  const svg = d3.select(container)
+    .append('svg')
+    .attr('width', width)
+    .attr('height', height)
+    .style('border', '1px solid #e5e7eb')
+    .style('border-radius', '8px')
+    .style('background', '#f9fafb')
+
+  currentSvg = svg
+
+  const g = svg.append('g')
+  currentG = g
+
+  const zoom = d3.zoom<SVGSVGElement, unknown>()
+    .scaleExtent([0.1, 4])
+    .on('zoom', (event) => {
+      g.attr('transform', event.transform)
+    })
+
+  svg.call(zoom)
+  currentZoom = zoom
+
+  const nodes = wholeGraphData.value.nodes.map(n => ({ ...n }))
+  const nodeIds = new Set(nodes.map(n => n.id))
+  const edges = wholeGraphData.value.edges
+    .filter((e: any) => e.source && e.target && nodeIds.has(String(e.source)) && nodeIds.has(String(e.target)))
+    .map(e => ({ ...e }))
+
+  const nodeMap = new Map(nodes.map(n => [n.id, n]))
+
+  currentNodes = nodes
+  currentLinks = edges
+
+  const simulation = d3.forceSimulation(nodes)
+    .force('link', d3.forceLink(edges).id((d: any) => d.id).distance(120))
+    .force('charge', d3.forceManyBody().strength(-300))
+    .force('center', d3.forceCenter(width / 2, height / 2))
+    .force('collision', d3.forceCollide().radius(40))
+
+  currentSimulation = simulation
+
+  const linkSel = g.append('g')
+    .selectAll('line')
+    .data(edges)
+    .join('line')
+    .attr('stroke', '#9ca3af')
+    .attr('stroke-width', 1.5)
+    .attr('marker-end', 'url(#arrowhead)')
+
+  currentLinkSel = linkSel
+
+  const nodeColors: Record<string, string> = {
+    'Person': '#10b981',
+    'Organization': '#3b82f6',
+    'Location': '#f59e0b',
+    'Event': '#ef4444',
+    'Product': '#8b5cf6',
+    'Entity': '#64748b',
+    'default': '#64748b'
+  }
+
+  function getNodeColor(type: string): string {
+    if (!type) return nodeColors.default
+    const upperType = type.charAt(0).toUpperCase() + type.slice(1).toLowerCase()
+    return nodeColors[upperType] || nodeColors.default
+  }
+
+  const nodeSel = g.append('g')
+    .selectAll('g')
+    .data(nodes)
+    .join('g')
+    .call(d3.drag<SVGGElement, any>()
+      .on('start', dragstarted)
+      .on('drag', dragged)
+      .on('end', dragended) as any)
+
+  currentNodeSel = nodeSel
+
+  nodeSel.append('circle')
+    .attr('r', 20)
+    .attr('fill', d => getNodeColor(d.type))
+    .attr('stroke', '#fff')
+    .attr('stroke-width', 2)
+
+  nodeSel.append('text')
+    .text(d => d.label.substring(0, 6))
+    .attr('text-anchor', 'middle')
+    .attr('dy', 35)
+    .attr('font-size', '11px')
+    .attr('fill', '#374151')
+
+  nodeSel.append('title')
+    .text(d => `${d.label}\n类型: ${d.type}`)
+
+  svg.append('defs').append('marker')
+    .attr('id', 'arrowhead')
+    .attr('viewBox', '-0 -5 10 10')
+    .attr('refX', 25)
+    .attr('refY', 0)
+    .attr('orient', 'auto')
+    .attr('markerWidth', 6)
+    .attr('markerHeight', 6)
+    .append('path')
+    .attr('d', 'M 0,-5 L 10,0 L 0,5')
+    .attr('fill', '#9ca3af')
+
+  simulation.on('tick', () => {
+    linkSel
+      .attr('x1', (d: any) => d.source.x)
+      .attr('y1', (d: any) => d.source.y)
+      .attr('x2', (d: any) => d.target.x)
+      .attr('y2', (d: any) => d.target.y)
+
+    nodeSel.attr('transform', (d: any) => `translate(${d.x},${d.y})`)
+  })
+
+  function dragstarted(event: any) {
+    if (!event.active) simulation.alphaTarget(0.3).restart()
+    event.subject.fx = event.subject.x
+    event.subject.fy = event.subject.y
+  }
+
+  function dragged(event: any) {
+    event.subject.fx = event.x
+    event.subject.fy = event.y
+  }
+
+  function dragended(event: any) {
+    if (!event.active) simulation.alphaTarget(0)
+    event.subject.fx = null
+    event.subject.fy = null
+  }
+}
+
+function resetView() {
+  renderGraph()
+}
 </script>
 
 <template>
@@ -233,6 +440,17 @@ function getEntityTypeColor(type: string): string {
           ]"
         >
           混合检索
+        </button>
+        <button
+          @click="activeTab = 'overview'"
+          :class="[
+            'px-4 py-2 font-medium rounded-lg transition-colors',
+            activeTab === 'overview'
+              ? 'bg-emerald-100 text-emerald-600'
+              : 'text-gray-600 hover:bg-gray-100'
+          ]"
+        >
+          图谱概览
         </button>
         </div>
         <button
@@ -453,6 +671,95 @@ function getEntityTypeColor(type: string): string {
               </span>
               <span v-if="result.metadata.entity">
                 实体: {{ result.metadata.entity }}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Graph Overview Tab -->
+      <div v-if="activeTab === 'overview'" class="space-y-6">
+        <div class="bg-white rounded-xl border border-gray-200 p-6">
+          <h2 class="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+            <Globe :size="20" class="text-emerald-600" />
+            图谱概览
+          </h2>
+          <div class="flex gap-4 items-center">
+            <div class="flex items-center gap-2">
+              <label class="text-sm text-gray-600">节点数量：</label>
+              <select
+                v-model="wholeGraphLimit"
+                class="px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-emerald-200 focus:border-emerald-500 outline-none"
+              >
+                <option :value="20">20</option>
+                <option :value="50">50</option>
+                <option :value="100">100</option>
+                <option :value="200">200</option>
+              </select>
+            </div>
+            <button
+              @click="loadWholeGraph"
+              :disabled="isLoading"
+              class="px-6 py-2.5 bg-emerald-600 text-white font-medium rounded-lg hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              <Loader2 v-if="isLoading" :size="18" class="animate-spin" />
+              <Globe v-else :size="18" />
+              {{ isLoading ? '加载中...' : '查看全图' }}
+            </button>
+          </div>
+          <p class="text-sm text-gray-500 mt-3">查看 Neo4j 图数据库中的实体和关系分布（采样显示）</p>
+        </div>
+
+        <!-- Graph Stats -->
+        <div v-if="graphStats.nodes > 0" class="grid grid-cols-2 gap-4">
+          <div class="bg-white rounded-xl border border-gray-200 p-6 text-center">
+            <div class="text-3xl font-bold text-emerald-600">{{ graphStats.nodes }}</div>
+            <div class="text-sm text-gray-500 mt-1">节点数</div>
+          </div>
+          <div class="bg-white rounded-xl border border-gray-200 p-6 text-center">
+            <div class="text-3xl font-bold text-teal-600">{{ graphStats.edges }}</div>
+            <div class="text-sm text-gray-500 mt-1">边数</div>
+          </div>
+        </div>
+
+        <!-- Graph Visualization -->
+        <div v-if="wholeGraphData" class="bg-white rounded-xl border border-gray-200 p-6">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-semibold text-gray-900">图可视化</h3>
+            <button
+              @click="resetView"
+              class="px-4 py-2 text-sm bg-gray-100 text-gray-700 font-medium rounded-lg hover:bg-gray-200 flex items-center gap-2"
+            >
+              <Move :size="16" />
+              聚拢重置
+            </button>
+          </div>
+          <div class="flex gap-4 mb-4 text-sm text-gray-500">
+            <span>🟢 Person</span>
+            <span>🔵 Organization</span>
+            <span>🟠 Location</span>
+            <span>🔴 Event</span>
+            <span>🟣 Product</span>
+            <span>⚫ 其他</span>
+          </div>
+          <div ref="graphContainer" class="w-full h-[500px]"></div>
+          <p class="text-xs text-gray-400 mt-2">拖拽节点可移动，滚轮可缩放</p>
+        </div>
+
+        <!-- Node List -->
+        <div v-if="wholeGraphData && wholeGraphData.nodes.length > 0" class="bg-white rounded-xl border border-gray-200 p-6">
+          <h3 class="text-lg font-semibold text-gray-900 mb-4">节点列表</h3>
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-96 overflow-y-auto">
+            <div
+              v-for="node in wholeGraphData.nodes"
+              :key="node.id"
+              class="p-3 border border-gray-200 rounded-lg hover:bg-gray-50"
+            >
+              <div class="flex items-center gap-2">
+                <span class="font-medium text-gray-900">{{ node.label }}</span>
+              </div>
+              <span :class="['px-2 py-0.5 text-xs font-medium rounded-full border mt-1 inline-block', getEntityTypeColor(node.type)]">
+                {{ node.type }}
               </span>
             </div>
           </div>

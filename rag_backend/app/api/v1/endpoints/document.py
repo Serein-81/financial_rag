@@ -141,3 +141,145 @@ async def update_document_visibility(
         await db.commit()
         
         return {"message": "Visibility updated successfully", "visibility": visibility}
+
+
+@router.get("/{document_id}/processing-status")
+async def get_document_processing_status(
+    document_id: str,
+    current_user: User = Depends(deps.get_current_user)
+):
+    """
+    获取文档处理状态（暂停/进度查询）
+    """
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(Document).where(
+                Document.id == uuid.UUID(document_id),
+                Document.tenant_id == str(current_user.tenant_id)
+            )
+        )
+        doc = result.scalar_one_or_none()
+        
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        return {
+            "document_id": str(doc.id),
+            "processing_state": doc.processing_state or "unknown",
+            "processing_progress": doc.processing_progress or 0,
+            "processing_message": doc.processing_message or "",
+            "status": doc.status,
+            "error_msg": doc.error_msg
+        }
+
+
+@router.post("/{document_id}/pause")
+async def pause_document_processing(
+    document_id: str,
+    current_user: User = Depends(deps.get_current_user)
+):
+    """
+    暂停文档处理（仅在 processing 状态下有效）
+    """
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(Document).where(
+                Document.id == uuid.UUID(document_id),
+                Document.tenant_id == str(current_user.tenant_id)
+            )
+        )
+        doc = result.scalar_one_or_none()
+        
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        if doc.processing_state not in [None, "pending", "processing"]:
+            return {
+                "message": f"无法暂停：当前状态为 {doc.processing_state}",
+                "processing_state": doc.processing_state,
+                "processing_progress": doc.processing_progress
+            }
+        
+        doc.processing_state = "paused"
+        await db.commit()
+        
+        return {
+            "message": "文档处理已暂停",
+            "document_id": str(doc.id),
+            "processing_state": "paused",
+            "processing_progress": doc.processing_progress
+        }
+
+
+@router.post("/{document_id}/resume")
+async def resume_document_processing(
+    document_id: str,
+    current_user: User = Depends(deps.get_current_user)
+):
+    """
+    恢复文档处理（仅在 paused 状态下有效）
+    """
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(Document).where(
+                Document.id == uuid.UUID(document_id),
+                Document.tenant_id == str(current_user.tenant_id)
+            )
+        )
+        doc = result.scalar_one_or_none()
+        
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        if doc.processing_state != "paused":
+            return {
+                "message": f"无法恢复：当前状态为 {doc.processing_state or 'pending'}，只有暂停状态可以恢复",
+                "processing_state": doc.processing_state or "pending"
+            }
+        
+        doc.processing_state = "processing"
+        await db.commit()
+        
+        return {
+            "message": "文档处理已恢复",
+            "document_id": str(doc.id),
+            "processing_state": "processing",
+            "processing_progress": doc.processing_progress
+        }
+
+
+@router.post("/{document_id}/cancel")
+async def cancel_document_processing(
+    document_id: str,
+    current_user: User = Depends(deps.get_current_user)
+):
+    """
+    取消文档处理（可取消 paused/processing 状态）
+    """
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(Document).where(
+                Document.id == uuid.UUID(document_id),
+                Document.tenant_id == str(current_user.tenant_id)
+            )
+        )
+        doc = result.scalar_one_or_none()
+        
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        if doc.processing_state in ["completed", "failed", "cancelled"]:
+            return {
+                "message": f"无法取消：当前状态为 {doc.processing_state}",
+                "processing_state": doc.processing_state
+            }
+        
+        doc.processing_state = "cancelled"
+        doc.processing_message = "用户主动取消"
+        await db.commit()
+        
+        return {
+            "message": "文档处理已取消",
+            "document_id": str(doc.id),
+            "processing_state": "cancelled"
+        }

@@ -17,20 +17,29 @@ router = APIRouter()
 @router.get("/traces/{session_id}")
 async def get_session_traces(
     session_id: str,
-    current_user: User = Depends(deps.get_current_user)
+    current_user: User = Depends(deps.get_current_user),
+    tenant_context: dict = Depends(deps.get_tenant_context)
 ):
     """
-    获取某个会话的所有 Agent 追踪记录
+    获取某个会话的 Agent 追踪记录（仅限当前用户）
     
     Args:
         session_id: 会话 ID
         current_user: 当前用户
+        tenant_context: 租户上下文
         
     Returns:
         追踪记录列表
     """
     try:
-        traces = await agent_tracer.get_session_traces(session_id)
+        user_id = str(current_user.id)
+        tenant_id = tenant_context['tenant_id']
+        
+        traces = await agent_tracer.get_session_traces(
+            session_id=session_id,
+            user_id=user_id,
+            tenant_id=tenant_id
+        )
         
         return {
             "session_id": session_id,
@@ -51,7 +60,7 @@ async def get_trace_steps(
     current_user: User = Depends(deps.get_current_user)
 ):
     """
-    获取某次追踪的详细步骤
+    获取某次追踪的详细步骤（仅限本人）
     
     Args:
         trace_id: 追踪 ID
@@ -61,10 +70,15 @@ async def get_trace_steps(
         包含所有步骤的完整追踪信息
     """
     try:
-        trace_data = await agent_tracer.get_trace_with_steps(trace_id)
+        user_id = str(current_user.id)
+        
+        trace_data = await agent_tracer.get_trace_with_steps(
+            trace_id=trace_id,
+            user_id=user_id
+        )
         
         if not trace_data:
-            raise HTTPException(status_code=404, detail="追踪记录不存在")
+            raise HTTPException(status_code=404, detail="追踪记录不存在或无权访问")
         
         return trace_data
     except HTTPException:
@@ -83,7 +97,7 @@ async def get_trace_visualization(
     current_user: User = Depends(deps.get_current_user)
 ):
     """
-    获取追踪的可视化数据（用于前端绘制流程图）
+    获取追踪的可视化数据（用于前端绘制流程图，仅限本人）
     
     Args:
         trace_id: 追踪 ID
@@ -93,10 +107,15 @@ async def get_trace_visualization(
         可视化数据（节点和边）
     """
     try:
-        trace_data = await agent_tracer.get_trace_with_steps(trace_id)
+        user_id = str(current_user.id)
+        
+        trace_data = await agent_tracer.get_trace_with_steps(
+            trace_id=trace_id,
+            user_id=user_id
+        )
         
         if not trace_data:
-            raise HTTPException(status_code=404, detail="追踪记录不存在")
+            raise HTTPException(status_code=404, detail="追踪记录不存在或无权访问")
         
         # 构建可视化节点和边
         nodes = []

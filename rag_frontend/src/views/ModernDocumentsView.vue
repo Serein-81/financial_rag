@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useKnowledgeStore } from '@/stores/knowledge'
+import { knowledgeApi } from '@/api/knowledge'
 import {
   FileText,
   CheckCircle,
@@ -12,7 +13,9 @@ import {
   Loader2,
   AlertCircle,
   X,
-  Eye
+  Eye,
+  Pause,
+  Play
 } from 'lucide-vue-next'
 
 const knowledgeStore = useKnowledgeStore()
@@ -20,6 +23,7 @@ const knowledgeStore = useKnowledgeStore()
 const isRefreshing = ref(false)
 const showDocDetailModal = ref(false)
 const selectedDoc = ref<any>(null)
+const pausingDocId = ref<string | null>(null)
 
 const selectedKB = computed(() => knowledgeStore.selectedKnowledgeBase)
 const documents = computed(() => {
@@ -50,6 +54,32 @@ async function refreshDocuments() {
 function viewDocumentDetail(doc: any) {
   selectedDoc.value = doc
   showDocDetailModal.value = true
+}
+
+async function handlePauseResume(doc: any) {
+  pausingDocId.value = doc.id
+  try {
+    if (doc.processing_state === 'paused') {
+      await knowledgeApi.resumeDocument(doc.id)
+    } else {
+      await knowledgeApi.pauseDocument(doc.id)
+    }
+    await knowledgeStore.fetchDocuments(selectedKB.value.id)
+  } catch (error) {
+    console.error('操作失败:', error)
+  } finally {
+    pausingDocId.value = null
+  }
+}
+
+async function handleDelete(doc: any) {
+  if (!confirm(`确定要删除文档 "${doc.filename}" 吗？`)) return
+  try {
+    await knowledgeApi.deleteDocument(doc.id)
+    await knowledgeStore.fetchDocuments(selectedKB.value.id)
+  } catch (error) {
+    console.error('删除失败:', error)
+  }
 }
 
 function getStatusColor(status: string): string {
@@ -103,6 +133,15 @@ function getStatusLabel(status: string): string {
     pending: '等待中'
   }
   return labels[status] || status
+}
+
+function isProcessingOrPending(status: string, processingState?: string): boolean {
+  return (status === 'processing' || status === 'pending' || processingState === 'processing') 
+    && processingState !== 'paused'
+}
+
+function isPaused(processingState?: string): boolean {
+  return processingState === 'paused'
 }
 
 function formatFileSize(bytes: number | null): string {
@@ -273,7 +312,40 @@ function formatDate(dateString: string): string {
               <Eye :size="16" />
               查看详情
             </button>
+            <!-- 正在处理中：显示暂停按钮 -->
             <button
+              v-if="isProcessingOrPending(doc.status, doc.processing_state)"
+              @click="handlePauseResume(doc)"
+              :disabled="pausingDocId === doc.id"
+              class="flex-1 py-2.5 px-4 bg-white border border-amber-300 text-amber-600 hover:bg-amber-50 rounded-xl transition-all flex items-center justify-center gap-2 text-sm font-medium disabled:opacity-50"
+            >
+              <Loader2 v-if="pausingDocId === doc.id" :size="16" class="animate-spin" />
+              <Pause v-else :size="16" />
+              {{ pausingDocId === doc.id ? '操作中...' : '暂停' }}
+            </button>
+            <!-- 已暂停：显示恢复和删除按钮 -->
+            <template v-else-if="isPaused(doc.processing_state)">
+              <button
+                @click="handlePauseResume(doc)"
+                :disabled="pausingDocId === doc.id"
+                class="py-2.5 px-4 bg-emerald-50 border border-emerald-300 text-emerald-600 hover:bg-emerald-100 rounded-xl transition-all flex items-center justify-center gap-2 text-sm font-medium disabled:opacity-50"
+              >
+                <Play v-if="pausingDocId !== doc.id" :size="16" />
+                <Loader2 v-else :size="16" class="animate-spin" />
+                {{ pausingDocId === doc.id ? '...' : '继续' }}
+              </button>
+              <button
+                @click="handleDelete(doc)"
+                class="py-2.5 px-4 bg-red-50 border border-red-300 text-red-600 hover:bg-red-100 rounded-xl transition-all flex items-center justify-center gap-2 text-sm font-medium"
+              >
+                <Trash2 :size="16" />
+                删除
+              </button>
+            </template>
+            <!-- 其他状态：显示删除按钮 -->
+            <button
+              v-else
+              @click="handleDelete(doc)"
               class="flex-1 py-2.5 px-4 bg-white border border-gray-200 text-gray-700 hover:border-red-300 hover:bg-red-50 hover:text-red-600 rounded-xl transition-all flex items-center justify-center gap-2 text-sm font-medium"
             >
               <Trash2 :size="16" />

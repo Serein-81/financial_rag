@@ -98,10 +98,18 @@ async def get_db():
         try:
             yield session
         except Exception:
-            await session.rollback()
+            try:
+                if session.is_active:
+                    await session.rollback()
+            except Exception:
+                pass
             raise
         finally:
-            await session.close()
+            try:
+                if session.is_active:
+                    await session.close()
+            except Exception:
+                pass
 
 
 @asynccontextmanager
@@ -118,4 +126,8 @@ async def get_db_context():
         try:
             yield session
         finally:
-            await session.close()
+            try:
+                if session.is_active:
+                    await session.close()
+            except Exception:
+                pass

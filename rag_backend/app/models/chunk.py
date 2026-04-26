@@ -1,6 +1,7 @@
 import uuid
 from sqlalchemy import Column, String, Integer, Text, DateTime, ForeignKey, func, Float
-from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY
+from sqlalchemy.dialects.postgresql import UUID, JSONB
+from pgvector.sqlalchemy import Vector
 from app.db.base import Base
 
 
@@ -25,9 +26,9 @@ class DocumentChunk(Base):
     # 元数据：可以存这段文字所在的页码等信息
     meta_info = Column(JSONB, default={})
 
-    # ✅ 重点修改：使用标准数组类型 ARRAY(Float)
-    # 这对应数据库里的 FLOAT8[]
-    embedding = Column(ARRAY(Float), nullable=True)
+    # ✅ 向量嵌入：使用 pgvector Vector 类型，支持 HNSW/IVFFlat 索引
+    # 向量维度：1024 (适配 embedding-3, bge-m3 等模型)
+    embedding = Column(Vector(1024), nullable=True)
     
     # 新增字段：支持智能切块元数据
     heading_path = Column(String, nullable=True)  # 标题路径(如: "第一章 > 1.1节")

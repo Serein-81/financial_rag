@@ -276,36 +276,38 @@ async def remove_user_from_enterprise(
     return {"message": "用户已从企业中移除，转移到个人租户"}
 
 
-@router.get("/info")
+@router.get("/info", response_model=dict)
 async def get_enterprise_info(
     db: AsyncSession = Depends(get_db),
-    admin_user: User = Depends(require_admin_user)
+    current_user: User = Depends(deps.get_current_user)
 ):
     """
-    获取企业信息
+    获取企业信息（所有用户可用）
     """
     company_info = {
-        "tenant_id": admin_user.tenant_id,
-        "company_name": admin_user.company_name,
-        "admin_name": admin_user.full_name or admin_user.nickname,
-        "admin_email": admin_user.email,
-        "admin_phone": admin_user.phone,
-        "created_at": admin_user.created_at
+        "id": current_user.tenant_id,
+        "name": current_user.company_name or "未命名企业",
+        "tenant_id": current_user.tenant_id,
+        "admin_name": current_user.full_name or current_user.nickname,
+        "admin_email": current_user.email,
+        "admin_phone": current_user.phone,
+        "created_at": current_user.created_at
     }
     
     total_users_result = await db.execute(
-        select(func.count(User.id)).where(User.tenant_id == admin_user.tenant_id)
+        select(func.count(User.id)).where(User.tenant_id == current_user.tenant_id)
     )
     total_users = total_users_result.scalar()
     
     active_users_result = await db.execute(
         select(func.count(User.id)).where(
-            and_(User.tenant_id == admin_user.tenant_id, User.is_active.is_(True))
+            and_(User.tenant_id == current_user.tenant_id, User.is_active.is_(True))
         )
     )
     active_users = active_users_result.scalar()
     
     company_info.update({
+        "member_count": total_users,
         "total_users": total_users,
         "active_users": active_users
     })

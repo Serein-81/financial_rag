@@ -1,12 +1,20 @@
 """
 LangGraph 条件边路由
 
-定义工作流中的条件路由逻辑
+定义工作流中的条件路由逻辑。
+核心路由逻辑委托给 multi_agent_system.routing.unified_router 中的纯函数，
+确保 LangGraph 条件边和 AgentOrchestrator 共用同一份路由逻辑。
 """
 
 import logging
-from typing import List, Callable
+from typing import List, Callable, Optional, Set
+
 from .state import AgentState, IntentCategory, SpecialistType, QualityLevel
+from app.multi_agent_system.routing.unified_router import (
+    route_by_blackboard_state,
+    route_by_intent_result,
+    RoutingDecision,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +22,8 @@ logger = logging.getLogger(__name__)
 def route_by_intent(state: AgentState) -> str:
     """
     根据意图路由到下一个节点
+    
+    委托给 unified_router.route_by_intent_result 做实际决策。
     
     Args:
         state: 当前状态
@@ -26,27 +36,36 @@ def route_by_intent(state: AgentState) -> str:
     
     logger.info(f"[路由] Intent={intent}, Confidence={intent_confidence:.2f}")
     
-    if intent_confidence < 0.5:
-        logger.info("[路由] 置信度过低，转向人工审核")
-        return "human_review"
-    
     if intent is None:
         logger.info("[路由] 无意图信息，转向人工审核")
         return "human_review"
     
-    route_map = {
-        IntentCategory.RAG_RETRIEVAL: "rag_retrieval",
-        IntentCategory.SINGLE_SPECIALIST: "single_specialist",
-        IntentCategory.MULTI_SPECIALIST: "multi_specialist",
-        IntentCategory.DIRECT_ANSWER: "direct_answer",
-        IntentCategory.HUMAN_REVIEW: "human_review",
-        IntentCategory.UNKNOWN: "human_review"
-    }
+    intent_value = intent.value if hasattr(intent, "value") else str(intent)
+    routing_strategy = state.get("routing_strategy")
+    routing_strategy_value = (
+        routing_strategy.value if hasattr(routing_strategy, "value") else str(routing_strategy)
+    ) if routing_strategy else None
     
-    target = route_map.get(intent, "human_review")
-    logger.info(f"[路由] 路由到: {target}")
+    requires_specialists = state.get("target_specialists", [])
+    requires_specialist_values = [
+        s.value if hasattr(s, "value") else str(s)
+        for s in requires_specialists
+    ]
     
-    return target
+    decision = route_by_intent_result(
+        intent_value=intent_value,
+        routing_strategy=routing_strategy_value,
+        requires_specialists=requires_specialist_values,
+        confidence=intent_confidence,
+    )
+    
+    if decision is not None and decision.target_nodes:
+        target = decision.target_nodes[0]
+        logger.info(f"[路由] 统一路由决策: {target} (source={decision.source.value})")
+        return target
+    
+    logger.info("[路由] 统一路由无决策，降级到人工审核")
+    return "human_review"
 
 
 def route_by_specialists(state: AgentState) -> str:

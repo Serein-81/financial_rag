@@ -61,6 +61,15 @@ class TaxEntity:
     period: Optional[str] = None
 
 
+@dataclass
+class TaxQueryResult:
+    """税务数据查询结果"""
+    has_data: bool = False
+    tax_data: Optional[Dict[str, Any]] = None
+    error_message: Optional[str] = None
+    fiscal_year: Optional[int] = None
+
+
 class TaxSpecialist(BaseSpecialistAgent):
     """
     税务专家智能体
@@ -100,6 +109,57 @@ class TaxSpecialist(BaseSpecialistAgent):
         
         self.entity_patterns = self._compile_entity_patterns()
         self.tax_calculations = self._load_tax_calculations()
+        
+        self._register_mcp_tools()
+    
+    def _register_mcp_tools(self):
+        """
+        注册 MCP 工具（财务数据查询 + 时间锚点）
+        
+        税务专家需要访问财务数据库进行税务分析
+        """
+        try:
+            from app.mcp.foundation_tools import get_current_time_and_context
+            from app.mcp.financial_tools import create_financial_tools
+            from app.mcp.financial_health_tools import create_financial_health_tools
+            
+            # 1. 注册财务数据查询工具（关键修复）
+            try:
+                financial_tools = create_financial_tools()
+                for tool in financial_tools:
+                    try:
+                        self.tool_manager.register_langchain_tool(tool)
+                        logger.info(f"✅ [税务专家] 注册财务工具: {tool.name}")
+                    except Exception as e:
+                        logger.warning(f"⚠️ [税务专家] 注册财务工具失败 {tool.name}: {e}")
+            except ImportError as e:
+                logger.warning(f"⚠️ [税务专家] 无法导入财务工具: {e}")
+            
+            # 2. 注册财务健康工具
+            try:
+                health_tools = create_financial_health_tools()
+                for tool in health_tools:
+                    try:
+                        self.tool_manager.register_langchain_tool(tool)
+                        logger.info(f"✅ [税务专家] 注册健康工具: {tool.name}")
+                    except Exception as e:
+                        logger.warning(f"⚠️ [税务专家] 注册健康工具失败 {tool.name}: {e}")
+            except ImportError as e:
+                logger.warning(f"⚠️ [税务专家] 无法导入健康工具: {e}")
+            
+            # 3. 注册时间锚点工具（所有专家 Agent 都需要）
+            try:
+                self.tool_manager.register_langchain_tool(get_current_time_and_context)
+                logger.info(f"✅ [税务专家] 注册时间锚点工具: get_current_time_and_context")
+            except Exception as e:
+                logger.warning(f"⚠️ [税务专家] 注册时间锚点工具失败: {e}")
+            
+            logger.info(f"📊 [税务专家] MCP 工具注册完成")
+            
+        except ImportError as e:
+            logger.warning(f"⚠️ [税务专家] 无法导入 MCP 工具: {e}")
+        except Exception as e:
+            logger.error(f"❌ [税务专家] 注册 MCP 工具时出错: {e}")
     
     def _load_system_prompt(self) -> str:
         """从外部文件加载系统提示词"""
@@ -115,8 +175,13 @@ class TaxSpecialist(BaseSpecialistAgent):
     
     def _get_prompt_context(self) -> Dict[str, Any]:
         """获取提示词渲染上下文"""
+        tools_description = ""
+        if self.tool_manager:
+            tools_description = self.tool_manager.get_tools_description()
+        
         return {
             "tax_types": [t.value for t in TaxType],
+            "available_tools": tools_description or "无可用工具",
         }
     
     def _build_default_prompt(self) -> str:
@@ -127,12 +192,139 @@ class TaxSpecialist(BaseSpecialistAgent):
 3. 能够进行税务计算和风险评估
 4. 提供合规的税收筹划建议
 
+## 可用工具
+- 时间锚点工具 get_current_time_and_context（【重要】处理时间相关查询时必须使用）
+
+## 时间感知原则
+大模型没有生物钟，当处理以下场景时，必须先调用 get_current_time_and_context：
+- 用户询问"今年最新政策"、"去年税率变化"等相对时间
+- 需要分析"本季度税务情况"、"去年同期对比"等时间对比
+- 任何涉及时间范围的税务分析（如"近3年税务趋势"）
+- 查询"最新税收优惠政策"或"近期政策变化"
+
+## 税务时间敏感性
+- 税务政策每年可能变化（如企业所得税优惠）
+- 税收申报有严格的时间截止日期
+- 不同税种有不同的申报周期（月度、季度、年度）
+- 历史税务数据需要准确的时间锚定
+
+## 工作流程
+1. 当用户查询包含相对时间词时，先调用 get_current_time_and_context 获取准确时间基准
+2. 根据时间基准查询对应时期的税务政策
+3. 执行税务分析和计算
+4. 提供基于准确时间的专业建议
+
 在回答时，请：
-- 引用相关法规条款
-- 提供具体的计算过程
-- 指出潜在的合规风险
+- 引用相关法规条款（注明生效日期）
+- 提供具体的计算过程（基于准确时间）
+- 指出潜在的合规风险（考虑时效性）
 - 建议合理的筹划方案（合法合规范围内）
+- 明确说明时间基准（例如："基于当前 2026 年 4 月的时间，根据 2026 年最新政策..."）
 """
+    
+    async def _query_user_tax_data(
+        self,
+        context: Optional[Dict[str, Any]]
+    ) -> TaxQueryResult:
+        """
+        查询用户的企业税务和财务数据（使用 MCP 工具）
+        
+        【关键修复】税务专家必须先查询数据库获取真实财务和税务数据，
+        才能进行准确的税务分析和风险评估。
+        
+        Args:
+            context: 上下文信息，包含 tenant_id、user_id 等
+            
+        Returns:
+            TaxQueryResult：税务数据查询结果
+        """
+        tenant_id = None
+        user_id = None
+        fiscal_year = None
+        
+        if context:
+            tenant_id = context.get("tenant_id")
+            user_id = context.get("user_id")
+            fiscal_year = context.get("fiscal_year")
+        
+        logger.info(f"🔍 [税务专家] _query_user_tax_data 接收到的 tenant_id = '{tenant_id}', user_id = '{user_id}'")
+        
+        if not tenant_id or not user_id or tenant_id == "default" or user_id == "default":
+            logger.warning(f"🔍 [税务专家] 跳过税务数据查询：tenant_id='{tenant_id}', user_id='{user_id}'")
+            return TaxQueryResult(
+                has_data=False,
+                error_message=f"未提供有效的 tenant_id 或 user_id (tenant_id='{tenant_id}', user_id='{user_id}')"
+            )
+        
+        from app.mcp.financial_tools import get_financial_overview, query_financial_data
+        
+        max_retries = 2
+        last_error = None
+        
+        for attempt in range(1, max_retries + 1):
+            try:
+                logger.info(
+                    f"🔍 [税务专家] 正在通过 MCP 工具查询税务数据 "
+                    f"(尝试 {attempt}/{max_retries}): tenant='{tenant_id}', year={fiscal_year}"
+                )
+                
+                # 1. 先获取财务概览（包含税务数据）
+                overview_result = await get_financial_overview(
+                    tenant_id=tenant_id,
+                    fiscal_year=fiscal_year if fiscal_year else None
+                )
+                
+                logger.info(f"🔍 [税务专家] MCP 工具返回原始结果:")
+                logger.info(f"   - status: {overview_result.get('status')}")
+                logger.info(f"   - has 'data': {overview_result.get('data') is not None}")
+                logger.info(f"   - has 'summary': {overview_result.get('summary') is not None}")
+                
+                if overview_result.get('status') == 'success' and overview_result.get('data'):
+                    data = overview_result['data']
+                    logger.info(f"   - data keys: {list(data.keys())}")
+                    
+                    # 提取税务相关数据
+                    tax_data = {
+                        "fiscal_year": overview_result.get('fiscal_year'),
+                        "total_revenue": data.get("total_revenue"),
+                        "total_vat": data.get("total_vat"),
+                        "total_corporate_tax": data.get("total_corporate_tax"),
+                        "vat_rate": data.get("vat_rate"),
+                        "corporate_tax_rate": data.get("corporate_tax_rate"),
+                        "taxable_sales": data.get("taxable_sales"),
+                        "input_tax": data.get("input_tax"),
+                        "output_tax": data.get("output_tax"),
+                        "is_small_enterprise": data.get("is_small_enterprise"),
+                        "data_status": data.get("data_status"),
+                    }
+                    
+                    logger.info(f"✅ [税务专家] 成功提取税务数据: revenue={tax_data.get('total_revenue')}, vat={tax_data.get('total_vat')}")
+                    
+                    return TaxQueryResult(
+                        has_data=True,
+                        tax_data=tax_data,
+                        fiscal_year=overview_result.get('fiscal_year')
+                    )
+                else:
+                    logger.warning(f"⚠️ [税务专家] 税务数据为空或查询失败")
+                    return TaxQueryResult(
+                        has_data=False,
+                        error_message=overview_result.get('message', '税务数据为空'),
+                        fiscal_year=overview_result.get('fiscal_year')
+                    )
+                    
+            except Exception as e:
+                last_error = str(e)
+                logger.error(f"❌ [税务专家] 第 {attempt} 次查询失败: {e}")
+                if attempt < max_retries:
+                    import asyncio
+                    await asyncio.sleep(0.5)  # 重试前等待
+        
+        logger.error(f"❌ [税务专家] 税务数据查询最终失败: {last_error}")
+        return TaxQueryResult(
+            has_data=False,
+            error_message=f"查询失败: {last_error}"
+        )
     
     def _compile_entity_patterns(self) -> Dict[str, re.Pattern]:
         """编译税务实体提取正则表达式"""
@@ -320,24 +512,54 @@ class TaxSpecialist(BaseSpecialistAgent):
         user_input: str,
         history: List[Dict[str, Any]] = None,
         context: Dict[str, Any] = None,
+        rag_context: Optional[Dict[str, Any]] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
         处理税务咨询请求
         
+        【关键修复】现在会先查询数据库获取真实税务数据，
+        然后基于真实数据进行税务分析和风险评估。
+        
         Args:
             user_input: 用户输入
             history: 对话历史
-            context: 上下文信息
+            context: 上下文信息（包含 tenant_id、user_id）
+            rag_context: RAG检索到的上下文数据
             **kwargs: 其他参数
             
         Returns:
             处理结果
         """
         try:
+            # ⭐ 关键修复1：查询数据库获取税务数据
+            logger.info(f"🔍 [税务专家] 开始查询税务数据...")
+            query_result: TaxQueryResult = await self._query_user_tax_data(context)
+            
+            logger.info(f"🔍 [税务专家] 数据查询结果:")
+            logger.info(f"   - query_result.has_data: {query_result.has_data}")
+            logger.info(f"   - query_result.tax_data: {query_result.tax_data}")
+            logger.info(f"   - query_result.fiscal_year: {query_result.fiscal_year}")
+            
+            # ⭐ 关键修复2：构建税务上下文
+            tax_context = rag_context.copy() if rag_context else {}
+            tax_context["has_tax_data"] = query_result.has_data
+            if query_result.has_data:
+                tax_context["tax_data"] = query_result.tax_data
+                tax_context["tax_error"] = None
+                logger.info(f"✅ [税务专家] tax_data 已添加到 tax_context:")
+                logger.info(f"   - total_revenue: {query_result.tax_data.get('total_revenue')}")
+                logger.info(f"   - total_vat: {query_result.tax_data.get('total_vat')}")
+                logger.info(f"   - total_corporate_tax: {query_result.tax_data.get('total_corporate_tax')}")
+            else:
+                tax_context["tax_data"] = None
+                tax_context["tax_error"] = query_result.error_message
+                logger.warning(f"⚠️ [税务专家] 无有效税务数据: {query_result.error_message}")
+            
             entities = self.extract_entities(user_input)
             
-            prompt = self._build_tax_prompt(user_input, entities)
+            # ⭐ 关键修复3：传递真实数据给提示词构建
+            prompt = self._build_tax_prompt(user_input, entities, tax_context)
             
             full_prompt = f"{self.system_prompt}\n\n{prompt}" if self.system_prompt else prompt
             llm_response = await self.llm_adapter.generate(
@@ -349,6 +571,9 @@ class TaxSpecialist(BaseSpecialistAgent):
             analysis = self._parse_llm_response(response_text, entities)
             
             risk_assessment = self.assess_tax_risk(analysis, entities)
+            
+            # 生成完整的分析报告
+            analysis_report = self._generate_analysis_report(analysis, entities, risk_assessment)
             
             if not entities.tax_type and not entities.tax_rate and not entities.tax_amount:
                 return {
@@ -364,13 +589,20 @@ class TaxSpecialist(BaseSpecialistAgent):
                     },
                     "recommendations": self._generate_recommendations(analysis),
                     "confidence": analysis.confidence,
+                    "analysis_report": analysis_report,
                     "needs_more_info": True,
                     "missing_fields": ["tax_type", "tax_rate", "tax_amount"],
-                    "suggestion": "为了提供更准确的税务分析，请提供以下信息：\n1. 具体税种（如增值税、企业所得税、个人所得税等）\n2. 税务金额或计算基数\n3. 适用税率（如已知）\n4. 税务期间（如季度、年度）\n5. 相关业务背景或特殊情况"
+                    "suggestion": "为了提供更准确的税务分析，请提供以下信息：\n1. 具体税种（如增值税、企业所得税、个人所得税等）\n2. 税务金额或计算基数\n3. 适用税率（如已知）\n4. 税务期间（如季度、年度）\n5. 相关业务背景或特殊情况",
+                    "has_tax_db_data": query_result.has_data,
+                    "tax_data_error": query_result.error_message
                 }
             
             return {
                 "success": True,
+                "has_tax_db_data": query_result.has_data,
+                "tax_data": query_result.tax_data,
+                "tax_data_error": query_result.error_message,
+                "tax_type": analysis.tax_type,
                 "tax_type": analysis.tax_type,
                 "analysis": analysis.dict(),
                 "risk_assessment": risk_assessment,
@@ -381,7 +613,8 @@ class TaxSpecialist(BaseSpecialistAgent):
                     "period": entities.period
                 },
                 "recommendations": self._generate_recommendations(analysis),
-                "confidence": analysis.confidence
+                "confidence": analysis.confidence,
+                "analysis_report": analysis_report
             }
             
         except (ValueError, KeyError) as e:
@@ -406,8 +639,21 @@ class TaxSpecialist(BaseSpecialistAgent):
                 "fallback": "建议您咨询专业税务顾问获取准确信息"
             }
     
-    def _build_tax_prompt(self, user_input: str, entities: TaxEntity) -> str:
-        """构建税务分析提示词"""
+    def _build_tax_prompt(self, user_input: str, entities: TaxEntity, tax_context: Optional[Dict[str, Any]] = None) -> str:
+        """
+        构建税务分析提示词
+        
+        【关键修复】现在会包含从数据库查询到的真实税务数据，
+        使LLM能够基于真实数据进行分析，而非凭空生成。
+        
+        Args:
+            user_input: 用户输入
+            entities: 提取的税务实体
+            tax_context: 税务上下文（包含数据库查询结果）
+            
+        Returns:
+            构建好的提示词
+        """
         prompt_parts = [
             f"用户问题：{user_input}\n",
             "提取的税务实体："
@@ -422,8 +668,34 @@ class TaxSpecialist(BaseSpecialistAgent):
         if entities.period:
             prompt_parts.append(f"- 期间：{entities.period}")
         
+        # ⭐ 关键修复：添加真实税务数据
+        if tax_context and tax_context.get("has_tax_data"):
+            tax_data = tax_context.get("tax_data", {})
+            prompt_parts.extend([
+                "\n\n【企业真实税务数据】",
+                f"- 财务年度：{tax_data.get('fiscal_year', 'N/A')}",
+                f"- 总营收：¥{tax_data.get('total_revenue', 0):,.2f}" if tax_data.get('total_revenue') else "- 总营收：暂无数据",
+                f"- 应税销售额：¥{tax_data.get('taxable_sales', 0):,.2f}" if tax_data.get('taxable_sales') else "- 应税销售额：暂无数据",
+                f"- 增值税总额：¥{tax_data.get('total_vat', 0):,.2f}" if tax_data.get('total_vat') else "- 增值税总额：暂无数据",
+                f"- 企业所得税总额：¥{tax_data.get('total_corporate_tax', 0):,.2f}" if tax_data.get('total_corporate_tax') else "- 企业所得税总额：暂无数据",
+                f"- 增值税率：{tax_data.get('vat_rate', 0):%}" if tax_data.get('vat_rate') else "- 增值税率：暂无数据",
+                f"- 企业所得税率：{tax_data.get('corporate_tax_rate', 0):%}" if tax_data.get('corporate_tax_rate') else "- 企业所得税率：暂无数据",
+                f"- 进项税额：¥{tax_data.get('input_tax', 0):,.2f}" if tax_data.get('input_tax') else "- 进项税额：暂无数据",
+                f"- 销项税额：¥{tax_data.get('output_tax', 0):,.2f}" if tax_data.get('output_tax') else "- 销项税额：暂无数据",
+                f"- 是否小微企业：{'是' if tax_data.get('is_small_enterprise') else '否'}",
+                f"- 数据状态：{tax_data.get('data_status', 'unknown')}",
+                "\n⚠️ 【重要】请基于上述真实数据进行分析，而非假设数据。"
+            ])
+        else:
+            error_msg = tax_context.get("tax_error", "未知错误") if tax_context else "无可用数据"
+            prompt_parts.extend([
+                "\n\n【注意】无法获取企业真实税务数据：",
+                f"- 错误信息：{error_msg}",
+                "\n⚠️ 请基于用户提供的信息进行分析，并在报告中明确说明缺少哪些数据。"
+            ])
+        
         prompt_parts.extend([
-            "\n请进行税务分析，包括：",
+            "\n\n请进行税务分析，包括：",
             "1. 相关税法条款",
             "2. 合规性检查要点",
             "3. 潜在风险点",
@@ -431,6 +703,97 @@ class TaxSpecialist(BaseSpecialistAgent):
         ])
         
         return "\n".join(prompt_parts)
+    
+    def _generate_analysis_report(
+        self,
+        analysis: TaxAnalysisResult,
+        entities: TaxEntity,
+        risk_assessment: Dict[str, Any]
+    ) -> str:
+        """
+        生成完整的税务分析报告
+        
+        Args:
+            analysis: 税务分析结果
+            entities: 提取的税务实体
+            risk_assessment: 风险评估结果
+            
+        Returns:
+            格式化的分析报告
+        """
+        try:
+            # 构建报告标题
+            report = f"""# 📋 税务分析报告
+
+## 1. 税种识别
+- **税种类型**: {analysis.tax_type.value if hasattr(analysis.tax_type, 'value') else analysis.tax_type}
+- **适用税率**: {analysis.tax_rate if analysis.tax_rate is not None else "未提供"}
+- **税额估算**: {analysis.tax_amount if analysis.tax_amount is not None else "未提供"}
+- **税务期间**: {analysis.tax_period if analysis.tax_period else "未指定"}
+
+## 2. 合规性评估
+- **合规状态**: {analysis.compliance_status}
+- **置信度**: {analysis.confidence:.2%}
+- **可扣除项目**: {', '.join(analysis.deductions) if analysis.deductions else "无"}
+- **免税项目**: {', '.join(analysis.exemptions) if analysis.exemptions else "无"}
+
+## 3. 风险点分析"""
+            
+            if analysis.risk_points:
+                for i, risk in enumerate(analysis.risk_points, 1):
+                    report += f"\n{i}. {risk}"
+            else:
+                report += "\n- 未发现明显风险点"
+            
+            # 添加风险评估
+            if risk_assessment:
+                report += f"\n\n## 4. 风险评估"
+                for key, value in risk_assessment.items():
+                    if value is not None:
+                        report += f"\n- **{key}**: {value}"
+            
+            # 添加实体信息
+            if entities.tax_rate or entities.tax_amount or entities.tax_id or entities.period:
+                report += "\n\n## 5. 提取信息"
+                if entities.tax_rate:
+                    report += f"\n- **税率**: {entities.tax_rate}%"
+                if entities.tax_amount:
+                    report += f"\n- **金额**: {entities.tax_amount}"
+                if entities.tax_id:
+                    report += f"\n- **税号**: {entities.tax_id}"
+                if entities.period:
+                    report += f"\n- **期间**: {entities.period}"
+            
+            # 添加建议部分
+            recommendations = self._generate_recommendations(analysis)
+            if recommendations:
+                report += "\n\n## 6. 专业建议"
+                for i, rec in enumerate(recommendations, 1):
+                    report += f"\n{i}. {rec}"
+            
+            # 添加总结
+            report += f"\n\n## 7. 总结\n"
+            if analysis.compliance_status == "compliant":
+                report += "✅ 税务合规性良好，建议继续保持并关注政策变化。"
+            elif analysis.compliance_status == "review_required":
+                report += "⚠️ 需要进一步审查，建议咨询专业税务顾问。"
+            else:
+                report += "❌ 存在合规风险，建议立即采取纠正措施。"
+            
+            return report
+            
+        except Exception as e:
+            logger.error(f"生成税务分析报告失败: {e}")
+            # 返回简化版本
+            return f"""# 📋 税务分析报告
+
+## 分析结果
+- **税种**: {analysis.tax_type.value if hasattr(analysis.tax_type, 'value') else analysis.tax_type}
+- **合规状态**: {analysis.compliance_status}
+- **置信度**: {analysis.confidence:.2%}
+
+## 风险点
+{chr(10).join(f"- {risk}" for risk in analysis.risk_points) if analysis.risk_points else "- 未发现明显风险点"}"""
     
     def _parse_llm_response(
         self,

@@ -13,7 +13,7 @@ import json
 import logging
 from typing import Dict, List, Any, Optional
 from enum import Enum
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from pathlib import Path
 
 from app.agent_framework.core.base_agent import BaseAgent
@@ -21,6 +21,11 @@ from app.agent_framework.llm.base_adapter import BaseLLMAdapter
 from app.agent_framework.tools.tool_manager import ToolManager
 from app.services.prompt_service import PromptEngine
 from app.multi_agent_system.agents.base_agent_prompt import load_agent_prompt
+from app.multi_agent_system.clarification_service import (
+    ClarificationService,
+    ClarificationRequest,
+    ClarificationType
+)
 
 logger = logging.getLogger(__name__)
 
@@ -97,9 +102,11 @@ class IntentRoutingResult(BaseModel):
     is_simple: bool = Field(False, description="是否为简单问题")
     simple_response: Optional[str] = Field(None, description="简单问题的回答")
     intent_result: Optional[IntentAnalysisResult] = Field(None, description="意图分析结果")
+    clarification_request: Optional[ClarificationRequest] = Field(None, description="追问请求（当输入模糊时）")
     
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True
+    )
 
 
 class IntentRouterAgent(BaseAgent):
@@ -123,6 +130,7 @@ class IntentRouterAgent(BaseAgent):
         "time": r".*?(时间|time|现在几点).*",
         "help": r".*?(help|帮助|怎么用|如何使用).*",
         "thanks": r"^.*?(谢谢|thanks|感谢)[\s,，.]*",
+        "config_query": r".*?(有没有打开|是否启用|开启了吗|关闭了吗|当前状态|当前配置|我的设置|会话状态)",
     }
     
     ENTITY_PATTERNS = {
@@ -208,6 +216,12 @@ class IntentRouterAgent(BaseAgent):
         self._specialist_descriptions = specialist_descriptions
         self._intent_mapping = intent_mapping or {}
         self._classification_prompt_cache: Optional[str] = None
+        
+        self.clarification_service = ClarificationService(
+            min_query_length=5,
+            confidence_threshold=0.6,
+            enable_clarification=True
+        )
         
         system_prompt = self._load_system_prompt()
         
@@ -329,6 +343,9 @@ class IntentRouterAgent(BaseAgent):
         
         if re.search(self.SIMPLE_PATTERNS["help"], text_lower):
             return self._build_help_response()
+        
+        if re.search(self.SIMPLE_PATTERNS["config_query"], text_lower):
+            return "__CONFIG_QUERY__"
         
         return None
     
@@ -534,8 +551,8 @@ class IntentRouterAgent(BaseAgent):
             (["税务", "合规"], IntentCategory.TAX_COMPLIANCE, "税务合规"),
             (["发票", "管理"], IntentCategory.TAX_DECLARATION, "发票管理"),
             (["发票", "风险"], IntentCategory.TAX_COMPLIANCE, "发票风险"),
-            (["企业", "财务", "风险"], IntentCategory.COMPLEX_TASK, "企业财务风险"),
-            (["财务系统", "风险"], IntentCategory.COMPLEX_TASK, "财务系统风险"),
+            (["企业", "财务", "风险"], IntentCategory.RISK_ANALYSIS, "企业财务风险"),
+            (["财务系统", "风险"], IntentCategory.RISK_ANALYSIS, "财务系统风险"),
         ]
         
         for keywords, intent, _ in multi_patterns:
@@ -735,7 +752,13 @@ class IntentRouterAgent(BaseAgent):
             )
         
         entities = self._extract_entities(user_input)
-        intent_result_dict = await self._classify_intent_llm(user_input, entities, context or {})
+        
+        rule_based_result = self._classify_intent_rule_based(user_input)
+        if rule_based_result["confidence"] >= 0.9:
+            print(f"✅ [意图路由智能体] 规则匹配命中，跳过LLM: {rule_based_result['intent'].value}")
+            intent_result_dict = rule_based_result
+        else:
+            intent_result_dict = await self._classify_intent_llm(user_input, entities, context or {})
         
         complexity = self._assess_complexity(
             user_input,
@@ -779,10 +802,30 @@ class IntentRouterAgent(BaseAgent):
         print(f"   路由: {intent_result.routing_strategy.value}")
         print(f"   置信度: {intent_result.confidence:.2f}")
         
+        intent_str = (
+            intent_result.intent.value 
+            if hasattr(intent_result.intent, 'value') 
+            else str(intent_result.intent)
+        )
+        routing_str = (
+            intent_result.routing_strategy.value
+            if hasattr(intent_result.routing_strategy, 'value')
+            else str(intent_result.routing_strategy)
+        )
+        
+        clarification = await self.clarification_service.detect_ambiguous_input(
+            query=user_input,
+            intent=intent_str,
+            confidence=intent_result.confidence,
+            entities=[e.model_dump() for e in intent_result.entities],
+            routing_strategy=routing_str
+        )
+        
         return IntentRoutingResult(
             is_simple=False,
             simple_response=None,
-            intent_result=intent_result
+            intent_result=intent_result,
+            clarification_request=clarification
         )
     
     async def stream_run(self, user_input: str, history: List[Dict] = None, **kwargs):

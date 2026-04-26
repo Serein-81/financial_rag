@@ -6,8 +6,11 @@ LangChain 兼容层
 提供与 LangChain 工具的兼容性
 """
 
+import logging
 from typing import List, Any
 from .tool_manager import ToolManager
+
+logger = logging.getLogger(__name__)
 
 
 class LangChainCompatLayer:
@@ -35,7 +38,7 @@ class LangChainCompatLayer:
         Args:
             langchain_tools: LangChain 工具列表
         """
-        print(f"开始注册 {len(langchain_tools)} 个 LangChain 工具...")
+        logger.info(f"开始注册 {len(langchain_tools)} 个 LangChain 工具...")
         
         success_count = 0
         for tool in langchain_tools:
@@ -43,9 +46,9 @@ class LangChainCompatLayer:
                 self.tool_manager.register_langchain_tool(tool)
                 success_count += 1
             except Exception as e:
-                print(f"[ERROR] 注册工具失败: {getattr(tool, 'name', 'unknown')} - {str(e)}")
+                logger.warning(f"[ERROR] 注册工具失败: {getattr(tool, 'name', 'unknown')} - {str(e)}")
         
-        print(f"成功注册 {success_count}/{len(langchain_tools)} 个工具")
+        logger.info(f"成功注册 {success_count}/{len(langchain_tools)} 个工具")
         
         return success_count
     

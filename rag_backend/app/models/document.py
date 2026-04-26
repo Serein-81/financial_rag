@@ -55,6 +55,11 @@ class Document(Base):
     status = Column(String(20), default="pending")
     error_msg = Column(Text, nullable=True)
     meta_info = Column(JSONB, default={})
+    
+    # 📌 文档处理状态管理（用于暂停/恢复/取消）
+    processing_state = Column(String(20), default="pending", index=True)  # pending/processing/paused/completed/failed/cancelled
+    processing_progress = Column(Integer, default=0)  # 处理进度 0-100
+    processing_message = Column(String(255), nullable=True)  # 当前处理步骤信息
 
     # 🔢 文档向量嵌入（使用 halfvec 类型，768维，适配 bge-m3 模型）
     embedding = Column(Vector(768), nullable=True)

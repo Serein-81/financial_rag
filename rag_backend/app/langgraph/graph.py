@@ -5,6 +5,7 @@ LangGraph StateGraph 构建器
 """
 
 import logging
+from datetime import datetime
 from typing import Dict, Any, Optional, Callable
 from langgraph.graph import StateGraph, END, START
 from langgraph.checkpoint.memory import MemorySaver
@@ -28,6 +29,7 @@ class MultiAgentWorkflowBuilder:
     多智能体工作流构建器
     
     使用 LangGraph 构建复杂的多智能体协作工作流
+    支持 PostgresSaver 状态持久化，断电/中断后可恢复
     """
     
     def __init__(
@@ -36,7 +38,8 @@ class MultiAgentWorkflowBuilder:
         enable_checkpointer: bool = True,
         enable_reflection: bool = True,
         max_iterations: int = 10,
-        max_retries: int = 3
+        max_retries: int = 3,
+        db_session_factory=None
     ):
         """
         初始化工作流构建器
@@ -47,22 +50,26 @@ class MultiAgentWorkflowBuilder:
             enable_reflection: 是否启用反思审核
             max_iterations: 最大迭代次数
             max_retries: 最大重试次数
+            db_session_factory: 数据库会话工厂（用于 PostgresSaver）
         """
         self.agents_registry = agents_registry
         self.enable_checkpointer = enable_checkpointer
         self.enable_reflection = enable_reflection
         self.max_iterations = max_iterations
         self.max_retries = max_retries
+        self.db_session_factory = db_session_factory
         
         self.node_factory = AgentNodeFactory(agents_registry)
         self.graph: Optional[StateGraph] = None
         self.compiled_graph: Optional[Any] = None
+        self._postgres_saver = None
         
         logger.info("[WorkflowBuilder] 初始化完成")
         logger.info(f"  - Checkpointer: {enable_checkpointer}")
         logger.info(f"  - Reflection: {enable_reflection}")
         logger.info(f"  - Max Iterations: {max_iterations}")
         logger.info(f"  - Max Retries: {max_retries}")
+        logger.info(f"  - PostgresSaver: {'启用' if db_session_factory else '未配置(使用 MemorySaver)'}")
     
     def build(self) -> StateGraph:
         """
@@ -284,12 +291,34 @@ class MultiAgentWorkflowBuilder:
         
         return error_handler_node
     
+    def _get_postgres_saver(self):
+        """获取 PostgresSaver 实例"""
+        if self._postgres_saver is None and self.db_session_factory:
+            from .postgres_saver import LangGraphPostgresSaver
+            self._postgres_saver = LangGraphPostgresSaver(
+                db_session_factory=self.db_session_factory,
+                table_name="langgraph_checkpoints"
+            )
+            logger.info("[WorkflowBuilder] PostgresSaver 初始化完成")
+        return self._postgres_saver
+    
     def compile(self):
         """编译工作流图"""
         if self.graph is None:
             self.build()
         
-        checkpointer = MemorySaver() if self.enable_checkpointer else None
+        checkpointer = None
+        if self.enable_checkpointer:
+            if self.db_session_factory:
+                checkpointer = self._get_postgres_saver()
+                if checkpointer:
+                    logger.info("[WorkflowBuilder] 使用 PostgresSaver 进行状态持久化")
+                else:
+                    logger.warning("[WorkflowBuilder] PostgresSaver 初始化失败，使用 MemorySaver")
+                    checkpointer = MemorySaver()
+            else:
+                logger.warning("[WorkflowBuilder] 未配置数据库会话，使用 MemorySaver（断电丢失）")
+                checkpointer = MemorySaver()
         
         self.compiled_graph = self.graph.compile(
             checkpointer=checkpointer,
@@ -306,17 +335,19 @@ class MultiAgentWorkflowBuilder:
         user_id: str,
         user_query: str,
         config: Optional[Dict[str, Any]] = None,
+        task_id: Optional[str] = None,
         **metadata
     ) -> AgentState:
         """
         执行工作流
         
         Args:
-            session_id: 会话ID
+            session_id: 会话ID（thread_id）
             tenant_id: 租户ID
             user_id: 用户ID
             user_query: 用户查询
             config: LangGraph 配置
+            task_id: 任务ID（用于状态持久化）
             **metadata: 其他元数据
             
         Returns:
@@ -339,11 +370,52 @@ class MultiAgentWorkflowBuilder:
         logger.info(f"  - Session: {session_id}")
         logger.info(f"  - Query: {user_query[:100]}...")
         
+        postgres_saver = self._get_postgres_saver()
+        
+        if postgres_saver:
+            checkpoint_id = f"{session_id}_start_{datetime.now().timestamp()}"
+            await postgres_saver.put_checkpoint(
+                thread_id=session_id,
+                checkpoint_id=checkpoint_id,
+                checkpoint_data=initial_state,
+                metadata={
+                    "task_id": task_id,
+                    "tenant_id": tenant_id,
+                    "user_id": user_id,
+                    "node": "start",
+                    "status": "running"
+                }
+            )
+            logger.info(f"[Workflow] 初始状态已保存: checkpoint_id={checkpoint_id}")
+        
         try:
+            checkpoint_config = {
+                "configurable": {
+                    "thread_id": session_id
+                }
+            }
+            if config:
+                checkpoint_config["configurable"].update(config.get("configurable", {}))
+            
             final_state = await self.compiled_graph.ainvoke(
                 initial_state,
-                config=config or {}
+                config=checkpoint_config
             )
+            
+            if postgres_saver:
+                checkpoint_id = f"{session_id}_end_{datetime.now().timestamp()}"
+                await postgres_saver.put_checkpoint(
+                    thread_id=session_id,
+                    checkpoint_id=checkpoint_id,
+                    checkpoint_data=final_state,
+                    metadata={
+                        "task_id": task_id,
+                        "tenant_id": tenant_id,
+                        "user_id": user_id,
+                        "node": "end",
+                        "status": "completed"
+                    }
+                )
             
             logger.info("[Workflow] 工作流执行完成")
             return final_state
@@ -356,6 +428,21 @@ class MultiAgentWorkflowBuilder:
             }
         except Exception as e:
             logger.error(f"[Workflow] 执行错误: {e}")
+            if postgres_saver:
+                checkpoint_id = f"{session_id}_error_{datetime.now().timestamp()}"
+                await postgres_saver.put_checkpoint(
+                    thread_id=session_id,
+                    checkpoint_id=checkpoint_id,
+                    checkpoint_data=initial_state,
+                    metadata={
+                        "task_id": task_id,
+                        "tenant_id": tenant_id,
+                        "user_id": user_id,
+                        "node": "error",
+                        "status": "failed",
+                        "error": str(e)
+                    }
+                )
             return {
                 **initial_state,
                 "error": str(e),

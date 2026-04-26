@@ -600,11 +600,20 @@ function formatDate(dateString: string): string {
               <Upload :size="18" />
               <span>上传文档</span>
             </button>
+            <div class="relative group">
+              <div class="px-3 py-1.5 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-700">
+                支持: PDF, DOC, DOCX, XLS, XLSX, TXT, MD, CSV, PNG, JPG, JPEG, BMP, TIFF
+              </div>
+              <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-slate-900 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
+                点击查看支持的文件类型列表
+                <div class="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-900"></div>
+              </div>
+            </div>
             <input
               ref="uploadFileRef"
               type="file"
               multiple
-              accept=".pdf,.doc,.docx,.txt,.md"
+              accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.md,.csv,.png,.jpg,.jpeg,.bmp,.tiff"
               class="hidden"
               @change="handleFileSelect"
             />

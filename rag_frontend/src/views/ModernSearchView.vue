@@ -320,6 +320,10 @@ function getResultColor(type: 'local' | 'web') {
                 <div class="flex-1">
                   <div class="font-medium" :class="enableWebSearch ? 'text-emerald-900' : 'text-gray-700'">联网搜索</div>
                   <div class="text-xs" :class="enableWebSearch ? 'text-emerald-600' : 'text-gray-500'">实时获取互联网信息</div>
+                  <div v-if="enableWebSearch" class="text-xs text-amber-600 mt-1 flex items-center gap-1">
+                    <AlertCircle :size="12" />
+                    <span>需在环境变量中配置 TAVILY_API_KEY</span>
+                  </div>
                 </div>
                 <div :class="enableWebSearch ? 'bg-emerald-500' : 'bg-gray-300'" class="w-12 h-6 rounded-full p-1 transition-colors">
                   <div

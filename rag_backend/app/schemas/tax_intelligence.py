@@ -5,7 +5,7 @@
 
 from typing import List, Dict, Any, Optional
 from datetime import datetime
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 from enum import Enum
 
 
@@ -96,8 +96,8 @@ class TaxAnalysisRequest(BaseModel):
                         data['fiscal_quarter'] = 4
         return data
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "analysis_type": "quarterly_vat",
                 "fiscal_year": 2024,
@@ -109,6 +109,7 @@ class TaxAnalysisRequest(BaseModel):
                 "tenant_id": "tenant-456"
             }
         }
+    )
 
 
 class TaxCalculationResult(BaseModel):
@@ -204,8 +205,8 @@ class TaxIntelligenceAnalysisResponse(BaseModel):
     message: str = Field(..., description="状态消息")
     result: Optional[TaxAnalysisResult] = Field(None, description="分析结果（完成后返回）")
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "analysis_id": "analysis-123",
                 "status": "completed",
@@ -220,6 +221,7 @@ class TaxIntelligenceAnalysisResponse(BaseModel):
                 }
             }
         }
+    )
 
 
 class TaxCalculationRequest(BaseModel):
@@ -232,8 +234,8 @@ class TaxCalculationRequest(BaseModel):
     user_id: str = Field(..., description="用户ID")
     tenant_id: str = Field(..., description="租户ID")
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "tax_type": "vat",
                 "taxable_amount": 1000000.0,
@@ -244,6 +246,7 @@ class TaxCalculationRequest(BaseModel):
                 "tenant_id": "tenant-456"
             }
         }
+    )
 
 
 class TaxCalculationResponse(BaseModel):
@@ -272,9 +275,8 @@ class PolicyQueryRequest(BaseModel):
 class PolicyQueryResponse(BaseModel):
     """政策查询响应"""
     query: str = Field(..., description="查询关键词")
-    total_results: int = Field(..., description="结果总数")
-    policies: List[PolicyBenefitItem] = Field(default_factory=list, description="匹配的政策")
-    timestamp: datetime = Field(default_factory=datetime.now, description="查询时间")
+    total_count: int = Field(default=0, description="结果总数")
+    policies: List[Dict[str, Any]] = Field(default_factory=list, description="匹配的政策列表")
 
 
 class PolicySubscriptionRequest(BaseModel):
@@ -289,8 +291,8 @@ class PolicySubscriptionRequest(BaseModel):
     notification_email: Optional[str] = Field(None, description="通知邮箱")
     notification_webhook: Optional[str] = Field(None, description="通知Webhook")
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "user_id": "user-123",
                 "tenant_id": "tenant-456",
@@ -302,6 +304,7 @@ class PolicySubscriptionRequest(BaseModel):
                 "notification_email": "tax@company.com"
             }
         }
+    )
 
 
 class PolicySubscriptionResponse(BaseModel):

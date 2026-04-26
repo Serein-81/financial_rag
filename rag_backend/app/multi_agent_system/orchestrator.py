@@ -1,9 +1,10 @@
 """
 智能体编排器 (Agent Orchestrator)
-企业智能体系统的核心协调器，负责编排接待、意图识别、专业Agent协作和报告生成
+企业智能体系统的核心协调器，负责编排接待、意图识别，专业Agent协作和报告生成
 """
 
 import asyncio
+from functools import partial
 from app.utils.json_compat import json
 import uuid
 import traceback
@@ -28,14 +29,618 @@ from .message_bus import MessageBus
 from .rag_retriever import TenantIsolatedRAGRetriever
 from app.agent_framework.llm.factory import LLMAdapterFactory
 from app.agent_framework.tools.tool_manager import ToolManager
-from app.agent_framework.core.output_agent import output_agent
 from app.memory_system.memory_manager import MemoryManager
 from app.core.config import settings
-from app.agent_framework.core.output_agent import OutputAgent
 from app.services.agent_tracer import agent_tracer
+from app.agent_framework.components import ResultSynthesizer
+from .result_cache import ResultCache, CacheConfig
+
+# LangGraph 状态类型导入
+from app.langgraph.state import AgentState, SpecialistType
 
 
 logger = logging.getLogger(__name__)
+
+
+class LatencyTracker:
+    """延迟追踪器"""
+    
+    def __init__(self):
+        self.stages = {}
+        self.start_time = None
+    
+    def start(self):
+        """开始追踪"""
+        self.start_time = datetime.now()
+        self.stages = {}
+    
+    def mark(self, stage: str):
+        """标记阶段完成"""
+        if self.start_time:
+            elapsed = (datetime.now() - self.start_time).total_seconds() * 1000
+            self.stages[stage] = {
+                "elapsed_ms": elapsed,
+                "timestamp": datetime.now().isoformat()
+            }
+    
+    def get_summary(self) -> Dict[str, Any]:
+        """获取延迟摘要"""
+        if not self.start_time:
+            return {}
+        
+        total_ms = (datetime.now() - self.start_time).total_seconds() * 1000
+        return {
+            "total_ms": round(total_ms, 2),
+            "stages": self.stages,
+            "ttft_ms": self.stages.get("first_token", {}).get("elapsed_ms", total_ms)
+        }
+
+
+class Nodes:
+    """LangGraph 节点函数集合"""
+    
+    def __init__(self, orchestrator: 'AgentOrchestrator'):
+        self.orchestrator = orchestrator
+    
+    async def receptionist(self, state: AgentState) -> AgentState:
+        logger.info("[节点] receptionist 开始")
+        
+        updated_state = {
+            **state,
+            "metadata": {
+                **state.get("metadata", {}),
+                "reception_time": datetime.now().isoformat()
+            }
+        }
+        
+        logger.debug(f"receptionist 完成 | user_query: {state.get('user_query', 'N/A')[:50]}...")
+        return updated_state
+    
+    async def intent_router(self, state: AgentState) -> AgentState:
+        logger.info(f"[节点] intent_router | query: {state.get('user_query', '')[:50]}...")
+        
+        user_query = state["user_query"]
+        intent_result = await self.orchestrator.intent_router.run(user_input=user_query)
+        
+        if intent_result.is_simple:
+            logger.info(f"[意图路由] 简单问题，直接回答")
+            updated_state = {
+                **state,
+                "intent": "simple",
+                "intent_confidence": 1.0,
+                "specialists_needed": [],
+                "routing_strategy": "direct_answer",
+                "metadata": {
+                    **state.get("metadata", {}),
+                    "simple_response": intent_result.simple_response
+                }
+            }
+            return updated_state
+        
+        inner_result = intent_result.intent_result
+        specialists_needed = inner_result.requires_specialists[:3] if inner_result.requires_specialists else ["finance"]
+        logger.info(f"[意图路由] 意图: {inner_result.intent.value} | 需要专家: {specialists_needed}")
+        
+        updated_state = {
+            **state,
+            "intent": inner_result.intent.value,
+            "intent_confidence": inner_result.confidence,
+            "specialists_needed": specialists_needed,
+            "routing_strategy": inner_result.routing_strategy.value,
+            "metadata": {
+                **state.get("metadata", {}),
+                "intent_result": {
+                    "intent": inner_result.intent.value,
+                    "confidence": inner_result.confidence
+                }
+            }
+        }
+        
+        if intent_result.clarification_request:
+            logger.info(f"[意图路由] 需要追问: {intent_result.clarification_request.type}")
+            updated_state["clarification_request"] = intent_result.clarification_request.model_dump()
+            updated_state["needs_clarification"] = True
+        
+        return updated_state
+    
+    async def rag_retrieval(self, state: AgentState) -> AgentState:
+        logger.info("[节点] rag_retrieval 开始")
+        
+        if not self.orchestrator.rag_retriever:
+            logger.debug("RAG 检索器未初始化，跳过")
+            return {**state, "rag_context": []}
+        try:
+            rag_context = await self.orchestrator.rag_retriever.retrieve(
+                query=state["user_query"],
+                tenant_id=self.orchestrator.tenant_id,
+                top_k=5
+            )
+            results = rag_context.results if rag_context else []
+            docs = [{"content": r.content, "source": r.source, "score": r.relevance_score} for r in results]
+            logger.info(f"[RAG] 检索到 {len(docs)} 条文档")
+            
+            updated_state = {**state, "rag_context": docs}
+            return updated_state
+        except Exception as e:
+            logger.warning(f"[RAG] 检索失败: {e}")
+            return {**state, "rag_context": []}
+    
+    async def finance_specialist(self, state: AgentState) -> AgentState:
+        logger.info("[节点] finance_specialist 开始")
+        
+        actual_tenant_id = self.orchestrator.tenant_id
+        actual_user_id = self.orchestrator.user_id
+        
+        specialist_context = {"tenant_id": actual_tenant_id, "user_id": actual_user_id}
+        try:
+            result = await self.orchestrator.finance_specialist.run(
+                user_input=state["user_query"],
+                context=specialist_context
+            )
+            logger.info(f"[财务专家] 分析完成")
+            
+            # 🔧 修复病灶二：将字典翻译成人类可读的 Markdown 文本
+            # 反思节点期望看到的是可读的报告，而不是 Python 字典
+            def format_as_markdown(result: dict) -> str:
+                """将专家结果字典格式化为 Markdown 文本"""
+                if not isinstance(result, dict):
+                    return str(result)
+                
+                parts = []
+                parts.append("## 💰 财务专家分析报告\n")
+                
+                # 领域信息
+                domain = result.get('domain')
+                if domain:
+                    domain_name = domain.value if hasattr(domain, 'value') else str(domain)
+                    parts.append(f"**分析领域**: {domain_name}\n\n")
+                
+                # 成功状态
+                success = result.get('success', False)
+                parts.append(f"**查询状态**: {'✅ 成功' if success else '❌ 失败'}\n\n")
+                
+                # 直接从 data_summary 中提取财务数据（来自数据库）
+                data_summary = result.get('data_summary', {})
+                if data_summary:
+                    parts.append("### 📊 企业财务数据\n")
+                    total_revenue = data_summary.get('total_revenue', 0) or 0
+                    total_expenses = data_summary.get('total_expenses', 0) or 0
+                    total_profit = data_summary.get('total_profit', 0) or 0
+                    profit_margin = data_summary.get('profit_margin', 0) or 0
+                    
+                    parts.append(f"- **营业收入**: {total_revenue:,.2f} 元\n")
+                    parts.append(f"- **总支出**: {total_expenses:,.2f} 元\n")
+                    parts.append(f"- **营业利润**: {total_profit:,.2f} 元\n")
+                    parts.append(f"- **利润率**: {profit_margin:.2f}%\n")
+                    
+                    avg_margin = data_summary.get('avg_profit_margin')
+                    if avg_margin:
+                        parts.append(f"- **平均利润率**: {avg_margin:.2f}%\n")
+                    
+                    total_vat = data_summary.get('total_vat')
+                    if total_vat:
+                        parts.append(f"- **增值税合计**: {total_vat:,.2f} 元\n")
+                    
+                    total_tax = data_summary.get('total_corporate_tax')
+                    if total_tax:
+                        parts.append(f"- **企业所得税**: {total_tax:,.2f} 元\n")
+                    
+                    fiscal_years = data_summary.get('fiscal_years', [])
+                    if fiscal_years:
+                        parts.append(f"- **财务年度**: {', '.join(str(y) for y in fiscal_years[:5])}\n")
+                    
+                    parts.append("\n")
+                
+                # 关键指标
+                key_metrics = result.get('key_metrics', [])
+                if key_metrics:
+                    parts.append("### 🎯 关键发现\n")
+                    for i, metric in enumerate(key_metrics[:5], 1):
+                        parts.append(f"{i}. {metric}\n")
+                    parts.append("\n")
+                
+                # 风险因素
+                risk_factors = result.get('risk_factors', [])
+                if risk_factors:
+                    parts.append("### ⚠️ 风险因素\n")
+                    for factor in risk_factors[:5]:
+                        parts.append(f"- {factor}\n")
+                    parts.append("\n")
+                
+                # 建议
+                recommendations = result.get('recommendations', [])
+                if recommendations:
+                    parts.append("### 💡 建议\n")
+                    for i, rec in enumerate(recommendations[:5], 1):
+                        parts.append(f"{i}. {rec}\n")
+                    parts.append("\n")
+                
+                # 数据来源说明
+                has_data = result.get('has_financial_db_data', False)
+                data_error = result.get('financial_data_error')
+                if not has_data and data_error:
+                    parts.append(f"⚠️ **注意**: {data_error}\n")
+                
+                return "".join(parts) if parts else str(result)
+            
+            # 将字典转换为 Markdown 文本
+            markdown_report = format_as_markdown(result)
+            
+            specialist_data = {
+                "source": "finance",
+                "content": markdown_report,
+                "data": result,
+                "confidence": result.get('confidence', 0.85),
+                "success": result.get('success', True)
+            }
+            
+            retry_count = state.get("retry_count", 0)
+            if retry_count > 0:
+                existing_results = []
+                logger.info(f"[财务专家] 重试 #{retry_count} 替换结果")
+            else:
+                existing_results = state.get("specialist_results", [])
+                existing_results = [r for r in existing_results if r.get("source") != "finance"]
+                logger.debug(f"[财务专家] 替换旧结果 | 旧: {len(existing_results)} → 新: {len(existing_results) + 1}")
+            
+            updated_state = {
+                **state,
+                "specialist_results": existing_results + [specialist_data]
+            }
+            
+            return updated_state
+        except Exception as e:
+            logger.error(f"[财务专家] 执行失败: {e}")
+            updated_state = {
+                **state,
+                "specialist_results": [{"source": "finance", "data": {"error": str(e)}, "confidence": 0.0, "success": False}]
+            }
+            return updated_state
+    
+    async def tax_specialist(self, state: AgentState) -> AgentState:
+        logger.info("[节点] tax_specialist 开始")
+        
+        specialist_context = {"tenant_id": self.orchestrator.tenant_id, "user_id": self.orchestrator.user_id}
+        try:
+            result = await self.orchestrator.tax_specialist.run(user_input=state["user_query"], context=specialist_context)
+            logger.info("[税务专家] 分析完成")
+            
+            def format_tax_as_markdown(result: dict) -> str:
+                if not isinstance(result, dict):
+                    return str(result)
+                parts = []
+                parts.append("## 📋 税务专家分析报告\n")
+                if result.get('success'):
+                    parts.append("**查询状态**: ✅ 成功\n\n")
+                else:
+                    parts.append("**查询状态**: ❌ 失败\n\n")
+                for key, value in result.items():
+                    if key not in ['success', 'domain'] and value:
+                        parts.append(f"- **{key}**: {value}\n")
+                return "".join(parts) if parts else str(result)
+            
+            markdown_content = format_tax_as_markdown(result)
+            
+            specialist_data = {
+                "source": "tax",
+                "content": markdown_content,
+                "data": result,
+                "confidence": result.get('confidence', 0.85),
+                "success": result.get('success', True)
+            }
+            
+            existing_results = state.get("specialist_results", [])
+            updated_state = {
+                **state,
+                "specialist_results": existing_results + [specialist_data]
+            }
+            
+            return updated_state
+        except Exception as e:
+            logger.error(f"[税务专家] 执行失败: {e}")
+            updated_state = {
+                **state,
+                "specialist_results": [{"source": "tax", "content": f"税务专家分析失败: {str(e)}", "data": {"error": str(e)}, "confidence": 0.0, "success": False}]
+            }
+            return updated_state
+    
+    async def legal_specialist(self, state: AgentState) -> AgentState:
+        logger.info("[节点] legal_specialist 开始")
+        
+        specialist_context = {"tenant_id": self.orchestrator.tenant_id, "user_id": self.orchestrator.user_id}
+        try:
+            result = await self.orchestrator.legal_specialist.run(user_input=state["user_query"], context=specialist_context)
+            logger.info("[法律专家] 分析完成")
+            
+            def format_legal_as_markdown(result: dict) -> str:
+                if not isinstance(result, dict):
+                    return str(result)
+                parts = []
+                parts.append("## ⚖️ 法律专家分析报告\n")
+                if result.get('success'):
+                    parts.append("**查询状态**: ✅ 成功\n\n")
+                else:
+                    parts.append("**查询状态**: ❌ 失败\n\n")
+                for key, value in result.items():
+                    if key not in ['success', 'domain'] and value:
+                        parts.append(f"- **{key}**: {value}\n")
+                return "".join(parts) if parts else str(result)
+            
+            markdown_content = format_legal_as_markdown(result)
+            
+            existing_results = state.get("specialist_results", [])
+            specialist_data = {
+                "source": "legal",
+                "content": markdown_content,
+                "data": result,
+                "confidence": result.get('confidence', 0.85),
+                "success": result.get('success', True)
+            }
+            
+            updated_state = {
+                **state,
+                "specialist_results": existing_results + [specialist_data]
+            }
+            
+            return updated_state
+        except Exception as e:
+            logger.error(f"[法律专家] 执行失败: {e}")
+            return {
+                **state,
+                "specialist_results": [{"source": "legal", "content": f"法律专家分析失败: {str(e)}", "data": {"error": str(e)}, "confidence": 0.0, "success": False}]
+            }
+    
+    async def reflection(self, state: AgentState) -> AgentState:
+        logger.info("[节点] reflection 审核开始")
+        
+        specialist_results = state.get("specialist_results", [])
+        current_retry = state.get("retry_count", 0)
+        
+        if not specialist_results:
+            logger.debug("[反思] 无专家结果，跳过")
+            return {
+                "reflection_result": {"score": 0.5, "acceptable": True},
+                "retry_count": current_retry
+            }
+        
+        if len(specialist_results) == 1:
+            result = specialist_results[0]
+            result_confidence = result.get('confidence', 0.0)
+            has_db_data = result.get('has_financial_db_data', False)
+            
+            if result_confidence >= 0.85 and has_db_data:
+                logger.debug(f"[反思] 快速通过 | confidence={result_confidence:.2f}")
+                return {
+                    "reflection_result": {"score": result_confidence, "acceptable": True},
+                    "retry_count": current_retry
+                }
+        
+        response_text = "\n\n".join([f"### {r.get('source')}\n{r.get('content', '')}" for r in specialist_results])
+        logger.info(f"[反思] 合并 {len(specialist_results)} 个专家结果")
+        
+        data_source_parts = []
+        for r in specialist_results:
+            source = r.get('source', 'unknown')
+            has_db_data = r.get('has_financial_db_data', False) or r.get('data', {}).get('has_financial_db_data', False)
+            if has_db_data:
+                data = r.get('data', {})
+                total_revenue = data.get('data_summary', {}).get('total_revenue') or data.get('total_revenue', 'N/A')
+                total_profit = data.get('data_summary', {}).get('total_profit') or data.get('total_profit', 'N/A')
+                data_source_parts.append(
+                    f"- {source}专家：来自企业数据库（营业收入: {total_revenue}元，利润: {total_profit}元）"
+                )
+        
+        data_source_info = "\n".join(data_source_parts) if data_source_parts else "无数据来源信息"
+        
+        try:
+            from app.prompts.llm_functions import review_quality
+            quality_result = await review_quality(
+                user_question=state["user_query"], 
+                ai_answer=response_text,
+                data_source_info=data_source_info
+            )
+            
+            actual_score = quality_result.get('scores', {}).get('overall', quality_result.get('score', 0.0))
+            is_acceptable = quality_result.get('is_quality_acceptable', quality_result.get('acceptable', False))
+            
+            logger.info(f"[反思] 质量分数: {actual_score:.2f}, 可接受: {is_acceptable}")
+            
+            new_retry_count = current_retry + 1 if not is_acceptable else current_retry
+            
+            updated_state = {
+                **state,
+                "reflection_result": {"score": actual_score, "acceptable": is_acceptable},
+                "retry_count": new_retry_count
+            }
+            
+            if not is_acceptable:
+                logger.warning("[反思] 质量不达标")
+            
+            return updated_state
+        except Exception as e:
+            logger.error(f"[反思] 审核失败: {e}")
+            return {
+                **state,
+                "reflection_result": {"score": 0.7, "acceptable": True},
+                "retry_count": current_retry
+            }
+    
+    async def final(self, state: AgentState) -> AgentState:
+        logger.info("[节点] final 开始")
+        
+        if state.get("needs_clarification") and state.get("clarification_request"):
+            clarification = state.get("clarification_request", {})
+            logger.info("[最终答案] 需要追问")
+            return {
+                **state,
+                "final_answer": "",
+                "output": "",
+                "needs_clarification": True,
+                "clarification_request": clarification
+            }
+        
+        simple_response = state.get("metadata", {}).get("simple_response")
+        if simple_response and simple_response == "__CONFIG_QUERY__":
+            reflection_status = "已启用" if self.orchestrator.enable_reflection else "已禁用"
+            rag_status = "已启用" if self.orchestrator.enable_rag else "已禁用"
+            report_status = "已启用" if self.orchestrator.enable_report_generation else "已禁用"
+            
+            config_response = f"""📋 **当前系统配置状态**
+
+以下是当前会话的系统设置：
+
+| 功能 | 状态 |
+|------|------|
+| **反思审核** | {reflection_status} |
+| **知识检索 (RAG)** | {rag_status} |
+| **报告生成** | {report_status} |
+
+**说明**：
+- 反思审核：对多智能体回答进行质量评估和审核
+- 知识检索：从企业知识库中检索相关信息
+- 报告生成：自动生成结构化分析报告
+
+如需更改设置，请在对话页面的设置面板中调整。"""
+            
+            logger.info("[最终答案] 配置查询模式")
+            return {
+                **state,
+                "final_answer": config_response,
+                "output": config_response
+            }
+        
+        specialist_results = state.get("specialist_results", [])
+        logger.debug(f"[最终答案] specialist_results: {len(specialist_results)} 个")
+        
+        if state.get("needs_clarification") and state.get("clarification_request"):
+            logger.info("[最终答案] 需要追问")
+            return {
+                **state,
+                "final_answer": "",
+                "output": "",
+                "needs_clarification": True,
+                "clarification_request": state.get("clarification_request")
+            }
+        
+        logger.debug(f"[最终答案] 收到 {len(specialist_results)} 个专家结果")
+        
+        if not specialist_results:
+            logger.warning("[最终答案] 无专家结果，返回降级响应")
+            return {
+                **state,
+                "final_answer": "抱歉，未能获取到有效的分析结果。",
+                "output": "抱歉，未能获取到有效的分析结果。"
+            }
+        
+        try:
+            raw_results = []
+            for sr in specialist_results:
+                if isinstance(sr, dict) and "data" in sr:
+                    raw_results.append(sr)
+            
+            if not raw_results:
+                logger.warning("[最终答案] raw_results 为空，返回降级响应")
+                
+                if state.get("needs_clarification") and state.get("clarification_request"):
+                    logger.info("[最终答案] 需要追问")
+                    return {
+                        **state,
+                        "final_answer": "",
+                        "output": "",
+                        "needs_clarification": True,
+                        "clarification_request": state.get("clarification_request")
+                    }
+                
+                return {
+                    **state,
+                    "final_answer": "抱歉，未能获取到有效的分析结果。",
+                    "output": "抱歉，未能获取到有效的分析结果。"
+                }
+            
+            from app.agent_framework.components.result_synthesizer import ResultSynthesizer
+            synthesizer = ResultSynthesizer(llm_adapter=self.orchestrator.llm_adapter)
+            
+            logger.info("[最终答案] 开始调用 ResultSynthesizer...")
+            final_markdown = await synthesizer.synthesize_and_format(
+                specialist_results={r.get("source", "unknown"): r.get("data", {}) for r in raw_results},
+                user_query=state.get("user_query", "")
+            )
+            
+            final_markdown = self._clean_markdown_output(final_markdown)
+            logger.debug(f"[最终答案] 清洗后长度: {len(final_markdown)}")
+            
+            if final_markdown:
+                logger.info(f"[最终答案] 合成成功，长度: {len(final_markdown)}")
+                updated_state = {
+                    **state,
+                    "final_answer": final_markdown,
+                    "output": final_markdown
+                }
+            else:
+                logger.warning("[最终答案] 合成器返回空，使用降级方案")
+                updated_state = {
+                    **state,
+                    "final_answer": "抱歉，生成报告时遇到问题。",
+                    "output": "抱歉，生成报告时遇到问题。"
+                }
+            
+        except Exception as e:
+            logger.error(f"[最终答案] 合成器异常: {e}")
+            updated_state = {
+                **state,
+                "final_answer": "抱歉，生成报告时遇到问题。",
+                "output": "抱歉，生成报告时遇到问题。"
+            }
+        
+        return updated_state
+    
+    def _clean_markdown_output(self, text: str) -> str:
+        """
+        清洗 LLM 返回的 Markdown 文本
+        
+        移除多余的反引号包裹（如 ```markdown ... ```）
+        
+        Args:
+            text: 原始 LLM 输出
+            
+        Returns:
+            清洗后的文本
+        """
+        if not text:
+            return text
+        
+        original = text
+        text = text.strip()
+        
+        if text.startswith("```markdown\n"):
+            text = text[12:]
+        elif text.startswith("```markdown"):
+            text = text[11:]
+        elif text.startswith("```\n"):
+            text = text[4:]
+        elif text.startswith("```"):
+            text = text[3:]
+        
+        if text.endswith("```"):
+            text = text[:-3]
+        
+        text = text.strip()
+        
+        if original != text:
+            print(f"🔧 [清洗] 移除了 markdown 代码块标记")
+        
+        return text
+    
+    def _fallback_concat(self, specialist_results: list) -> str:
+        """降级方案：灾难发生时的基础拼接"""
+        parts = ["## 📊 综合分析报告 (系统降级版)\n\n"]
+        source_names = {"finance": "💰 财务专家", "tax": "📋 税务专家", "legal": "⚖️ 法律专家"}
+        for result in specialist_results:
+            source = result.get("source", "unknown")
+            name = source_names.get(source, f"🤖 {source}专家")
+            content = result.get("content", "")
+            parts.append(f"### {name}\n\n{content}\n\n---\n\n")
+        return "".join(parts)
 
 
 @dataclass
@@ -46,7 +651,7 @@ class OrchestrationContext:
     user_id: str
     user_query: Optional[str] = None
     context: Dict[str, Any] = field(default_factory=dict)
-    enable_reflection: bool = False
+    enable_reflection: bool = True
     enable_rag: bool = True
     enable_report_generation: bool = False
     confidence_threshold: float = 0.7
@@ -57,6 +662,8 @@ class OrchestrationContext:
     reflection_result: Optional[Dict[str, Any]] = None
     final_response: Optional[str] = None
     needs_human_review: bool = False
+    needs_clarification: bool = False
+    clarification_request: Optional[Any] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -81,7 +688,7 @@ class AgentOrchestrator:
         self,
         tenant_id: str = "default",
         user_id: str = "default",
-        enable_reflection: bool = False,
+        enable_reflection: bool = True,
         enable_rag: bool = True,
         max_parallel_agents: int = 3,
         timeout: float = 120.0,
@@ -105,6 +712,7 @@ class AgentOrchestrator:
             self.enable_reflection = context.enable_reflection
             self.max_parallel_agents = context.max_specialists
             self.enable_rag = enable_rag
+            self.enable_report_generation = context.enable_report_generation
             self.timeout = timeout
             self.context = context
         else:
@@ -112,6 +720,7 @@ class AgentOrchestrator:
             self.user_id = user_id
             self.enable_reflection = enable_reflection
             self.enable_rag = enable_rag
+            self.enable_report_generation = False
             self.max_parallel_agents = max_parallel_agents
             self.timeout = timeout
             self.context = None
@@ -126,7 +735,7 @@ class AgentOrchestrator:
         self.tax_specialist: Optional[TaxSpecialist] = None
         self.legal_specialist: Optional[LegalSpecialist] = None
 
-        self.output_agent: Optional[OutputAgent] = None
+        self.output_agent: Optional[ResultSynthesizer] = None
         
         self.rag_retriever: Optional[TenantIsolatedRAGRetriever] = None
         
@@ -136,10 +745,627 @@ class AgentOrchestrator:
         
         self.initialized = False
         
+        self.result_cache: Optional[ResultCache] = None
+        self._init_result_cache()
+        
         print("🎭 [编排器] 初始化完成")
         print(f"   - 租户ID: {tenant_id}")
         print(f"   - 反思审核: {'启用' if enable_reflection else '禁用'}")
         print(f"   - RAG检索: {'启用' if enable_rag else '禁用'}")
+    
+    def _init_result_cache(self):
+        """初始化结果缓存"""
+        try:
+            cache_config = CacheConfig(
+                max_size=1000,
+                default_ttl=3600,
+                similarity_threshold=0.85,
+                enable_semantic=True
+            )
+            self.result_cache = ResultCache(config=cache_config)
+            print("💾 [编排器] 结果缓存已初始化")
+        except Exception as e:
+            print(f"⚠️ [编排器] 结果缓存初始化失败: {e}")
+            self.result_cache = None
+    
+    def _generate_cache_key(self, query: str, tenant_id: str) -> str:
+        """生成缓存键"""
+        import hashlib
+        key_data = f"{tenant_id}:{query.strip().lower()}"
+        return hashlib.sha256(key_data.encode()).hexdigest()[:32]
+    
+    async def _check_cache(self, query: str, embedding: Optional[List[float]] = None) -> Optional[Any]:
+        """检查缓存"""
+        if not self.result_cache:
+            return None
+        
+        try:
+            cache_key = self._generate_cache_key(query, self.tenant_id)
+            
+            if embedding:
+                result = await self.result_cache.get_similar(query, embedding)
+                if result:
+                    logger.info(f"💾 [缓存] 语义命中: {cache_key[:8]}...")
+                    return result[0]
+            else:
+                result = await self.result_cache.get(query)
+                if result:
+                    logger.info(f"💾 [缓存] 精确命中: {cache_key[:8]}...")
+                    return result
+            
+            return None
+        except Exception as e:
+            logger.error(f"❌ [缓存] 检查失败: {e}")
+            return None
+    
+    async def _save_to_cache(self, query: str, result: Any, embedding: Optional[List[float]] = None):
+        """保存结果到缓存"""
+        if not self.result_cache:
+            return
+        
+        try:
+            await self.result_cache.set(
+                query=query,
+                result=result,
+                embedding=embedding,
+                ttl=3600
+            )
+            logger.info(f"💾 [缓存] 已保存结果")
+        except Exception as e:
+            logger.error(f"❌ [缓存] 保存失败: {e}")
+    
+    # =========================================================================
+    # 🚀 状态机启动器模式 (LangGraph 集成)
+    # =========================================================================
+    
+    async def process_user_request(
+        self,
+        user_input: str,
+        session_id: Optional[str] = None,
+        history: Optional[List[Dict[str, str]]] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> OrchestrationContext:
+        """
+        🚀 状态机启动器 - 核心入口（LangGraph 集成版）
+        
+        这是重构后的核心处理方法，使用 LangGraph 状态机进行多智能体协作。
+        废弃了旧的 _handle_single_specialist、_handle_multiple_specialists 等自研方法。
+        
+        工作流程：
+        1. 组装初始黑板状态 (Initial State)
+        2. 实例化 LangGraph Workflow
+        3. 携带 Checkpointer 记忆执行
+        4. 从最终状态中提取报告并返回
+        
+        Args:
+            user_input: 用户输入
+            session_id: 会话ID（用于 Checkpointer 记忆持久化）
+            history: 历史消息
+            metadata: 其他元数据
+            
+        Returns:
+            OrchestrationContext: 包含最终响应的上下文
+        """
+        print(f"🚀 [Orchestrator] 启动 LangGraph 状态机...")
+        print(f"   - 用户输入: {user_input[:50]}...")
+        print(f"   - 会话ID: {session_id}")
+        
+        session_id = session_id or str(uuid.uuid4())
+        start_time = datetime.now()
+        
+        if not self.initialized:
+            await self.initialize()
+        
+        context = OrchestrationContext(
+            session_id=session_id,
+            tenant_id=self.tenant_id,
+            user_id=self.user_id,
+            user_query=user_input,
+            context={"history": history or [], **(metadata or {})},
+            enable_reflection=self.enable_reflection,
+            enable_rag=self.enable_rag
+        )
+        
+        try:
+            # 1️⃣ 组装初始黑板状态
+            print("📋 [状态机] 组装初始黑板状态...")
+            initial_state = self._create_initial_blackboard_state(
+                user_input=user_input,
+                session_id=session_id,
+                history=history,
+                metadata=metadata
+            )
+            
+            # 2️⃣ 执行 LangGraph 状态机（带超时保护）
+            print("⚙️ [状态机] 执行 LangGraph 工作流...")
+            MAX_WORKFLOW_TIMEOUT = 120  # 最大执行时间 120 秒
+            
+            try:
+                final_state = await asyncio.wait_for(
+                    self._execute_langgraph_workflow(initial_state, context),
+                    timeout=MAX_WORKFLOW_TIMEOUT
+                )
+                print(f"✅ [状态机] LangGraph 执行完成")
+            except asyncio.TimeoutError:
+                print(f"❌ [状态机] LangGraph 执行超时 ({MAX_WORKFLOW_TIMEOUT}秒)，强制终止")
+                final_state = initial_state.copy()
+                final_state["final_answer"] = "抱歉，处理时间过长。系统已在规定时间内完成了基础分析。"
+                final_state["specialist_results"] = context.specialist_results or []
+                context.metadata["timeout"] = True
+            except Exception as e:
+                print(f"❌ [状态机] 执行异常: {e}")
+                error_msg = str(e)
+                if "enable_report_generation" in error_msg or "enable_reflection" in error_msg or "enable_rag" in error_msg:
+                    final_answer = "⚠️ 系统配置加载失败，请刷新页面后重试"
+                elif "AttributeError" in error_msg or "object has no attribute" in error_msg or "'NoneType'" in error_msg:
+                    final_answer = "⚠️ 智能体初始化不完整，请稍后重试或刷新页面"
+                else:
+                    final_answer = "⚠️ 处理过程中遇到问题，请稍后重试"
+                final_state = initial_state.copy()
+                final_state["final_answer"] = final_answer
+                final_state["specialist_results"] = []
+                context.metadata["error"] = error_msg
+                context.metadata["user_friendly_error"] = final_answer
+            
+            # 3️⃣ 从最终状态提取结果
+            print("📤 [状态机] 提取最终响应...")
+            context.final_response = final_state.get("final_answer", "")
+            context.specialist_results = final_state.get("specialist_results", [])
+            
+            print(f"🚨 [调试] final_state 键: {list(final_state.keys())}")
+            print(f"🚨 [调试] 'needs_clarification' in final_state: {'needs_clarification' in final_state}")
+            print(f"🚨 [调试] 'clarification_request' in final_state: {'clarification_request' in final_state}")
+            
+            # 🚨 从 specialist_results 提取生肉数据（因为 LangGraph 可能丢失 raw_results）
+            specialist_results = final_state.get("specialist_results", [])
+            raw_results = []
+            for sr in specialist_results:
+                if isinstance(sr, dict) and "data" in sr:
+                    raw_results.append(sr)
+            
+            context.intent_result = final_state.get("intent")
+            context.needs_human_review = final_state.get("needs_human_review", False)
+            
+            context.needs_clarification = final_state.get("needs_clarification", False)
+            if final_state.get("clarification_request"):
+                clarification = final_state.get("clarification_request")
+                if isinstance(clarification, dict):
+                    from app.multi_agent_system.clarification_service import ClarificationRequest, ClarificationType
+                    context.clarification_request = ClarificationRequest(
+                        type=clarification.get("type", ClarificationType.INTENT_CLARIFICATION),
+                        question=clarification.get("question", "请详细描述您的问题"),
+                        suggestions=clarification.get("suggestions", []),
+                        reason=clarification.get("reason", "您的输入需要更多信息来帮助您"),
+                        required=clarification.get("required", True),
+                        placeholder=clarification.get("placeholder")
+                    )
+                else:
+                    context.clarification_request = clarification
+            
+            if context.needs_clarification and context.clarification_request:
+                print(f"💬 [状态机] 检测到需要追问，跳过结果合成")
+                context.final_response = ""
+            
+            # 🚨 添加详细日志追踪数据
+            print(f"🚨 [调试] process_user_request 提取数据:")
+            if context.final_response:
+                print(f"  - final_answer: '{context.final_response[:100]}...' (长度: {len(context.final_response)})")
+            else:
+                print(f"  - final_answer: '(空/None)'")
+            print(f"  - specialist_results: {len(specialist_results)} 个")
+            print(f"  - raw_results (从 specialist_results 提取): {len(raw_results)} 个")
+            print(f"  - needs_clarification: {context.needs_clarification}")
+            print(f"  - final_state keys: {list(final_state.keys())}")
+            
+            # 4️⃣ 如果有生肉数据，调用 ResultSynthesizer 生成最终答案
+            if raw_results and not context.final_response:
+                print("🎨 [状态机] 检测到生肉数据，调用 ResultSynthesizer...")
+                try:
+                    # 获取用户原始查询
+                    messages = final_state.get("messages", [])
+                    user_query = user_input
+                    if messages and isinstance(messages[0], dict):
+                        user_query = messages[0].get("content", user_input)
+                    
+                    # 调用 ResultSynthesizer
+                    synthesizer = self.output_agent
+                    if synthesizer:
+                        print("🎨 [状态机] 开始智能合成...")
+                        context.final_response = await synthesizer.synthesize_and_format(
+                            specialist_results={r.get("source", "unknown"): r.get("data", {}) for r in raw_results},
+                            user_query=user_query
+                        )
+                        if context.final_response:
+                            print(f"🎨 [状态机] 合成完成，长度: {len(context.final_response)} 字符")
+                        else:
+                            print(f"🎨 [状态机] 合成完成，但结果为空")
+                    else:
+                        # 降级：使用 fallback 方法
+                        print("⚠️ [状态机] ResultSynthesizer 未初始化，使用降级方案...")
+                        context.final_response = self._fallback_concat(raw_results)
+                except Exception as e:
+                    print(f"❌ [状态机] ResultSynthesizer 执行失败: {e}")
+                    # 降级方案
+                    context.final_response = self._fallback_concat(raw_results)
+            
+            elapsed_ms = (datetime.now() - start_time).total_seconds() * 1000
+            print(f"✅ [状态机] 处理完成，耗时: {elapsed_ms:.0f}ms")
+            
+            return context
+            
+        except Exception as e:
+            import traceback
+            error_trace = traceback.format_exc()
+            print(f"❌ [状态机] 执行失败: {type(e).__name__}: {e}")
+            print(f"❌ [状态机] 详细堆栈:\n{error_trace}")
+            
+            error_msg = str(e)
+            if "enable_report_generation" in error_msg or "enable_reflection" in error_msg or "enable_rag" in error_msg:
+                context.final_response = "⚠️ 系统配置加载失败，请刷新页面后重试"
+                context.metadata["error"] = "配置加载失败"
+            elif "AttributeError" in error_msg or "'NoneType'" in error_msg:
+                context.final_response = "⚠️ 智能体初始化不完整，请稍后重试或刷新页面"
+                context.metadata["error"] = "智能体初始化失败"
+            else:
+                context.final_response = f"⚠️ 处理过程中遇到问题，请稍后重试"
+                context.metadata["error"] = error_msg
+            
+            context.metadata["error_type"] = type(e).__name__
+            context.metadata["error_trace"] = error_trace
+            return context
+    
+    def _create_initial_blackboard_state(
+        self,
+        user_input: str,
+        session_id: str,
+        history: Optional[List[Dict[str, str]]] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        创建 LangGraph 初始黑板状态
+        
+        这个状态会被传入 LangGraph 的 StateGraph，作为工作流的起点。
+        所有后续的处理都会基于这个状态进行增量修改。
+        
+        Args:
+            user_input: 用户输入
+            session_id: 会话ID
+            history: 历史消息
+            metadata: 其他元数据
+            
+        Returns:
+            Dict: 初始黑板状态
+        """
+        from app.langgraph.state import (
+            AgentState, 
+            create_initial_state as create_langgraph_state,
+            AgentMessage,
+            SpecialistType
+        )
+        
+        # 构建消息历史
+        messages = []
+        if history:
+            for msg in history[-10:]:  # 最多保留最近10条
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                messages.append(AgentMessage(
+                    role=role,
+                    content=content
+                ))
+        
+        # 添加当前用户消息
+        messages.append(AgentMessage(
+            role="user",
+            content=user_input
+        ))
+        
+        # 从用户输入中提取关键实体
+        entities = self._extract_entities(user_input)
+        
+        initial_state = create_langgraph_state(
+            session_id=session_id,
+            tenant_id=self.tenant_id,
+            user_id=self.user_id,
+            user_query=user_input,
+            max_iterations=10,
+            max_retries=3,
+            entities=entities,
+            messages=messages,
+            specialists_needed=[],
+            specialist_results=[],
+            rag_context=[],
+            metadata=metadata or {}
+        )
+        
+        print(f"📋 [黑板] 初始状态已创建")
+        print(f"   - 消息数: {len(messages)}")
+        print(f"   - 实体: {entities}")
+        
+        return initial_state
+    
+    # =========================================================================
+    # 🚦 LangGraph 条件边路由函数（系统交警）
+    # =========================================================================
+    
+    @staticmethod
+    def route_after_intent(state: Dict[str, Any]) -> str | List[str]:
+        """
+        🚦 冷酷的交警逻辑：根据 IntentRouter 写在黑板上的意图，决定流量去向。
+        
+        这是一个纯代码函数，不调用大模型，只根据状态数据瞬间决定下一秒的流转方向。
+        
+        Args:
+            state: AgentState 黑板状态
+            
+        Returns:
+            str | List[str]: 路由目标（单路由返回字符串，并行路由返回列表）
+        """
+        print(f"🚦 [Router Edge] 收到 state 键: {list(state.keys())}")
+        print(f"🚦 [Router Edge] needs_clarification in state: {'needs_clarification' in state}")
+        print(f"🚦 [Router Edge] needs_clarification 值: {state.get('needs_clarification')}")
+        print(f"🚦 [Router Edge] clarification_request in state: {'clarification_request' in state}")
+        
+        if state.get("needs_clarification") and state.get("clarification_request"):
+            print("🚦 [Router Edge] → 检测到需要追问，跳过专家节点")
+            return "final"
+        
+        intent = state.get("intent", "direct_answer")
+        specialists = state.get("specialists_needed", [])
+        
+        print(f"🚦 [Router Edge] 捕获意图: {intent}, 需要专家: {specialists}")
+        
+        routing_strategy = state.get("routing_strategy", "")
+        
+        if intent == "direct_answer" or routing_strategy == "direct_answer":
+            print("🚦 [Router Edge] → 直接跳到终点")
+            return "final"
+            
+        elif intent == "rag_only" or routing_strategy == "rag_retrieval":
+            print("🚦 [Router Edge] → 走 RAG 节点")
+            return "rag_retrieval"
+            
+        elif routing_strategy == "single_specialist" or intent in ["single_specialist", "risk_analysis", "financial_analysis", "accounting_query"]:
+            if not specialists:
+                print("🚦 [Router Edge] → 单专家默认财务")
+                return "finance_specialist"
+            
+            target = specialists[0]
+            print(f"🚦 [Router Edge] → 单专家: {target}")
+            
+            if target == "finance":
+                return "finance_specialist"
+            elif target == "tax":
+                return "tax_specialist"
+            elif target == "legal":
+                return "legal_specialist"
+            else:
+                return "finance_specialist"
+            
+        elif intent == "multi_specialist":
+            print(f"🚦 [Router Edge] → 多专家并行: {specialists}")
+            routes = []
+            for s in specialists:
+                if s == "finance":
+                    routes.append("finance_specialist")
+                elif s == "tax":
+                    routes.append("tax_specialist")
+                elif s == "legal":
+                    routes.append("legal_specialist")
+            
+            if routes:
+                return routes
+            return ["finance_specialist"]
+        
+        print(f"🚦 [Router Edge] → 默认路由")
+        return "final"
+    
+    async def _execute_langgraph_workflow(
+        self,
+        initial_state: Dict[str, Any],
+        context: OrchestrationContext
+    ) -> Dict[str, Any]:
+        """
+        执行 LangGraph 工作流
+        
+        使用 LangGraph 的 StateGraph 和条件边来实现意图驱动的动态路由。
+        
+        Args:
+            initial_state: 初始黑板状态
+            context: 编排上下文
+            
+        Returns:
+            Dict: 最终状态
+        """
+        from langgraph.graph import StateGraph, END, START
+        
+        print(f"⚙️ [LangGraph] 构建工作流图...")
+        
+        # 初始化节点函数集合
+        nodes = Nodes(self)
+        
+        workflow = StateGraph(AgentState)
+        
+        # 📍 定义工作流节点（带日志追踪）
+        print("📍 [工作流构建] 定义节点:")
+        print("   START → receptionist → intent_router")
+        print("   ├── → finance_specialist")
+        print("   ├── → tax_specialist")  
+        print("   ├── → legal_specialist")
+        print("   ├── → rag_retrieval")
+        print("   └── → final → END")
+        print("   intent_router 节点之后通过条件边动态路由")
+        
+        workflow.add_node("receptionist", nodes.receptionist)
+        workflow.add_node("intent_router", nodes.intent_router)
+        workflow.add_node("rag_retrieval", nodes.rag_retrieval)
+        workflow.add_node("finance_specialist", nodes.finance_specialist)
+        workflow.add_node("tax_specialist", nodes.tax_specialist)
+        workflow.add_node("legal_specialist", nodes.legal_specialist)
+        workflow.add_node("reflection", nodes.reflection)
+        workflow.add_node("final", nodes.final)
+        
+        workflow.add_edge(START, "receptionist")
+        print("📍 [边定义] START → receptionist")
+        workflow.add_edge("receptionist", "intent_router")
+        print("📍 [边定义] receptionist → intent_router")
+        
+        workflow.add_conditional_edges(
+            "intent_router",
+            self.route_after_intent,
+            {
+                "finance_specialist": "finance_specialist",
+                "tax_specialist": "tax_specialist",
+                "legal_specialist": "legal_specialist",
+                "rag_retrieval": "rag_retrieval",
+                "final": "final"
+            }
+        )
+        print("📍 [边定义] intent_router → (条件边) → specialist/final")
+        
+        workflow.add_edge("finance_specialist", "reflection")
+        workflow.add_edge("tax_specialist", "reflection")
+        workflow.add_edge("legal_specialist", "reflection")
+        workflow.add_edge("rag_retrieval", "reflection")
+        
+        def check_reflection(state: AgentState) -> str:
+            """反思审核后的条件路由：根据质量评估结果决定下一步"""
+            res = state.get("reflection_result", {})
+            acceptable = res.get("acceptable", True)
+            retries = state.get("retry_count", 0)
+            max_retries = state.get("max_retries", 3)
+            print(f"🚦 [反思路由] 质量评估: acceptable={acceptable}, retry_count={retries}/{max_retries}")
+            
+            if acceptable:
+                print("🚦 [反思路由] → 质量达标，直接输出最终答案")
+                return "final"
+            else:
+                print(f"🚦 [反思路由] → 质量不达标")
+                if retries >= max_retries:
+                    print(f"🚨 [架构级熔断] 已达最大重试次数 ({retries}>={max_retries})，强制放行！")
+                    return "final"
+                print(f"🚦 [反思路由] → 打回重做 (第 {retries + 1} 次)")
+                return "finance_specialist"
+        
+        workflow.add_conditional_edges(
+            "reflection",
+            check_reflection,
+            {
+                "final": "final",
+                "finance_specialist": "finance_specialist"
+            }
+        )
+        workflow.add_edge("final", END)
+        print("📍 [边定义] specialists → reflection → (条件边) → final/finance_specialist → END")
+        
+        # 启用 MemorySaver 实现跨请求记忆持久化
+        from langgraph.checkpoint.memory import MemorySaver
+        memory = MemorySaver()
+        app = workflow.compile(checkpointer=memory)
+        
+        print(f"⚙️ [LangGraph] 工作流图编译完成，已启用 MemorySaver")
+        
+        config = {
+            "configurable": {
+                "thread_id": context.session_id
+            }
+        }
+        
+        print(f"⚙️ [LangGraph] 开始执行，thread_id={context.session_id}")
+        
+        # 🔧 创建节点执行追踪器
+        class NodeTransitionTracker:
+            def __init__(self):
+                self.execution_path = []
+            
+            def on_node_start(self, node_name: str):
+                print(f"\n{'='*60}")
+                print(f"🔄 [节点执行] ▶️ 进入节点: {node_name}")
+                print(f"{'='*60}")
+            
+            def on_node_end(self, node_name: str, state: dict):
+                print(f"🔄 [节点执行] ✅ 节点完成: {node_name}")
+                self.execution_path.append(node_name)
+                
+                # 打印写入黑板的数据
+                if isinstance(state, dict):
+                    print(f"\n📝 [黑板写入] {node_name} 节点写入黑板的数据:")
+                    for key, value in state.items():
+                        if value is not None and value != [] and value != {}:
+                            if isinstance(value, (str, int, float, bool)):
+                                print(f"   • {key}: {value}")
+                            elif isinstance(value, list):
+                                print(f"   • {key}: list[{len(value)}] items")
+                                if value and len(value) <= 3:
+                                    for i, item in enumerate(value):
+                                        if isinstance(item, dict):
+                                            print(f"     [{i}]: {list(item.keys())}")
+                                        else:
+                                            print(f"     [{i}]: {str(item)[:100]}")
+                            elif isinstance(value, dict):
+                                print(f"   • {key}: dict with keys {list(value.keys())[:5]}")
+                            else:
+                                print(f"   • {key}: {type(value).__name__}")
+                    print(f"{'='*60}\n")
+        
+        tracker = NodeTransitionTracker()
+        
+        try:
+            print(f"📋 [LangGraph] initial_state 类型: {type(initial_state)}")
+            print(f"📋 [LangGraph] initial_state 键: {list(initial_state.keys()) if isinstance(initial_state, dict) else 'not a dict'}")
+            
+            # 🚀 使用 stream 模式以获取节点执行信息
+            print(f"\n🚀 [执行开始] 准备执行工作流...")
+            final_state = initial_state
+            async for event in app.astream(initial_state, config):
+                for node_name, node_state in event.items():
+                    if node_name != "__end__":
+                        tracker.on_node_start(node_name)
+                        tracker.on_node_end(node_name, node_state)
+                        final_state = node_state
+            
+            print(f"📋 [LangGraph] 最终状态已更新")
+            print(f"📋 [LangGraph] final_answer: {final_state.get('final_answer', 'N/A')[:100] if final_state.get('final_answer') else '(空)'}")
+            print(f"📋 [LangGraph] final_state 包含 keys: {list(final_state.keys())[:10]}...")
+        except Exception as invoke_error:
+            import traceback
+            error_detail = traceback.format_exc()
+            print(f"❌ [LangGraph] invoke 失败: {invoke_error}")
+            print(f"❌ [LangGraph] 详细错误: {error_detail}")
+            raise invoke_error
+        
+        print(f"\n{'='*60}")
+        print(f"⚙️ [LangGraph] 执行完成")
+        print(f"📍 [执行路径] {' → '.join(tracker.execution_path)}")
+        print(f"{'='*60}")
+        
+        return final_state
+    
+    def _extract_entities(self, text: str) -> Dict[str, Any]:
+        """从文本中提取实体"""
+        entities = {}
+        
+        # 提取公司名
+        company_patterns = [
+            r'公司', r'企业', r'集团', r'股份有限公司', r'有限公司'
+        ]
+        for pattern in company_patterns:
+            if pattern in text:
+                entities["has_company"] = True
+                break
+        
+        # 提取金额
+        import re
+        amount_pattern = r'(\d+(?:\.\d+)?)\s*(?:万|亿|元)'
+        amounts = re.findall(amount_pattern, text)
+        if amounts:
+            entities["amounts"] = amounts
+        
+        return entities
+    
+    # =========================================================================
+    # 📴 废弃的方法（保留用于兼容性，逐步移除）
+    # =========================================================================
     
     async def process_context(
         self,
@@ -171,6 +1397,8 @@ class AgentOrchestrator:
             trace_id = await agent_tracer.start_trace(
                 agent_type="multi_agent_orchestrator",
                 user_query=user_input,
+                user_id=context.user_id,
+                tenant_id=context.tenant_id,
                 session_id=context.session_id,
                 message_id=context.session_id
             )
@@ -206,12 +1434,37 @@ class AgentOrchestrator:
                     step_type="final_answer",
                     content="直接返回简单响应"
                 )
+                
+                if routing_result.simple_response == "__CONFIG_QUERY__":
+                    config_response = self._build_config_query_response()
+                    await agent_tracer.end_trace(
+                        trace_id=trace_id,
+                        final_answer=config_response,
+                        success=True
+                    )
+                    context.final_response = config_response
+                    return context
+                
                 await agent_tracer.end_trace(
                     trace_id=trace_id,
                     final_answer=routing_result.simple_response,
                     success=True
                 )
                 context.final_response = routing_result.simple_response
+                return context
+            
+            if routing_result.clarification_request:
+                step_number += 1
+                await agent_tracer.add_step(
+                    trace_id=trace_id,
+                    step_number=step_number,
+                    step_type="thought",
+                    content=f"检测到模糊输入，需要追问: {routing_result.clarification_request.type}"
+                )
+                print(f"💬 [编排器] 检测到需要追问: {routing_result.clarification_request.type}")
+                context.clarification_request = routing_result.clarification_request
+                context.final_response = None
+                context.needs_clarification = True
                 return context
             
             intent_result = routing_result.intent_result
@@ -594,8 +1847,8 @@ class AgentOrchestrator:
                 tool_manager=self.tool_manager
             )
             
-            print("🎨 [编排器] 创建输出智能体...")
-            self.output_agent = OutputAgent(llm_adapter=self.llm_adapter)
+            print("🎨 [编排器] 创建结果合成器...")
+            self.output_agent = ResultSynthesizer(llm_adapter=self.llm_adapter)
             
             if self.enable_rag:
                 print("📚 [编排器] 初始化RAG检索器...")
@@ -844,14 +2097,38 @@ class AgentOrchestrator:
             await self.initialize()
         
         start_time = datetime.now()
+        latency_tracker = LatencyTracker()
+        latency_tracker.start()
         
         try:
             user_input = context.user_query
             
-            # 发送接待阶段事件
-            receptionist_event = json.dumps({"type": "stage", "stage": "receptionist"}, ensure_ascii=False)
-            print(f"📤 [流式] 发送事件: {receptionist_event[:100]}")
-            yield receptionist_event
+            yield json.dumps({
+                "type": "ttft",
+                "stage": "received",
+                "timestamp": start_time.isoformat()
+            }, ensure_ascii=False)
+            
+            cached_result = await self._check_cache(user_input)
+            if cached_result:
+                latency_tracker.mark("cache_hit")
+                yield json.dumps({
+                    "type": "cache_hit",
+                    "result": cached_result,
+                    "latency_ms": latency_tracker.get_summary()["total_ms"]
+                }, ensure_ascii=False)
+                yield json.dumps({
+                    "type": "done",
+                    "processing_time": latency_tracker.get_summary()["total_ms"],
+                    "from_cache": True
+                }, ensure_ascii=False)
+                return
+            
+            yield json.dumps({
+                "type": "stage",
+                "stage": "receptionist",
+                "timestamp": datetime.now().isoformat()
+            }, ensure_ascii=False)
             
             if not user_input:
                 error_event = json.dumps({
@@ -868,6 +2145,8 @@ class AgentOrchestrator:
                 yield done_event
                 return
             
+            latency_tracker.mark("intent_routing")
+            
             print("🎯 [流式] 开始意图路由分析...")
             routing_result = await self.intent_router.run(
                 user_input=user_input,
@@ -881,17 +2160,29 @@ class AgentOrchestrator:
                 stage_event = json.dumps({"type": "stage", "stage": "response"}, ensure_ascii=False)
                 yield stage_event
                 
-                text_event = json.dumps({
-                    "type": "text",
-                    "content": routing_result.simple_response
-                }, ensure_ascii=False)
+                if routing_result.simple_response == "__CONFIG_QUERY__":
+                    config_response = self._build_config_query_response()
+                    text_event = json.dumps({
+                        "type": "text",
+                        "content": config_response
+                    }, ensure_ascii=False)
+                else:
+                    text_event = json.dumps({
+                        "type": "text",
+                        "content": routing_result.simple_response
+                    }, ensure_ascii=False)
+                    await self._save_to_cache(user_input, routing_result.simple_response)
+                
                 print(f"📤 [流式] 发送文本事件: {text_event[:100]}...")
                 yield text_event
                 
                 processing_time = int((datetime.now() - start_time).total_seconds() * 1000)
+                latency_tracker.mark("response_ready")
+                
                 done_event = json.dumps({
                     "type": "done",
-                    "processing_time": processing_time
+                    "processing_time": processing_time,
+                    "latency_summary": latency_tracker.get_summary()
                 }, ensure_ascii=False)
                 print(f"📤 [流式] 发送完成事件: 处理时间={processing_time}ms")
                 yield done_event
@@ -956,79 +2247,16 @@ class AgentOrchestrator:
                 specialist_name_map = {"finance": "💰 财务专家", "tax": "📋 税务专家", "legal": "⚖️ 法务专家"}
                 specialist_display = specialist_name_map.get(specialist_type, specialist_type)
                 
-                thinking_event1 = json.dumps({
-                    "type": "thinking",
-                    "stage": "analyzing",
-                    "message": f"正在连接 {specialist_display}...",
-                    "progress": 10
-                }, ensure_ascii=False)
-                print("📤 [流式] 发送 thinking 事件: 正在连接专家")
-                yield thinking_event1
+                latency_tracker.mark("specialist_start")
                 
-                thinking_event2 = json.dumps({
-                    "type": "thinking",
-                    "stage": "retrieving",
-                    "message": "正在检索相关数据...",
-                    "progress": 25
-                }, ensure_ascii=False)
-                print("📤 [流式] 发送 thinking 事件: 正在检索")
-                yield thinking_event2
-                
-                thinking_event3 = json.dumps({
-                    "type": "thinking",
-                    "stage": "querying",
-                    "message": "正在查询企业财务数据...",
-                    "progress": 40
-                }, ensure_ascii=False)
-                print("📤 [流式] 发送 thinking 事件: 正在查询")
-                yield thinking_event3
-                
-                thinking_messages = [
-                    {"stage": "analyzing", "message": f"{specialist_display}正在思考中...", "progress": 50},
-                    {"stage": "processing", "message": "正在分析财务指标...", "progress": 55},
-                    {"stage": "analyzing", "message": "正在评估风险因素...", "progress": 60},
-                    {"stage": "synthesizing", "message": "正在整合分析结果...", "progress": 65},
-                ]
-                
-                thinking_queue = asyncio.Queue()
-                
-                specialist_task = asyncio.create_task(
-                    self._handle_single_specialist(user_input, intent_result)
-                )
-                thinking_task = asyncio.create_task(
-                    self._run_thinking_loop(thinking_messages, interval=3.0, queue=thinking_queue)
+                specialist_result = await self._handle_single_specialist_stream(
+                    user_input, intent_result
                 )
                 
-                specialist_result = None
-                
-                while not specialist_task.done():
-                    try:
-                        msg = await asyncio.wait_for(thinking_queue.get(), timeout=0.5)
-                        yield msg
-                    except asyncio.TimeoutError:
-                        continue
-                
-                specialist_result = specialist_task.result()
-                thinking_task.cancel()
-                try:
-                    await thinking_task
-                except asyncio.CancelledError:
-                    pass
+                latency_tracker.mark("specialist_complete")
                 
                 specialists_needed = intent_result.requires_specialists[:1] if intent_result.requires_specialists else []
                 suggested = intent_result.requires_specialists[0] if intent_result.requires_specialists else None
-                yield json.dumps({
-                    "type": "stage",
-                    "stage": "specialists",
-                    "specialists": specialists_needed
-                }, ensure_ascii=False)
-                
-                yield json.dumps({
-                    "type": "thinking",
-                    "stage": "analyzing",
-                    "message": f"正在分析 {specialist_display} 的回复...",
-                    "progress": 70
-                }, ensure_ascii=False)
                 
                 context.specialist_results.append({
                     'specialist_type': suggested,
@@ -1066,48 +2294,29 @@ class AgentOrchestrator:
                     user_input
                 )
                 
-                if self.output_agent and hasattr(self.output_agent, 'synthesize_and_format_stream'):
-                    buffer = ""
-                    text_count = 0
-                    # 优化：降低缓冲阈值到2个字符，实现更流畅的逐字显示
-                    CHAR_BUFFER_SIZE = 2
-                    for chunk in final_response.split():
-                        buffer += chunk + " "
-                        if len(buffer) >= CHAR_BUFFER_SIZE:
-                            text_event = json.dumps({
-                                "type": "text",
-                                "content": buffer
-                            }, ensure_ascii=False)
-                            text_count += 1
-                            if text_count % 20 == 0:
-                                print(f"📤 [流式] 发送文本块 #{text_count}: {buffer[:50]}...")
-                            yield text_event
-                            buffer = ""
-                    if buffer:
+                # 按行发送，保持Markdown格式
+                print(f"📤 [流式] 准备发送响应，长度: {len(final_response)} 字符")
+                
+                if not final_response or len(final_response.strip()) == 0:
+                    final_response = "抱歉，暂时无法生成回复，请稍后重试。"
+                
+                # 逐行发送，确保完整性
+                for line in final_response.split('\n'):
+                    if line.strip():  # 跳过空行
                         text_event = json.dumps({
                             "type": "text",
-                            "content": buffer
+                            "content": line + "\n"
                         }, ensure_ascii=False)
-                        print(f"📤 [流式] 发送最后文本块 #{text_count + 1}: {buffer[:50]}...")
                         yield text_event
-                else:
-                    text_count = 0
-                    # 优化：降低到2个字符分块，实现逐字显示
-                    for i in range(0, len(final_response), 2):
-                        chunk = final_response[i:i + 2]
-                        text_event = json.dumps({
-                            "type": "text",
-                            "content": chunk
-                        }, ensure_ascii=False)
-                        text_count += 1
-                        if text_count % 25 == 0:
-                            print(f"📤 [流式] 发送文本块 #{text_count}: {chunk}")
-                        yield text_event
+                        print(f"📤 [流式] 发送行: {line[:30]}...")
+                
+                print(f"📤 [流式] 响应发送完成")
                 
                 processing_time = int((datetime.now() - start_time).total_seconds() * 1000)
                 done_event = json.dumps({
                     "type": "done",
-                    "processing_time": processing_time
+                    "processing_time": processing_time,
+                    "latency_summary": latency_tracker.get_summary()
                 }, ensure_ascii=False)
                 print(f"📤 [流式] 发送完成事件: 处理时间={processing_time}ms")
                 yield done_event
@@ -1186,23 +2395,29 @@ class AgentOrchestrator:
                     user_input
                 )
                 
-                # 优化：降低到2个字符分块，实现逐字显示
-                text_count = 0
-                for i in range(0, len(final_response), 2):
-                    chunk = final_response[i:i + 2]
-                    text_event = json.dumps({
-                        "type": "text",
-                        "content": chunk
-                    }, ensure_ascii=False)
-                    text_count += 1
-                    if text_count % 25 == 0:
-                        print(f"📤 [流式-多专家] 发送文本块 #{text_count}: {chunk}")
-                    yield text_event
+                # 逐行发送，保持Markdown格式
+                print(f"📤 [流式-多专家] 准备发送响应，长度: {len(final_response)} 字符")
+                
+                if not final_response or len(final_response.strip()) == 0:
+                    final_response = "抱歉，暂时无法生成回复，请稍后重试。"
+                
+                # 逐行发送
+                for line in final_response.split('\n'):
+                    if line.strip():
+                        text_event = json.dumps({
+                            "type": "text",
+                            "content": line + "\n"
+                        }, ensure_ascii=False)
+                        yield text_event
+                        print(f"📤 [流式-多专家] 发送行: {line[:30]}...")
+                
+                print(f"📤 [流式-多专家] 响应发送完成")
                 
                 processing_time = int((datetime.now() - start_time).total_seconds() * 1000)
                 yield json.dumps({
                     "type": "done",
-                    "processing_time": processing_time
+                    "processing_time": processing_time,
+                    "latency_summary": latency_tracker.get_summary()
                 }, ensure_ascii=False)
                 return
             
@@ -1217,13 +2432,18 @@ class AgentOrchestrator:
                 }, ensure_ascii=False)
                 return
             
+            latency_tracker.mark("first_token")
+            
             yield json.dumps({
                 "type": "error",
                 "error": "抱歉，暂时无法处理您的请求，请稍后重试。"
             }, ensure_ascii=False)
+            
+            await self._save_to_cache(user_input, context.final_response)
             yield json.dumps({
                 "type": "done",
-                "processing_time": int((datetime.now() - start_time).total_seconds() * 1000)
+                "processing_time": int((datetime.now() - start_time).total_seconds() * 1000),
+                "latency_summary": latency_tracker.get_summary()
             }, ensure_ascii=False)
             
         except Exception as e:
@@ -1235,7 +2455,8 @@ class AgentOrchestrator:
             }, ensure_ascii=False)
             yield json.dumps({
                 "type": "done",
-                "processing_time": int((datetime.now() - start_time).total_seconds() * 1000)
+                "processing_time": int((datetime.now() - start_time).total_seconds() * 1000),
+                "latency_summary": latency_tracker.get_summary()
             }, ensure_ascii=False)
     
     async def stream_process(
@@ -1278,6 +2499,31 @@ class AgentOrchestrator:
         ]
         
         return any(indicator in response[:20] for indicator in simple_indicators)
+    
+    def _build_config_query_response(self) -> str:
+        """构建系统配置查询响应"""
+        reflection_status = "已启用" if self.enable_reflection else "已禁用"
+        rag_status = "已启用" if self.enable_rag else "已禁用"
+        report_status = "已启用" if self.enable_report_generation else "已禁用"
+        
+        response = f"""📋 **当前系统配置状态**
+
+以下是当前会话的系统设置：
+
+| 功能 | 状态 |
+|------|------|
+| **反思审核** | {reflection_status} |
+| **知识检索 (RAG)** | {rag_status} |
+| **报告生成** | {report_status} |
+
+**说明**：
+- 反思审核：对多智能体回答进行质量评估和审核
+- 知识检索：从企业知识库中检索相关信息
+- 报告生成：自动生成结构化分析报告
+
+如需更改设置，请在对话页面的设置面板中调整。"""
+
+        return response
     
     async def _handle_direct_answer(
         self,
@@ -1343,6 +2589,17 @@ class AgentOrchestrator:
             print(f"⚠️ [编排器] RAG检索失败: {e}")
             return "抱歉，知识库检索失败。"
     
+    async def _handle_single_specialist_stream(
+        self,
+        user_input: str,
+        intent_result: IntentAnalysisResult
+    ) -> Dict[str, Any]:
+        """流式处理单专家类型的请求（供 stream_process_context 使用）
+        
+        这个方法调用 _handle_single_specialist 并返回结果。
+        """
+        return await self._handle_single_specialist(user_input, intent_result)
+    
     async def _handle_single_specialist(
         self,
         user_input: str,
@@ -1406,42 +2663,33 @@ class AgentOrchestrator:
                     print("📚 [编排器] 未检索到相关数据")
                     rag_context = {
                         "documents": [],
-                        "summary": "未找到企业相关数据",
+                        "summary": "RAG检索未完成",
                         "specialist_type": specialist_name,
                         "has_data": False,
-                        "data_status": "no_data"
+                        "data_status": "rag_failed"
                     }
             except Exception as e:
                 print(f"⚠️ [编排器] RAG检索失败: {e}")
                 rag_context = {
                     "documents": [],
-                    "summary": "数据检索失败",
+                    "summary": "RAG检索失败",
                     "specialist_type": specialist_name,
                     "has_data": False,
-                    "data_status": "retrieval_error"
+                    "data_status": "rag_error"
                 }
         
         specialist_context = intent_result.suggested_params or {}
         specialist_context["tenant_id"] = self.tenant_id
         specialist_context["user_id"] = self.user_id
         
-        has_data = rag_context and rag_context.get("has_data", len(rag_context.get("documents", [])) > 0)
-        requires_enterprise_data = self._requires_enterprise_data(user_input, intent_result)
-        
         print("🔍 [编排器] 数据可用性检查:")
-        print(f"   - requires_enterprise_data: {requires_enterprise_data}")
-        print(f"   - has_data: {has_data}")
-        print(f"   - rag_context: {rag_context}")
+        print(f"   - specialist_type: {specialist_name}")
+        docs_count = len(rag_context.get('documents', []))
+        print(f"   - RAG文档数: {docs_count}")
+        rag_summary = rag_context.get('summary', '')
+        print(f"   - RAG摘要: {rag_summary[:50] if rag_summary else '无'}...")
         
-        if requires_enterprise_data and not has_data:
-            print("📭 [编排器] 检测到需要企业数据但无可用数据，跳过专家调用")
-            return {
-                "status": "no_data",
-                "specialist": specialist_name,
-                "result": self._generate_no_data_response(user_input, specialist_name, intent_result),
-                "data_status": "insufficient",
-                "suggestions": self._generate_data_import_suggestions(user_input, specialist_name)
-            }
+        print("📤 [编排器] 调用专家处理（无论RAG结果如何，专家都会查询企业数据库）")
         
         try:
             if hasattr(specialist, 'consult'):
@@ -1503,7 +2751,7 @@ class AgentOrchestrator:
         specialist_context["user_id"] = self.user_id
         
         if intent_result.routing_strategy == RoutingStrategy.MULTI_SPECIALIST_PARALLEL:
-            tasks = []
+            tasks = {}
             for specialist_name in specialists_needed[:self.max_parallel_agents]:
                 specialist = specialist_map.get(specialist_name)
                 if specialist:
@@ -1518,31 +2766,38 @@ class AgentOrchestrator:
                             user_input=user_input,
                             context=specialist_context
                         )
-                    tasks.append((specialist_name, specialist, task))
+                    tasks[specialist_name] = task
             
             results = {}
-            for specialist_name, specialist, task in tasks:
-                try:
-                    result = await task
-                    results[specialist_name] = {
-                        "status": "success",
-                        "result": result
-                    }
-                except (ValueError, KeyError) as e:
-                    results[specialist_name] = {
-                        "status": "error",
-                        "error": f"数据错误: {str(e)}"
-                    }
-                except (OSError, IOError) as e:
-                    results[specialist_name] = {
-                        "status": "error",
-                        "error": f"IO错误: {str(e)}"
-                    }
-                except Exception as e:
-                    results[specialist_name] = {
-                        "status": "error",
-                        "error": str(e)
-                    }
+            if tasks:
+                # 并发执行所有任务
+                task_coroutines = list(tasks.values())
+                gathered_results = await asyncio.gather(*task_coroutines, return_exceptions=True)
+                
+                for idx, (specialist_name, task_result) in enumerate(zip(tasks.keys(), gathered_results)):
+                    if isinstance(task_result, Exception):
+                        # 处理异常
+                        if isinstance(task_result, (ValueError, KeyError)):
+                            results[specialist_name] = {
+                                "status": "error",
+                                "error": f"数据错误: {str(task_result)}"
+                            }
+                        elif isinstance(task_result, (OSError, IOError)):
+                            results[specialist_name] = {
+                                "status": "error",
+                                "error": f"IO错误: {str(task_result)}"
+                            }
+                        else:
+                            results[specialist_name] = {
+                                "status": "error",
+                                "error": str(task_result)
+                            }
+                    else:
+                        # 正常结果
+                        results[specialist_name] = {
+                            "status": "success",
+                            "result": task_result
+                        }
             
             return {
                 "status": "success",
@@ -1899,7 +3154,7 @@ class AgentOrchestrator:
         specialist_results: List[Dict[str, Any]],
         intent_result: IntentAnalysisResult
     ) -> str:
-        """使用 OutputAgent 合成多专家结果
+        """使用 ResultSynthesizer 合成多专家结果
         
         Args:
             user_query: 用户原始问题
@@ -1912,6 +3167,9 @@ class AgentOrchestrator:
         try:
             task_id = f"task_{datetime.now().timestamp()}"
             
+            # 创建 ResultSynthesizer 实例
+            synthesizer = ResultSynthesizer(llm_adapter=self.llm_adapter)
+            
             for result in specialist_results:
                 source_agent = result.get('specialist_type', 'unknown')
                 source_type = result.get('specialist_name', 'specialist')
@@ -1921,7 +3179,7 @@ class AgentOrchestrator:
                 if isinstance(content, dict):
                     content = json.dumps(content, ensure_ascii=False)
                 
-                output_agent.add_input(
+                synthesizer.add_input(
                     task_id=task_id,
                     source_agent=source_agent,
                     source_type=source_type,
@@ -1933,9 +3191,9 @@ class AgentOrchestrator:
                     }
                 )
             
-            from app.agent_framework.core.output_agent import SynthesisStrategy
+            from app.agent_framework.components import SynthesisStrategy
             
-            synthesis_result = await output_agent.synthesize(
+            synthesis_result = await synthesizer.synthesize(
                 user_query=user_query,
                 strategy=SynthesisStrategy.MERGE
             )
@@ -1946,7 +3204,7 @@ class AgentOrchestrator:
             return self._format_fallback_response(specialist_results, intent_result)
             
         except Exception as e:
-            print(f"⚠️ [编排器] OutputAgent 合成失败: {e}")
+            print(f"⚠️ [编排器] ResultSynthesizer 合成失败: {e}")
             return self._format_fallback_response(specialist_results, intent_result)
     
     def _format_fallback_response(
@@ -1954,7 +3212,7 @@ class AgentOrchestrator:
         specialist_results: List[Dict[str, Any]],
         intent_result: IntentAnalysisResult
     ) -> str:
-        """格式化备用响应（当 OutputAgent 失败时使用）
+        """格式化备用响应（当 ResultSynthesizer 失败时使用）
         
         Args:
             specialist_results: 各专家的分析结果
@@ -2050,7 +3308,7 @@ class AgentOrchestrator:
             生成的报告文本
         """
         if not self.report_generator:
-            print("⚠️ [编排器] ReportGenerator 未初始化，使用 OutputAgent 合成")
+            print("⚠️ [编排器] ReportGenerator 未初始化，使用 ResultSynthesizer 合成")
             return await self._synthesize_output(user_query, specialist_results, intent_result)
         
         try:
@@ -2177,7 +3435,7 @@ class AgentOrchestrator:
         intent_result: IntentAnalysisResult,
         user_query: str = ""
     ) -> str:
-        """格式化单专家响应（委托给 OutputAgent）"""
+        """格式化单专家响应（委托给 ResultSynthesizer）"""
         if specialist_result.get("status") == "no_data":
             formatted_no_data = self._format_no_data_response(specialist_result, intent_result, user_query)
             
@@ -2191,15 +3449,15 @@ class AgentOrchestrator:
                     }
                     specialist_display = specialist_name_map.get(specialist_type, "专家")
                     
-                    logger.info("📤 [输出智能体] 正在美化无数据响应...")
+                    logger.info("📤 [结果合成器] 正在美化无数据响应...")
                     formatted = await self.output_agent.synthesize_and_format(
                         {specialist_display: formatted_no_data},
                         user_query
                     )
-                    logger.info("📤 [输出智能体] 无数据响应美化完成")
+                    logger.info("📤 [结果合成器] 无数据响应美化完成")
                     return formatted
                 except Exception as e:
-                    logger.warning(f"⚠️ [输出智能体] 美化无数据响应失败: {e}")
+                    logger.warning(f"⚠️ [结果合成器] 美化无数据响应失败: {e}")
             
             return formatted_no_data
         
@@ -2215,24 +3473,34 @@ class AgentOrchestrator:
 
             specialist_display = specialist_name_map.get(specialist_key, "专家")
 
-            specialist_results = {specialist_display: result}
+            # 格式化专家结果，确保有统一的输出格式
+            formatted_result = self._format_specialist_result(result, specialist_key)
+            
+            # 为结果合成器准备原始专家结果和格式化结果
+            specialist_results = {
+                specialist_display: {
+                    "raw_result": result,  # 原始专家结果
+                    "formatted_result": formatted_result,  # 格式化后的结果
+                    "specialist_type": specialist_key
+                }
+            }
 
             if self.output_agent:
                 try:
-                    logger.info("📤 [输出智能体] 开始整合专家结果...")
+                    logger.info("📤 [结果合成器] 开始整合专家结果...")
+                    # 传递包含原始结果和格式化结果的结构
                     formatted = await self.output_agent.synthesize_and_format(
                         specialist_results,
                         user_query
                     )
-                    logger.info("📤 [输出智能体] 整合完成")
+                    logger.info("📤 [结果合成器] 整合完成")
                     return formatted
                 except Exception as e:
-                    logger.warning(f"⚠️ [输出智能体] 整合失败: {e}")
+                    logger.warning(f"⚠️ [结果合成器] 整合失败: {e}")
+                    # 如果结果合成器失败，返回格式化结果
+                    return formatted_result
 
-            if isinstance(result, dict):
-                result = result.get("analysis", result.get("content", str(result)))
-
-            return f"## {specialist_display}\n\n{result}"
+            return formatted_result
 
         error_msg = specialist_result.get("error", "处理失败")
         specialist_display = specialist_result.get("specialist", "专家")
@@ -2247,6 +3515,292 @@ class AgentOrchestrator:
 ---
 
 请稍后重试，或联系管理员协助处理。"""
+    
+    def _format_specialist_result(self, result: Any, specialist_type: str) -> str:
+        """
+        格式化专家结果，确保统一的输出格式
+        
+        Args:
+            result: 专家返回的结果
+            specialist_type: 专家类型
+            
+        Returns:
+            格式化后的结果字符串
+        """
+        if isinstance(result, dict):
+            # 税务专家特殊处理
+            if specialist_type == "tax":
+                return self._format_tax_result(result)
+            # 财务专家特殊处理
+            elif specialist_type == "finance":
+                return self._format_finance_result(result)
+            # 法务专家特殊处理
+            elif specialist_type == "legal":
+                return self._format_legal_result(result)
+            # 通用处理
+            else:
+                return self._format_general_result(result)
+        elif isinstance(result, str):
+            return result
+        else:
+            return str(result)
+    
+    def _format_tax_result(self, result: Dict[str, Any]) -> str:
+        """格式化税务专家结果"""
+        try:
+            # 优先使用分析报告字段
+            analysis_report = result.get("analysis_report")
+            if analysis_report:
+                return analysis_report
+            
+            # 如果没有分析报告，则构建一个
+            analysis = result.get("analysis", {})
+            if isinstance(analysis, dict):
+                tax_type = analysis.get("tax_type", "未知税种")
+                tax_rate = analysis.get("tax_rate")
+                tax_amount = analysis.get("tax_amount")
+                risk_points = analysis.get("risk_points", [])
+                compliance_status = analysis.get("compliance_status", "未知")
+                confidence = analysis.get("confidence", 0.0)
+                
+                # 构建格式化输出
+                formatted = f"""# 📋 税务分析报告
+
+## 1. 税种识别
+- **税种类型**: {tax_type}
+- **适用税率**: {tax_rate if tax_rate is not None else "未提供"}
+- **税额估算**: {tax_amount if tax_amount is not None else "未提供"}
+
+## 2. 合规性评估
+- **合规状态**: {compliance_status}
+- **置信度**: {confidence:.2%}
+
+## 3. 风险点分析"""
+                
+                if risk_points:
+                    for i, risk in enumerate(risk_points, 1):
+                        formatted += f"\n{i}. {risk}"
+                else:
+                    formatted += "\n- 未发现明显风险点"
+                
+                # 添加建议
+                recommendations = result.get("recommendations", [])
+                if recommendations:
+                    formatted += "\n\n## 4. 专业建议"
+                    for i, rec in enumerate(recommendations, 1):
+                        formatted += f"\n{i}. {rec}"
+                
+                # 添加实体信息
+                entities = result.get("entities", {})
+                if entities:
+                    formatted += "\n\n## 5. 提取信息"
+                    for key, value in entities.items():
+                        if value is not None:
+                            formatted += f"\n- **{key}**: {value}"
+                
+                # 添加总结
+                formatted += f"\n\n## 6. 总结\n"
+                if compliance_status == "compliant":
+                    formatted += "✅ 税务合规性良好，建议继续保持并关注政策变化。"
+                elif compliance_status == "review_required":
+                    formatted += "⚠️ 需要进一步审查，建议咨询专业税务顾问。"
+                else:
+                    formatted += "❌ 存在合规风险，建议立即采取纠正措施。"
+                
+                return formatted
+            else:
+                return f"# 📋 税务分析\n\n{str(analysis)}"
+        except Exception as e:
+            logger.error(f"格式化税务结果失败: {e}")
+            return f"# 📋 税务分析\n\n{str(result)}"
+    
+    def _format_finance_result(self, result: Dict[str, Any]) -> str:
+        """格式化财务专家结果"""
+        try:
+            # 提取分析结果
+            analysis = result.get("analysis", {})
+            if isinstance(analysis, dict):
+                domain = analysis.get("domain", "未知领域")
+                confidence = analysis.get("confidence", 0.0)
+                financial_indicators = analysis.get("financial_indicators", {})
+                key_metrics = analysis.get("key_metrics", [])
+                risk_factors = analysis.get("risk_factors", [])
+                recommendations = result.get("recommendations", [])
+                
+                # 构建美观的Markdown报告
+                formatted = f"""# 💰 财务分析报告
+
+## 📊 分析概览
+- **分析领域**: {domain}
+- **置信度**: {confidence:.2%}
+- **分析时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+## 📈 财务指标分析"""
+                
+                if financial_indicators:
+                    formatted += "\n\n| 指标名称 | 数值 | 说明 |"
+                    formatted += "\n|----------|------|------|"
+                    for key, value in financial_indicators.items():
+                        # 格式化数值
+                        if isinstance(value, (int, float)):
+                            if abs(value) >= 1000000:
+                                display_value = f"{value/1000000:.2f}百万"
+                            elif abs(value) >= 10000:
+                                display_value = f"{value/10000:.2f}万"
+                            elif abs(value) >= 1000:
+                                display_value = f"{value/1000:.1f}千"
+                            elif 0 < abs(value) < 1:
+                                display_value = f"{value:.2%}"
+                            else:
+                                display_value = f"{value:.2f}"
+                        else:
+                            display_value = str(value)
+                        
+                        # 添加说明
+                        description = self._get_financial_indicator_description(key)
+                        formatted += f"\n| **{key}** | {display_value} | {description} |"
+                else:
+                    formatted += "\n\n> ℹ️ 未提取到具体的财务指标数据"
+                
+                # 关键指标
+                if key_metrics:
+                    formatted += "\n\n## 🔑 关键指标"
+                    for i, metric in enumerate(key_metrics, 1):
+                        formatted += f"\n{i}. {metric}"
+                
+                # 风险因素
+                if risk_factors:
+                    formatted += "\n\n## ⚠️ 风险因素"
+                    for i, risk in enumerate(risk_factors, 1):
+                        formatted += f"\n{i}. {risk}"
+                else:
+                    formatted += "\n\n## ✅ 风险评估\n- 未发现明显风险因素"
+                
+                # 专业建议
+                if recommendations:
+                    formatted += "\n\n## 💡 专业建议"
+                    for i, rec in enumerate(recommendations, 1):
+                        formatted += f"\n{i}. {rec}"
+                
+                # 详细分析内容
+                content = analysis.get("content")
+                if content and content != "暂无详细分析":
+                    formatted += f"\n\n## 📝 详细分析\n{content}"
+                
+                # 添加总结
+                risk_assessment = result.get("risk_assessment", {})
+                risk_level = risk_assessment.get("risk_level", "未知")
+                
+                formatted += f"\n\n## 🎯 总结"
+                if risk_level == "low":
+                    formatted += "\n✅ **财务健康状况良好**，建议继续保持当前经营策略。"
+                elif risk_level == "medium":
+                    formatted += "\n⚠️ **存在中等财务风险**，建议关注关键指标变化，适时调整策略。"
+                elif risk_level == "high":
+                    formatted += "\n❌ **财务风险较高**，建议立即采取措施改善财务状况。"
+                else:
+                    formatted += "\n📊 **财务分析完成**，建议根据具体业务情况制定相应策略。"
+                
+                # 添加数据来源说明 - 基于真实数据状态
+                has_rag_data = result.get("rag_enabled", False)
+                has_db_data = result.get("has_financial_db_data", False)
+                data_error = result.get("financial_data_error")
+
+                if has_db_data:
+                    formatted += "\n\n---\n*💾 分析基于企业财务数据库真实数据*"
+                elif has_rag_data:
+                    formatted += "\n\n---\n*📚 分析基于企业知识库文档数据*"
+                elif data_error:
+                    formatted += f"\n\n---\n*⚠️ 无法获取企业财务数据: {data_error}*"
+                else:
+                    formatted += "\n\n---\n*🔍 分析基于通用财务知识框架*"
+                
+                return formatted
+            else:
+                # 如果analysis不是字典，尝试直接使用内容
+                content = str(analysis) if analysis else str(result)
+                return f"""# 💰 财务分析报告
+
+## 📊 分析结果
+
+{content}
+
+---
+*🔍 基于通用财务知识分析*"""
+        except Exception as e:
+            logger.error(f"格式化财务结果失败: {e}")
+            return f"""# 💰 财务分析报告
+
+## ❌ 格式化错误
+
+抱歉，格式化财务分析结果时出现错误。
+
+**错误信息**: {str(e)}
+
+**原始数据**: {str(result)[:200]}...
+
+---
+*⚠️ 系统内部错误，请联系技术支持*"""
+    
+    def _get_financial_indicator_description(self, indicator: str) -> str:
+        """获取财务指标描述"""
+        descriptions = {
+            "revenue": "营业收入，反映企业经营规模",
+            "profit": "净利润，反映企业盈利能力",
+            "profit_margin": "利润率，反映盈利效率",
+            "assets": "总资产，反映企业规模",
+            "liabilities": "总负债，反映债务水平",
+            "equity": "所有者权益，反映股东投资",
+            "current_ratio": "流动比率，反映短期偿债能力",
+            "debt_ratio": "资产负债率，反映财务杠杆",
+            "roa": "资产收益率，反映资产使用效率",
+            "roe": "净资产收益率，反映股东回报",
+            "gross_margin": "毛利率，反映产品盈利能力",
+            "operating_margin": "营业利润率，反映经营效率",
+            "cash_flow": "现金流量，反映现金状况",
+            "inventory_turnover": "存货周转率，反映存货管理效率",
+            "receivables_turnover": "应收账款周转率，反映收款效率",
+        }
+        return descriptions.get(indicator, "财务指标")
+    
+    def _format_legal_result(self, result: Dict[str, Any]) -> str:
+        """格式化法务专家结果"""
+        try:
+            # 提取分析结果
+            analysis = result.get("analysis", {})
+            if isinstance(analysis, dict):
+                return f"""## ⚖️ 法务分析报告
+
+### 合规评估
+- **合规状态**: {analysis.get('compliance_status', '未知')}
+- **置信度**: {analysis.get('confidence', 0.0):.2%}
+- **风险等级**: {analysis.get('risk_level', '未知')}
+
+### 详细分析
+{analysis.get('content', '暂无详细分析')}"""
+            else:
+                return f"## ⚖️ 法务分析\n\n{str(analysis)}"
+        except Exception as e:
+            logger.error(f"格式化法务结果失败: {e}")
+            return f"## ⚖️ 法务分析\n\n{str(result)}"
+    
+    def _format_general_result(self, result: Dict[str, Any]) -> str:
+        """格式化通用专家结果"""
+        try:
+            # 尝试提取各种可能的字段
+            content = result.get("content") or result.get("analysis") or result.get("result") or str(result)
+            
+            if isinstance(content, dict):
+                # 如果是字典，转换为格式化的字符串
+                formatted = "## 专家分析报告\n\n"
+                for key, value in content.items():
+                    formatted += f"### {key}\n{value}\n\n"
+                return formatted.strip()
+            else:
+                return f"## 专家分析\n\n{content}"
+        except Exception as e:
+            logger.error(f"格式化通用结果失败: {e}")
+            return f"## 专家分析\n\n{str(result)}"
     
     async def _format_multi_specialist_response(
         self,
@@ -2269,24 +3823,29 @@ class AgentOrchestrator:
             if is_success:
                 specialist_display = specialist_name_map.get(specialist_name, specialist_name)
                 specialist_response = result.get("result", "")
-                if isinstance(specialist_response, dict):
-                    specialist_response = specialist_response.get("analysis", specialist_response.get("content", str(specialist_response)))
-                specialist_results_for_synthesis[specialist_display] = specialist_response
+                # 使用统一的格式化方法
+                formatted_response = self._format_specialist_result(specialist_response, specialist_name)
+                # 为结果合成器准备结构化的数据
+                specialist_results_for_synthesis[specialist_display] = {
+                    "raw_result": specialist_response,
+                    "formatted_result": formatted_response,
+                    "specialist_type": specialist_name
+                }
 
         if not specialist_results_for_synthesis:
             return "⚠️ 抱歉，所有专家处理均失败。"
 
         if self.output_agent:
             try:
-                logger.info(f"📤 [输出智能体-多专家] 开始整合 {len(specialist_results_for_synthesis)} 位专家结果...")
+                logger.info(f"📤 [结果合成器-多专家] 开始整合 {len(specialist_results_for_synthesis)} 位专家结果...")
                 formatted_output = await self.output_agent.synthesize_and_format(
                     specialist_results_for_synthesis,
                     user_query
                 )
-                logger.info("📤 [输出智能体-多专家] 整合完成")
+                logger.info("📤 [结果合成器-多专家] 整合完成")
                 return formatted_output
             except Exception as e:
-                logger.warning(f"⚠️ [输出智能体-多专家] 整合失败: {e}")
+                logger.warning(f"⚠️ [结果合成器-多专家] 整合失败: {e}")
 
         combined_response = "\n\n---\n\n".join(
             f"### {name}\n\n{content}"
@@ -2422,3 +3981,172 @@ class AgentOrchestrator:
             }, ensure_ascii=False, indent=2)
         
         return report_content
+
+    async def breakdown_task_to_blackboard(
+        self,
+        user_goal: str,
+        required_expertise: Optional[List[str]] = None,
+        priority_tasks: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """
+        Orchestrator Agent 专用工具：将用户宏大目标拆解为 DAG 子任务，写入黑板
+
+        这是 Orchestrator Agent（协调者/主路由智能体）的核心工具之一。
+        它的职责是：
+        1. 分析用户目标，识别关键子任务
+        2. 确定任务间的依赖关系，构建 DAG
+        3. 设置任务优先级和执行顺序
+        4. 将所有任务写入 TaskBlackboard
+
+        Args:
+            user_goal: 用户的宏大目标描述
+            required_expertise: 需要哪些专业领域的专家（如 ["finance", "tax", "legal"]）
+            priority_tasks: 高优先级任务标识列表
+
+        Returns:
+            包含 DAG 结构、创建的任务、执行顺序的字典
+        """
+        try:
+            from app.mcp.orchestrator_tools import breakdown_task_to_blackboard as _breakdown
+
+            result = await _breakdown(
+                user_goal=user_goal,
+                session_id=self.context.session_id if self.context else str(uuid.uuid4()),
+                tenant_id=self.tenant_id,
+                required_expertise=required_expertise,
+                priority_tasks=priority_tasks
+            )
+
+            logger.info(f"[Orchestrator] 任务拆解完成，创建 {result.get('summary', {}).get('total_tasks', 0)} 个子任务")
+            return result
+
+        except Exception as e:
+            logger.error(f"[Orchestrator] 任务拆解失败: {e}", exc_info=True)
+            return {
+                "status": "error",
+                "error": str(e),
+                "message": f"任务拆解失败: {str(e)}"
+            }
+
+    async def summarize_final_report(
+        self,
+        user_query: str,
+        report_title: Optional[str] = None,
+        include_executive_summary: bool = True,
+        include_recommendations: bool = True,
+        format: str = "markdown"
+    ) -> Dict[str, Any]:
+        """
+        Orchestrator Agent 专用工具：收集黑板结论，生成最终交付报告
+
+        这是 Orchestrator Agent（协调者/主路由智能体）的核心工具之一。
+        它的职责是：
+        1. 从 TaskBlackboard 读取所有已完成任务的结论
+        2. 整合各专家的分析结果
+        3. 生成结构化的最终交付报告
+        4. 包含执行摘要、详细分析、建议和后续步骤
+
+        Args:
+            user_query: 用户原始查询（用于报告上下文）
+            report_title: 报告标题（可选）
+            include_executive_summary: 是否包含执行摘要
+            include_recommendations: 是否包含建议
+            format: 报告格式（markdown/html/json）
+
+        Returns:
+            包含报告内容的字典
+        """
+        try:
+            from app.mcp.orchestrator_tools import summarize_final_report as _summarize
+
+            result = await _summarize(
+                session_id=self.context.session_id if self.context else str(uuid.uuid4()),
+                tenant_id=self.tenant_id,
+                user_query=user_query,
+                report_title=report_title,
+                include_executive_summary=include_executive_summary,
+                include_recommendations=include_recommendations,
+                format=format
+            )
+
+            logger.info(f"[Orchestrator] 最终报告生成完成")
+            return result
+
+        except Exception as e:
+            logger.error(f"[Orchestrator] 报告生成失败: {e}", exc_info=True)
+            return {
+                "status": "error",
+                "error": str(e),
+                "message": f"报告生成失败: {str(e)}"
+            }
+
+    def get_available_tools(self) -> List[str]:
+        """
+        获取 Orchestrator Agent 可用的工具列表
+
+        返回:
+            工具名称列表
+        """
+        return [
+            "breakdown_task_to_blackboard",
+            "summarize_final_report",
+            "check_enterprise_data",
+            "retrieve_context"
+        ]
+
+    async def execute_orchestrator_workflow(
+        self,
+        user_goal: str,
+        generate_report: bool = True
+    ) -> Dict[str, Any]:
+        """
+        执行完整的 Orchestrator 工作流
+
+        工作流：
+        1. 使用 breakdown_task_to_blackboard 拆解任务
+        2. 并行/串行执行各子任务（由专家 Agent 处理）
+        3. 使用 summarize_final_report 生成最终报告
+
+        Args:
+            user_goal: 用户的宏大目标
+            generate_report: 是否生成最终报告
+
+        Returns:
+            工作流执行结果
+        """
+        try:
+            breakdown_result = await self.breakdown_task_to_blackboard(
+                user_goal=user_goal,
+                required_expertise=["finance", "tax", "legal"]
+            )
+
+            if breakdown_result.get("status") == "error":
+                return breakdown_result
+
+            created_tasks = breakdown_result.get("created_tasks", [])
+            task_ids = [t["task_id"] for t in created_tasks]
+
+            if generate_report:
+                report_result = await self.summarize_final_report(
+                    user_query=user_goal,
+                    report_title=f"关于「{user_goal[:30]}...」的综合分析报告"
+                )
+            else:
+                report_result = None
+
+            return {
+                "status": "success",
+                "workflow": "orchestrator",
+                "breakdown_result": breakdown_result,
+                "task_ids": task_ids,
+                "report_result": report_result,
+                "message": f"工作流完成：拆解为 {len(created_tasks)} 个任务" + ("，已生成报告" if generate_report else "")
+            }
+
+        except Exception as e:
+            logger.error(f"[Orchestrator] 工作流执行失败: {e}", exc_info=True)
+            return {
+                "status": "error",
+                "error": str(e),
+                "message": f"工作流执行失败: {str(e)}"
+            }

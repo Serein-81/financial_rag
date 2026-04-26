@@ -49,8 +49,10 @@ class EmbeddingService:
         Returns:
             向量列表
         """
+        logger.debug(f"[EmbeddingService] get_embedding 调用 | text长度={len(text) if text else 0}")
         adapter = self._get_adapter()
         embedding, _ = await adapter.encode_queries(text, return_tokens=False)
+        logger.debug(f"[EmbeddingService] get_embedding 返回 | embedding长度={len(embedding) if embedding else 0}")
         return embedding
     
     async def get_embeddings(self, texts: List[str]) -> List[List[float]]:

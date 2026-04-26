@@ -111,17 +111,18 @@ class TenantSecurityService:
             )
             
             try:
-                repository = TenantAuditLogRepository(AsyncSessionLocal())
-                await repository.create(
-                    tenant_id=_tenant_id or "system",
-                    user_id=_user_id or "system",
-                    action=event_type,
-                    resource_type="security_event",
-                    resource_id="",
-                    details=details,
-                    ip_address=details.get("ip_address"),
-                    user_agent=details.get("user_agent")
-                )
+                async with AsyncSessionLocal() as session:
+                    repository = TenantAuditLogRepository(session)
+                    await repository.create(
+                        tenant_id=_tenant_id or "system",
+                        user_id=_user_id or "system",
+                        action=event_type,
+                        resource_type="security_event",
+                        resource_id="",
+                        details=details,
+                        ip_address=details.get("ip_address"),
+                        user_agent=details.get("user_agent")
+                    )
             except Exception as repo_error:
                 logger.warning(f"记录审计日志失败（不影响主流程）: {repo_error}")
                 

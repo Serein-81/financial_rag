@@ -1,5 +1,6 @@
 from app.utils.json_compat import json
 import time
+import asyncio
 import uuid
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
@@ -24,6 +25,15 @@ from app.db import AsyncSessionLocal
 
 # 引入日志装饰器
 from app.utils.log_decorators import log_user_action
+
+
+class OrchestratorChatRequest(BaseModel):
+    """编排器对话请求"""
+    query: str
+    session_id: Optional[str] = None
+    enable_reflection: bool = True
+    enable_rag: bool = True
+
 
 router = APIRouter()
 
@@ -331,7 +341,8 @@ async def chat_with_agent(
 )
 async def chat_with_agent_stream(
         request: AgentChatRequest,
-        current_user: User = Depends(deps.get_current_user)
+        current_user: User = Depends(deps.get_current_user),
+        tenant_context: dict = Depends(deps.get_tenant_context)
 ):
     print(f"🌊 [Agent 流式接口被调用] 用户: {current_user.email} | kb_id: {request.kb_id} | 问题: {request.query}")
 
@@ -378,9 +389,9 @@ async def chat_with_agent_stream(
     async def event_generator():
         # SSE 标准要求数据以 "data: " 开头，以 "\n\n" 结尾
         
-        # 流式输出缓冲配置 - 优化为更小的缓冲区以实现逐字显示
-        BUFFER_SIZE = 1  # 每收到1个字符就发送（实现真正的逐字显示）
-        MAX_WAIT_TIME = 0.02  # 最大等待时间（秒），超时后立即发送
+        # 流式输出缓冲配置 - 平衡实时性和网络效率
+        BUFFER_SIZE = 5  # 累积5个字符后发送
+        MAX_WAIT_TIME = 0.03  # 最大等待时间30ms
 
         # 先把 session_id 发给前端，让前端知道当前会话的 ID
         init_data = json.dumps({"type": "init", "session_id": session_id})
@@ -399,13 +410,14 @@ async def chat_with_agent_stream(
                 last_send_time = time.time()
 
         try:
-            # 🧠 调用集成了记忆系统的流式服务，传入user_id
+            # 🧠 调用集成了记忆系统的流式服务，传入user_id和tenant_id
             async for chunk in agent_service.chat_stream(
                 user_input=request.query, 
                 kb_id=request.kb_id, 
                 session_id=session_id, 
-                history=[],  # 空历史，使用记忆系统替代
-                user_id=str(current_user.id)  # 🧠 传入user_id
+                history=[],
+                user_id=str(current_user.id),
+                tenant_id=tenant_context.get('tenant_id')  # 🧠 传入tenant_id用于图谱检索
             ):
                 # 识别 sources 信息并单独发送
                 if chunk.startswith("__SOURCES_EVENT__:"):
@@ -456,21 +468,251 @@ async def chat_with_agent_stream(
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
+@router.post("/orchestrator_chat_async")
+@log_user_action(
+    action_type="CHAT",
+    action_name="orchestrator_chat_async",
+    resource_type="orchestrator_session",
+    description="智能体编排器异步对话（支持页面切换）"
+)
+async def chat_with_orchestrator_async(
+        request: OrchestratorChatRequest,
+        current_user: User = Depends(deps.get_current_user),
+        tenant_context: dict = Depends(deps.get_tenant_context)
+):
+    """
+    [异步版] 智能体编排器对话接口
+    
+    与 /orchestrator_chat_stream 的区别：
+    1. 立即返回 task_id 和 thread_id（不阻塞）
+    2. 任务在后台通过 ARQ Worker 执行
+    3. 前端通过 GET /api/v1/agent-task/status/{thread_id} 查询进度
+    4. 切换页面后通过 GET /api/v1/agent-task/hydrate/{thread_id} 恢复状态
+    
+    使用流程：
+    1. POST /orchestrator_chat_async -> 获得 task_id, thread_id
+    2. GET /agent-task/status/{thread_id} -> 轮询获取进度
+    3. 页面切换后 GET /agent-task/hydrate/{thread_id} -> 恢复状态
+    """
+    print(f"🌊 [编排器异步接口被调用] 用户: {current_user.email} | 问题: {request.query}")
+    
+    tenant_id = tenant_context['tenant_id']
+    session_id = request.session_id or str(uuid.uuid4())
+    task_id = f"lgwf_{uuid.uuid4().hex[:16]}"
+    
+    try:
+        from app.models.agent_task import AgentTaskStatus, TaskStatus, TaskPriority
+        
+        task_record = AgentTaskStatus(
+            task_id=task_id,
+            thread_id=session_id,
+            tenant_id=tenant_id,
+            user_id=current_user.id,
+            task_type="langgraph_workflow",
+            task_name="多智能体工作流",
+            status=TaskStatus.PENDING,
+            priority=TaskPriority.NORMAL,
+            user_query=request.query,
+            extra_metadata={
+                "enable_reflection": request.enable_reflection,
+                "enable_rag": request.enable_rag
+            }
+        )
+        
+        from app.db.session import AsyncSessionLocal
+        async with AsyncSessionLocal() as db:
+            db.add(task_record)
+            await db.commit()
+        
+        import asyncio
+        from datetime import datetime
+        
+        asyncio.create_task(
+            execute_orchestrator_background(
+                task_id=task_id,
+                session_id=session_id,
+                tenant_id=tenant_id,
+                user_id=str(current_user.id),
+                query=request.query,
+                enable_reflection=request.enable_reflection,
+                enable_rag=request.enable_rag
+            )
+        )
+        
+        print(f"✅ [编排器异步] 任务已提交: task_id={task_id}, session_id={session_id}")
+        
+        return {
+            "task_id": task_id,
+            "thread_id": session_id,
+            "session_id": session_id,
+            "status": "submitted",
+            "message": "任务已提交到后台，请轮询获取进度",
+            "poll_url": f"/api/v1/agent-task/status/{session_id}",
+            "hydrate_url": f"/api/v1/agent-task/hydrate/{session_id}"
+        }
+        
+    except Exception as e:
+        print(f"❌ [编排器异步] 提交任务失败: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"任务提交失败: {str(e)}")
+
+
+async def execute_orchestrator_background(
+    task_id: str,
+    session_id: str,
+    tenant_id: str,
+    user_id: str,
+    query: str,
+    enable_reflection: bool = True,
+    enable_rag: bool = True
+):
+    """后台执行编排器任务"""
+    from app.models.agent_task import AgentTaskStatus, TaskStatus
+    from app.db.session import AsyncSessionLocal
+    from sqlalchemy import update
+    from datetime import datetime
+    import traceback
+    
+    try:
+        async with AsyncSessionLocal() as db:
+        
+            await db.execute(
+                update(AgentTaskStatus)
+                .where(AgentTaskStatus.task_id == task_id)
+                .values(
+                    status=TaskStatus.RUNNING,
+                    started_at=datetime.now(),
+                    current_node="initializing",
+                    progress_percent=5,
+                    progress_message="正在初始化..."
+                )
+            )
+            await db.commit()
+        
+        print(f"🚀 [后台] 开始执行编排器: task_id={task_id}")
+        
+        from app.multi_agent_system import AgentOrchestrator
+        
+        orchestrator = AgentOrchestrator(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            enable_reflection=enable_reflection,
+            enable_rag=enable_rag
+        )
+        
+        await orchestrator.initialize()
+        
+        await db.execute(
+            update(AgentTaskStatus)
+            .where(AgentTaskStatus.task_id == task_id)
+            .values(
+                current_node="intent",  # 改为前端期望的节点名称
+                progress_percent=30,
+                progress_message="正在分析意图..."
+            )
+        )
+        await db.commit()
+        
+        result_context = await orchestrator.process_user_request(
+            user_input=query,
+            session_id=session_id,
+            history=[]
+        )
+        
+        # 在专家处理前更新状态
+        await db.execute(
+            update(AgentTaskStatus)
+            .where(AgentTaskStatus.task_id == task_id)
+            .values(
+                current_node="specialists",  # 专家处理阶段
+                progress_percent=50,
+                progress_message="专家分析中..."
+            )
+        )
+        await db.commit()
+        
+        if result_context.needs_clarification and result_context.clarification_request:
+            clarification_dict = result_context.clarification_request
+            if hasattr(clarification_dict, 'model_dump'):
+                clarification_dict = clarification_dict.model_dump()
+            
+            intent_dict = None
+            if result_context.intent_result:
+                intent_dict = {
+                    "category": getattr(result_context.intent_result, 'intent', None),
+                    "confidence": getattr(result_context.intent_result, 'confidence', 0),
+                    "routing_strategy": getattr(result_context.intent_result, 'routing_strategy', None)
+                }
+            
+            await db.execute(
+                update(AgentTaskStatus)
+                .where(AgentTaskStatus.task_id == task_id)
+                .values(
+                    status=TaskStatus.RUNNING,
+                    current_node="clarification",
+                    progress_percent=50,
+                    progress_message="等待用户补充信息",
+                    needs_clarification=True,
+                    clarification_request=clarification_dict,
+                    intent_analysis=intent_dict
+                )
+            )
+            await db.commit()
+            print(f"💬 [后台] 检测到需要追问，状态已更新: task_id={task_id}")
+        else:
+            await db.execute(
+                update(AgentTaskStatus)
+                .where(AgentTaskStatus.task_id == task_id)
+                .values(
+                    status=TaskStatus.COMPLETED,
+                    current_node="response",  # 改为前端期望的节点名称
+                    progress_percent=100,
+                    progress_message="任务完成",
+                    final_response=result_context.final_response,
+                    completed_at=datetime.now(),
+                    execution_time_ms=0.0
+                )
+            )
+            await db.commit()
+        
+        print(f"✅ [后台] 编排器执行完成: task_id={task_id}")
+        
+    except Exception as e:
+        error_msg = str(e)
+        print(f"❌ [后台] 编排器执行失败: task_id={task_id}, error={error_msg}")
+        traceback.print_exc()
+        
+        sanitized_error = error_msg
+        if "enable_report_generation" in error_msg or "enable_reflection" in error_msg or "enable_rag" in error_msg:
+            sanitized_error = "系统配置加载失败"
+        elif "AttributeError" in error_msg or "object has no attribute" in error_msg or "'NoneType'" in error_msg:
+            sanitized_error = "智能体初始化失败"
+        elif len(error_msg) > 100 or any(x in error_msg for x in ["orchestrator", "AgentOrchestrator", "处理遇到问题"]):
+            sanitized_error = "处理过程中遇到问题"
+        
+        try:
+            await db.execute(
+                update(AgentTaskStatus)
+                .where(AgentTaskStatus.task_id == task_id)
+                .values(
+                    status=TaskStatus.FAILED,
+                    current_node="error",
+                    progress_percent=0,
+                    progress_message="任务执行失败",
+                    final_response=f"⚠️ {sanitized_error}，请稍后重试或刷新页面",
+                    error_message=sanitized_error,
+                    completed_at=datetime.now()
+                )
+            )
+            await db.commit()
+        except Exception as db_error:
+            print(f"⚠️ [后台] 更新失败状态失败: {db_error}")
+            await db.rollback()
+
+
 # ==========================================
 #  V4: 智能体编排器接口 🚀 新增
-#  用于：企业智能体系统的统一入口
-#  特点：接待Agent + 意图识别 + 专业Agent协作 + 反思审核
-# ==========================================
-
-class OrchestratorChatRequest(BaseModel):
-    """编排器对话请求"""
-    query: str  # 用户问题
-    session_id: Optional[str] = None  # 会话ID
-    enable_reflection: bool = True  # 是否启用反思审核
-    enable_rag: bool = True  # 是否启用RAG
-
-
-@router.post("/orchestrator_chat")
 @log_user_action(
     action_type="CHAT",
     action_name="orchestrator_chat",
@@ -479,7 +721,8 @@ class OrchestratorChatRequest(BaseModel):
 )
 async def chat_with_orchestrator(
         request: OrchestratorChatRequest,
-        current_user: User = Depends(deps.get_current_user)
+        current_user: User = Depends(deps.get_current_user),
+        tenant_context: dict = Depends(deps.get_tenant_context)
 ):
     """
     [V4] 智能体编排器对话接口
@@ -500,11 +743,14 @@ async def chat_with_orchestrator(
     """
     print(f"🎭 [编排器接口被调用] 用户: {current_user.email} | 问题: {request.query}")
     
+    tenant_id = tenant_context['tenant_id']
+    print(f"📋 使用租户ID: {tenant_id}")
+    
     try:
         from app.multi_agent_system import AgentOrchestrator, OrchestrationContext
         
         orchestrator = AgentOrchestrator(
-            tenant_id=str(current_user.id),
+            tenant_id=tenant_id,
             user_id=str(current_user.id),
             enable_reflection=request.enable_reflection,
             enable_rag=request.enable_rag
@@ -514,7 +760,7 @@ async def chat_with_orchestrator(
         
         context = OrchestrationContext(
             session_id=request.session_id or str(uuid.uuid4()),
-            tenant_id=str(current_user.id),
+            tenant_id=tenant_id,
             user_id=str(current_user.id),
             user_query=request.query,
             context={"history": []},
@@ -523,6 +769,22 @@ async def chat_with_orchestrator(
         )
         
         result = await orchestrator.process(context)
+        
+        if context.needs_clarification and context.clarification_request:
+            clarification = context.clarification_request
+            return {
+                "type": "clarification",
+                "status": "needs_clarification",
+                "session_id": context.session_id,
+                "data": {
+                    "question": clarification.question,
+                    "suggestions": clarification.suggestions,
+                    "reason": clarification.reason,
+                    "required": clarification.required,
+                    "placeholder": clarification.placeholder,
+                    "clarification_type": clarification.type
+                }
+            }
         
         return {
             "status": "success" if result.final_response else "error",
@@ -563,30 +825,44 @@ async def chat_with_orchestrator(
 )
 async def chat_with_orchestrator_stream(
         request: OrchestratorChatRequest,
-        current_user: User = Depends(deps.get_current_user)
+        current_user: User = Depends(deps.get_current_user),
+        tenant_context: dict = Depends(deps.get_tenant_context)
 ):
     """
     [V4] 智能体编排器流式对话接口
     
+    使用 LangGraph 状态机进行多智能体协作
     返回SSE流式响应，实时展示处理进度和结果
     """
     print(f"🌊 [编排器流式接口被调用] 用户: {current_user.email} | 问题: {request.query}")
     
+    tenant_id = tenant_context['tenant_id']
+    print(f"📋 使用租户ID: {tenant_id}")
+    
     session_id = request.session_id or str(uuid.uuid4())
     
     async def event_generator():
+        disconnected = False
+        
+        def mark_disconnected():
+            nonlocal disconnected
+            disconnected = True
+            print("⚠️ [API] 标记客户端已断开")
+        
         try:
             from app.multi_agent_system import AgentOrchestrator
             
             init_data = json.dumps({
                 "type": "init",
                 "session_id": session_id,
-                "status": "processing"
+                "status": "processing",
+                "mode": "langgraph_state_machine",
+                "message": "开始处理，请勿切换页面..."
             })
             yield f"data: {init_data}\n\n"
             
             orchestrator = AgentOrchestrator(
-                tenant_id=str(current_user.id),
+                tenant_id=tenant_id,
                 user_id=str(current_user.id),
                 enable_reflection=request.enable_reflection,
                 enable_rag=request.enable_rag
@@ -594,12 +870,124 @@ async def chat_with_orchestrator_stream(
             
             await orchestrator.initialize()
             
-            async for event_json in orchestrator.stream_process(
-                user_input=request.query,
-                session_id=session_id,
-                history=[]
-            ):
-                yield f"data: {event_json}\n\n"
+            warning_data = json.dumps({
+                "type": "warning",
+                "message": "⚠️ 请勿切换页面，正在处理中..."
+            })
+            yield f"data: {warning_data}\n\n"
+            
+            # 尝试使用新的 LangGraph 状态机
+            try:
+                print("🚀 [API] 使用 LangGraph 状态机处理...")
+                
+                # 使用新的状态机启动器
+                result_context = await orchestrator.process_user_request(
+                    user_input=request.query,
+                    session_id=session_id,
+                    history=[]
+                )
+                
+                if disconnected:
+                    print("⚠️ [API] 客户端已断开，停止发送响应")
+                    return
+                
+                if result_context.needs_clarification and result_context.clarification_request:
+                    clarification = result_context.clarification_request
+                    if hasattr(clarification, 'model_dump'):
+                        clarification_data = clarification.model_dump()
+                    else:
+                        clarification_data = clarification
+                    
+                    clarification_event = json.dumps({
+                        "type": "clarification",
+                        "data": {
+                            "question": clarification_data.get('question', ''),
+                            "suggestions": clarification_data.get('suggestions', []),
+                            "reason": clarification_data.get('reason', ''),
+                            "required": clarification_data.get('required', True),
+                            "placeholder": clarification_data.get('placeholder', ''),
+                            "clarification_type": clarification_data.get('type', 'intent_clarification')
+                        }
+                    })
+                    yield f"data: {clarification_event}\n\n"
+                    
+                    done_data = json.dumps({
+                        "type": "done",
+                        "processing_time": 0,
+                        "mode": "clarification"
+                    })
+                    yield f"data: {done_data}\n\n"
+                    return
+                
+                # 发送意图分析阶段
+                if result_context.intent_result:
+                    # 安全获取意图类别和置信度
+                    intent_result = result_context.intent_result
+                    if isinstance(intent_result, str):
+                        # 如果是字符串（从 LangGraph 状态机返回）
+                        category = intent_result
+                        confidence = 0.9
+                    else:
+                        # 如果是对象（IntentAnalysisResult）
+                        category = intent_result.intent.value if hasattr(intent_result.intent, 'value') else str(intent_result.intent)
+                        confidence = getattr(intent_result, 'confidence', 0.9)
+                    
+                    intent_data = json.dumps({
+                        "type": "stage",
+                        "stage": "intent",
+                        "category": category,
+                        "confidence": confidence,
+                        "message": "意图分析完成"
+                    })
+                    yield f"data: {intent_data}\n\n"
+                
+                # 发送专家处理阶段
+                specialist_data = json.dumps({
+                    "type": "stage",
+                    "stage": "specialists",
+                    "message": "专家分析中..."
+                })
+                yield f"data: {specialist_data}\n\n"
+                
+                # 发送反思审核阶段
+                reflection_data = json.dumps({
+                    "type": "stage",
+                    "stage": "reflection",
+                    "message": "质量审核中..."
+                })
+                yield f"data: {reflection_data}\n\n"
+                
+                # 分行发送最终响应
+                if result_context.final_response:
+                    for i in range(0, len(result_context.final_response), 100):
+                        chunk = result_context.final_response[i:i+100]
+                        chunk_data = json.dumps({
+                            "type": "text",
+                            "content": chunk
+                        })
+                        yield f"data: {chunk_data}\n\n"
+                        await asyncio.sleep(0.01)  # 模拟打字效果
+                
+                # 发送完成事件
+                done_data = json.dumps({
+                    "type": "done",
+                    "processing_time": 0,
+                    "mode": "langgraph_state_machine"
+                })
+                yield f"data: {done_data}\n\n"
+                
+                print(f"✅ [API] LangGraph 状态机处理完成")
+                
+            except Exception as langgraph_error:
+                print(f"⚠️ [API] LangGraph 状态机失败，回退到流式处理: {langgraph_error}")
+                
+                # 回退到旧的流式处理
+                async for event_json in orchestrator.stream_process(
+                    user_input=request.query,
+                    session_id=session_id,
+                    history=[]
+                ):
+                    yield f"data: {event_json}\n\n"
             
         except (ValueError, KeyError) as e:
             error_data = json.dumps({
@@ -613,8 +1001,10 @@ async def chat_with_orchestrator_stream(
                 "error": f"IO错误: {str(e)}"
             })
             yield f"data: {error_data}\n\n"
-        except (OSError, IOError) as e:
-            raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
+        except GeneratorExit:
+            print("⚠️ [API] 客户端断开连接 (GeneratorExit)")
+            mark_disconnected()
+            return
         except Exception as e:
             error_data = json.dumps({
                 "type": "error",

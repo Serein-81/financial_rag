@@ -4,7 +4,8 @@ LangGraph 状态定义
 定义多智能体工作流的状态结构和类型
 """
 
-from typing import TypedDict, List, Dict, Any, Optional, Literal
+from typing import TypedDict, Annotated, Sequence, List, Dict, Any, Optional, Literal
+import operator
 from enum import Enum
 from datetime import datetime
 from pydantic import BaseModel, Field
@@ -71,7 +72,10 @@ class AgentState(TypedDict):
     """
     LangGraph 智能体状态
     
-    这是整个多智能体工作流的核心状态定义
+    这是整个多智能体工作流的核心状态定义。
+    
+    ⚠️ 关键设计：使用 Annotated[..., operator.add] 支持并行节点结果合并。
+    当多个专家并行执行时，operator.add 会将结果合并而不是覆盖。
     """
     # 会话信息
     session_id: str
@@ -82,21 +86,22 @@ class AgentState(TypedDict):
     user_query: str
     
     # 意图识别
-    intent: Optional[IntentCategory]
+    intent: Optional[str]
     intent_confidence: float
     
     # 路由信息
     routing_strategy: Optional[str]
-    target_specialists: List[SpecialistType]
+    specialists_needed: Annotated[List[str], operator.add]
     
-    # RAG 检索结果
-    rag_context: Optional[List[Dict[str, Any]]]
+    # RAG 检索结果（使用 operator.add 并行合并）
+    rag_context: Annotated[List[Dict[str, Any]], operator.add]
     
-    # 专家结果列表
-    specialist_results: List[SpecialistResult]
+    # 专家结果列表（使用 operator.add 并行合并）
+    # 多个专家并行执行时，每个专家的输出会被追加到列表中
+    specialist_results: Annotated[List[Dict[str, Any]], operator.add]
     
     # 反思结果
-    reflection_result: Optional[ReflectionResult]
+    reflection_result: Optional[Dict[str, Any]]
     
     # 聚合响应
     aggregated_response: Optional[str]
@@ -113,15 +118,20 @@ class AgentState(TypedDict):
     error: Optional[str]
     error_history: List[str]
     
-    # 消息历史
-    messages: List[AgentMessage]
+    # 消息历史（使用 operator.add 并行合并）
+    messages: Annotated[List[Any], operator.add]
     
     # 元数据
     metadata: Dict[str, Any]
     
     # 最终结果
     final_answer: Optional[str]
+    output: str  # 用于存放最终报告输出
     needs_human_review: bool
+    
+    # 追问状态（用于模糊输入处理）
+    needs_clarification: bool
+    clarification_request: Optional[Dict[str, Any]]
 
 
 def create_initial_state(
@@ -156,8 +166,8 @@ def create_initial_state(
         intent=None,
         intent_confidence=0.0,
         routing_strategy=None,
-        target_specialists=[],
-        rag_context=None,
+        specialists_needed=[],
+        rag_context=[],
         specialist_results=[],
         reflection_result=None,
         aggregated_response=None,
@@ -170,7 +180,10 @@ def create_initial_state(
         messages=[],
         metadata=metadata,
         final_answer=None,
-        needs_human_review=False
+        output="",
+        needs_human_review=False,
+        needs_clarification=False,
+        clarification_request=None
     )
 
 

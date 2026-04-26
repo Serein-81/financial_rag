@@ -82,6 +82,9 @@ export interface AgentTrace {
   tool_calls_count?: number
   created_at: string
   final_answer?: string
+  events?: AgentTraceEvent[]
+  session_id?: string
+  query?: string
 }
 
 export const agentDiscoveryApi = {
@@ -114,5 +117,17 @@ export const agentDiscoveryApi = {
 
   async getTrace(trace_id: string): Promise<AgentTrace> {
     return request<AgentTrace>(`/agent-discovery/traces/${trace_id}`)
+  },
+
+  async getTraceVisualization(trace_id: string): Promise<{
+    nodes: any[]
+    edges: any[]
+    summary: any
+  }> {
+    return request<{
+      nodes: any[]
+      edges: any[]
+      summary: any
+    }>(`/agent-discovery/traces/${trace_id}/visualization`)
   },
 }

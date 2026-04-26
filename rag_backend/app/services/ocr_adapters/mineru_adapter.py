@@ -114,28 +114,29 @@ class MinerUAdapter(BaseOCRAdapter):
         return await asyncio.to_thread(_sync_extract)
     
     async def extract_text_from_image(self, image_bytes: bytes) -> str:
-        """图片 OCR - 降级到 Tesseract"""
+        """图片 OCR - 使用 Tesseract"""
         import tempfile
         import asyncio
+        from PIL import Image
+        import pytesseract
         
-        def _sync_ocr():
-            from PIL import Image
-            import pytesseract
-            
+        try:
             with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
                 tmp.write(image_bytes)
                 tmp_path = tmp.name
             
             try:
                 image = Image.open(tmp_path)
-                return pytesseract.image_to_string(image, lang='chi_sim+eng')
+                text = pytesseract.image_to_string(image, lang='chi_sim+eng')
+                return text
             finally:
                 try:
                     os.unlink(tmp_path)
-                except Exception:
+                except:
                     pass
-        
-        return await asyncio.to_thread(_sync_ocr)
+        except Exception as e:
+            self._logger.error(f"MinerU 图片 OCR 失败: {e}")
+            raise RuntimeError(f"图片 OCR 失败: {e}")
     
     async def extract_structured(self, file_path: str) -> Dict[str, Any]:
         """提取结构化内容"""

@@ -10,6 +10,7 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import update
 
 from app.schemas.multi_agent import (
     MultiAgentRequest,
@@ -80,6 +81,12 @@ def get_orchestrator(tenant_id: str = None, user_id: str = None):
             tenant_id=tenant_id or "default",
             user_id=user_id or "default"
         )
+    else:
+        # 如果已有实例，更新租户ID（确保使用当前请求的租户）
+        if tenant_id:
+            orchestrator.tenant_id = tenant_id
+            orchestrator.user_id = user_id or orchestrator.user_id
+            logger.debug(f"[编排器] 更新租户ID: {tenant_id}")
     return orchestrator
 
 
@@ -132,8 +139,9 @@ async def process_multi_agent_query(
     try:
         logger.info(f"处理多智能体查询 - 请求ID: {request_id}, 会话ID: {session_id}")
         logger.info(f"用户查询: {request.query}")
+        logger.info(f"租户ID: {tenant_context['tenant_id']}")
         
-        orch = get_orchestrator()
+        orch = get_orchestrator(tenant_id=tenant_context['tenant_id'], user_id=str(current_user.id))
         
         context = OrchestrationContext(
             session_id=session_id,
@@ -233,6 +241,195 @@ async def process_multi_agent_query(
     except Exception as e:
         logger.error(f"处理多智能体查询失败 - 请求ID: {request_id}, 错误: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"处理查询失败: {str(e)}")
+
+
+@router.post("/query-async")
+async def process_multi_agent_query_async(
+    request: MultiAgentRequest,
+    current_user: User = Depends(deps.get_current_user),
+    tenant_context: dict = Depends(deps.get_tenant_context),
+    db: AsyncSession = Depends(deps.get_db)
+):
+    """
+    异步处理多智能体查询请求（推荐使用）
+    
+    与 /query 的区别：
+    1. 立即返回 task_id 和 thread_id（不阻塞）
+    2. 任务在后台通过 ARQ Worker 执行
+    3. 前端通过 GET /api/v1/agent-task/status/{thread_id} 查询进度
+    4. 切换页面后通过 GET /api/v1/agent-task/hydrate/{thread_id} 恢复状态
+    
+    使用流程：
+    1. POST /query-async -> 获得 task_id, thread_id
+    2. GET /agent-task/status/{thread_id} -> 轮询获取进度
+    3. 页面切换后 GET /agent-task/hydrate/{thread_id} -> 恢复状态
+    """
+    import uuid as uuid_module
+    from app.models.agent_task import AgentTaskStatus, TaskStatus, TaskPriority
+    from app.db.session import AsyncSessionLocal
+    
+    task_id = f"lgwf_{uuid_module.uuid4().hex[:16]}"
+    thread_id = request.session_id or f"thread_{uuid_module.uuid4().hex[:16]}"
+    
+    try:
+        task_record = AgentTaskStatus(
+            task_id=task_id,
+            thread_id=thread_id,
+            tenant_id=tenant_context['tenant_id'],
+            user_id=current_user.id,
+            task_type="langgraph_workflow",
+            task_name="多智能体工作流",
+            status=TaskStatus.PENDING,
+            priority=TaskPriority.NORMAL,
+            user_query=request.query,
+            extra_metadata={
+                "enable_reflection": request.enable_reflection,
+                "confidence_threshold": request.confidence_threshold,
+                "max_specialists": request.max_specialists,
+                "context": request.context or {}
+            }
+        )
+        
+        db.add(task_record)
+        await db.commit()
+        
+        try:
+            from app.tasks.arq_tasks import ARQ_AVAILABLE
+            if ARQ_AVAILABLE:
+                from app.services.redis_service import get_redis_service
+                import json
+                
+                redis_service = await get_redis_service()
+                await redis_service.enqueue_task(
+                    "run_langgraph_workflow",
+                    {
+                        "task_id": task_id,
+                        "thread_id": thread_id,
+                        "tenant_id": tenant_context['tenant_id'],
+                        "user_id": str(current_user.id),
+                        "user_query": request.query,
+                        "enable_reflection": request.enable_reflection,
+                        "confidence_threshold": request.confidence_threshold,
+                        "max_specialists": request.max_specialists,
+                        "context": request.context or {}
+                    }
+                )
+                logger.info(f"[AsyncQuery] 任务已入队 ARQ: task_id={task_id}")
+            else:
+                import asyncio
+                asyncio.create_task(
+                    execute_workflow_background(
+                        task_id=task_id,
+                        thread_id=thread_id,
+                        tenant_id=tenant_context['tenant_id'],
+                        user_id=str(current_user.id),
+                        user_query=request.query,
+                        enable_reflection=request.enable_reflection
+                    )
+                )
+                logger.info(f"[AsyncQuery] 任务已在后台执行: task_id={task_id}")
+                
+        except Exception as queue_error:
+            logger.warning(f"[AsyncQuery] ARQ 入队失败，使用后台任务: {queue_error}")
+            import asyncio
+            asyncio.create_task(
+                execute_workflow_background(
+                    task_id=task_id,
+                    thread_id=thread_id,
+                    tenant_id=tenant_context['tenant_id'],
+                    user_id=str(current_user.id),
+                    user_query=request.query,
+                    enable_reflection=request.enable_reflection
+                )
+            )
+        
+        logger.info(
+            f"[AsyncQuery] 提交异步任务: task_id={task_id}, "
+            f"thread_id={thread_id[:8]}..., user={current_user.id}"
+        )
+        
+        return {
+            "task_id": task_id,
+            "thread_id": thread_id,
+            "status": "submitted",
+            "message": "任务已提交到后台，请使用 GET /api/v1/agent-task/status/" + thread_id + " 查询进度",
+            "poll_url": f"/api/v1/agent-task/status/{thread_id}",
+            "hydrate_url": f"/api/v1/agent-task/hydrate/{thread_id}"
+        }
+        
+    except Exception as e:
+        logger.error(f"[AsyncQuery] 提交任务失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"任务提交失败: {str(e)}")
+
+
+async def execute_workflow_background(
+    task_id: str,
+    thread_id: str,
+    tenant_id: str,
+    user_id: str,
+    user_query: str,
+    enable_reflection: bool = True,
+    confidence_threshold: float = 0.7,
+    max_specialists: int = 3,
+    context: dict = None
+):
+    """后台执行工作流任务"""
+    from app.models.agent_task import AgentTaskStatus, TaskStatus
+    from app.db.session import AsyncSessionLocal
+    from datetime import datetime
+    import traceback
+    
+    try:
+        async with AsyncSessionLocal() as db:
+            await db.execute(
+                update(AgentTaskStatus)
+                .where(AgentTaskStatus.task_id == task_id)
+                .values(status=TaskStatus.RUNNING, started_at=datetime.now())
+            )
+            await db.commit()
+        
+        logger.info(f"[Background] 开始执行工作流: task_id={task_id}")
+        
+        from app.multi_agent_system import AgentOrchestrator
+        from app.multi_agent_system.orchestrator import OrchestrationContext
+        
+        orch = AgentOrchestrator(tenant_id=tenant_id, user_id=user_id)
+        await orch.initialize()
+        
+        orchestration_context = OrchestrationContext(
+            session_id=thread_id,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            user_query=user_query,
+            context=context or {},
+            enable_reflection=enable_reflection,
+            confidence_threshold=confidence_threshold,
+            max_specialists=max_specialists
+        )
+        
+        result = await orch.process(orchestration_context)
+        
+        final_response = result.final_response or "处理完成"
+        
+        await db.execute(
+            update(AgentTaskStatus)
+            .where(AgentTaskStatus.task_id == task_id)
+            .values(
+                status=TaskStatus.COMPLETED,
+                final_response=final_response,
+                completed_at=datetime.now(),
+                progress_percent=100,
+                progress_message="任务完成"
+            )
+        )
+        await db.commit()
+        
+        logger.info(f"[Background] 工作流执行完成: task_id={task_id}")
+        
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"[Background] 工作流执行失败: task_id={task_id}, error={error_msg}")
+        logger.error(traceback.format_exc())
 
 
 @router.post("/specialist/query", response_model=SpecialistQueryResponse)
@@ -556,7 +753,8 @@ async def check_system_health():
 @router.post("/report/generate", response_model=ReportGenerationResponse)
 async def generate_report(
     request: ReportGenerationRequest,
-    current_user: User = Depends(deps.get_current_user)
+    current_user: User = Depends(deps.get_current_user),
+    tenant_context: dict = Depends(deps.get_tenant_context)
 ):
     """
     生成多智能体分析报告
@@ -569,7 +767,7 @@ async def generate_report(
         report_id = str(uuid.uuid4())
         
         orch = get_orchestrator(
-            tenant_id=str(current_user.id),
+            tenant_id=tenant_context['tenant_id'],
             user_id=str(current_user.id)
         )
         
@@ -894,15 +1092,23 @@ async def get_pending_approvals(
 @router.get("/hitl/history", response_model=List[HITLApproval])
 async def get_approval_history(
     current_user: User = Depends(deps.get_current_user),
+    tenant_context: dict = Depends(deps.get_tenant_context),
+    db: AsyncSession = Depends(deps.get_db),
     status: Optional[ApprovalStatus] = Query(None, description="按状态筛选"),
     limit: int = Query(50, ge=1, le=100, description="返回数量限制")
 ):
     """
     获取审批历史记录
 
-    返回已处理的审批请求历史
+    返回已处理的审批请求历史，并从数据库获取最新操作记录
     """
     try:
+        from sqlalchemy import select, text
+        from app.models.review_request import ReviewRequest, ReviewRequestAction
+        import json
+        
+        logger.info(f"[HITL] get_approval_history called, status={status}, limit={limit}, storage_size={len(hitl_approvals_storage)}")
+        
         history = []
 
         for approval in hitl_approvals_storage.values():
@@ -910,8 +1116,163 @@ async def get_approval_history(
                 continue
             history.append(approval)
 
+        logger.info(f"[HITL] filtered history from storage count: {len(history)}")
+        
         history.sort(key=lambda x: x.created_at, reverse=True)
-        return history[:limit]
+        
+        if len(history) == 0:
+            logger.info(f"[HITL] storage is empty, trying to get reviews from database")
+            review_result = await db.execute(
+                select(ReviewRequest).where(ReviewRequest.status.in_(["completed", "rejected"])).order_by(ReviewRequest.updated_at.desc()).limit(limit)
+            )
+            db_reviews = review_result.scalars().all()
+            logger.info(f"[HITL] found {len(db_reviews)} reviews from database")
+            
+            for review in db_reviews:
+                actions_result = await db.execute(
+                    text("SELECT * FROM review_request_actions WHERE review_request_id = :review_id ORDER BY created_at DESC LIMIT 1"),
+                    {"review_id": str(review.id)}
+                )
+                latest_action = actions_result.fetchone()
+                
+                if latest_action:
+                    latest_action_dict = dict(latest_action._mapping) if hasattr(latest_action, '_mapping') else {c: getattr(latest_action, c) for c in latest_action._fields}
+                    
+                    logger.info(f"[HITL] action record: id={latest_action_dict.get('id')}, action={latest_action_dict.get('action')}, action_details={latest_action_dict.get('action_details')}, new_value={latest_action_dict.get('new_value')}")
+                    
+                    approval_dict = {
+                        "approval_id": str(review.id),
+                        "task_id": str(review.task_id),
+                        "user_id": str(review.user_id),
+                        "operation": latest_action_dict.get("action"),
+                        "details": {},
+                        "risk_level": "SENSITIVE",
+                        "status": "APPROVED" if review.status == "completed" else "REJECTED",
+                        "created_at": review.created_at,
+                        "expires_at": review.created_at,
+                        "reviewed_at": review.reviewed_at,
+                        "reviewer_notes": None
+                    }
+                    
+                    action_details = latest_action_dict.get("action_details")
+                    logger.info(f"[HITL] action_details raw: {action_details}, type: {type(action_details)}")
+                    
+                    if isinstance(action_details, str):
+                        action_details = json.loads(action_details) if action_details else {}
+                    
+                    logger.info(f"[HITL] action_details parsed: {action_details}")
+                    
+                    reviewer_notes = None
+                    if action_details:
+                        reviewer_notes = action_details.get("comment") or action_details.get("description")
+                    
+                    logger.info(f"[HITL] reviewer_notes from action_details: {reviewer_notes}")
+                    
+                    if not reviewer_notes:
+                        new_value = latest_action_dict.get("new_value")
+                        logger.info(f"[HITL] new_value raw: {new_value}, type: {type(new_value)}")
+                        if isinstance(new_value, str):
+                            new_value = json.loads(new_value) if new_value else {}
+                        
+                        if new_value:
+                            reviewer_notes = new_value.get("review_comments")
+                            logger.info(f"[HITL] reviewer_notes from new_value: {reviewer_notes}")
+                    
+                    if not reviewer_notes:
+                        reviewer_notes = latest_action_dict.get("action")
+                    
+                    approval_dict["reviewer_notes"] = reviewer_notes
+                    
+                    history.append(type('Approval', (), approval_dict)())
+                    logger.info(f"[HITL] added review to history: review_id={review.id}, operation={approval_dict['operation']}, reviewer_notes={approval_dict['reviewer_notes']}")
+        
+        result_approvals = []
+        for approval in history[:limit]:
+            try:
+                if hasattr(approval, 'model_dump'):
+                    approval_dict = approval.model_dump()
+                elif hasattr(approval, '__dict__'):
+                    approval_dict = vars(approval)
+                else:
+                    logger.warning(f"[HITL] 跳过无效 approval 对象: {type(approval)}")
+                    continue
+                
+                task_id = approval_dict.get("task_id")
+                approval_id = approval_dict.get("approval_id")
+                
+                if not task_id or not approval_id:
+                    logger.warning(f"[HITL] 跳过无效 approval: approval_id={approval_id}, task_id={task_id}")
+                    continue
+                
+                logger.info(f"[HITL] 处理 approval: approval_id={approval_id}, task_id={task_id}")
+                
+                if task_id:
+                    try:
+                        result = await db.execute(
+                            text("""
+                                SELECT * FROM review_request_actions 
+                                WHERE review_request_id = :task_id 
+                                ORDER BY created_at DESC 
+                                LIMIT 1
+                            """),
+                            {"task_id": task_id}
+                        )
+                        latest_action = result.fetchone()
+                        
+                        if not latest_action:
+                            review_result = await db.execute(
+                                text("SELECT id FROM review_requests WHERE task_id = :task_id LIMIT 1"),
+                                {"task_id": task_id}
+                            )
+                            review_row = review_result.fetchone()
+                            if review_row:
+                                result = await db.execute(
+                                    text("""
+                                        SELECT * FROM review_request_actions 
+                                        WHERE review_request_id = :review_id 
+                                        ORDER BY created_at DESC 
+                                        LIMIT 1
+                                    """),
+                                    {"review_id": str(review_row.id)}
+                                )
+                                latest_action = result.fetchone()
+                        
+                        if latest_action:
+                            latest_action_dict = dict(latest_action._mapping) if hasattr(latest_action, '_mapping') else {c: getattr(latest_action, c) for c in latest_action._fields}
+                            
+                            action_details = latest_action_dict.get("action_details")
+                            if isinstance(action_details, str):
+                                action_details = json.loads(action_details) if action_details else {}
+                            
+                            reviewer_notes = None
+                            if action_details:
+                                reviewer_notes = action_details.get("comment") or action_details.get("description")
+                            
+                            if not reviewer_notes:
+                                new_value = latest_action_dict.get("new_value")
+                                if isinstance(new_value, str):
+                                    new_value = json.loads(new_value) if new_value else {}
+                                if new_value:
+                                    reviewer_notes = new_value.get("review_comments")
+                            
+                            if not reviewer_notes:
+                                reviewer_notes = latest_action_dict.get("action")
+                            
+                            approval_dict["reviewer_notes"] = reviewer_notes
+                            approval_dict["operation"] = latest_action_dict.get("action")
+                            
+                            logger.info(f"[HITL] 获取到操作记录: approval_id={approval_id}, action={approval_dict['operation']}, notes={reviewer_notes}")
+                        else:
+                            logger.info(f"[HITL] 未找到操作记录: task_id={task_id}")
+                    except Exception as e:
+                        logger.warning(f"[HITL] 获取操作记录失败: {str(e)}")
+                
+                result_approvals.append(HITLApproval(**approval_dict))
+                logger.info(f"[HITL] 成功添加 approval: approval_id={approval_id}")
+            except Exception as e:
+                logger.error(f"[HITL] 处理 approval 失败: {str(e)}")
+        
+        return result_approvals
 
     except (ValueError, KeyError) as e:
         logger.error(f"获取审批历史数据错误: {str(e)}", exc_info=True)

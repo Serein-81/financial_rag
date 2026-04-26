@@ -6,7 +6,7 @@
 提供租户设置的验证和序列化
 """
 
-from pydantic import BaseModel, EmailStr, Field, field_validator, field_serializer
+from pydantic import BaseModel, EmailStr, Field, ConfigDict, field_validator, field_serializer
 from typing import Optional, Dict, Any, List, Union
 from datetime import datetime
 from enum import Enum
@@ -152,8 +152,7 @@ class TenantSettingsResponse(TenantSettingsBase):
     def serialize_id(self, value: Union[str, UUID]) -> str:
         return str(value)
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TenantSettingsPublicResponse(BaseModel):
@@ -166,8 +165,7 @@ class TenantSettingsPublicResponse(BaseModel):
     primary_color: str = "#1890ff"
     secondary_color: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class FeatureToggleRequest(BaseModel):

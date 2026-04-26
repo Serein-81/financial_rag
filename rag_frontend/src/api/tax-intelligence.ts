@@ -53,6 +53,54 @@ export interface TaxReport {
   updated_at: string
 }
 
+export interface TaxIntelligenceStatistics {
+  total_analyses: number
+  current_quarter_analyses: number
+  high_risk_count: number
+  compliance_rate: number
+}
+
+export interface PolicyQueryParams {
+  query: string
+  tax_types?: string[]
+  industries?: string[]
+  regions?: string[]
+  top_k?: number
+}
+
+export interface PolicyMatchItem {
+  policy_id: string
+  policy_name: string
+  policy_content: string
+  match_level: string
+  applicable_conditions: string[]
+  potential_savings: number
+  source_url?: string
+  source_name?: string
+  industries?: string[]
+  regions?: string[]
+  tax_types?: string[]
+  effective_date?: string
+  expiry_date?: string
+}
+
+export interface PolicyQueryResponse {
+  policies: PolicyMatchItem[]
+  total_count: number
+  query: string
+}
+
+export interface ExplainRequest {
+  question?: string
+}
+
+export interface ExplainResponse {
+  explanation: string
+  confidence: number
+  related_policies?: string[]
+  follow_up_suggestions?: string[]
+}
+
 export const taxIntelligenceApi = {
   analyzeTax: async (params: TaxAnalysisRequest): Promise<TaxAnalysisResult> => {
     return request('/tax-intelligence/analyze', {
@@ -102,6 +150,32 @@ export const taxIntelligenceApi = {
   deleteAnalysis: async (analysisId: string): Promise<void> => {
     return request(`/tax-intelligence/report/${analysisId}`, {
       method: 'DELETE'
+    })
+  },
+
+  getStatistics: async (): Promise<TaxIntelligenceStatistics> => {
+    return request('/tax-intelligence/statistics', {
+      method: 'GET'
+    })
+  },
+
+  explainReport: async (analysisId: string, params: ExplainRequest = {}): Promise<ExplainResponse> => {
+    return request(`/tax-intelligence/report/${analysisId}/explain`, {
+      method: 'POST',
+      data: params
+    })
+  },
+
+  queryPolicies: async (params: PolicyQueryParams): Promise<PolicyQueryResponse> => {
+    const queryParams = new URLSearchParams()
+    queryParams.append('query', params.query)
+    if (params.tax_types) queryParams.append('tax_types', params.tax_types.join(','))
+    if (params.industries) queryParams.append('industries', params.industries.join(','))
+    if (params.regions) queryParams.append('regions', params.regions.join(','))
+    if (params.top_k) queryParams.append('top_k', String(params.top_k))
+    
+    return request(`/tax-intelligence/policies?${queryParams.toString()}`, {
+      method: 'GET'
     })
   },
 

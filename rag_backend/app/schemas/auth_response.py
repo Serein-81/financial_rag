@@ -1,7 +1,7 @@
 # app/schemas/auth_response.py
 """认证响应相关的Schema模型"""
 from datetime import datetime
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, ConfigDict
 from typing import Optional
 from uuid import UUID
 
@@ -35,5 +35,6 @@ class UserProfile(BaseModel):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(
+        from_attributes=True
+    )

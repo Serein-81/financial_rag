@@ -24,6 +24,10 @@ class AgentTrace(Base):
     # 主键
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     
+    # 用户和租户关联
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(String(50), nullable=False, index=True)
+    
     # 关联信息
     session_id = Column(UUID, ForeignKey("chat_sessions.id"), nullable=True)
     message_id = Column(UUID, ForeignKey("chat_messages.id"), nullable=True)
@@ -66,6 +70,10 @@ class AgentStep(Base):
     
     # 关联到追踪记录
     trace_id = Column(UUID, ForeignKey("agent_traces.id"), nullable=False)
+    
+    # 用户和租户关联（冗余存储，方便查询）
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    tenant_id = Column(String(50), nullable=False, index=True)
     
     # 步骤信息
     step_number = Column(Integer, nullable=False)  # 第几步（从 1 开始）

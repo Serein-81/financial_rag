@@ -197,12 +197,33 @@ export async function requestForm<T = any>(
   return response.data
 }
 
-export async function login(email: string, password: string): Promise<{
+export function get<T = any>(url: string, config: any = {}): Promise<T> {
+  return request<T>(url, { ...config, method: 'GET' })
+}
+
+export function post<T = any>(url: string, data?: any, config: any = {}): Promise<T> {
+  return request<T>(url, { ...config, method: 'POST', data })
+}
+
+export function put<T = any>(url: string, data?: any, config: any = {}): Promise<T> {
+  return request<T>(url, { ...config, method: 'PUT', data })
+}
+
+export function del<T = any>(url: string, config: any = {}): Promise<T> {
+  return request<T>(url, { ...config, method: 'DELETE' })
+}
+
+export async function login(identifier: string, password: string): Promise<{
   access_token: string
   token_type: string
   user_name: string
   avatar_url?: string
 }> {
+  const isEmail = identifier.includes('@')
+  const loginData = isEmail 
+    ? { email: identifier, password: password }
+    : { username: identifier, password: password }
+  
   const data = await request<{
     access_token: string
     token_type: string
@@ -210,10 +231,7 @@ export async function login(email: string, password: string): Promise<{
     avatar_url?: string
   }>('/auth/login', {
     method: 'POST',
-    data: {
-      email: email,
-      password: password
-    }
+    data: loginData
   })
 
   localStorage.setItem('rag_token', data.access_token)
@@ -229,7 +247,8 @@ export async function register(
   email: string,
   password: string,
   full_name: string,
-  invite_code?: string
+  invite_code?: string,
+  phone?: string
 ): Promise<{
   access_token: string
   token_type: string
@@ -245,7 +264,8 @@ export async function register(
     email,
     password,
     full_name,
-    invite_code
+    invite_code,
+    phone
   })
 
   const data = response.data
@@ -262,7 +282,8 @@ export async function registerAdmin(
   email: string,
   password: string,
   full_name: string,
-  company_name: string
+  company_name: string,
+  phone?: string
 ): Promise<{
   access_token: string
   token_type: string
@@ -278,7 +299,8 @@ export async function registerAdmin(
     email,
     password,
     full_name,
-    company_name
+    company_name,
+    phone
   })
 
   const data = response.data

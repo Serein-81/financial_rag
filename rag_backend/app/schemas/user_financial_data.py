@@ -95,8 +95,8 @@ class FinancialDataCreate(BaseModel):
             raise ValueError(f"周期开始日期年份({self.period_start.year})必须与财务年度({self.fiscal_year})一致")
         return self
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "fiscal_year": 2024,
                 "period_type": "quarterly",
@@ -113,6 +113,7 @@ class FinancialDataCreate(BaseModel):
                 "is_small_enterprise": False
             }
         }
+    )
 
 
 class FinancialDataUpdate(BaseModel):
@@ -227,8 +228,8 @@ class TaxQueryRequest(BaseModel):
     include_personal_tax: bool = Field(False, description="是否包含个人所得税")
     include_recommendations: bool = Field(True, description="是否包含筹划建议")
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "fiscal_year": 2024,
                 "include_vat": True,
@@ -237,6 +238,7 @@ class TaxQueryRequest(BaseModel):
                 "include_recommendations": True
             }
         }
+    )
 
 
 class TaxQueryResponse(BaseModel):
@@ -266,8 +268,8 @@ class TaxQueryResponse(BaseModel):
     data_status: str = Field(..., description="数据状态")
     data_completeness: float = Field(..., ge=0, le=1, description="数据完整度")
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "fiscal_year": 2024,
                 "query_time": "2024-03-25T10:00:00Z",
@@ -294,6 +296,7 @@ class TaxQueryResponse(BaseModel):
                 "data_completeness": 0.95
             }
         }
+    )
 
 
 class FinancialDataListResponse(BaseModel):

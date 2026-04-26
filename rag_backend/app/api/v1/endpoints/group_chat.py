@@ -580,9 +580,21 @@ async def get_notifications(
 ):
     user_id_str = str(current_user.id)
     key = f"notification:user:{user_id_str}"
-    notifications = redis.client.lrange(key, 0, 19) if redis.client else []
     
-    return [json.loads(n) for n in notifications]
+    try:
+        if redis.client:
+            notifications = redis.client.lrange(key, 0, 19) or []
+            if isinstance(notifications, list):
+                return [json.loads(n) for n in notifications]
+            else:
+                logger.error(f"❌ Redis lrange 返回类型错误: {type(notifications)}, value: {notifications}")
+                return []
+        else:
+            logger.warning("⚠️ Redis 不可用，返回空通知列表")
+            return []
+    except Exception as e:
+        logger.error(f"❌ 获取通知失败: {e}")
+        return []
 
 
 @notification_router.get("/list")
@@ -874,186 +886,172 @@ async def group_websocket(
     user_id = None
     current_user_name = None
     current_user_avatar = None
-    db_gen = None
-    db_session = None
     try:
         from app.core.security import verify_token
         from sqlalchemy import select
+        from app.db.session import get_db_context
+        
         payload = verify_token(token)
         user_id = payload.get("sub")
         
         if not user_id:
             await websocket.close(code=4001, reason="Invalid token")
-            if db_gen:
-                try:
-                    await db_gen.aclose()
-                except Exception:
-                    pass
             return
         
-        db_gen = get_db()
-        db_session = await db_gen.__anext__()
-        
-        user_result = await db_session.execute(select(User).where(User.id == user_id))
-        current_user_obj = user_result.scalar_one_or_none()
-        if current_user_obj:
-            current_user_name = current_user_obj.full_name
-            current_user_avatar = current_user_obj.avatar_url
-        
-        service = GroupChatService(db_session)
-        
-        if not await service.is_group_member(group_id, user_id):
-            await websocket.close(code=4003, reason="Not a group member")
-            if db_gen:
-                try:
-                    await db_gen.aclose()
-                except Exception:
-                    pass
-            return
-        
-        redis = get_redis_service()
-        service.set_redis(redis)
-        
-        await group_chat_ws_manager.connect_group(group_id, user_id, websocket)
-        
-        await service.set_member_online(group_id, user_id, {"device": "web"})
-        
-        await websocket.send_json({
-            "event": "connected",
-            "data": {"group_id": group_id, "heartbeat_interval": HEARTBEAT_INTERVAL}
-        })
-        
-        members = await service.get_group_members(group_id)
-        online_members = await service.get_online_members(group_id)
-        
-        members_with_info = []
-        for m in members:
-            user_name, avatar_url = await service.get_user_info(m.user_id)
-            members_with_info.append({
-                "id": m.id,
-                "user_id": m.user_id,
-                "user_name": user_name,
-                "avatar_url": avatar_url,
-                "role": m.role
+        async with get_db_context() as db_session:
+            user_result = await db_session.execute(select(User).where(User.id == user_id))
+            current_user_obj = user_result.scalar_one_or_none()
+            if current_user_obj:
+                current_user_name = current_user_obj.full_name
+                current_user_avatar = current_user_obj.avatar_url
+            
+            service = GroupChatService(db_session)
+            
+            if not await service.is_group_member(group_id, user_id):
+                await websocket.close(code=4003, reason="Not a group member")
+                return
+            
+            redis = get_redis_service()
+            service.set_redis(redis)
+            
+            await group_chat_ws_manager.connect_group(group_id, user_id, websocket)
+            
+            await service.set_member_online(group_id, user_id, {"device": "web"})
+            
+            await websocket.send_json({
+                "event": "connected",
+                "data": {"group_id": group_id, "heartbeat_interval": HEARTBEAT_INTERVAL}
             })
-        
-        await websocket.send_json({
-            "event": "members_sync",
-            "data": {
-                "members": members_with_info,
-                "online": list(online_members)
-            }
-        })
-        
-        await group_chat_ws_manager.broadcast_to_group(
-            group_id,
-            {
-                "event": "member_online",
+            
+            members = await service.get_group_members(group_id)
+            online_members = await service.get_online_members(group_id)
+            
+            members_with_info = []
+            for m in members:
+                user_name, avatar_url = await service.get_user_info(m.user_id)
+                members_with_info.append({
+                    "id": m.id,
+                    "user_id": m.user_id,
+                    "user_name": user_name,
+                    "avatar_url": avatar_url,
+                    "role": m.role
+                })
+            
+            await websocket.send_json({
+                "event": "members_sync",
                 "data": {
-                    "user_id": user_id,
-                    "user_name": current_user_name,
-                    "timestamp": datetime.utcnow().isoformat()
+                    "members": members_with_info,
+                    "online": list(online_members)
                 }
-            },
-            exclude_user=user_id
-        )
-        
-        last_pong_time = asyncio.get_event_loop().time()
-        
-        while True:
-            try:
+            })
+            
+            await group_chat_ws_manager.broadcast_to_group(
+                group_id,
+                {
+                    "event": "member_online",
+                    "data": {
+                        "user_id": user_id,
+                        "user_name": current_user_name,
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                },
+                exclude_user=user_id
+            )
+            
+            last_pong_time = asyncio.get_event_loop().time()
+            
+            while True:
                 try:
-                    data = await asyncio.wait_for(
-                        websocket.receive_json(),
-                        timeout=HEARTBEAT_TIMEOUT
-                    )
-                    last_pong_time = asyncio.get_event_loop().time()
-                    event = data.get("event")
-                    
-                    if event == "message":
-                        content = data.get("data", {}).get("content", "")
-                        if content:
-                            message = await service.send_message(
-                                group_id=group_id,
-                                sender_id=user_id,
-                                tenant_id=db_session.get("tenant_id", ""),
-                                content=content
-                            )
-                            
-                            await group_chat_ws_manager.broadcast_to_group(
-                                group_id,
-                                {
-                                    "event": "group_message",
-                                    "data": {
-                                        "id": message.id,
-                                        "sender_id": message.sender_id,
-                                        "content": message.content,
-                                        "sender_name": current_user_name,
-                                        "sender_avatar": current_user_avatar,
-                                        "created_at": message.created_at.isoformat()
-                                    }
-                                }
-                            )
-                    
-                    elif event == "typing":
-                        await group_chat_ws_manager.broadcast_to_group(
-                            group_id,
-                            {
-                                "event": "user_typing",
-                                "data": {"user_id": user_id}
-                            },
-                            exclude_user=user_id
+                    try:
+                        data = await asyncio.wait_for(
+                            websocket.receive_json(),
+                            timeout=HEARTBEAT_TIMEOUT
                         )
-                    
-                    elif event == "pong":
                         last_pong_time = asyncio.get_event_loop().time()
-                        await group_chat_ws_manager.refresh_heartbeat(group_id, user_id)
-                    
-                    elif event == "ping":
-                        await websocket.send_json({"event": "pong"})
-                    
-                    elif event == "mark_read":
-                        message_ids = data.get("data", {}).get("message_ids", [])
-                        if message_ids:
-                            await service.mark_messages_read(group_id, user_id, message_ids)
+                        event = data.get("event")
+                        
+                        if event == "message":
+                            content = data.get("data", {}).get("content", "")
+                            if content:
+                                message = await service.send_message(
+                                    group_id=group_id,
+                                    sender_id=user_id,
+                                    tenant_id=db_session.get("tenant_id", ""),
+                                    content=content
+                                )
+                                
+                                await group_chat_ws_manager.broadcast_to_group(
+                                    group_id,
+                                    {
+                                        "event": "group_message",
+                                        "data": {
+                                            "id": message.id,
+                                            "sender_id": message.sender_id,
+                                            "content": message.content,
+                                            "sender_name": current_user_name,
+                                            "sender_avatar": current_user_avatar,
+                                            "created_at": message.created_at.isoformat()
+                                        }
+                                    }
+                                )
+                        
+                        elif event == "typing":
                             await group_chat_ws_manager.broadcast_to_group(
                                 group_id,
                                 {
-                                    "event": "messages_read",
-                                    "data": {
-                                        "user_id": user_id,
-                                        "message_ids": message_ids
-                                    }
-                                }
+                                    "event": "user_typing",
+                                    "data": {"user_id": user_id}
+                                },
+                                exclude_user=user_id
                             )
+                        
+                        elif event == "pong":
+                            last_pong_time = asyncio.get_event_loop().time()
+                            await group_chat_ws_manager.refresh_heartbeat(group_id, user_id)
+                        
+                        elif event == "ping":
+                            await websocket.send_json({"event": "pong"})
+                        
+                        elif event == "mark_read":
+                            message_ids = data.get("data", {}).get("message_ids", [])
+                            if message_ids:
+                                await service.mark_messages_read(group_id, user_id, message_ids)
+                                await group_chat_ws_manager.broadcast_to_group(
+                                    group_id,
+                                    {
+                                        "event": "messages_read",
+                                        "data": {
+                                            "user_id": user_id,
+                                            "message_ids": message_ids
+                                        }
+                                    }
+                                )
+                    
+                    except asyncio.TimeoutError:
+                        current_time = asyncio.get_event_loop().time()
+                        if current_time - last_pong_time > HEARTBEAT_TIMEOUT:
+                            logger.warning(f"WebSocket heartbeat timeout for user {user_id}")
+                            break
                 
-                except asyncio.TimeoutError:
-                    current_time = asyncio.get_event_loop().time()
-                    if current_time - last_pong_time > HEARTBEAT_TIMEOUT:
-                        logger.warning(f"WebSocket heartbeat timeout for user {user_id}")
-                        break
+                except WebSocketDisconnect:
+                    break
+                except (ValueError, KeyError) as e:
+                    logger.error(f"WebSocket数据错误: {e}")
+                    break
+                except (OSError, IOError) as e:
+                    logger.error(f"WebSocket IO错误: {e}")
+                    break
+                except (ValueError, KeyError) as e:
+                    raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+                except (OSError, IOError) as e:
+                    raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
+                except Exception as e:
+                    logger.error(f"WebSocket error: {e}")
+                    break
             
-            except WebSocketDisconnect:
-                break
-            except (ValueError, KeyError) as e:
-                logger.error(f"WebSocket数据错误: {e}")
-                break
-            except (OSError, IOError) as e:
-                logger.error(f"WebSocket IO错误: {e}")
-                break
-            except (ValueError, KeyError) as e:
-                raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
-            except (OSError, IOError) as e:
-                raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
-            except Exception as e:
-                logger.error(f"WebSocket error: {e}")
-                break
-    
-    finally:
-        if user_id:
-            await group_chat_ws_manager.disconnect_group(group_id, user_id)
-            
-            if db_session:
+            if user_id:
+                await group_chat_ws_manager.disconnect_group(group_id, user_id)
+                
                 service = GroupChatService(db_session)
                 redis = get_redis_service()
                 service.set_redis(redis)
@@ -1072,9 +1070,6 @@ async def group_websocket(
                     )
                 except Exception as e:
                     logger.warning(f"Failed to broadcast offline event: {e}")
-        
-        if db_gen:
-            try:
-                await db_gen.aclose()
-            except Exception as e:
-                logger.warning(f"Failed to close db generator: {e}")
+    
+    except Exception as e:
+        logger.error(f"WebSocket connection error: {e}")

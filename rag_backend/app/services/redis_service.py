@@ -148,6 +148,60 @@ class RedisService:
         except Exception as e:
             logger.error(f"Redis exists 失败: {e}")
             return False
+    
+    async def enqueue_task(self, queue_name: str, task_data: dict) -> bool:
+        """
+        将任务放入 Redis 队列（用于 ARQ）
+        
+        Args:
+            queue_name: 队列名称，如 "arq:default"
+            task_data: 任务数据
+            
+        Returns:
+            是否成功
+        """
+        try:
+            import json
+            task_json = json.dumps(task_data, default=str)
+            
+            if self.client:
+                self.client.rpush(queue_name, task_json)
+                logger.info(f"[Redis] 任务已入队: queue={queue_name}, data={str(task_data)[:100]}...")
+                return True
+            else:
+                logger.warning("[Redis] Redis 未连接，无法入队")
+                return False
+        except Exception as e:
+            logger.error(f"[Redis] 入队失败: {e}")
+            return False
+    
+    def dequeue_task(self, queue_name: str, timeout: int = 0) -> Optional[dict]:
+        """
+        从 Redis 队列取出任务（用于 Worker）
+        
+        Args:
+            queue_name: 队列名称
+            timeout: 阻塞等待时间（秒），0 表示非阻塞
+            
+        Returns:
+            任务数据或 None
+        """
+        try:
+            import json
+            if self.client:
+                if timeout > 0:
+                    result = self.client.blpop(queue_name, timeout=timeout)
+                    if result:
+                        _, task_json = result
+                        return json.loads(task_json)
+                else:
+                    task_json = self.client.lpop(queue_name)
+                    if task_json:
+                        return json.loads(task_json)
+            return None
+        except Exception as e:
+            logger.error(f"[Redis] 出队失败: {e}")
+            return None
 
 
 # 创建全局实例

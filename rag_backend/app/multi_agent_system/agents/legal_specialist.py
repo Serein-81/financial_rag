@@ -112,6 +112,96 @@ class LegalSpecialist(BaseSpecialistAgent):
         
         self.entity_patterns = self._compile_entity_patterns()
         self.contract_templates = self._load_contract_templates()
+        
+        self._register_mcp_tools()
+        self._register_enhanced_legal_tools()
+        self._register_mcp_legal_tools()
+    
+    def _register_mcp_tools(self):
+        """
+        注册 MCP 工具（时间锚点工具）
+        
+        所有专家 Agent 都需要时间感知能力来处理相对时间查询
+        """
+        try:
+            from app.mcp.foundation_tools import get_current_time_and_context
+            
+            try:
+                self.tool_manager.register_langchain_tool(get_current_time_and_context)
+                logger.info(f"✅ [法务专家] 注册时间锚点工具: get_current_time_and_context")
+            except Exception as e:
+                logger.warning(f"⚠️ [法务专家] 注册时间锚点工具失败: {e}")
+            
+            logger.info(f"📊 [法务专家] MCP 工具注册完成")
+            
+        except ImportError as e:
+            logger.warning(f"⚠️ [法务专家] 无法导入 MCP 工具: {e}")
+        except Exception as e:
+            logger.error(f"❌ [法务专家] 注册 MCP 工具时出错: {e}")
+    
+    def _register_enhanced_legal_tools(self):
+        """
+        注册增强的法务合规工具（ToolBase 格式）
+        
+        这些工具基于项目现有数据模型，与 contract_review、scheduled_task 等模块配合
+        """
+        try:
+            from app.agent_framework.tools.legal_enhanced_tools import (
+                ContractComplianceDeadlineTool,
+                ContractTemplateMatcher,
+                DisputeResolutionAdvisor,
+                ContractRiskTrendAnalyzer,
+                EnterprisePolicyMatchReader,
+                EnterprisePolicyMatcher
+            )
+            
+            tools_to_register = [
+                ContractComplianceDeadlineTool(),
+                ContractTemplateMatcher(),
+                DisputeResolutionAdvisor(),
+                ContractRiskTrendAnalyzer(),
+                EnterprisePolicyMatchReader(),
+                EnterprisePolicyMatcher()
+            ]
+            
+            for tool in tools_to_register:
+                try:
+                    self.tool_manager.register_tool(tool)
+                    logger.info(f"✅ [法务专家] 注册增强工具: {tool.name}")
+                except Exception as e:
+                    logger.warning(f"⚠️ [法务专家] 注册增强工具 {tool.name} 失败: {e}")
+            
+            logger.info(f"📊 [法务专家] 增强工具注册完成，共 {len(tools_to_register)} 个")
+            
+        except ImportError as e:
+            logger.warning(f"⚠️ [法务专家] 无法导入增强工具模块: {e}")
+        except Exception as e:
+            logger.error(f"❌ [法务专家] 注册增强工具时出错: {e}")
+    
+    def _register_mcp_legal_tools(self):
+        """
+        注册 MCP 格式的法律合规工具
+        
+        这些工具使用 @local_tool 装饰器，符合 MCP STDIO 协议
+        """
+        try:
+            from app.mcp import create_legal_compliance_tools_v2
+            
+            mcp_tools = create_legal_compliance_tools_v2()
+            
+            for tool_func in mcp_tools:
+                try:
+                    self.tool_manager.register_langchain_tool(tool_func)
+                    logger.info(f"✅ [法务专家] 注册 MCP 工具: {tool_func.name}")
+                except Exception as e:
+                    logger.warning(f"⚠️ [法务专家] 注册 MCP 工具 {tool_func.name} 失败: {e}")
+            
+            logger.info(f"📊 [法务专家] MCP 法律工具注册完成，共 {len(mcp_tools)} 个")
+            
+        except ImportError as e:
+            logger.warning(f"⚠️ [法务专家] 无法导入 MCP 法律工具: {e}")
+        except Exception as e:
+            logger.error(f"❌ [法务专家] 注册 MCP 法律工具时出错: {e}")
     
     def _load_system_prompt(self) -> str:
         """从外部文件加载系统提示词"""
@@ -140,12 +230,35 @@ class LegalSpecialist(BaseSpecialistAgent):
 3. 能够提供合规性建议和风险防控措施
 4. 了解行业监管要求和最佳实践
 
+## 可用工具
+- 时间锚点工具 get_current_time_and_context（【重要】处理时间相关查询时必须使用）
+
+## 时间感知原则
+大模型没有生物钟，当处理以下场景时，必须先调用 get_current_time_and_context：
+- 用户询问"今年最新法规"、"去年法律变化"等相对时间
+- 需要分析"近期政策动向"、"法律时效性"等时间相关分析
+- 任何涉及法律法规生效日期的查询
+- 合同条款中涉及时间条款的解释
+
+## 法律时间敏感性
+- 法律法规有明确的生效日期和失效日期
+- 司法解释和指导案例有时效性
+- 合同中的期限条款需要准确的时间理解
+- 法律程序有严格的时间限制（如诉讼时效、上诉期限）
+
+## 工作流程
+1. 当用户查询包含相对时间词时，先调用 get_current_time_and_context 获取准确时间基准
+2. 根据时间基准查询对应时期的法律法规
+3. 分析法律条款的时效性和适用性
+4. 提供基于准确时间的专业法律建议
+
 在回答时，请：
-- 引用相关法律法规条款
-- 明确指出法律风险点
+- 引用相关法律法规条款（注明生效日期和修订情况）
+- 明确指出法律风险点（考虑时效性）
 - 提供具体的修改建议（针对合同条款）
 - 建议合理的风险防控措施
-- 明确说明法律界限和合规要求
+- 明确说明法律界限和合规要求（基于当前法律环境）
+- 清晰说明时间基准（例如："基于当前 2026 年 4 月的时间，根据 2026 年最新修订的《公司法》..."）
 """
     
     def _compile_entity_patterns(self) -> Dict[str, re.Pattern]:
@@ -204,6 +317,10 @@ class LegalSpecialist(BaseSpecialistAgent):
         Returns:
             提取的法律实体
         """
+        # 防御性处理：确保 text 是字符串
+        if not isinstance(text, str):
+            text = str(text) if text else ""
+        
         entity = LegalEntity(parties=[])
         
         for pattern_name, pattern in self.entity_patterns.items():
@@ -270,6 +387,10 @@ class LegalSpecialist(BaseSpecialistAgent):
         Returns:
             法律领域
         """
+        # 防御性处理：确保 text 是字符串
+        if not isinstance(text, str):
+            text = str(text) if text else ""
+        
         domain_keywords = {
             "知识产权": LegalDomain.INTELLECTUAL_PROPERTY,
             "专利": LegalDomain.INTELLECTUAL_PROPERTY,
@@ -309,6 +430,10 @@ class LegalSpecialist(BaseSpecialistAgent):
         Returns:
             合同类型
         """
+        # 防御性处理：确保 text 是字符串
+        if not isinstance(text, str):
+            text = str(text) if text else ""
+        
         contract_keywords = {
             "采购合同": ContractType.PURCHASE,
             "销售合同": ContractType.SALES,
