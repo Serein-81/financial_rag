@@ -57,57 +57,6 @@
 | 📈 **数据可视化** | 分析仪表板、实时监控、图表展示 |
 | 🎨 **交互体验** | 动画效果、骨架屏、国际化支持 |
 
-### 🆕 当前代码能力概览
-
-根据当前代码，系统已经扩展为覆盖 RAG、智能体协作、企业管理、财税工作流和运维观测的一体化平台：
-
-| 能力域 | 当前实现 |
-|------|------|
-| **认证与企业权限** | 登录/注册、JWT 鉴权、管理员路由、租户上下文中间件、企业用户管理、邀请码管理 |
-| **知识库与 RAG** | 文档上传、知识库管理、向量检索、混合检索、查询改写、MMR、知识图谱增强、检索结果缓存 |
-| **文档解析** | 文本、Markdown、Word、PDF、Excel、图片解析；支持 OCR、MinerU、Unstructured API 等解析路径 |
-| **智能体框架** | ReAct / Plan / Reflect Agent、智能体 LLM 独立配置、工具路由、工具调用追踪、Agent Trace |
-| **多智能体系统** | 意图路由、任务拆解、税务/法务/财务专家、结果合并、报告生成、人机审核、A2A 协议与多传输适配 |
-| **财税法务业务** | 税务申报、税务智能分析、政策检索与通知、合同审查、财务数据录入、财务健康监控、企业政策匹配 |
-| **协作与实时能力** | 群组聊天、WebSocket 在线状态、SSE 流式响应、工作流事件推送、后台任务状态持久化 |
-| **运维与治理** | 请求日志、对话日志、安全监控、限流、熔断器、健康检查、LangSmith 追踪、OpenTelemetry 依赖 |
-| **远程工具服务** | 独立 MCP Server，提供税务、法务、财务工具注册、API Key 鉴权、JSON-RPC 风格工具调用 |
-
-### 🧭 当前前端页面入口
-
-前端路由已覆盖下列主要业务页面：
-
-| 路径 | 页面能力 |
-|------|------|
-| `/` | 主智能对话 |
-| `/multi-agent` | 多智能体对话 |
-| `/search`、`/documents`、`/knowledge`、`/knowledge/:id` | 搜索、文档、知识库与知识详情 |
-| `/knowledge-graph`、`/knowledge-graph-editor` | 知识图谱查看与编辑 |
-| `/audit/upload`、`/audit/result/:id` | 多智能体审计上传与结果页 |
-| `/tax-submission`、`/tax-intelligence` | 税务申报与税务智能分析 |
-| `/policy`、`/policy/:id`、`/policy-search`、`/policy-notifications` | 政策列表、详情、检索与通知 |
-| `/financial-health`、`/financial-data-entry`、`/financial-data-list` | 财务健康、财务数据录入与列表 |
-| `/contract-review`、`/enterprise-match` | 合同审查与企业政策匹配 |
-| `/group-chat`、`/notifications` | 群组聊天与通知中心 |
-| `/analytics`、`/agent-center`、`/hitl-approval`、`/intent-debug`、`/security-audit`、`/logs` | 分析、Agent 管理、人机审核、意图调试、安全审计与日志 |
-
-### 🔌 当前后端 API 分组
-
-后端入口位于 `rag_backend/app/main.py`，当前已注册的主要 API 分组包括：
-
-| API 前缀 | 功能 |
-|------|------|
-| `/api/v1/auth` | 认证、登录、注册 |
-| `/api/v1/documents`、`/api/v1/knowledge`、`/api/v1/search`、`/api/v1/knowledge_graph` | 文档、知识库、搜索、知识图谱 |
-| `/api/v1/chat`、`/api/v1/sessions`、`/api/v1/groups`、`/api/v1/ws/groups` | 对话、会话、群聊与 WebSocket |
-| `/api/v1/multi-agent`、`/api/v1/human-review`、`/api/v1/agent_trace`、`/api/v1/tool_trace` | 多智能体、人机审核、Agent/工具追踪 |
-| `/api/v1/tax-reports`、`/api/v1/policy`、`/api/v1/financial-tools-test` | 税务报告、政策管理、财务工具测试 |
-| `/api/v1/enterprise`、`/api/v1/invite-codes`、`/api/v1/tenant-settings` | 企业管理、邀请码、租户设置 |
-| `/api/v1/logs`、`/api/v1/chat-logs`、`/api/v1/security`、`/api/v1/rate-limit` | 系统日志、对话日志、安全监控、限流管理 |
-| `/api/v1/workflow*`、`/api/v1/task-manager`、`/api/v1/notifications` | 工作流事件、任务管理、通知与政策通知 |
-| `/health`、`/health/quick`、`/health/{component}`、`/api/health` | 健康检查与组件级诊断 |
-
----
 
 ## ✨ 核心特性
 
@@ -231,6 +180,59 @@ app/agent_framework/
 - ⚖️ **法律匹配** - 合同条款检查、法规匹配
 - 📊 **财务分析** - 比率计算、报表分析
 - 🏢 **企业信息** - 企业查询、风险评估
+
+---
+
+
+### 🆕 当前代码能力概览
+
+根据当前代码，系统已经扩展为覆盖 RAG、智能体协作、企业管理、财税工作流和运维观测的一体化平台：
+
+| 能力域 | 当前实现 |
+|------|------|
+| **认证与企业权限** | 登录/注册、JWT 鉴权、管理员路由、租户上下文中间件、企业用户管理、邀请码管理 |
+| **知识库与 RAG** | 文档上传、知识库管理、向量检索、混合检索、查询改写、MMR、知识图谱增强、检索结果缓存 |
+| **文档解析** | 文本、Markdown、Word、PDF、Excel、图片解析；支持 OCR、MinerU、Unstructured API 等解析路径 |
+| **智能体框架** | ReAct / Plan / Reflect Agent、智能体 LLM 独立配置、工具路由、工具调用追踪、Agent Trace |
+| **多智能体系统** | 意图路由、任务拆解、税务/法务/财务专家、结果合并、报告生成、人机审核、A2A 协议与多传输适配 |
+| **财税法务业务** | 税务申报、税务智能分析、政策检索与通知、合同审查、财务数据录入、财务健康监控、企业政策匹配 |
+| **协作与实时能力** | 群组聊天、WebSocket 在线状态、SSE 流式响应、工作流事件推送、后台任务状态持久化 |
+| **运维与治理** | 请求日志、对话日志、安全监控、限流、熔断器、健康检查、LangSmith 追踪、OpenTelemetry 依赖 |
+| **远程工具服务** | 独立 MCP Server，提供税务、法务、财务工具注册、API Key 鉴权、JSON-RPC 风格工具调用 |
+
+### 🧭 当前前端页面入口
+
+前端路由已覆盖下列主要业务页面：
+
+| 路径 | 页面能力 |
+|------|------|
+| `/` | 主智能对话 |
+| `/multi-agent` | 多智能体对话 |
+| `/search`、`/documents`、`/knowledge`、`/knowledge/:id` | 搜索、文档、知识库与知识详情 |
+| `/knowledge-graph`、`/knowledge-graph-editor` | 知识图谱查看与编辑 |
+| `/audit/upload`、`/audit/result/:id` | 多智能体审计上传与结果页 |
+| `/tax-submission`、`/tax-intelligence` | 税务申报与税务智能分析 |
+| `/policy`、`/policy/:id`、`/policy-search`、`/policy-notifications` | 政策列表、详情、检索与通知 |
+| `/financial-health`、`/financial-data-entry`、`/financial-data-list` | 财务健康、财务数据录入与列表 |
+| `/contract-review`、`/enterprise-match` | 合同审查与企业政策匹配 |
+| `/group-chat`、`/notifications` | 群组聊天与通知中心 |
+| `/analytics`、`/agent-center`、`/hitl-approval`、`/intent-debug`、`/security-audit`、`/logs` | 分析、Agent 管理、人机审核、意图调试、安全审计与日志 |
+
+### 🔌 当前后端 API 分组
+
+后端入口位于 `rag_backend/app/main.py`，当前已注册的主要 API 分组包括：
+
+| API 前缀 | 功能 |
+|------|------|
+| `/api/v1/auth` | 认证、登录、注册 |
+| `/api/v1/documents`、`/api/v1/knowledge`、`/api/v1/search`、`/api/v1/knowledge_graph` | 文档、知识库、搜索、知识图谱 |
+| `/api/v1/chat`、`/api/v1/sessions`、`/api/v1/groups`、`/api/v1/ws/groups` | 对话、会话、群聊与 WebSocket |
+| `/api/v1/multi-agent`、`/api/v1/human-review`、`/api/v1/agent_trace`、`/api/v1/tool_trace` | 多智能体、人机审核、Agent/工具追踪 |
+| `/api/v1/tax-reports`、`/api/v1/policy`、`/api/v1/financial-tools-test` | 税务报告、政策管理、财务工具测试 |
+| `/api/v1/enterprise`、`/api/v1/invite-codes`、`/api/v1/tenant-settings` | 企业管理、邀请码、租户设置 |
+| `/api/v1/logs`、`/api/v1/chat-logs`、`/api/v1/security`、`/api/v1/rate-limit` | 系统日志、对话日志、安全监控、限流管理 |
+| `/api/v1/workflow*`、`/api/v1/task-manager`、`/api/v1/notifications` | 工作流事件、任务管理、通知与政策通知 |
+| `/health`、`/health/quick`、`/health/{component}`、`/api/health` | 健康检查与组件级诊断 |
 
 ---
 
@@ -1066,8 +1068,8 @@ class Reranker:
 ┌─────────────────────────────┼───────────────────────────────────┐
 │                       AI 服务层                                   │
 │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐               │
-│  │ 智谱 AI  │ │ OpenAI │ │  本地   │ │  MCP    │               │
-│  │ GLM-4   │ │ GPT-4   │ │ Ollama  │ │ 工具服务 │               │
+│  │DeepSeek │ │OpenAI等 │ │  本地   │ │  MCP    │               │
+│  │ 推荐使用 │ │ 适配器  │ │ Ollama  │ │ 工具服务 │               │
 │  └─────────┘ └─────────┘ └─────────┘ └─────────┘               │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -1085,8 +1087,10 @@ class Reranker:
 | **前端框架** | Vue 3.4+ | 渐进式 JavaScript 框架 |
 | **UI 库** | Element Plus | Vue 3 组件库 |
 | **状态管理** | Pinia | Vue 3 状态管理 |
-| **LLM** | 智谱 AI GLM-4 | 中文优化大语言模型 |
-| **向量模型** | Embedding-3 | 文档向量化 |
+| **LLM** | DeepSeek | 当前推荐和主要自测的大语言模型 |
+| **向量模型** | SiliconFlow / 智谱 / OpenAI 等 | 文档向量化，按环境变量选择 |
+
+> 说明：当前项目推荐使用 DeepSeek。代码中也保留了 OpenAI、Claude、智谱、Qwen、MiniMax 等 LLM 适配器，已检查其导入和初始化路径；真实调用仍取决于用户自己的 API Key、Base URL、模型权限和网络环境。
 
 ---
 
@@ -1305,22 +1309,23 @@ exit
 
 #### 1. LLM 大模型 API
 
-系统支持多种大模型提供商，**至少需要配置其中一种**：
+系统支持多种大模型提供商，**推荐优先使用 DeepSeek**。其它供应商适配器已检查导入和初始化路径；真实调用需要根据对应平台的 API Key、Base URL、模型权限和网络环境确认。
 
 | 提供商 | 环境变量 | 获取地址 | 说明 |
 |--------|----------|----------|------|
-| **智谱 AI** | `ZHIPU_API_KEY` | [智谱AI开放平台](https://open.bigmodel.cn/) | 推荐首选，免费额度充足 |
-| OpenAI | `OPENAI_API_KEY` | [OpenAI Platform](https://platform.openai.com/) | 需要科学上网 |
-| Claude | `CLAUDE_API_KEY` | [Anthropic Console](https://console.anthropic.com/) | 需要科学上网 |
-| DeepSeek | `DEEPSEEK_API_KEY` | [DeepSeek Platform](https://platform.deepseek.com/) | 性价比高 |
-| 硅基流动 | `SILICONFLOW_API_KEY` | [硅基流动](https://siliconflow.cn/) | 支持多种开源模型 |
+| **DeepSeek** | `DEEPSEEK_API_KEY` | [DeepSeek Platform](https://platform.deepseek.com/) | **推荐使用，当前项目主要验证路径** |
+| 智谱 AI | `ZHIPU_API_KEY` | [智谱AI开放平台](https://open.bigmodel.cn/) | 已有适配器，需配置平台密钥 |
+| OpenAI | `OPENAI_API_KEY` | [OpenAI Platform](https://platform.openai.com/) | 已有适配器，需配置平台密钥 |
+| Claude | `CLAUDE_API_KEY` | [Anthropic Console](https://console.anthropic.com/) | 已有适配器，需配置平台密钥 |
+| 硅基流动 | `SILICONFLOW_API_KEY` | [硅基流动](https://siliconflow.cn/) | 主要用于 Embedding/Rerank，也可按需接入模型 |
 
-**配置示例（使用智谱AI）：**
+**推荐配置示例（使用 DeepSeek）：**
 
 ```env
-LLM_PROVIDER=zhipu
-ZHIPU_API_KEY=your_zhipu_api_key_here
-ZHIPU_MODEL=glm-4-flash
+LLM_PROVIDER=deepseek
+DEEPSEEK_API_KEY=your_deepseek_api_key_here
+DEEPSEEK_MODEL=deepseek/deepseek-chat-v3-0324
+DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
 ```
 
 #### 2. 数据库密码
@@ -1458,9 +1463,10 @@ ACCESS_TOKEN_EXPIRE_MINUTES=1440
 # ==========================================
 # LLM 大模型配置（必需）
 # ==========================================
-LLM_PROVIDER=zhipu
-ZHIPU_API_KEY=your_zhipu_api_key_here
-ZHIPU_MODEL=glm-4-flash
+LLM_PROVIDER=deepseek
+DEEPSEEK_API_KEY=your_deepseek_api_key_here
+DEEPSEEK_MODEL=deepseek/deepseek-chat-v3-0324
+DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
 
 # ==========================================
 # MinIO 对象存储
@@ -1700,8 +1706,10 @@ NEO4J_PASSWORD=your_neo4j_password
 # ==========================
 # LLM 配置
 # ==========================
-LLM_PROVIDER=zhipu
-ZHIPU_API_KEY=your_zhipu_api_key
+LLM_PROVIDER=deepseek
+DEEPSEEK_API_KEY=your_deepseek_api_key
+DEEPSEEK_MODEL=deepseek/deepseek-chat-v3-0324
+DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
 
 # ==========================
 # MCP 服务配置 (云端)
@@ -1769,12 +1777,14 @@ VITE_API_BASE_URL=http://localhost:8000
 
 ### LLM 模型切换
 
-系统支持多种 LLM 提供商，修改配置即可切换：
+当前推荐使用 DeepSeek。系统代码中保留多种 LLM 提供商适配器，已检查导入和初始化路径；切换到其它供应商时，请确认对应平台的 API Key、Base URL、模型权限和网络环境。
 
 ```env
-# 智谱 AI（推荐）
-LLM_PROVIDER=zhipu
-ZHIPU_API_KEY=your_key
+# DeepSeek（推荐，当前主要验证路径）
+LLM_PROVIDER=deepseek
+DEEPSEEK_API_KEY=your_key
+DEEPSEEK_MODEL=deepseek/deepseek-chat-v3-0324
+DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
 
 # OpenAI
 LLM_PROVIDER=openai
@@ -1784,9 +1794,9 @@ OPENAI_API_KEY=your_key
 LLM_PROVIDER=claude
 CLAUDE_API_KEY=your_key
 
-# DeepSeek
-LLM_PROVIDER=deepseek
-DEEPSEEK_API_KEY=your_key
+# 智谱 AI
+LLM_PROVIDER=zhipu
+ZHIPU_API_KEY=your_key
 
 # 本地 Ollama
 LLM_PROVIDER=ollama
