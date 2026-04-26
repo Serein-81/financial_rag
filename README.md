@@ -57,6 +57,56 @@
 | 📈 **数据可视化** | 分析仪表板、实时监控、图表展示 |
 | 🎨 **交互体验** | 动画效果、骨架屏、国际化支持 |
 
+### 🆕 当前代码能力概览
+
+根据当前代码，系统已经扩展为覆盖 RAG、智能体协作、企业管理、财税工作流和运维观测的一体化平台：
+
+| 能力域 | 当前实现 |
+|------|------|
+| **认证与企业权限** | 登录/注册、JWT 鉴权、管理员路由、租户上下文中间件、企业用户管理、邀请码管理 |
+| **知识库与 RAG** | 文档上传、知识库管理、向量检索、混合检索、查询改写、MMR、知识图谱增强、检索结果缓存 |
+| **文档解析** | 文本、Markdown、Word、PDF、Excel、图片解析；支持 OCR、MinerU、Unstructured API 等解析路径 |
+| **智能体框架** | ReAct / Plan / Reflect Agent、智能体 LLM 独立配置、工具路由、工具调用追踪、Agent Trace |
+| **多智能体系统** | 意图路由、任务拆解、税务/法务/财务专家、结果合并、报告生成、人机审核、A2A 协议与多传输适配 |
+| **财税法务业务** | 税务申报、税务智能分析、政策检索与通知、合同审查、财务数据录入、财务健康监控、企业政策匹配 |
+| **协作与实时能力** | 群组聊天、WebSocket 在线状态、SSE 流式响应、工作流事件推送、后台任务状态持久化 |
+| **运维与治理** | 请求日志、对话日志、安全监控、限流、熔断器、健康检查、LangSmith 追踪、OpenTelemetry 依赖 |
+| **远程工具服务** | 独立 MCP Server，提供税务、法务、财务工具注册、API Key 鉴权、JSON-RPC 风格工具调用 |
+
+### 🧭 当前前端页面入口
+
+前端路由已覆盖下列主要业务页面：
+
+| 路径 | 页面能力 |
+|------|------|
+| `/` | 主智能对话 |
+| `/multi-agent` | 多智能体对话 |
+| `/search`、`/documents`、`/knowledge`、`/knowledge/:id` | 搜索、文档、知识库与知识详情 |
+| `/knowledge-graph`、`/knowledge-graph-editor` | 知识图谱查看与编辑 |
+| `/audit/upload`、`/audit/result/:id` | 多智能体审计上传与结果页 |
+| `/tax-submission`、`/tax-intelligence` | 税务申报与税务智能分析 |
+| `/policy`、`/policy/:id`、`/policy-search`、`/policy-notifications` | 政策列表、详情、检索与通知 |
+| `/financial-health`、`/financial-data-entry`、`/financial-data-list` | 财务健康、财务数据录入与列表 |
+| `/contract-review`、`/enterprise-match` | 合同审查与企业政策匹配 |
+| `/group-chat`、`/notifications` | 群组聊天与通知中心 |
+| `/analytics`、`/agent-center`、`/hitl-approval`、`/intent-debug`、`/security-audit`、`/logs` | 分析、Agent 管理、人机审核、意图调试、安全审计与日志 |
+
+### 🔌 当前后端 API 分组
+
+后端入口位于 `rag_backend/app/main.py`，当前已注册的主要 API 分组包括：
+
+| API 前缀 | 功能 |
+|------|------|
+| `/api/v1/auth` | 认证、登录、注册 |
+| `/api/v1/documents`、`/api/v1/knowledge`、`/api/v1/search`、`/api/v1/knowledge_graph` | 文档、知识库、搜索、知识图谱 |
+| `/api/v1/chat`、`/api/v1/sessions`、`/api/v1/groups`、`/api/v1/ws/groups` | 对话、会话、群聊与 WebSocket |
+| `/api/v1/multi-agent`、`/api/v1/human-review`、`/api/v1/agent_trace`、`/api/v1/tool_trace` | 多智能体、人机审核、Agent/工具追踪 |
+| `/api/v1/tax-reports`、`/api/v1/policy`、`/api/v1/financial-tools-test` | 税务报告、政策管理、财务工具测试 |
+| `/api/v1/enterprise`、`/api/v1/invite-codes`、`/api/v1/tenant-settings` | 企业管理、邀请码、租户设置 |
+| `/api/v1/logs`、`/api/v1/chat-logs`、`/api/v1/security`、`/api/v1/rate-limit` | 系统日志、对话日志、安全监控、限流管理 |
+| `/api/v1/workflow*`、`/api/v1/task-manager`、`/api/v1/notifications` | 工作流事件、任务管理、通知与政策通知 |
+| `/health`、`/health/quick`、`/health/{component}`、`/api/health` | 健康检查与组件级诊断 |
+
 ---
 
 ## ✨ 核心特性
@@ -1206,18 +1256,27 @@ docker-compose logs -f backend
 |------|--------|------|------|
 | PostgreSQL | rag_db | 5432 | 向量数据库 |
 | Redis | rag_redis | 6379 | 缓存服务 |
+| PgBouncer | rag_pgbouncer | 6432 | PostgreSQL 连接池 |
 | Neo4j | rag_neo4j | 7474, 7687 | 知识图谱 |
 | MinIO | rag_minio | 9000, 9001 | 对象存储 |
 | Backend | rag_backend | 8000 | 后端 API |
+| Unstructured API | rag_unstructured_api | 8001 | 重型文档解析服务，需 `--profile heavy` 或 `--profile full` |
 
 ### 4. 验证后端服务
 
 ```bash
 # 检查后端健康状态
-curl http://localhost:8000/api/v1/health
+curl http://localhost:8000/health
+curl http://localhost:8000/health/quick
 
 # 访问 API 文档
 # http://localhost:8000/docs
+```
+
+如只需确认 API 进程是否存活，也可以访问：
+
+```bash
+curl http://localhost:8000/api/health
 ```
 
 ### 5. 数据库初始化
@@ -1883,11 +1942,13 @@ pytest --cov=app --cov-report=html
 ```bash
 cd rag_frontend
 
-# 运行单元测试
-npm run test
+# 当前 package.json 提供的脚本
+npm run dev
+npm run build
+npm run preview
 
-# 运行 E2E 测试
-npm run test:e2e
+# 类型检查可直接调用本地 vue-tsc
+npx vue-tsc --noEmit
 ```
 
 ---
