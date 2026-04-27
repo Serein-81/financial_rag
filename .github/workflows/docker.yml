@@ -22,6 +22,11 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/rag-backend
 
+permissions:
+  contents: read
+  packages: write
+  security-events: write
+
 jobs:
   docker:
     name: Build Docker image
@@ -43,7 +48,7 @@ jobs:
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          password: ${{ secrets.REGISTRY_TOKEN }}
 
       - name: Extract Docker metadata
         id: meta
