@@ -1218,6 +1218,77 @@ My_rag/
 
 ## 📦 本地部署（Docker）
 
+### 0. 使用 Docker Desktop 复现运行环境
+
+如果你只是想在自己的电脑上复现本项目的运行环境，不需要手动安装 Python 包、Node 包、PostgreSQL、Redis、Neo4j、MinIO 或 OCR 相关系统库。推荐安装 **Docker Desktop**，由 Docker Compose 一次性启动后端和依赖服务。
+
+#### Windows / macOS 准备
+
+1. 安装 Docker Desktop：[https://www.docker.com/products/docker-desktop/](https://www.docker.com/products/docker-desktop/)
+2. 启动 Docker Desktop，等待左下角/状态栏显示 Docker Engine 正在运行。
+3. Windows 用户建议开启 WSL 2 后端，并在 Docker Desktop 设置中确认 WSL integration 已启用。
+4. 安装 Git，用于克隆代码。
+
+#### 一键启动后端完整依赖
+
+```bash
+git clone https://github.com/Serein-81/My_rag.git
+cd My_rag/rag_backend
+
+# 首次运行需要创建本地环境变量文件
+cp .env.example .env
+
+# 按需编辑 .env，至少填写数据库、Redis、Neo4j 密码和你要使用的大模型 API Key
+
+# 启动 PostgreSQL/pgvector、Redis、PgBouncer、Neo4j、MinIO 和后端服务
+docker compose up -d
+
+# 查看容器状态
+docker compose ps
+
+# 查看后端日志
+docker compose logs -f backend
+```
+
+启动成功后访问：
+
+- 后端 API 文档：http://localhost:8000/docs
+- 后端健康检查：http://localhost:8000/health
+- MinIO 控制台：http://localhost:9001
+- Neo4j Browser：http://localhost:7474
+
+停止环境：
+
+```bash
+cd My_rag/rag_backend
+docker compose down
+```
+
+清理本地数据卷/数据目录前请先确认不再需要已有数据。当前 compose 使用 `rag_backend` 目录下的 `postgres_data/`、`redis_data/`、`neo4j_data/`、`minio_data/` 等目录保存数据。
+
+#### 使用已发布的后端镜像（可选）
+
+如果不想在本地重新构建后端镜像，可以拉取 GitHub Container Registry 中由 CI 构建好的镜像：
+
+```bash
+docker pull ghcr.io/serein-81/rag-backend:main
+```
+
+要让 Docker Compose 使用这个远端镜像，需要把 `rag_backend/docker-compose.yml` 中 `backend` 服务的 `build:` 配置改为：
+
+```yaml
+backend:
+  image: ghcr.io/serein-81/rag-backend:main
+```
+
+然后再运行：
+
+```bash
+docker compose up -d
+```
+
+普通复现建议直接使用本仓库默认的 `docker compose up -d`，它会按当前代码在本地构建镜像，更适合调试和二次开发。
+
 ### 1. 克隆项目
 
 ```bash
