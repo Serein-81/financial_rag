@@ -30,6 +30,7 @@ class PolicyRetrievalService:
     def __init__(self):
         self.default_top_k = 10
         self.min_score_threshold = 0.5
+        self.notification_service = None
     
     async def semantic_search(
         self,
@@ -245,6 +246,14 @@ class PolicyRetrievalService:
         Returns:
             List[Dict]: 匹配的政策列表，包含增强的匹配信息
         """
+        if self.notification_service is None:
+            try:
+                from app.services.notification_service import NotificationService
+                self.notification_service = NotificationService()
+                logger.info("✅ NotificationService 初始化成功")
+            except Exception as e:
+                logger.warning(f"⚠️ 无法初始化 NotificationService: {e}")
+        
         logger.info(f"🎯 企业政策匹配: {enterprise_profile.get('industry', 'unknown')}")
         
         filters = {}

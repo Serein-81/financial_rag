@@ -623,10 +623,12 @@ class EnterpriseAgentService:
 
         # 不再使用手动历史记录
         formatted_history = []
-        
+
         # 用于收集完整回答
         full_response = ""
-        
+        # 跟踪已输出的乾淨内容长度（用于缓冲区标记剥离后的增量输出）
+        last_clean_output_length = 0
+
         try:
             async with monitor_service.trace_agent(
                 user_id=user_id or "anonymous",
@@ -645,10 +647,22 @@ class EnterpriseAgentService:
                     # 对每个 chunk 进行实时清理，移除内部标记
                     cleaned_chunk = output_formatter.clean_stream_chunk(chunk)
                     full_response += cleaned_chunk
-                    # 输出清理后的内容
-                    if cleaned_chunk:
-                        yield cleaned_chunk
+
+                    # 🔒 安全网：从缓冲区剥离 ReAct 内部标记段
+                    # 防止 react_agent.py 的流式检测未能拦截的 ## Action/## Thought 泄露
+                    clean_buffer = output_formatter.strip_react_markers_from_buffer(full_response)
+
+                    # 计算新的干净内容并输出（增量输出，避免重复）
+                    if len(clean_buffer) > last_clean_output_length:
+                        new_clean_content = clean_buffer[last_clean_output_length:]
+                        last_clean_output_length = len(clean_buffer)
+                        if new_clean_content:
+                            yield new_clean_content
+                    # 如果剥离后内容变少（标记被移除），更新输出位置但不输出任何内容
+                    elif len(clean_buffer) < last_clean_output_length:
+                        last_clean_output_length = len(clean_buffer)
                 # 记录回答到监控（使用清理后的完整内容）
+                full_response = clean_buffer  # 使用剥离后的干净内容
                 trace.set_result(full_response)
             
             # 🧠 将完整的AI回答添加到记忆系统（使用深度清理后的内容）

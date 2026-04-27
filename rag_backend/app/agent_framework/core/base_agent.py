@@ -151,7 +151,11 @@ class BaseAgent(ABC):
         try:
             self._log_action(f"🔧 调用工具: {tool_name}", kwargs)
             
-            result = await self.tool_manager.call_tool(tool_name, **kwargs)
+            result = await self.tool_manager.call_tool(
+                tool_name,
+                trace_id=self.current_trace_id,
+                **kwargs
+            )
             
             self._log_action(f"✅ 工具结果: {tool_name}", {"result": result[:100] + "..." if len(result) > 100 else result})
             

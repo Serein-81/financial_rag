@@ -36,6 +36,7 @@ class AgentTrace(Base):
     agent_type = Column(String, nullable=False)  # react, plan, reflect
     user_query = Column(Text, nullable=False)
     final_answer = Column(Text, nullable=True)
+    langsmith_run_id = Column(String, nullable=True)
     
     # 执行统计
     total_iterations = Column(Integer, default=0)

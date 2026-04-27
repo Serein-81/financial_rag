@@ -8,8 +8,9 @@
 
 import time
 from typing import Dict, Any, List
-from sqlalchemy import select, func
+from sqlalchemy import select, func, case
 from app.db.session import AsyncSessionLocal
+from app.models.agent_trace import AgentTrace
 from app.models.tool_trace import ToolCallTrace
 
 
@@ -26,7 +27,10 @@ class ToolCallTracer:
         tool_type: str = "function",
         input_params: Dict = None,
         trace_id: str = None,
-        parent_call_id: str = None
+        parent_call_id: str = None,
+        user_id: str = None,
+        tenant_id: str = None,
+        session_id: str = None
     ) -> str:
         """
         开始工具调用追踪
@@ -42,12 +46,22 @@ class ToolCallTracer:
             call_id: 调用 ID
         """
         async with AsyncSessionLocal() as db:
+            if trace_id and (not user_id or not tenant_id or not session_id):
+                parent_trace = await db.get(AgentTrace, trace_id)
+                if parent_trace:
+                    user_id = user_id or parent_trace.user_id
+                    tenant_id = tenant_id or parent_trace.tenant_id
+                    session_id = session_id or parent_trace.session_id
+
             call_trace = ToolCallTrace(
                 tool_name=tool_name,
                 tool_type=tool_type,
                 input_params=input_params,
                 trace_id=trace_id,
                 parent_call_id=parent_call_id,
+                user_id=user_id,
+                tenant_id=tenant_id,
+                session_id=session_id,
                 start_time=time.time(),
                 status="running"
             )
@@ -97,7 +111,8 @@ class ToolCallTracer:
             
             # 打印日志
             status_icon = "✅" if status == "success" else "❌"
-            print(f"{status_icon} 工具调用完成: {call_trace.tool_name} ({duration:.0f}ms)")
+            duration_text = f"{duration:.0f}ms" if duration is not None else "unknown"
+            print(f"{status_icon} 工具调用完成: {call_trace.tool_name} ({duration_text})")
     
     async def get_trace_calls(self, trace_id: str) -> List[Dict[str, Any]]:
         """
@@ -120,6 +135,7 @@ class ToolCallTracer:
             return [
                 {
                     "call_id": str(c.id),
+                    "trace_id": str(c.trace_id) if c.trace_id else None,
                     "tool_name": c.tool_name,
                     "tool_type": c.tool_type,
                     "input_params": c.input_params,
@@ -217,7 +233,7 @@ class ToolCallTracer:
                     func.count(ToolCallTrace.id).label("call_count"),
                     func.avg(ToolCallTrace.duration).label("avg_duration"),
                     func.sum(
-                        func.case((ToolCallTrace.status == "success", 1), else_=0)
+                        case((ToolCallTrace.status == "success", 1), else_=0)
                     ).label("success_count")
                 )
                 .where(ToolCallTrace.created_at >= start_date)
@@ -231,7 +247,7 @@ class ToolCallTracer:
                     "tool_name": s.tool_name,
                     "call_count": s.call_count,
                     "avg_duration": round(s.avg_duration, 2) if s.avg_duration else 0,
-                    "success_rate": round(s.success_count / s.call_count * 100, 2) if s.call_count > 0 else 0
+                    "success_rate": round((s.success_count or 0) / s.call_count * 100, 2) if s.call_count > 0 else 0
                 }
                 for s in stats
             ]

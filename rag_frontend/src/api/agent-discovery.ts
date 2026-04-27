@@ -72,6 +72,18 @@ export interface AgentTraceEvent {
   metadata?: Record<string, any>
 }
 
+export interface AgentTraceStep {
+  step_number: number
+  step_type: 'thought' | 'action' | 'observation' | 'final_answer' | string
+  content: string
+  tool_name?: string
+  tool_input?: Record<string, any>
+  tool_output?: string
+  tool_duration?: number
+  confidence?: number
+  timestamp: number
+}
+
 export interface AgentTrace {
   trace_id: string
   agent_type: string
@@ -83,6 +95,7 @@ export interface AgentTrace {
   created_at: string
   final_answer?: string
   events?: AgentTraceEvent[]
+  steps?: AgentTraceStep[]
   session_id?: string
   query?: string
 }
@@ -116,7 +129,7 @@ export const agentDiscoveryApi = {
   },
 
   async getTrace(trace_id: string): Promise<AgentTrace> {
-    return request<AgentTrace>(`/agent-discovery/traces/${trace_id}`)
+    return request<AgentTrace>(`/agent-discovery/traces/${trace_id}/steps`)
   },
 
   async getTraceVisualization(trace_id: string): Promise<{

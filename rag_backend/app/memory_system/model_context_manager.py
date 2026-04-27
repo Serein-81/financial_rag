@@ -10,6 +10,8 @@
 
 import json
 import logging
+import os
+import tempfile
 from typing import Dict, Optional
 from pathlib import Path
 
@@ -206,31 +208,40 @@ class ModelContextManager:
     def _load_from_cache(self) -> bool:
         """
         从本地缓存文件加载
-        
+
         Returns:
             bool: 是否成功加载
         """
-        if not self._cache_file.exists():
-            logger.info("[ModelContextManager] 本地缓存文件不存在")
-            return False
-        
-        try:
-            with open(self._cache_file, "r", encoding="utf-8") as f:
-                cache_data = json.load(f)
-            
-            if isinstance(cache_data, dict):
-                self._memory_cache = cache_data
-                logger.info(
-                    f"[ModelContextManager] 从本地缓存加载了 {len(self._memory_cache)} 个模型"
-                )
-                return True
-            else:
-                logger.warning("[ModelContextManager] 缓存文件格式错误")
-                return False
-                
-        except Exception as e:
-            logger.warning(f"[ModelContextManager] 读取本地缓存失败: {e}")
-            return False
+        cache_files_to_try = [self._cache_file]
+
+        # 如果默认路径不可读，尝试临时目录中的回退缓存
+        fallback_path = Path(tempfile.gettempdir()) / "rag_cache" / self._cache_file.name
+        if fallback_path.exists():
+            cache_files_to_try.append(fallback_path)
+
+        for cache_file in cache_files_to_try:
+            if not cache_file.exists():
+                continue
+
+            try:
+                with open(cache_file, "r", encoding="utf-8") as f:
+                    cache_data = json.load(f)
+
+                if isinstance(cache_data, dict):
+                    self._memory_cache = cache_data
+                    self._cache_file = cache_file
+                    logger.info(
+                        f"[ModelContextManager] 从缓存加载了 {len(self._memory_cache)} 个模型"
+                    )
+                    return True
+                else:
+                    logger.warning(f"[ModelContextManager] 缓存文件格式错误: {cache_file}")
+
+            except Exception as e:
+                logger.warning(f"[ModelContextManager] 读取缓存失败 {cache_file}: {e}")
+
+        logger.info("[ModelContextManager] 本地缓存文件不存在")
+        return False
     
     def _save_to_cache(self) -> None:
         """保存到本地缓存文件"""
@@ -238,6 +249,18 @@ class ModelContextManager:
             with open(self._cache_file, "w", encoding="utf-8") as f:
                 json.dump(self._memory_cache, f, ensure_ascii=False, indent=2)
             logger.debug(f"[ModelContextManager] 已保存缓存到 {self._cache_file}")
+        except PermissionError:
+            # Docker 环境中 /app 可能不可写，回退到临时目录
+            try:
+                fallback_dir = Path(tempfile.gettempdir()) / "rag_cache"
+                fallback_dir.mkdir(parents=True, exist_ok=True)
+                fallback_file = fallback_dir / self._cache_file.name
+                with open(fallback_file, "w", encoding="utf-8") as f:
+                    json.dump(self._memory_cache, f, ensure_ascii=False, indent=2)
+                self._cache_file = fallback_file
+                logger.info(f"[ModelContextManager] 已保存缓存到可写路径: {fallback_file}")
+            except Exception as fallback_error:
+                logger.warning(f"[ModelContextManager] 保存缓存失败 (已尝试回退): {fallback_error}")
         except Exception as e:
             logger.warning(f"[ModelContextManager] 保存缓存失败: {e}")
     

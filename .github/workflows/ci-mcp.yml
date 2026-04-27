@@ -18,56 +18,54 @@ on:
 
 jobs:
   test:
-    name: 测试
+    name: Tests
     runs-on: ubuntu-latest
-    
+
     defaults:
       run:
         working-directory: mcp_server
 
     steps:
-      - name: 检出代码
+      - name: Check out code
         uses: actions/checkout@v4
 
-      - name: 设置 Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
+          cache: pip
           cache-dependency-path: mcp_server/requirements.txt
 
-      - name: 安装依赖
+      - name: Install dependencies
         run: |
           pip install -r requirements.txt
+          pip install pytest
 
-      - name: 运行测试
-        run: |
-          pytest tests/ -v --tb=short
-        continue-on-error: true
+      - name: Run tests
+        run: pytest tests/ -v --tb=short
 
   lint:
-    name: 代码质量
+    name: Lint
     runs-on: ubuntu-latest
-    
+
     defaults:
       run:
         working-directory: mcp_server
 
     steps:
-      - name: 检出代码
+      - name: Check out code
         uses: actions/checkout@v4
 
-      - name: 设置 Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: 安装依赖
+      - name: Install lint dependencies
         run: pip install ruff mypy
 
-      - name: Ruff 检查
+      - name: Ruff
         run: ruff check app/
 
-      - name: MyPy 类型检查
+      - name: MyPy
         run: mypy app/ --ignore-missing-imports --no-error-summary
-        continue-on-error: true

@@ -451,7 +451,115 @@ class ToolManager:
             # 弹出调用栈
             if call_id and self.call_stack and self.call_stack[-1] == call_id:
                 self.call_stack.pop()
-    
+
+    async def call_tool_raw(self, tool_name: str, trace_id: str = None, **kwargs) -> Any:
+        """
+        调用工具并返回原始结果（不进行字符串转换）
+
+        与 call_tool 的区别：返回工具函数的原始返回值（dict/list 等），
+        适合需要处理结构化数据的内部调用场景。
+
+        Args:
+            tool_name: 工具名称
+            trace_id: Agent 追踪 ID
+            **kwargs: 工具参数
+
+        Returns:
+            工具执行的原始返回值
+        """
+        if tool_name not in self.tools:
+            available_tools = ", ".join(self.tools.keys())
+            raise ValueError(f"工具 '{tool_name}' 不存在。可用工具: {available_tools}")
+
+        tool_info = self.tools[tool_name]
+        func = tool_info["func"]
+
+        # 开始追踪
+        call_id = None
+        if self.enable_tracing:
+            try:
+                call_id = await self.tracer.start_call(
+                    tool_name=tool_name,
+                    tool_type=tool_info["type"],
+                    input_params=kwargs,
+                    trace_id=trace_id,
+                    parent_call_id=self.call_stack[-1] if self.call_stack else None
+                )
+                self.call_stack.append(call_id)
+            except Exception as e:
+                logger.warning(f"⚠️ 开始工具追踪失败: {e}")
+
+        start_time = time.time()
+
+        try:
+            # 检查必需参数
+            missing_params = []
+            for param_name, param_info in tool_info["parameters"].items():
+                if param_info.get("required", False) and param_name not in kwargs:
+                    missing_params.append(param_name)
+
+            if missing_params:
+                error_msg = f"错误: 缺少必需参数: {', '.join(missing_params)}"
+                self._record_failure(tool_name, "MissingParameters", error_msg)
+                raise ValueError(error_msg)
+
+            # 调用工具函数
+            if asyncio.iscoroutinefunction(func):
+                result = await func(**kwargs)
+            else:
+                result = func(**kwargs)
+
+            # 记录成功
+            if call_id:
+                await self.tracer.end_call(
+                    call_id=call_id,
+                    output_result=str(result)[:2000],
+                    duration=(time.time() - start_time) * 1000,
+                    status="success"
+                )
+
+            # LangSmith 追踪
+            langsmith_tracer = _get_langsmith_tracer()
+            if langsmith_tracer and langsmith_tracer.client:
+                langsmith_tracer.trace_tool_call(
+                    tool_name=tool_name,
+                    arguments=kwargs,
+                    result=result
+                )
+
+            self._record_success(tool_name)
+            self._current_sequence.append(tool_name)
+
+            return result
+
+        except Exception as e:
+            error_msg = f"工具执行错误: {str(e)}"
+            logger.error(f"❌ {tool_name} 执行失败: {error_msg}")
+
+            self._record_failure(tool_name, type(e).__name__, error_msg)
+
+            if call_id:
+                await self.tracer.end_call(
+                    call_id=call_id,
+                    duration=(time.time() - start_time) * 1000,
+                    status="error",
+                    error_message=error_msg
+                )
+
+            langsmith_tracer = _get_langsmith_tracer()
+            if langsmith_tracer and langsmith_tracer.client:
+                langsmith_tracer.trace_tool_call(
+                    tool_name=tool_name,
+                    arguments=kwargs,
+                    result=None,
+                    error=error_msg
+                )
+
+            raise
+        finally:
+            if call_id and self.call_stack and self.call_stack[-1] == call_id:
+                self.call_stack.pop()
+
     def get_tools_description(self) -> str:
         """
         获取所有工具的描述（用于提示词）
@@ -509,16 +617,17 @@ class ToolManager:
     def parse_tool_call_from_text(self, text: str) -> Optional[Dict[str, Any]]:
         """
         从文本中解析工具调用
-        
+
         支持多种格式:
         1. MCP JSON 格式: {"name": "tool_name", "arguments": {...}}
         2. Action/Action Input 格式
-        3. 使用工具: tool_name + 参数: {...}
-        4. MiniMax XML 格式
-        
+        3. 内联函数调用格式: tool_name({"key": "value"})
+        4. 使用工具: tool_name + 参数: {...}
+        5. MiniMax XML 格式
+
         Args:
             text: 包含工具调用的文本
-            
+
         Returns:
             解析出的工具调用信息，如果没有找到则返回 None
         """
@@ -539,13 +648,13 @@ class ToolManager:
         # 模式1: Action/Action Input 格式
         action_pattern = r'Action:\s*(\w+)'
         input_pattern = r'Action Input:\s*(\{.*?\})'
-        
+
         action_match = re.search(action_pattern, text, re.IGNORECASE)
         input_match = re.search(input_pattern, text, re.DOTALL)
-        
+
         if action_match:
             tool_name = action_match.group(1)
-            
+
             # 解析参数
             params = {}
             if input_match:
@@ -553,57 +662,73 @@ class ToolManager:
                     params = json.loads(input_match.group(1))
                 except json.JSONDecodeError:
                     print(f"⚠️ 无法解析工具参数: {input_match.group(1)}")
-            
+
             return {
                 "tool_name": tool_name,
                 "parameters": params
             }
-        
+
+        # 模式2: 内联函数调用格式 tool_name({"key": "value"})
+        # 匹配:## Action 后面（或独立行）的 function_name(json_params)
+        # 例如: search_enterprise_knowledge({"query": "...", "kb_id": "..."})
+        inline_pattern = r'(?:##\s*Action\s*\n\s*|Action:\s*)?(\w+)\s*\(\s*(\{[^()]*\})\s*\)'
+        inline_match = re.search(inline_pattern, text, re.DOTALL)
+        if inline_match:
+            tool_name = inline_match.group(1)
+            try:
+                params = json.loads(inline_match.group(2))
+            except json.JSONDecodeError:
+                params = {}
+            return {
+                "tool_name": tool_name,
+                "parameters": params
+            }
+
         # 模式3: MiniMax XML 格式
         # <invoke name="tool_name">
         #   <parameter name="param_name">value</parameter>
         # </invoke>
         xml_pattern = r'<invoke\s+name="([^"]+)"'
         xml_params_pattern = r'<parameter\s+name="([^"]+)">([^<]*)</parameter>'
-        
+
         xml_match = re.search(xml_pattern, text, re.IGNORECASE)
         if xml_match:
             tool_name = xml_match.group(1)
-            
+
             # 提取所有参数
             params = {}
             for param_match in re.finditer(xml_params_pattern, text, re.DOTALL):
                 param_name = param_match.group(1)
                 param_value = param_match.group(2).strip()
                 params[param_name] = param_value
-            
+
             return {
                 "tool_name": tool_name,
                 "parameters": params
             }
-        
-        # 模式2: 中文格式
+
+        # 模式4: 中文格式
         chinese_pattern = r'使用工具:\s*(\w+)'
         chinese_params_pattern = r'参数:\s*(\{.*?\})'
-        
+
         chinese_match = re.search(chinese_pattern, text)
         chinese_params_match = re.search(chinese_params_pattern, text, re.DOTALL)
-        
+
         if chinese_match:
             tool_name = chinese_match.group(1)
-            
+
             params = {}
             if chinese_params_match:
                 try:
                     params = json.loads(chinese_params_match.group(1))
                 except json.JSONDecodeError:
                     print(f"⚠️ 无法解析工具参数: {chinese_params_match.group(1)}")
-            
+
             return {
                 "tool_name": tool_name,
                 "parameters": params
             }
-        
+
         return None
     
     def get_summary(self) -> Dict[str, Any]:

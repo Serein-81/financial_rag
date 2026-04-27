@@ -343,7 +343,7 @@ async def hydrate_thread_state(
                 last_checkpoint_info = CheckpointInfo(
                     checkpoint_id=latest_checkpoint,
                     metadata=latest_cp_data.get("metadata"),
-                    created_at=latest_checkpoint_data.get("updated_at") if 'updated_at' in latest_cp_data else None
+                    created_at=latest_cp_data.get("updated_at") if 'updated_at' in latest_cp_data else None
                 )
         
         checkpoint_history = [

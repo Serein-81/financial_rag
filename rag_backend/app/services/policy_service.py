@@ -26,6 +26,7 @@ from uuid import UUID
 from app.services.policy_crawler_service import policy_crawler_service, CrawledPolicy, PolicySource
 from app.models.policy import Policy, PolicyStatus, PolicyPriority
 from app.db.session import SessionLocal
+from app.core.config import settings
 from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
@@ -94,7 +95,7 @@ class PolicyService:
         try:
             policies = await policy_crawler_service.crawl_all_sources(
                 max_per_source=max_per_source,
-                include_sample=True
+                include_sample=settings.POLICY_SAMPLE_FALLBACK_ENABLED
             )
             
             logger.info(f"✅ 采集完成: {len(policies)} 条政策")

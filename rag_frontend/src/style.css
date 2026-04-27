@@ -29,6 +29,53 @@ html {
   }
 }
 
+/* Global utility classes - 消除各视图的重复定义 */
+@layer utilities {
+  .line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .line-clamp-3 {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .break-words {
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    word-break: break-word;
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .premium-shadow {
+    box-shadow:
+      0 1px 0 rgba(255, 255, 255, 0.92) inset,
+      0 16px 36px rgba(15, 23, 42, 0.06);
+  }
+
+  .premium-shadow-lg {
+    box-shadow:
+      0 1px 0 rgba(255, 255, 255, 0.86) inset,
+      0 24px 64px rgba(15, 23, 42, 0.12);
+  }
+
+  .premium-ring {
+    @apply ring-1 ring-inset ring-slate-200/70;
+  }
+
+  .gradient-text {
+    @apply bg-clip-text text-transparent;
+  }
+}
+
 /* Base styles */
 * {
   margin: 0;
@@ -42,6 +89,15 @@ html, body, #app {
   overflow: hidden;
 }
 
+body {
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  background:
+    radial-gradient(circle at top left, rgba(16, 185, 129, 0.08), transparent 30rem),
+    radial-gradient(circle at top right, rgba(14, 165, 233, 0.08), transparent 28rem),
+    #f8fafc;
+  color: #0f172a;
+}
+
 /* Selection - 亮色主题 */
 ::selection {
   background: rgba(59, 130, 246, 0.3);
@@ -53,10 +109,45 @@ html, body, #app {
   @apply transition-colors duration-200;
 }
 
-/* Line clamp utility */
-.line-clamp-2 {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+@layer components {
+  .premium-main :where(.bg-white.rounded-2xl, .bg-white.rounded-xl) {
+    border-color: rgba(226, 232, 240, 0.92);
+    box-shadow:
+      0 1px 0 rgba(255, 255, 255, 0.92) inset,
+      0 16px 36px rgba(15, 23, 42, 0.06);
+  }
+
+  .premium-main :where(.shadow-xl, .shadow-2xl) {
+    box-shadow:
+      0 1px 0 rgba(255, 255, 255, 0.86) inset,
+      0 24px 64px rgba(15, 23, 42, 0.12);
+  }
+
+  .premium-main :where(input, textarea, select) {
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.85) inset;
+  }
+
+  .premium-main :where(button, a, [role='button']) {
+    transition-property: color, background-color, border-color, opacity, box-shadow, transform;
+  }
+
+  .premium-main :where(button:hover, a:hover, [role='button']:hover) {
+    transform: translateY(-1px);
+  }
+
+  .premium-main :where(.rounded-2xl) {
+    border-radius: 1rem;
+  }
+
+  .premium-main :where(.border-gray-200, .border-slate-200, .border-gray-100) {
+    border-color: rgba(203, 213, 225, 0.72);
+  }
+
+  .premium-main :where(.bg-gray-50, .bg-slate-50) {
+    background-color: rgba(248, 250, 252, 0.82);
+  }
+
+  .premium-main :where(.prose) {
+    color: #334155;
+  }
 }

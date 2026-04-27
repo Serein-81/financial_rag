@@ -20,6 +20,7 @@
 
 import logging
 import logging.handlers
+import re
 import sys
 from app.utils.json_compat import json
 from datetime import datetime
@@ -42,6 +43,39 @@ class LogFormat(Enum):
     SIMPLE = "simple"
     DETAILED = "detailed"
     JSON = "json"
+
+
+class SensitiveDataFilter(logging.Filter):
+    """Filter secrets and credentials before log records reach handlers."""
+
+    SENSITIVE_PATTERNS = [
+        (re.compile(r'password["\']?\s*[:=]\s*["\']?([^"\'\s,}]+)', re.IGNORECASE), "password=[PASSWORD]"),
+        (re.compile(r'secret["\']?\s*[:=]\s*["\']?([^"\'\s,}]+)', re.IGNORECASE), "secret=[SECRET]"),
+        (re.compile(r'api[_-]?key["\']?\s*[:=]\s*["\']?([^"\'\s,}]+)', re.IGNORECASE), "api_key=[API_KEY]"),
+        (re.compile(r'token["\']?\s*[:=]\s*["\']?([^"\'\s,}]+)', re.IGNORECASE), "token=[TOKEN]"),
+        (re.compile(r'bearer\s+([a-zA-Z0-9\-_.]+)', re.IGNORECASE), "Bearer [TOKEN]"),
+        (re.compile(r'access[_-]?token["\']?\s*[:=]\s*["\']?([^"\'\s,}]+)', re.IGNORECASE), "access_token=[ACCESS_TOKEN]"),
+        (re.compile(r'refresh[_-]?token["\']?\s*[:=]\s*["\']?([^"\'\s,}]+)', re.IGNORECASE), "refresh_token=[REFRESH_TOKEN]"),
+        (re.compile(r'authorization["\']?\s*[:=]\s*["\']?([^"\'\s,}]+)', re.IGNORECASE), "authorization=[AUTH_HEADER]"),
+        (re.compile(r'jwt["\']?\s*[:=]\s*["\']?([^"\'\s,}]+)', re.IGNORECASE), "jwt=[JWT]"),
+        (re.compile(r'secret[_-]?key["\']?\s*[:=]\s*["\']?([^"\'\s,}]+)', re.IGNORECASE), "secret_key=[SECRET_KEY]"),
+        (re.compile(r'private[_-]?key["\']?\s*[:=]\s*["\']?([^"\'\s,}]+)', re.IGNORECASE), "private_key=[PRIVATE_KEY]"),
+    ]
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.msg:
+            record.msg = self._filter_message(str(record.msg))
+        if record.args:
+            record.args = tuple(
+                self._filter_message(str(arg)) if isinstance(arg, str) else arg
+                for arg in record.args
+            )
+        return True
+
+    def _filter_message(self, message: str) -> str:
+        for pattern, replacement in self.SENSITIVE_PATTERNS:
+            message = pattern.sub(replacement, message)
+        return message
 
 
 class STDIOAwareLogger:
@@ -191,11 +225,14 @@ def setup_logging(
     
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
+
+    sensitive_filter = SensitiveDataFilter()
     
     if enable_console and not stdio_safe:
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.encoding = 'utf-8'
         console_handler.setLevel(getattr(logging, log_level.upper()))
+        console_handler.addFilter(sensitive_filter)
         
         if format_type == LogFormat.JSON:
             console_handler.setFormatter(StructuredLogFormatter())
@@ -220,6 +257,7 @@ def setup_logging(
                 encoding="utf-8"
             )
             file_handler.setLevel(getattr(logging, log_level.upper()))
+            file_handler.addFilter(sensitive_filter)
             
             if format_type == LogFormat.JSON:
                 file_handler.setFormatter(StructuredLogFormatter())
@@ -241,6 +279,7 @@ def setup_logging(
         error_handler = logging.StreamHandler(sys.stderr)
         error_handler.encoding = 'utf-8'
         error_handler.setLevel(logging.WARNING)
+        error_handler.addFilter(sensitive_filter)
         error_handler.setFormatter(
             logging.Formatter("[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s")
         )

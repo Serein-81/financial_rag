@@ -2,7 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { multiAgentApi, type HITLApproval, type UserRole, type RBACPolicy, ApprovalStatus, PermissionLevel } from '@/api/multi-agent'
-import { reviewApiClient, type ReviewRequest, type ReviewStatusEnum as ReviewStatus, ReviewTypeEnum } from '@/api/review'
+import { reviewApiClient, type ReviewRequest, type ReviewStatusEnum as ReviewStatus } from '@/api/review'
 import {
   Shield,
   CheckCircle2,

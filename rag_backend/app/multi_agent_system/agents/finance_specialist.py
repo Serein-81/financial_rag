@@ -498,29 +498,33 @@ class FinanceSpecialist(BaseSpecialistAgent):
                 error_message=f"未提供有效的 tenant_id 或 user_id (tenant_id='{tenant_id}', user_id='{user_id}')"
             )
 
-        from app.mcp.financial_tools import get_financial_overview
-
+        # ─── 通过 ToolManager 路由工具调用（保证追踪/统计完整性） ───
         max_retries = 2
         last_error = None
 
         for attempt in range(1, max_retries + 1):
             try:
                 logger.warning(
-                    f"🔍 [FinanceSpecialist] 正在通过 MCP 工具查询财务数据 "
+                    f"🔍 [FinanceSpecialist] 正在通过 ToolManager 查询财务数据 "
                     f"(尝试 {attempt}/{max_retries}): tenant='{tenant_id}', year={fiscal_year}"
                 )
 
-                raw_result = await get_financial_overview(
-                    tenant_id=tenant_id,
-                    fiscal_year=fiscal_year if fiscal_year else None
+                tool_params = {
+                    "tenant_id": tenant_id,
+                    "fiscal_year": fiscal_year if fiscal_year else None,
+                }
+
+                raw_result = await self.tool_manager.call_tool_raw(
+                    "get_financial_overview",
+                    **tool_params
                 )
-                
-                logger.warning(f"🔍 [FinanceSpecialist] MCP 工具返回原始结果:")
+
+                logger.warning(f"🔍 [FinanceSpecialist] ToolManager 返回原始结果:")
                 logger.warning(f"   - status: {raw_result.get('status')}")
                 logger.warning(f"   - has 'data': {raw_result.get('data') is not None}")
                 logger.warning(f"   - has 'summary': {raw_result.get('summary') is not None}")
                 logger.warning(f"   - message: {raw_result.get('message', 'N/A')[:100]}")
-                
+
                 if raw_result.get('data'):
                     logger.warning(f"   - data keys: {list(raw_result['data'].keys())}")
                     logger.warning(f"   - data.total_revenue: {raw_result['data'].get('total_revenue')}")
@@ -534,7 +538,7 @@ class FinanceSpecialist(BaseSpecialistAgent):
                 logger.info("✅ [FinanceSpecialist] Pydantic 验证通过")
 
                 financial_data = validated.get_financial_data()
-                
+
                 logger.warning(f"🔍 [FinanceSpecialist] get_financial_data() 返回:")
                 logger.warning(f"   - financial_data is None: {financial_data is None}")
                 if financial_data:
@@ -542,20 +546,16 @@ class FinanceSpecialist(BaseSpecialistAgent):
                     logger.warning(f"   - total_revenue: {financial_data.get('total_revenue')}")
                     logger.warning(f"   - total_profit: {financial_data.get('total_profit')}")
                     logger.warning(f"   - avg_profit_margin: {financial_data.get('avg_profit_margin')}")
-                
+
                 data_summary = None
                 if financial_data:
-                    # 从 summary 或 data 中提取 profit
-                    # 数据库中没有 net_profit, total_assets, total_liabilities
-                    # 但有 total_revenue, total_expenses, total_profit (计算得出)
                     total_revenue = financial_data.get("total_revenue", 0) or 0
                     total_expenses = financial_data.get("total_expenses", 0) or 0
                     total_profit = financial_data.get("total_profit")
-                    
-                    # 如果 summary 中没有 total_profit，手动计算
+
                     if total_profit is None:
                         total_profit = total_revenue - total_expenses
-                    
+
                     data_summary = {
                         "fiscal_year": validated.fiscal_year,
                         "total_revenue": total_revenue,
@@ -575,7 +575,7 @@ class FinanceSpecialist(BaseSpecialistAgent):
                         "fiscal_year": validated.fiscal_year,
                         "message": validated.message or "财务数据为空"
                     }
-                
+
                 has_valid_data = financial_data is not None
                 return FinancialQueryResult(
                     has_data=has_valid_data,
@@ -584,7 +584,7 @@ class FinanceSpecialist(BaseSpecialistAgent):
                 )
 
             except ImportError as e:
-                last_error = f"MCP 财务工具不可用: {e}"
+                last_error = f"ToolManager 不可用: {e}"
                 logger.warning(f"⚠️ [FinanceSpecialist] {last_error}")
                 break
 
@@ -595,7 +595,6 @@ class FinanceSpecialist(BaseSpecialistAgent):
                 )
                 if attempt < max_retries:
                     continue
-                break
 
         return FinancialQueryResult(
             has_data=False,

@@ -10,7 +10,7 @@ import uuid
 import traceback
 import logging
 import re
-from typing import Dict, List, Any, Optional, AsyncGenerator
+from typing import Dict, List, Any, Optional, AsyncGenerator, Callable, Awaitable
 from datetime import datetime
 from dataclasses import dataclass, field
 
@@ -525,6 +525,42 @@ class Nodes:
         logger.debug(f"[最终答案] 收到 {len(specialist_results)} 个专家结果")
         
         if not specialist_results:
+            # ── 直接回答 / 简单问答分支 ──
+            simple_response = state.get("metadata", {}).get("simple_response")
+            routing_strategy = state.get("routing_strategy", "")
+            intent = state.get("intent", "")
+            user_query = state.get("user_query", "")
+
+            # 1) 正则预检测的简单响应（问候、感谢、帮助等）
+            if simple_response and simple_response != "__CONFIG_QUERY__":
+                logger.info("[最终答案] 使用预生成的简单响应: %s", simple_response[:80])
+                return {
+                    **state,
+                    "final_answer": simple_response,
+                    "output": simple_response
+                }
+
+            # 2) 前端传入了 direct_answer 路由 + 非正则匹配的通用对话
+            if routing_strategy == "direct_answer" or intent in ("direct_answer", "simple"):
+                logger.info("[最终答案] 直接回答模式，调用 LLM 生成回复")
+                try:
+                    direct_answer = await self._generate_direct_answer(user_query)
+                    if direct_answer:
+                        return {
+                            **state,
+                            "final_answer": direct_answer,
+                            "output": direct_answer
+                        }
+                except Exception as e:
+                    logger.warning("[最终答案] LLM 直接回答失败: %s", e)
+                # LLM 失败时回退到 simple_response（如果有的话）
+                if simple_response:
+                    return {
+                        **state,
+                        "final_answer": simple_response,
+                        "output": simple_response
+                    }
+
             logger.warning("[最终答案] 无专家结果，返回降级响应")
             return {
                 **state,
@@ -641,6 +677,37 @@ class Nodes:
             content = result.get("content", "")
             parts.append(f"### {name}\n\n{content}\n\n---\n\n")
         return "".join(parts)
+
+    async def _generate_direct_answer(self, user_query: str) -> str:
+        """针对闲聊/问候/常识性问题，使用 LLM 直接生成回复"""
+        prompt = f"""你是一个企业级财税法务智能助手。用户正在和你进行对话。
+
+你的职责：
+- 友好、自然地回应用户的问候和日常闲聊
+- 对专业知识类问题，给出准确、清晰的解答
+- 适当介绍你能提供的服务：财务分析、税务咨询、法律顾问、合同审查、政策检索等
+- 如果问题超出你的专业范围（财税法务），礼貌说明并引导到相关领域
+
+用户输入：{user_query}
+
+请用中文给出简洁、友好的回复（不超过200字）："""
+
+        try:
+            response = await self.orchestrator.llm_adapter.agenerate([prompt])
+            if response and response.content:
+                return response.content.strip()
+        except Exception as e:
+            logger.warning("[直接回答] LLM 调用失败: %s", e)
+
+        # 硬编码兜底
+        greeting_keywords = ["你好", "您好", "hi", "hello", "嗨", "hey"]
+        if any(kw in user_query.lower() for kw in greeting_keywords):
+            from datetime import datetime
+            hour = datetime.now().hour
+            time_greeting = "上午好" if hour < 12 else ("下午好" if hour < 18 else "晚上好")
+            return f"{time_greeting}！欢迎使用企业智能助手。我可以帮您处理财务、税务、法律等方面的问题。请问有什么可以帮到您的？"
+
+        return "您好！有什么可以帮助您的吗？"
 
 
 @dataclass
@@ -823,7 +890,8 @@ class AgentOrchestrator:
         user_input: str,
         session_id: Optional[str] = None,
         history: Optional[List[Dict[str, str]]] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        progress_callback: Optional[Callable[[str, Dict[str, Any]], Awaitable[None]]] = None
     ) -> OrchestrationContext:
         """
         🚀 状态机启动器 - 核心入口（LangGraph 集成版）
@@ -846,12 +914,11 @@ class AgentOrchestrator:
         Returns:
             OrchestrationContext: 包含最终响应的上下文
         """
-        print(f"🚀 [Orchestrator] 启动 LangGraph 状态机...")
-        print(f"   - 用户输入: {user_input[:50]}...")
-        print(f"   - 会话ID: {session_id}")
+        logger.info("[Orchestrator] 启动 LangGraph 状态机: session_id=%s, query=%s", session_id, user_input[:80])
         
         session_id = session_id or str(uuid.uuid4())
         start_time = datetime.now()
+        trace_id = None
         
         if not self.initialized:
             await self.initialize()
@@ -867,8 +934,35 @@ class AgentOrchestrator:
         )
         
         try:
+            try:
+                trace_session_id = str(uuid.UUID(str(session_id)))
+            except (ValueError, TypeError):
+                trace_session_id = None
+
+            try:
+                trace_id = await agent_tracer.start_trace(
+                    agent_type="langgraph_orchestrator",
+                    user_query=user_input,
+                    user_id=self.user_id,
+                    tenant_id=self.tenant_id,
+                    session_id=trace_session_id
+                )
+                await agent_tracer.add_step(
+                    trace_id=trace_id,
+                    step_number=1,
+                    step_type="thought",
+                    content="开始执行 LangGraph 多智能体编排流程",
+                    metadata={
+                        "enable_reflection": self.enable_reflection,
+                        "enable_rag": self.enable_rag
+                    }
+                )
+            except Exception as trace_error:
+                trace_id = None
+                logger.warning("[AgentTrace] LangGraph 编排追踪启动失败，不阻塞主流程: %s", trace_error)
+
             # 1️⃣ 组装初始黑板状态
-            print("📋 [状态机] 组装初始黑板状态...")
+            logger.debug("[状态机] 组装初始黑板状态")
             initial_state = self._create_initial_blackboard_state(
                 user_input=user_input,
                 session_id=session_id,
@@ -877,23 +971,23 @@ class AgentOrchestrator:
             )
             
             # 2️⃣ 执行 LangGraph 状态机（带超时保护）
-            print("⚙️ [状态机] 执行 LangGraph 工作流...")
+            logger.debug("[状态机] 执行 LangGraph 工作流")
             MAX_WORKFLOW_TIMEOUT = 120  # 最大执行时间 120 秒
             
             try:
                 final_state = await asyncio.wait_for(
-                    self._execute_langgraph_workflow(initial_state, context),
+                    self._execute_langgraph_workflow(initial_state, context, progress_callback),
                     timeout=MAX_WORKFLOW_TIMEOUT
                 )
-                print(f"✅ [状态机] LangGraph 执行完成")
+                logger.info("[状态机] LangGraph 执行完成: session_id=%s", session_id)
             except asyncio.TimeoutError:
-                print(f"❌ [状态机] LangGraph 执行超时 ({MAX_WORKFLOW_TIMEOUT}秒)，强制终止")
+                logger.error("[状态机] LangGraph 执行超时 (%s秒): session_id=%s", MAX_WORKFLOW_TIMEOUT, session_id)
                 final_state = initial_state.copy()
                 final_state["final_answer"] = "抱歉，处理时间过长。系统已在规定时间内完成了基础分析。"
                 final_state["specialist_results"] = context.specialist_results or []
                 context.metadata["timeout"] = True
             except Exception as e:
-                print(f"❌ [状态机] 执行异常: {e}")
+                logger.error("[状态机] 执行异常: %s", e, exc_info=True)
                 error_msg = str(e)
                 if "enable_report_generation" in error_msg or "enable_reflection" in error_msg or "enable_rag" in error_msg:
                     final_answer = "⚠️ 系统配置加载失败，请刷新页面后重试"
@@ -908,13 +1002,16 @@ class AgentOrchestrator:
                 context.metadata["user_friendly_error"] = final_answer
             
             # 3️⃣ 从最终状态提取结果
-            print("📤 [状态机] 提取最终响应...")
+            logger.debug("[状态机] 提取最终响应")
             context.final_response = final_state.get("final_answer", "")
             context.specialist_results = final_state.get("specialist_results", [])
             
-            print(f"🚨 [调试] final_state 键: {list(final_state.keys())}")
-            print(f"🚨 [调试] 'needs_clarification' in final_state: {'needs_clarification' in final_state}")
-            print(f"🚨 [调试] 'clarification_request' in final_state: {'clarification_request' in final_state}")
+            logger.debug("[状态机] final_state keys=%s", list(final_state.keys()))
+            logger.debug(
+                "[状态机] clarification flags: needs=%s, request_exists=%s",
+                final_state.get("needs_clarification"),
+                bool(final_state.get("clarification_request"))
+            )
             
             # 🚨 从 specialist_results 提取生肉数据（因为 LangGraph 可能丢失 raw_results）
             specialist_results = final_state.get("specialist_results", [])
@@ -943,19 +1040,17 @@ class AgentOrchestrator:
                     context.clarification_request = clarification
             
             if context.needs_clarification and context.clarification_request:
-                print(f"💬 [状态机] 检测到需要追问，跳过结果合成")
+                logger.info("[状态机] 检测到需要追问，跳过结果合成: session_id=%s", session_id)
                 context.final_response = ""
             
             # 🚨 添加详细日志追踪数据
-            print(f"🚨 [调试] process_user_request 提取数据:")
-            if context.final_response:
-                print(f"  - final_answer: '{context.final_response[:100]}...' (长度: {len(context.final_response)})")
-            else:
-                print(f"  - final_answer: '(空/None)'")
-            print(f"  - specialist_results: {len(specialist_results)} 个")
-            print(f"  - raw_results (从 specialist_results 提取): {len(raw_results)} 个")
-            print(f"  - needs_clarification: {context.needs_clarification}")
-            print(f"  - final_state keys: {list(final_state.keys())}")
+            logger.debug(
+                "[状态机] 提取结果: answer_len=%s, specialist_results=%s, raw_results=%s, needs_clarification=%s",
+                len(context.final_response or ""),
+                len(specialist_results),
+                len(raw_results),
+                context.needs_clarification
+            )
             
             # 4️⃣ 如果有生肉数据，调用 ResultSynthesizer 生成最终答案
             if raw_results and not context.final_response:
@@ -989,15 +1084,49 @@ class AgentOrchestrator:
                     context.final_response = self._fallback_concat(raw_results)
             
             elapsed_ms = (datetime.now() - start_time).total_seconds() * 1000
-            print(f"✅ [状态机] 处理完成，耗时: {elapsed_ms:.0f}ms")
+            execution_path = context.metadata.get("execution_path", [])
+            if trace_id:
+                try:
+                    await agent_tracer.add_step(
+                        trace_id=trace_id,
+                        step_number=2,
+                        step_type="observation",
+                        content=f"LangGraph 执行路径: {' → '.join(execution_path) if execution_path else 'unknown'}",
+                        metadata={
+                            "execution_path": execution_path,
+                            "intent": final_state.get("intent"),
+                            "routing_strategy": final_state.get("routing_strategy"),
+                            "specialists_needed": final_state.get("specialists_needed", []),
+                            "needs_clarification": context.needs_clarification
+                        }
+                    )
+                    await agent_tracer.add_step(
+                        trace_id=trace_id,
+                        step_number=3,
+                        step_type="final_answer",
+                        content=(context.final_response or "需要用户补充信息")[:1000],
+                        confidence=final_state.get("intent_confidence")
+                    )
+                    await agent_tracer.end_trace(
+                        trace_id=trace_id,
+                        final_answer=context.final_response or "",
+                        success=not bool(context.metadata.get("error"))
+                    )
+                except Exception as trace_error:
+                    logger.warning("[AgentTrace] LangGraph 编排追踪写入失败，不阻塞主流程: %s", trace_error)
+            logger.info(
+                "[状态机] 处理完成: session_id=%s, path=%s, 耗时=%.0fms",
+                session_id,
+                " → ".join(execution_path) if execution_path else "unknown",
+                elapsed_ms
+            )
             
             return context
             
         except Exception as e:
             import traceback
             error_trace = traceback.format_exc()
-            print(f"❌ [状态机] 执行失败: {type(e).__name__}: {e}")
-            print(f"❌ [状态机] 详细堆栈:\n{error_trace}")
+            logger.error("[状态机] 执行失败: %s: %s", type(e).__name__, e, exc_info=True)
             
             error_msg = str(e)
             if "enable_report_generation" in error_msg or "enable_reflection" in error_msg or "enable_rag" in error_msg:
@@ -1012,6 +1141,16 @@ class AgentOrchestrator:
             
             context.metadata["error_type"] = type(e).__name__
             context.metadata["error_trace"] = error_trace
+            if trace_id:
+                try:
+                    await agent_tracer.end_trace(
+                        trace_id=trace_id,
+                        final_answer=context.final_response or "",
+                        success=False,
+                        error_message=str(e)
+                    )
+                except Exception as trace_error:
+                    logger.warning("[AgentTrace] LangGraph 失败追踪写入失败: %s", trace_error)
             return context
     
     def _create_initial_blackboard_state(
@@ -1078,9 +1217,7 @@ class AgentOrchestrator:
             metadata=metadata or {}
         )
         
-        print(f"📋 [黑板] 初始状态已创建")
-        print(f"   - 消息数: {len(messages)}")
-        print(f"   - 实体: {entities}")
+        logger.debug("[黑板] 初始状态已创建: messages=%s, entities=%s", len(messages), entities)
         
         return initial_state
     
@@ -1101,37 +1238,38 @@ class AgentOrchestrator:
         Returns:
             str | List[str]: 路由目标（单路由返回字符串，并行路由返回列表）
         """
-        print(f"🚦 [Router Edge] 收到 state 键: {list(state.keys())}")
-        print(f"🚦 [Router Edge] needs_clarification in state: {'needs_clarification' in state}")
-        print(f"🚦 [Router Edge] needs_clarification 值: {state.get('needs_clarification')}")
-        print(f"🚦 [Router Edge] clarification_request in state: {'clarification_request' in state}")
+        logger.debug(
+            "[Router Edge] intent=%s, routing=%s, specialists=%s, needs_clarification=%s",
+            state.get("intent"),
+            state.get("routing_strategy"),
+            state.get("specialists_needed", []),
+            state.get("needs_clarification")
+        )
         
         if state.get("needs_clarification") and state.get("clarification_request"):
-            print("🚦 [Router Edge] → 检测到需要追问，跳过专家节点")
+            logger.debug("[Router Edge] 需要追问，路由到 final")
             return "final"
         
         intent = state.get("intent", "direct_answer")
         specialists = state.get("specialists_needed", [])
         
-        print(f"🚦 [Router Edge] 捕获意图: {intent}, 需要专家: {specialists}")
-        
         routing_strategy = state.get("routing_strategy", "")
         
         if intent == "direct_answer" or routing_strategy == "direct_answer":
-            print("🚦 [Router Edge] → 直接跳到终点")
+            logger.debug("[Router Edge] 直接回答，路由到 final")
             return "final"
             
         elif intent == "rag_only" or routing_strategy == "rag_retrieval":
-            print("🚦 [Router Edge] → 走 RAG 节点")
+            logger.debug("[Router Edge] 路由到 rag_retrieval")
             return "rag_retrieval"
             
-        elif routing_strategy == "single_specialist" or intent in ["single_specialist", "risk_analysis", "financial_analysis", "accounting_query"]:
+        elif routing_strategy == "single_specialist" or routing_strategy == "report_queue" or intent in ["single_specialist", "report_generation", "risk_analysis", "financial_analysis", "accounting_query"]:
             if not specialists:
-                print("🚦 [Router Edge] → 单专家默认财务")
+                logger.debug("[Router Edge] 单专家无指定，默认 finance_specialist")
                 return "finance_specialist"
             
             target = specialists[0]
-            print(f"🚦 [Router Edge] → 单专家: {target}")
+            logger.debug("[Router Edge] 单专家: %s", target)
             
             if target == "finance":
                 return "finance_specialist"
@@ -1143,7 +1281,7 @@ class AgentOrchestrator:
                 return "finance_specialist"
             
         elif intent == "multi_specialist":
-            print(f"🚦 [Router Edge] → 多专家并行: {specialists}")
+            logger.debug("[Router Edge] 多专家并行: %s", specialists)
             routes = []
             for s in specialists:
                 if s == "finance":
@@ -1157,13 +1295,14 @@ class AgentOrchestrator:
                 return routes
             return ["finance_specialist"]
         
-        print(f"🚦 [Router Edge] → 默认路由")
+        logger.debug("[Router Edge] 默认路由到 final")
         return "final"
     
     async def _execute_langgraph_workflow(
         self,
         initial_state: Dict[str, Any],
-        context: OrchestrationContext
+        context: OrchestrationContext,
+        progress_callback: Optional[Callable] = None
     ) -> Dict[str, Any]:
         """
         执行 LangGraph 工作流
@@ -1179,7 +1318,7 @@ class AgentOrchestrator:
         """
         from langgraph.graph import StateGraph, END, START
         
-        print(f"⚙️ [LangGraph] 构建工作流图...")
+        logger.debug("[LangGraph] 构建工作流图")
         
         # 初始化节点函数集合
         nodes = Nodes(self)
@@ -1187,14 +1326,7 @@ class AgentOrchestrator:
         workflow = StateGraph(AgentState)
         
         # 📍 定义工作流节点（带日志追踪）
-        print("📍 [工作流构建] 定义节点:")
-        print("   START → receptionist → intent_router")
-        print("   ├── → finance_specialist")
-        print("   ├── → tax_specialist")  
-        print("   ├── → legal_specialist")
-        print("   ├── → rag_retrieval")
-        print("   └── → final → END")
-        print("   intent_router 节点之后通过条件边动态路由")
+        logger.debug("[工作流构建] START → receptionist → intent_router → specialist/rag/final → reflection → final")
         
         workflow.add_node("receptionist", nodes.receptionist)
         workflow.add_node("intent_router", nodes.intent_router)
@@ -1206,9 +1338,9 @@ class AgentOrchestrator:
         workflow.add_node("final", nodes.final)
         
         workflow.add_edge(START, "receptionist")
-        print("📍 [边定义] START → receptionist")
+        logger.debug("[边定义] START → receptionist")
         workflow.add_edge("receptionist", "intent_router")
-        print("📍 [边定义] receptionist → intent_router")
+        logger.debug("[边定义] receptionist → intent_router")
         
         workflow.add_conditional_edges(
             "intent_router",
@@ -1221,7 +1353,7 @@ class AgentOrchestrator:
                 "final": "final"
             }
         )
-        print("📍 [边定义] intent_router → (条件边) → specialist/final")
+        logger.debug("[边定义] intent_router → (条件边) → specialist/final")
         
         workflow.add_edge("finance_specialist", "reflection")
         workflow.add_edge("tax_specialist", "reflection")
@@ -1234,17 +1366,17 @@ class AgentOrchestrator:
             acceptable = res.get("acceptable", True)
             retries = state.get("retry_count", 0)
             max_retries = state.get("max_retries", 3)
-            print(f"🚦 [反思路由] 质量评估: acceptable={acceptable}, retry_count={retries}/{max_retries}")
+            logger.debug("[反思路由] acceptable=%s, retry_count=%s/%s", acceptable, retries, max_retries)
             
             if acceptable:
-                print("🚦 [反思路由] → 质量达标，直接输出最终答案")
+                logger.debug("[反思路由] 质量达标，路由到 final")
                 return "final"
             else:
-                print(f"🚦 [反思路由] → 质量不达标")
+                logger.debug("[反思路由] 质量不达标")
                 if retries >= max_retries:
-                    print(f"🚨 [架构级熔断] 已达最大重试次数 ({retries}>={max_retries})，强制放行！")
+                    logger.warning("[架构级熔断] 已达最大重试次数 (%s>=%s)，强制放行", retries, max_retries)
                     return "final"
-                print(f"🚦 [反思路由] → 打回重做 (第 {retries + 1} 次)")
+                logger.debug("[反思路由] 打回重做 (第 %s 次)", retries + 1)
                 return "finance_specialist"
         
         workflow.add_conditional_edges(
@@ -1256,14 +1388,14 @@ class AgentOrchestrator:
             }
         )
         workflow.add_edge("final", END)
-        print("📍 [边定义] specialists → reflection → (条件边) → final/finance_specialist → END")
+        logger.debug("[边定义] specialists → reflection → (条件边) → final/finance_specialist → END")
         
         # 启用 MemorySaver 实现跨请求记忆持久化
         from langgraph.checkpoint.memory import MemorySaver
         memory = MemorySaver()
         app = workflow.compile(checkpointer=memory)
         
-        print(f"⚙️ [LangGraph] 工作流图编译完成，已启用 MemorySaver")
+        logger.debug("[LangGraph] 工作流图编译完成，已启用 MemorySaver")
         
         config = {
             "configurable": {
@@ -1271,7 +1403,7 @@ class AgentOrchestrator:
             }
         }
         
-        print(f"⚙️ [LangGraph] 开始执行，thread_id={context.session_id}")
+        logger.debug("[LangGraph] 开始执行，thread_id=%s", context.session_id)
         
         # 🔧 创建节点执行追踪器
         class NodeTransitionTracker:
@@ -1279,65 +1411,66 @@ class AgentOrchestrator:
                 self.execution_path = []
             
             def on_node_start(self, node_name: str):
-                print(f"\n{'='*60}")
-                print(f"🔄 [节点执行] ▶️ 进入节点: {node_name}")
-                print(f"{'='*60}")
+                logger.debug("[节点执行] 进入节点: %s", node_name)
             
             def on_node_end(self, node_name: str, state: dict):
-                print(f"🔄 [节点执行] ✅ 节点完成: {node_name}")
+                logger.debug("[节点执行] 节点完成: %s", node_name)
                 self.execution_path.append(node_name)
                 
                 # 打印写入黑板的数据
                 if isinstance(state, dict):
-                    print(f"\n📝 [黑板写入] {node_name} 节点写入黑板的数据:")
+                    logger.debug("[黑板写入] %s keys=%s", node_name, list(state.keys()))
                     for key, value in state.items():
                         if value is not None and value != [] and value != {}:
                             if isinstance(value, (str, int, float, bool)):
-                                print(f"   • {key}: {value}")
+                                logger.debug("   %s=%s", key, value)
                             elif isinstance(value, list):
-                                print(f"   • {key}: list[{len(value)}] items")
+                                logger.debug("   %s=list[%s]", key, len(value))
                                 if value and len(value) <= 3:
                                     for i, item in enumerate(value):
                                         if isinstance(item, dict):
-                                            print(f"     [{i}]: {list(item.keys())}")
+                                            logger.debug("     [%s]: %s", i, list(item.keys()))
                                         else:
-                                            print(f"     [{i}]: {str(item)[:100]}")
+                                            logger.debug("     [%s]: %s", i, str(item)[:100])
                             elif isinstance(value, dict):
-                                print(f"   • {key}: dict with keys {list(value.keys())[:5]}")
+                                logger.debug("   %s=dict keys=%s", key, list(value.keys())[:5])
                             else:
-                                print(f"   • {key}: {type(value).__name__}")
-                    print(f"{'='*60}\n")
+                                logger.debug("   %s=%s", key, type(value).__name__)
         
         tracker = NodeTransitionTracker()
         
         try:
-            print(f"📋 [LangGraph] initial_state 类型: {type(initial_state)}")
-            print(f"📋 [LangGraph] initial_state 键: {list(initial_state.keys()) if isinstance(initial_state, dict) else 'not a dict'}")
+            logger.debug("[LangGraph] initial_state type=%s keys=%s", type(initial_state), list(initial_state.keys()) if isinstance(initial_state, dict) else "not a dict")
             
             # 🚀 使用 stream 模式以获取节点执行信息
-            print(f"\n🚀 [执行开始] 准备执行工作流...")
+            logger.debug("[LangGraph] 准备执行工作流")
             final_state = initial_state
             async for event in app.astream(initial_state, config):
                 for node_name, node_state in event.items():
                     if node_name != "__end__":
                         tracker.on_node_start(node_name)
                         tracker.on_node_end(node_name, node_state)
+                        if progress_callback:
+                            try:
+                                await progress_callback(node_name, node_state if isinstance(node_state, dict) else {})
+                            except Exception as callback_error:
+                                logger.warning("[LangGraph] progress callback failed: %s", callback_error)
                         final_state = node_state
             
-            print(f"📋 [LangGraph] 最终状态已更新")
-            print(f"📋 [LangGraph] final_answer: {final_state.get('final_answer', 'N/A')[:100] if final_state.get('final_answer') else '(空)'}")
-            print(f"📋 [LangGraph] final_state 包含 keys: {list(final_state.keys())[:10]}...")
+            logger.debug(
+                "[LangGraph] 最终状态已更新: answer_len=%s, keys=%s",
+                len(final_state.get("final_answer") or ""),
+                list(final_state.keys())[:10]
+            )
         except Exception as invoke_error:
             import traceback
             error_detail = traceback.format_exc()
-            print(f"❌ [LangGraph] invoke 失败: {invoke_error}")
-            print(f"❌ [LangGraph] 详细错误: {error_detail}")
+            logger.error("[LangGraph] invoke 失败: %s", invoke_error)
+            logger.debug("[LangGraph] 详细错误: %s", error_detail)
             raise invoke_error
         
-        print(f"\n{'='*60}")
-        print(f"⚙️ [LangGraph] 执行完成")
-        print(f"📍 [执行路径] {' → '.join(tracker.execution_path)}")
-        print(f"{'='*60}")
+        context.metadata["execution_path"] = tracker.execution_path
+        logger.info("[LangGraph] 执行完成: path=%s", " → ".join(tracker.execution_path))
         
         return final_state
     
@@ -2431,6 +2564,44 @@ class AgentOrchestrator:
                     "processing_time": int((datetime.now() - start_time).total_seconds() * 1000)
                 }, ensure_ascii=False)
                 return
+
+            elif intent_result.routing_strategy == RoutingStrategy.DIRECT_ANSWER:
+                yield json.dumps({"type": "stage", "stage": "response"}, ensure_ascii=False)
+                direct_response = await self._handle_direct_answer(user_input, intent_result)
+                # 逐行发送直接回答
+                for line in direct_response.split('\n'):
+                    if line.strip():
+                        text_event = json.dumps({
+                            "type": "text",
+                            "content": line + "\n"
+                        }, ensure_ascii=False)
+                        yield text_event
+                await self._save_to_cache(user_input, direct_response)
+                processing_time = int((datetime.now() - start_time).total_seconds() * 1000)
+                yield json.dumps({
+                    "type": "done",
+                    "processing_time": processing_time,
+                    "latency_summary": latency_tracker.get_summary()
+                }, ensure_ascii=False)
+                return
+
+            elif intent_result.routing_strategy == RoutingStrategy.RAG_RETRIEVAL:
+                yield json.dumps({"type": "stage", "stage": "response"}, ensure_ascii=False)
+                rag_response = await self._handle_rag_retrieval(user_input, intent_result)
+                for line in rag_response.split('\n'):
+                    if line.strip():
+                        text_event = json.dumps({
+                            "type": "text",
+                            "content": line + "\n"
+                        }, ensure_ascii=False)
+                        yield text_event
+                processing_time = int((datetime.now() - start_time).total_seconds() * 1000)
+                yield json.dumps({
+                    "type": "done",
+                    "processing_time": processing_time,
+                    "latency_summary": latency_tracker.get_summary()
+                }, ensure_ascii=False)
+                return
             
             latency_tracker.mark("first_token")
             
@@ -2530,12 +2701,31 @@ class AgentOrchestrator:
         user_input: str,
         intent_result: IntentAnalysisResult
     ) -> str:
-        """处理直接回答类型的请求"""
+        """处理直接回答类型的请求（闲聊/问候/简单问答）"""
+        prompt = f"""你是一个企业级财税法务智能助手。用户正在和你进行对话。
+
+你的职责：
+- 友好、自然地回应用户的问候和日常闲聊
+- 对专业知识类问题，给出准确、清晰的解答
+- 适当介绍你能提供的服务：财务分析、税务咨询、法律顾问、合同审查、政策检索等
+- 如果问题超出你的专业范围（财税法务），礼貌说明并引导到相关领域
+
+用户输入：{user_input}
+
+请用中文给出简洁、友好的回复（不超过200字）："""
+
+        try:
+            response = await self.llm_adapter.agenerate([prompt])
+            if response and response.content:
+                return response.content.strip()
+        except Exception as e:
+            logger.warning("[直接回答] LLM 调用失败，使用兜底回复: %s", e)
+
+        # 硬编码兜底
         greeting_responses = {
             IntentCategory.GREETING: "您好！有什么可以帮助您的吗？",
             IntentCategory.CHIT_CHAT: "我们来聊聊吧，有什么感兴趣的话题吗？"
         }
-        
         return greeting_responses.get(
             intent_result.intent,
             "好的，我明白了。"
@@ -2752,21 +2942,26 @@ class AgentOrchestrator:
         
         if intent_result.routing_strategy == RoutingStrategy.MULTI_SPECIALIST_PARALLEL:
             tasks = {}
+            semaphore = asyncio.Semaphore(max(1, self.max_parallel_agents))
+
+            async def run_specialist(name: str, specialist: Any):
+                async with semaphore:
+                    context_copy = specialist_context.copy()
+                    if hasattr(specialist, 'consult'):
+                        return await specialist.consult(
+                            query=user_input,
+                            entities=intent_result.entities,
+                            context=context_copy
+                        )
+                    return await specialist.run(
+                        user_input=user_input,
+                        context=context_copy
+                    )
+
             for specialist_name in specialists_needed[:self.max_parallel_agents]:
                 specialist = specialist_map.get(specialist_name)
                 if specialist:
-                    if hasattr(specialist, 'consult'):
-                        task = specialist.consult(
-                            query=user_input,
-                            entities=intent_result.entities,
-                            context=specialist_context
-                        )
-                    else:
-                        task = specialist.run(
-                            user_input=user_input,
-                            context=specialist_context
-                        )
-                    tasks[specialist_name] = task
+                    tasks[specialist_name] = run_specialist(specialist_name, specialist)
             
             results = {}
             if tasks:

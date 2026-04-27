@@ -67,4 +67,3 @@ def pytest_configure(config):
 
 
 # 配置 pytest-asyncio
-pytest_plugins = ['pytest_asyncio']

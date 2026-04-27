@@ -181,6 +181,8 @@ app/agent_framework/
 - 📊 **财务分析** - 比率计算、报表分析
 - 🏢 **企业信息** - 企业查询、风险评估
 
+> **说明**：后端项目 `rag_backend/app/mcp/` 已内置上述所有计算/检查类工具的同名实现（通过 `@cloud_tool` 装饰器），agent 默认走进程内直接调用，无需依赖外部 MCP 服务。`mcp_server/` 是独立的 HTTP MCP 工具服务，供外部 MCP 客户端或其他项目通过标准协议调用。如需启用 mcp_server，请确保有可用的云端服务器并在 `.env` 中正确配置 `MCP_MODE` 和 `MCP_SERVER_URL`（见下方云端部署章节）。
+
 ---
 
 
@@ -1714,6 +1716,8 @@ DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
 # ==========================
 # MCP 服务配置 (云端)
 # ==========================
+# MCP_MODE=auto   # auto=本地进程内+云端(默认); local=仅本地 mcp_server; cloud=仅云端
+# MCP_LOCAL_URL=http://127.0.0.1:8001  # 仅 MCP_MODE=local 时使用
 MCP_SERVER_URL=http://your-cloud-server:8080
 MCP_API_KEY=your_mcp_api_key
 ```

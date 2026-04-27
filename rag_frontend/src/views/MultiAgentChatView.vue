@@ -326,6 +326,20 @@ function saveState() {
 
 
 
+function hasPendingAsyncTask() {
+
+  return Boolean(
+
+    localStorage.getItem('multi_agent_task_id') &&
+
+    localStorage.getItem('multi_agent_thread_id')
+
+  )
+
+}
+
+
+
 function loadState() {
 
   try {
@@ -378,43 +392,13 @@ function loadState() {
 
       }
 
-      
+      // 记录之前是否处于加载状态，用于后续中断检测
+      streamInterrupted.value = state.isLoading === true
 
-      if (state.isLoading && !state.currentStage) {
+      // 中断检测延迟到 resumeTaskFromStorage 之后执行
+      // 避免在未与服务器确认的情况下提前判定中断
 
-        console.log('检测到之前的请求被中断')
-
-        streamInterrupted.value = true
-
-        messages.value.push({
-
-          id: createMessageId(),
-
-          role: 'assistant',
-
-          content: '⚠️ 之前的请求似乎被中断了。您可以继续输入新的问题，或者等待系统自动恢复',
-
-          timestamp: new Date(),
-
-        })
-
-      } else if (state.isLoading) {
-
-        streamInterrupted.value = true
-
-        messages.value.push({
-
-          id: createMessageId(),
-
-          role: 'assistant',
-
-          content: `之前的请求在「${currentStage.value}」阶段被中断。以下是已生成的部分内容：\n\n${state.currentResponse || '（无内容）'}`,
-
-          timestamp: new Date(),
-
-        })
-
-      }
+      return true
 
       
 
@@ -562,6 +546,7 @@ function sanitizeErrorMessage(errorMsg: string | undefined | null): string {
 onMounted(async () => {
   loadSettings()
   
+  const hasAsyncTask = hasPendingAsyncTask()
   const hasRestoredState = loadState()
   
   if (hasRestoredState) {
@@ -590,7 +575,7 @@ onMounted(async () => {
     enableReflection.value = savedTask.enableReflection
     enableRAG.value = savedTask.enableRAG
     isLoading.value = true
-    streamInterrupted.value = true
+    streamInterrupted.value = hasAsyncTask
     
     nextTick(() => {
       scrollToBottom()
@@ -606,6 +591,7 @@ onMounted(async () => {
     
     if (taskResumeResult.type === 'completed') {
       // 任务已完成，直接显示结果
+      isLoading.value = false
       const status = taskResumeResult.data
       if (status.final_response) {
         // 创建完成的消息
@@ -619,6 +605,7 @@ onMounted(async () => {
         currentResponse.value = status.final_response
       }
     } else if (taskResumeResult.type === 'failed') {
+      isLoading.value = false
       const status = taskResumeResult.data
       const errorMsg = sanitizeErrorMessage(status.error_message)
       const failedMsg: Message = {
@@ -646,6 +633,32 @@ onMounted(async () => {
     nextTick(() => {
       scrollToBottom()
     })
+  } else {
+    // 服务器上没有进行中的任务，清理本地状态
+    if (savedTask) {
+      console.log('服务器无进行中任务，清理本地缓存的旧任务状态')
+      isLoading.value = false
+      streamInterrupted.value = false
+      taskStore.clearTaskState()
+    }
+
+    // 中断检测：服务器确认无恢复任务，且 sessionStorage 中有未完成的请求痕迹
+    if (!hasAsyncTask && currentStage.value && streamInterrupted.value) {
+      console.log('检测到之前的请求已中断（服务器确认无进行中任务）')
+      messages.value.push({
+        id: createMessageId(),
+        role: 'assistant',
+        content: `之前的请求在「${currentStage.value}」阶段被中断。以下是已生成的部分内容：\n\n${currentResponse.value || '（无内容）'}`,
+        timestamp: new Date(),
+      })
+    } else if (!hasAsyncTask && streamInterrupted.value) {
+      messages.value.push({
+        id: createMessageId(),
+        role: 'assistant',
+        content: '之前的请求似乎被中断了。您可以继续输入新的问题。',
+        timestamp: new Date(),
+      })
+    }
   }
 })
 
@@ -656,9 +669,7 @@ let stateSaveInterval: number | null = null
 
 
 onBeforeUnmount(() => {
-  if (pollInterval) {
-    clearInterval(pollInterval)
-  }
+  stopPolling()
   if (stateSaveInterval) {
     clearInterval(stateSaveInterval)
   }
@@ -689,6 +700,13 @@ watch([enableReflection, enableRAG], () => {
 let pollInterval: number | null = null
 let currentTaskId: string | null = null
 let currentThreadId: string | null = null
+
+function stopPolling() {
+  if (pollInterval) {
+    window.clearTimeout(pollInterval)
+    pollInterval = null
+  }
+}
 
 
 async function sendMessage() {
@@ -807,11 +825,30 @@ async function submitAsyncQuery(query: string, assistantMsg: Message) {
 
 // 轮询任务状态
 function startPolling(assistantMsg: Message) {
-  if (pollInterval) {
-    clearInterval(pollInterval)
-  }
+  stopPolling()
+
+  const startedAt = Date.now()
+  const MAX_POLL_DURATION = 2 * 60 * 1000 // 最大轮询 2 分钟
   
-  pollInterval = setInterval(async () => {
+  const getNextPollingDelay = () => {
+    const elapsed = Date.now() - startedAt
+    if (elapsed < 10_000) return 500
+    if (elapsed < 60_000) return 1000
+    return 2000
+  }
+
+  const poll = async () => {
+    // 超时保护：任务超过最大轮询时间仍未完成，主动停止并标记失败
+    if (Date.now() - startedAt > MAX_POLL_DURATION) {
+      stopPolling()
+      isLoading.value = false
+      assistantMsg.content = '⏱️ **任务执行超时**\n\n后台任务处理时间过长，请稍后重新发起请求'
+      localStorage.removeItem('multi_agent_task_id')
+      localStorage.removeItem('multi_agent_thread_id')
+      console.warn('⏱️ 轮询超时，已停止')
+      return
+    }
+
     try {
       const token = localStorage.getItem('rag_token')
       
@@ -835,8 +872,7 @@ function startPolling(assistantMsg: Message) {
       
       // 优先检查追问状态
       if (status.needs_clarification && status.clarification_request) {
-        clearInterval(pollInterval!)
-        pollInterval = null
+        stopPolling()
         
         const clarificationData = {
           question: status.clarification_request.question || '请详细描述您的问题',
@@ -855,14 +891,14 @@ function startPolling(assistantMsg: Message) {
       
       // 根据状态处理
       if (status.status === 'completed') {
-        clearInterval(pollInterval!)
-        pollInterval = null
-        
+        stopPolling()
+        isLoading.value = false
+
         // 任务完成，显示结果
         assistantMsg.content = status.final_response || '处理完成'
         currentResponse.value = status.final_response || ''
         currentStage.value = 'response'
-        
+
         taskStore.completeTask(status.final_response, {
           intent: intentAnalysis.value ? {
             category: intentAnalysis.value.category,
@@ -870,26 +906,26 @@ function startPolling(assistantMsg: Message) {
             routing_strategy: intentAnalysis.value.strategy,
           } : undefined,
         })
-        
+
         // 清理 localStorage
         localStorage.removeItem('multi_agent_task_id')
         localStorage.removeItem('multi_agent_thread_id')
-        
+
       } else if (status.status === 'failed') {
-        clearInterval(pollInterval!)
-        pollInterval = null
-        
+        stopPolling()
+        isLoading.value = false
+
         const errorMsg = sanitizeErrorMessage(status.error_message)
         assistantMsg.content = `?**任务执行失败**\n\n${errorMsg}\n\n💡 请稍后重试`
         taskStore.failTask(errorMsg, currentResponse.value)
-        
+
         localStorage.removeItem('multi_agent_task_id')
         localStorage.removeItem('multi_agent_thread_id')
-        
+
       } else if (status.status === 'cancelled') {
-        clearInterval(pollInterval!)
-        pollInterval = null
-        
+        stopPolling()
+        isLoading.value = false
+
         assistantMsg.content = '❌ 任务已被取消'
         localStorage.removeItem('multi_agent_task_id')
         localStorage.removeItem('multi_agent_thread_id')
@@ -899,7 +935,13 @@ function startPolling(assistantMsg: Message) {
     } catch (error) {
       console.error('轮询请求失败:', error)
     }
-  }, 2000) // 每2秒轮询一次
+
+    if (pollInterval) {
+      pollInterval = window.setTimeout(poll, getNextPollingDelay())
+    }
+  }
+
+  pollInterval = window.setTimeout(poll, 0)
 }
 
 
@@ -931,7 +973,7 @@ function updateProgressDisplay(status: any) {
     
     // 如果有 progress_percent，也更新到 taskStore
     if (status.progress_percent !== undefined && status.progress_percent > 0) {
-      taskStore.updateTaskProgress('progress', { percent: status.progress_percent })
+      taskStore.updateTaskProgress(currentStage.value, { percent: status.progress_percent })
     }
   }
 }
@@ -1345,6 +1387,12 @@ function clearChat() {
   currentResponse.value = ''
 
   resetAgentStages()
+
+  stopPolling()
+
+  localStorage.removeItem('multi_agent_task_id')
+  localStorage.removeItem('multi_agent_thread_id')
+  taskStore.clearTaskState()
 
   clearState()
 

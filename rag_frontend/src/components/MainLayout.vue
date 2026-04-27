@@ -269,24 +269,24 @@ function goToProfile() {
 </script>
 
 <template>
-  <div class="flex h-screen bg-slate-100">
+  <div class="premium-shell flex h-screen bg-slate-100">
     <!-- Sidebar -->
     <aside
       :class="[
-        'bg-slate-50 flex flex-col transition-all duration-300',
+        'premium-sidebar bg-slate-50 flex flex-col transition-all duration-300',
         isSidebarCollapsed ? 'w-16' : 'w-60'
       ]"
     >
       <!-- Theme Color Bar -->
-      <div class="h-1 flex flex-shrink-0" :style="{ background: `linear-gradient(90deg, ${primaryColor} 0%, ${secondaryColor} 100%)` }"></div>
+      <div class="premium-theme-bar h-1 flex flex-shrink-0" :style="{ background: `linear-gradient(90deg, ${primaryColor} 0%, ${secondaryColor} 100%)` }"></div>
       
       <!-- Logo -->
       <div class="h-14 flex items-center justify-between px-4">
         <div class="flex items-center gap-3">
-          <div class="w-8 h-8 bg-slate-900 rounded-lg flex items-center justify-center flex-shrink-0 shadow-sm">
+          <div class="premium-logo w-8 h-8 bg-slate-900 rounded-lg flex items-center justify-center flex-shrink-0 shadow-sm">
             <Database :size="16" class="text-white" />
           </div>
-          <span v-if="!isSidebarCollapsed" class="font-bold text-slate-900 tracking-tight text-sm">企业财税智能平台</span>
+          <span v-if="!isSidebarCollapsed" class="font-bold text-slate-900 tracking-tight text-sm leading-tight">企业财税智能平台</span>
         </div>
         <button
           @click="toggleSidebar"
@@ -333,7 +333,7 @@ function goToProfile() {
               <button
                 @click="toggleGroup(group.id)"
                 :class="[
-                  'flex items-center justify-between w-full px-3 py-2.5 rounded-lg transition-all duration-200',
+                  'premium-menu-group flex items-center justify-between w-full px-3 py-2.5 rounded-lg transition-all duration-200',
                   hasActiveGroup(group)
                     ? 'bg-slate-50 text-slate-900 font-bold'
                     : 'text-slate-600 font-medium hover:bg-slate-100/70'
@@ -368,7 +368,7 @@ function goToProfile() {
                 :key="item.path"
                 :to="item.path"
                 :class="[
-                  'group relative flex items-center w-full py-2 px-3 rounded-md text-sm transition-all duration-150',
+                  'premium-menu-item group relative flex items-center w-full py-2 px-3 rounded-md text-sm transition-all duration-150',
                   isActive(item.path)
                     ? 'font-semibold'
                     : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/50'
@@ -394,7 +394,7 @@ function goToProfile() {
       </nav>
 
       <!-- Bottom Section: Notification + User -->
-      <div class="mt-auto border-t border-slate-200/60">
+      <div class="premium-sidebar-footer mt-auto border-t border-slate-200/60">
         <!-- Notification Button -->
         <button
           @click="toggleNotificationsInSidebar"
@@ -442,7 +442,7 @@ function goToProfile() {
               </button>
               <div
                 v-if="showUserMenu"
-                class="absolute bottom-full right-0 mb-2 w-44 bg-white rounded-lg shadow-lg border border-slate-200/80 py-1 z-50"
+                class="premium-popover absolute bottom-full right-0 mb-2 w-44 bg-white rounded-lg shadow-lg border border-slate-200/80 py-1 z-50"
               >
                 <button
                   @click="goToProfile"
@@ -501,8 +501,15 @@ function goToProfile() {
     </aside>
 
     <!-- Main Content -->
-    <main class="flex-1 overflow-y-auto relative">
-      <router-view />
+    <main class="premium-main flex-1 overflow-y-auto relative scrollbar-custom">
+      <router-view v-slot="{ Component, route: r }">
+        <Transition
+          :name="'page-fade'"
+          mode="out-in"
+        >
+          <component :is="Component" :key="r.path" />
+        </Transition>
+      </router-view>
     </main>
 
     <!-- Notification Panel -->
@@ -518,6 +525,85 @@ function goToProfile() {
 </template>
 
 <style scoped>
+.premium-shell {
+  background:
+    radial-gradient(circle at 12% 8%, rgba(16, 185, 129, 0.12), transparent 28rem),
+    radial-gradient(circle at 85% 0%, rgba(14, 165, 233, 0.1), transparent 24rem),
+    linear-gradient(135deg, #f8fafc 0%, #eef6f5 46%, #f8fafc 100%);
+}
+
+.premium-sidebar {
+  position: relative;
+  z-index: 10;
+  border-right: 1px solid rgba(148, 163, 184, 0.24);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92) 0%, rgba(248, 250, 252, 0.84) 100%),
+    rgba(255, 255, 255, 0.78);
+  box-shadow: 18px 0 44px rgba(15, 23, 42, 0.06);
+  backdrop-filter: blur(18px);
+}
+
+.premium-theme-bar {
+  box-shadow: 0 8px 24px rgba(20, 184, 166, 0.22);
+}
+
+.premium-logo {
+  background:
+    radial-gradient(circle at 32% 24%, rgba(255, 255, 255, 0.32), transparent 34%),
+    linear-gradient(135deg, #0f172a 0%, #134e4a 100%);
+  box-shadow: 0 12px 26px rgba(15, 23, 42, 0.2);
+}
+
+.premium-menu-group {
+  position: relative;
+  isolation: isolate;
+}
+
+.premium-menu-group::before,
+.premium-menu-item::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease, box-shadow 180ms ease;
+}
+
+.premium-menu-group::before {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.85), rgba(241, 245, 249, 0.45));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.88);
+  z-index: -1;
+}
+
+.premium-menu-group:hover::before,
+.premium-menu-item:hover::before {
+  opacity: 1;
+}
+
+.premium-menu-item {
+  overflow: hidden;
+}
+
+.premium-menu-item::before {
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.9), rgba(240, 253, 250, 0.62));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+.premium-sidebar-footer {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0.8));
+}
+
+.premium-popover {
+  box-shadow: 0 18px 46px rgba(15, 23, 42, 0.16);
+}
+
+.premium-main {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.24), transparent 18rem),
+    rgba(248, 250, 252, 0.62);
+}
+
 .custom-scrollbar::-webkit-scrollbar {
   width: 3px;
 }
@@ -533,5 +619,20 @@ function goToProfile() {
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background-color: #94a3b8;
+}
+
+.page-fade-enter-active,
+.page-fade-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.page-fade-enter-from {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+.page-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
 }
 </style>

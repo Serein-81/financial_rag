@@ -271,29 +271,76 @@ class OutputFormatter:
         return cleaned
     
     @classmethod
-    def clean_stream_content(cls, content: str) -> str:
+    def strip_react_markers_from_buffer(cls, buffer: str) -> str:
         """
-        清理流式输出的完整内容（在流结束时调用）
-        
-        对完整的流式输出进行深度清理，移除所有内部标记和调试信息。
-        
+        从流式缓冲区中剥离 ReAct 内部标记段（## Action / ## Thought / ## Observation）
+
+        用于流式输出过程中实时清理已积累的缓冲区，
+        防止 ## Action、## Thought 等内部过程标记泄露到前端。
+
+        清理规则：
+        - ## Action section_name\n...  → 移除整段
+        - ## Thought\n...  → 移除整段
+        - ## Observation\n...  → 移除整段
+        - ## Final Answer → 移除标题行，保留内容
+
         Args:
-            content: 完整的流式输出
-            
+            buffer: 当前累积的流式缓冲区
+
         Returns:
-            清理后的内容
+            清理后的缓冲区
         """
-        if not content:
-            return content
-        
-        # 先使用完整清理
-        cleaned = cls.clean_output(content)
-        
-        # 如果包含 Final Answer 格式，提取最终答案
-        if cls._contains_react_format(cleaned):
-            cleaned = cls.extract_final_answer(cleaned)
-        
-        return cleaned
+        if not buffer:
+            return buffer
+
+        cleaned = buffer
+
+        # 1. 剥离完整的 ## Action\n 段（含内联函数调用的下一行）
+        cleaned = re.sub(
+            r'##\s*Action\s*\n\s*\w+\s*\([^)]*\)',
+            '',
+            cleaned,
+            flags=re.IGNORECASE
+        )
+        # 2. 剥离独立的 ## Action 标题行
+        cleaned = re.sub(
+            r'##\s*Action\s*\n?',
+            '',
+            cleaned,
+            flags=re.IGNORECASE
+        )
+        # 3. 剥离完整的 ## Thought\n... 段（到下一个 ## 标题行或末尾）
+        cleaned = re.sub(
+            r'##\s*Thought\s*\n.*?(?=\n##|$)',
+            '',
+            cleaned,
+            flags=re.IGNORECASE | re.DOTALL
+        )
+        # 4. 剥离完整的 ## Observation\n... 段
+        cleaned = re.sub(
+            r'##\s*Observation\s*\n.*?(?=\n##|$)',
+            '',
+            cleaned,
+            flags=re.IGNORECASE | re.DOTALL
+        )
+        # 5. 剥离独立标题行残留
+        cleaned = re.sub(
+            r'^##\s*(Thought|Action|Observation|Final Answer)\s*$',
+            '',
+            cleaned,
+            flags=re.IGNORECASE | re.MULTILINE
+        )
+        # 6. 剥离 "Final Answer" 标记标题（保留后面的答案内容）
+        cleaned = re.sub(
+            r'##\s*Final Answer\s*:\s*',
+            '',
+            cleaned,
+            flags=re.IGNORECASE
+        )
+        # 7. 清理多余空行
+        cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
+
+        return cleaned.strip()
     
     @classmethod
     def format_no_result_answer(cls, question_type: str = "问题") -> str:

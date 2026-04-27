@@ -289,10 +289,14 @@ export const policyApi = {
     })
   },
 
-  matchEnterprisePolicies: async (enterpriseId: string, topK?: number): Promise<PolicyMatchResult[]> => {
+  matchEnterprisePolicies: async (enterpriseId: string, enterpriseProfile?: any, topK?: number): Promise<PolicyMatchResult[]> => {
     return request('/policy/match', {
       method: 'POST',
-      data: JSON.stringify({ enterprise_id: enterpriseId, top_k: topK || 10 })
+      data: {
+        enterprise_id: enterpriseId,
+        enterprise_profile: enterpriseProfile,
+        top_k: topK || 10
+      }
     })
   },
 

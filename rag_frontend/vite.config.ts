@@ -14,6 +14,10 @@ export default defineConfig({
     host: '0.0.0.0',
     open: false,
     strictPort: true,
+    watch: {
+      usePolling: true,   // Windows 文件监听兼容
+      interval: 1000,
+    },
     proxy: {
       '/api': {
         target: 'http://localhost:8000',

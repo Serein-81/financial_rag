@@ -148,10 +148,16 @@ class QualityReviewFunction:
         Returns:
             审查结果
         """
+        # ⚠️ 防御：专家回复中可能包含 { } 花括号（如 JSON 示例），会导致
+        # str.format() 误判为格式占位符而抛出 KeyError。
+        # 对用户输入进行花括号转义后再格式化模板。
+        def _escape_braces(s: str) -> str:
+            return s.replace("{", "{{").replace("}", "}}")
+
         prompt = self.prompt_template.format(
-            user_question=user_question,
-            ai_answer=ai_answer,
-            data_source_info=data_source_info
+            user_question=_escape_braces(user_question),
+            ai_answer=_escape_braces(ai_answer),
+            data_source_info=_escape_braces(data_source_info)
         )
 
         try:
@@ -205,50 +211,106 @@ class QualityReviewFunction:
     def _parse_response(self, response: str) -> Dict[str, Any]:
         """解析 LLM 响应"""
         try:
-            if "```json" in response:
-                start = response.find("```json") + 7
-                end = response.find("```", start)
-                response = response[start:end]
-            elif "```" in response:
-                start = response.find("```") + 3
-                end = response.find("```", start)
-                response = response[start:end]
+            if not response or not isinstance(response, str):
+                logger.warning("⚠️ [QualityReview] LLM返回空响应或非字符串")
+                return self._get_default_result()
 
-            result = json.loads(response.strip())
+            cleaned = response.strip()
 
-            if "scores" in result and "overall" not in result["scores"]:
+            # 提取 ```json ... ``` 或 ``` ... ``` 包裹的内容
+            if "```json" in cleaned:
+                start = cleaned.find("```json") + 7
+                end = cleaned.find("```", start)
+                cleaned = cleaned[start:end].strip()
+            elif "```" in cleaned:
+                start = cleaned.find("```") + 3
+                end = cleaned.find("```", start)
+                cleaned = cleaned[start:end].strip()
+
+            # 尝试完整的 JSON 解析
+            try:
+                result = json.loads(cleaned)
+            except json.JSONDecodeError:
+                logger.warning("⚠️ [QualityReview] JSON解析失败，尝试智能提取")
+                return self._parse_fallback(cleaned)
+
+            # ✅ 关键检查：确保 result 是 dict，否则走 fallback
+            if not isinstance(result, dict):
+                logger.warning("⚠️ [QualityReview] JSON解析结果不是字典类型(type=%s)，使用 fallback", type(result).__name__)
+                return self._parse_fallback(cleaned)
+
+            if "scores" in result and isinstance(result["scores"], dict) and "overall" not in result["scores"]:
                 scores = result["scores"]
                 weights = {"accuracy": 0.3, "completeness": 0.2, "logic": 0.2, "readability": 0.15, "practicality": 0.15}
                 result["scores"]["overall"] = sum(scores.get(k, 0) * v for k, v in weights.items())
 
             return result
 
-        except json.JSONDecodeError:
-            logger.warning("⚠️ [QualityReview] JSON解析失败")
-            return self._parse_fallback(response)
+        except Exception as e:
+            logger.warning("⚠️ [QualityReview] 解析异常: %s", e)
+            return self._get_default_result()
 
     def _parse_fallback(self, response: str) -> Dict[str, Any]:
-        """备用解析方法"""
+        """智能备用解析方法 — 用正则从截断的 JSON 中提取各维度分数"""
         import re
 
         result = {
             "is_quality_acceptable": True,
             "scores": {
-                "accuracy": 0.7,
-                "completeness": 0.7,
-                "logic": 0.7,
-                "readability": 0.7,
-                "practicality": 0.7,
-                "overall": 0.7
+                "accuracy": 0.5,
+                "completeness": 0.5,
+                "logic": 0.5,
+                "readability": 0.5,
+                "practicality": 0.5,
+                "overall": 0.5
             },
             "issues": [],
             "summary": "解析失败，使用默认值"
         }
 
-        overall_match = re.search(r'"overall":\s*([0-9.]+)', response)
+        if not response or not isinstance(response, str):
+            return result
+
+        # 提取各维度分数
+        score_fields = {
+            "accuracy": r'"accuracy":?\s*([0-9.]+)',
+            "completeness": r'"completeness":?\s*([0-9.]+)',
+            "logic": r'"logic":?\s*([0-9.]+)',
+            "readability": r'"readability":?\s*([0-9.]+)',
+            "practicality": r'"practicality":?\s*([0-9.]+)',
+        }
+
+        for field, pattern in score_fields.items():
+            match = re.search(pattern, response)
+            if match:
+                try:
+                    result["scores"][field] = min(1.0, max(0.0, float(match.group(1))))
+                except (ValueError, TypeError):
+                    pass
+
+        # 优先使用提取到的 overall，否则加权计算
+        overall_match = re.search(r'"overall":?\s*([0-9.]+)', response)
         if overall_match:
-            result["scores"]["overall"] = float(overall_match.group(1))
+            try:
+                result["scores"]["overall"] = min(1.0, max(0.0, float(overall_match.group(1))))
+            except (ValueError, TypeError):
+                result["scores"]["overall"] = sum(result["scores"].values()) / 5
+        else:
+            result["scores"]["overall"] = sum(result["scores"].values()) / 5
+
+        # 提取 is_quality_acceptable
+        acceptable_match = re.search(r'"is_quality_acceptable":?\s*(true|false|True|False)', response)
+        if acceptable_match:
+            result["is_quality_acceptable"] = acceptable_match.group(1).lower() == "true"
+        else:
             result["is_quality_acceptable"] = result["scores"]["overall"] >= self.quality_threshold
+
+        logger.info(
+            "🔍 [QualityReview] 备用解析完成: acceptable=%s, overall=%.2f (from %d fields)",
+            result["is_quality_acceptable"],
+            result["scores"]["overall"],
+            sum(1 for f in score_fields if re.search(score_fields[f], response))
+        )
 
         return result
 

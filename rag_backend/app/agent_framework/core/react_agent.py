@@ -360,8 +360,14 @@ class ReActAgent(BaseAgent):
                             # 也检测 XML 格式的工具调用（MiniMax 格式）
                             has_xml_invoke = "<invoke" in response_text and "name=" in response_text
                             needs_tool = needs_tool or has_xml_invoke
+                            # 也检测 ## Action 格式（内联函数调用格式）
+                            # 例如: ## Action\nsearch_enterprise_knowledge({"query": "..."})
+                            has_markdown_action = bool(re.search(
+                                r'##\s*Action\s*\n\s*\w+\s*\(', response_text, re.IGNORECASE
+                            ))
+                            needs_tool = needs_tool or has_markdown_action
                             
-                            # 检查 JSON 是否完整（如果包含 Action Input）或 XML 格式
+                            # 检查 JSON 是否完整（如果包含 Action Input）或 XML 格式或内联格式
                             if needs_tool:
                                 tool_call_detected = False
                                 try:
@@ -373,16 +379,29 @@ class ReActAgent(BaseAgent):
                                         if json_str.startswith('{') and json_str.endswith('}'):
                                             json.loads(json_str)  # 验证 JSON 完整性
                                             tool_call_detected = True
-                                    
+
                                     # 模式2: MiniMax XML 格式
                                     if "</invoke>" in response_text:
                                         xml_pattern = r'<invoke\s+name="([^"]+)"'
                                         if re.search(xml_pattern, response_text, re.IGNORECASE):
                                             tool_call_detected = True
-                                            
+
+                                    # 模式3: 内联函数调用格式 tool_name({...})
+                                    # 匹配 ## Action\nfunction_name({"key": "value"})
+                                    if not tool_call_detected:
+                                        inline_json_match = re.search(
+                                            r'\w+\s*\(\s*(\{[^()]*\})\s*\)', response_text
+                                        )
+                                        if inline_json_match:
+                                            try:
+                                                json.loads(inline_json_match.group(1))
+                                                tool_call_detected = True
+                                            except json.JSONDecodeError:
+                                                pass
+
                                 except (json.JSONDecodeError, re.error):
                                     pass
-                                
+
                                 if tool_call_detected:
                                     should_stream_output = False
                                     logger.info("[Agent] 检测到完整工具调用，停止流式输出")

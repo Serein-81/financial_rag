@@ -13,13 +13,77 @@
 import logging
 import json
 import sys
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from datetime import datetime
 from dataclasses import dataclass, field
 
 from app.observability.tracing import get_tracer
 
 logger = logging.getLogger(__name__)
+
+# 内存日志存储（供 API 查询）
+_log_store: List[Dict[str, Any]] = []
+_MAX_LOG_STORE = 10000
+
+
+def _add_to_log_store(record_dict: Dict[str, Any]):
+    """将日志记录添加到内存存储"""
+    _log_store.append(record_dict)
+    if len(_log_store) > _MAX_LOG_STORE:
+        del _log_store[:1000]
+
+
+def get_log_store() -> List[Dict[str, Any]]:
+    """获取所有存储的日志记录"""
+    return list(_log_store)
+
+
+class LogStoreHandler(logging.Handler):
+    """
+    日志存储处理器
+
+    拦截所有标准 Python 日志并存入内存缓冲区供 API 查询
+    """
+
+    def __init__(self, level: int = logging.INFO):
+        super().__init__(level)
+        self.setFormatter(logging.Formatter("%(message)s"))
+
+    def emit(self, record: logging.LogRecord):
+        """处理日志记录"""
+        try:
+            log_entry = {
+                "timestamp": datetime.fromtimestamp(record.created).isoformat(),
+                "level": record.levelname,
+                "message": record.getMessage(),
+                "logger": record.name,
+                "service": "rag-backend",
+                "trace_id": None,
+                "span_id": None,
+                "attributes": {},
+            }
+
+            # 提取异常信息
+            if record.exc_info and record.exc_info[1]:
+                log_entry["error"] = {
+                    "type": type(record.exc_info[1]).__name__,
+                    "message": str(record.exc_info[1]),
+                }
+
+            # 提取 extra 属性
+            if hasattr(record, "trace_id"):
+                log_entry["trace_id"] = getattr(record, "trace_id")
+            if hasattr(record, "span_id"):
+                log_entry["span_id"] = getattr(record, "span_id")
+
+            _add_to_log_store(log_entry)
+        except Exception:
+            self.handleError(record)
+
+
+# 自动注册到根日志器，捕获所有应用的日志
+_log_store_handler = LogStoreHandler()
+logging.getLogger().addHandler(_log_store_handler)
 
 
 @dataclass
@@ -112,9 +176,9 @@ class StructuredLogger:
         return None, None
     
     def _format_message(self, level: str, message: str, **kwargs):
-        """格式化消息"""
+        """格式化消息并存储到内存"""
         trace_id, span_id = self._get_trace_context()
-        
+
         record = LogRecord(
             timestamp=datetime.now(),
             level=level,
@@ -125,7 +189,10 @@ class StructuredLogger:
             service_name=self.config.service_name,
             attributes=kwargs
         )
-        
+
+        # 存储到内存供 API 查询
+        _add_to_log_store(record.to_dict())
+
         if self.config.format_json:
             return record.to_json()
         else:
@@ -136,13 +203,13 @@ class StructuredLogger:
                 f"[{self.name}]",
                 message
             ]
-            
+
             if trace_id:
                 parts.append(f"trace_id={trace_id}")
-            
+
             if kwargs:
                 parts.append(f"attributes={kwargs}")
-            
+
             return " ".join(parts)
     
     def debug(self, message: str, **kwargs):
@@ -164,7 +231,7 @@ class StructuredLogger:
         """错误日志"""
         if self._enabled and self._logger.level <= logging.ERROR:
             error_info = kwargs.pop("error", None)
-            
+
             if error_info and isinstance(error_info, Exception):
                 error = {
                     "type": type(error_info).__name__,
@@ -172,7 +239,7 @@ class StructuredLogger:
                 }
             else:
                 error = error_info
-            
+
             record = LogRecord(
                 timestamp=datetime.now(),
                 level="ERROR",
@@ -184,23 +251,24 @@ class StructuredLogger:
                 attributes=kwargs,
                 error=error
             )
-            
+
+            _add_to_log_store(record.to_dict())
             self._logger.error(record.to_json())
     
     def exception(self, message: str, **kwargs):
         """异常日志（包含堆栈跟踪）"""
         if self._enabled and self._logger.level <= logging.ERROR:
             exc_info = kwargs.pop("exc_info", None)
-            
+
             error = {
                 "type": "Exception",
                 "message": message
             }
-            
+
             if exc_info:
                 import traceback
                 error["stack_trace"] = traceback.format_exc()
-            
+
             record = LogRecord(
                 timestamp=datetime.now(),
                 level="ERROR",
@@ -212,7 +280,8 @@ class StructuredLogger:
                 attributes=kwargs,
                 error=error
             )
-            
+
+            _add_to_log_store(record.to_dict())
             self._logger.error(record.to_json())
 
 

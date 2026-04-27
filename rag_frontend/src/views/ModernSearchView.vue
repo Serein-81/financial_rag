@@ -5,6 +5,10 @@ import { Search, Database, FileText, Sparkles, Loader2, Globe, Monitor, ToggleLe
 import { request } from '@/utils/request'
 import { searchApi, type SearchResult, type WebSearchResult } from '@/api/search'
 import { marked } from 'marked'
+import PageHeader from '@/components/PageHeader.vue'
+import ResultCard from '@/components/ResultCard.vue'
+import EmptyState from '@/components/EmptyState.vue'
+import SkeletonCard from '@/components/SkeletonCard.vue'
 
 const knowledgeStore = useKnowledgeStore()
 
@@ -250,25 +254,17 @@ function getResultColor(type: 'local' | 'web') {
 </script>
 
 <template>
-  <div class="flex-1 flex flex-col bg-gradient-to-br from-slate-100 via-emerald-50/30 to-teal-50/30 h-full">
-    <!-- Top Bar -->
-    <div class="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-6 shadow-sm">
-      <div class="flex items-center gap-3">
-        <div class="w-10 h-10 bg-gradient-to-br from-emerald-600 to-teal-600 rounded-xl flex items-center justify-center">
-          <Search :size="20" class="text-white" />
-        </div>
-        <div>
-          <h2 class="text-lg font-semibold text-gray-900">语义搜索</h2>
-          <p class="text-xs text-gray-500">在知识库中搜索相关内容</p>
-        </div>
-      </div>
-
-      <!-- KB Selector -->
-      <div class="flex items-center gap-2 px-4 py-2 bg-gray-50 rounded-xl border border-gray-200">
-        <Database :size="16" class="text-gray-500" />
+  <div class="flex-1 flex flex-col h-full bg-gradient-to-br from-slate-100 via-emerald-50/30 to-teal-50/30">
+    <PageHeader
+      :icon="Search"
+      title="语义搜索"
+      subtitle="在知识库中搜索相关内容"
+    >
+      <div class="flex items-center gap-2 px-4 py-2 bg-white rounded-xl border border-slate-200 shadow-sm">
+        <Database :size="16" class="text-slate-400" />
         <select
           v-model="knowledgeStore.selectedKnowledgeBaseId"
-          class="bg-transparent text-sm text-gray-700 outline-none cursor-pointer"
+          class="bg-transparent text-sm text-slate-700 outline-none cursor-pointer min-w-[120px]"
         >
           <option :value="null">所有知识库</option>
           <option v-for="kb in knowledgeStore.knowledgeBases" :key="kb.id" :value="kb.id">
@@ -276,28 +272,27 @@ function getResultColor(type: 'local' | 'web') {
           </option>
         </select>
       </div>
-    </div>
+    </PageHeader>
 
-    <!-- Main Content -->
-    <div class="flex-1 overflow-y-auto p-8">
-      <div class="max-w-6xl mx-auto space-y-8">
+    <div class="flex-1 overflow-y-auto">
+      <div class="max-w-5xl mx-auto p-6 space-y-6">
         <!-- Search Box -->
-        <div class="bg-white rounded-2xl shadow-xl p-8">
-          <div class="flex gap-3 mb-4">
+        <div class="bg-white rounded-2xl border border-slate-200/80 p-6 shadow-sm">
+          <div class="flex gap-3">
             <input
               v-model="searchQuery"
               type="text"
               placeholder="输入你想搜索的内容..."
-              class="flex-1 px-5 py-4 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 transition-all outline-none text-lg"
+              class="flex-1 px-5 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:bg-white focus:border-emerald-400 focus:ring-4 focus:ring-emerald-100 transition-all outline-none text-base"
               @keydown.enter="handleSearch"
             />
             <button
               @click="handleSearch"
               :disabled="isSearching || !searchQuery.trim()"
-              class="px-8 py-4 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-xl hover:from-emerald-700 hover:to-teal-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl flex items-center gap-3 font-medium"
+              class="px-7 py-3.5 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-xl hover:from-emerald-700 hover:to-teal-700 transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-lg hover:shadow-xl flex items-center gap-2.5 font-medium text-sm"
             >
-              <Search :size="20" v-if="!isSearching" />
-              <Loader2 :size="20" class="animate-spin" v-else />
+              <Search :size="18" v-if="!isSearching" />
+              <Loader2 :size="18" class="animate-spin" v-else />
               <span>{{ isSearching ? '搜索中...' : '搜索' }}</span>
             </button>
           </div>
@@ -309,50 +304,84 @@ function getResultColor(type: 'local' | 'web') {
               <!-- Web Search Toggle -->
               <div
                 @click="enableWebSearch = !enableWebSearch"
-                class="flex-1 flex items-center gap-3 px-4 py-3 rounded-xl border-2 cursor-pointer transition-all"
+                class="flex-1 flex items-center gap-3 px-4 py-3 rounded-xl border cursor-pointer transition-all duration-300 relative overflow-hidden"
                 :class="enableWebSearch
-                  ? 'bg-gradient-to-r from-emerald-50 to-teal-50 border-emerald-300 shadow-sm'
-                  : 'bg-gray-50 border-gray-200 hover:border-gray-300'"
+                  ? 'border-emerald-300 bg-gradient-to-br from-emerald-50/80 to-teal-50/50 shadow-sm'
+                  : 'border-slate-200 bg-white/50 hover:border-slate-300 hover:bg-slate-50/50'"
               >
-                <div :class="enableWebSearch ? 'bg-emerald-500' : 'bg-gray-400'" class="w-10 h-10 rounded-lg flex items-center justify-center shadow-sm transition-colors">
-                  <Globe :size="20" class="text-white" />
-                </div>
-                <div class="flex-1">
-                  <div class="font-medium" :class="enableWebSearch ? 'text-emerald-900' : 'text-gray-700'">联网搜索</div>
-                  <div class="text-xs" :class="enableWebSearch ? 'text-emerald-600' : 'text-gray-500'">实时获取互联网信息</div>
-                  <div v-if="enableWebSearch" class="text-xs text-amber-600 mt-1 flex items-center gap-1">
-                    <AlertCircle :size="12" />
-                    <span>需在环境变量中配置 TAVILY_API_KEY</span>
-                  </div>
-                </div>
-                <div :class="enableWebSearch ? 'bg-emerald-500' : 'bg-gray-300'" class="w-12 h-6 rounded-full p-1 transition-colors">
+                <!-- Active glow -->
+                <div v-if="enableWebSearch" class="absolute inset-0 bg-gradient-to-r from-emerald-500/5 to-teal-500/5 pointer-events-none" />
+
+                <div class="relative flex items-center gap-3 w-full">
                   <div
-                    class="w-4 h-4 bg-white rounded-full shadow-sm transition-transform"
-                    :class="enableWebSearch ? 'translate-x-6' : 'translate-x-0'"
-                  ></div>
+                    :class="[
+                      'w-10 h-10 rounded-lg flex items-center justify-center shadow-sm transition-all duration-300',
+                      enableWebSearch ? 'bg-gradient-to-br from-emerald-500 to-teal-600 shadow-emerald-200' : 'bg-slate-300'
+                    ]"
+                  >
+                    <Globe :size="20" class="text-white" />
+                  </div>
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2">
+                      <span class="font-medium text-sm" :class="enableWebSearch ? 'text-emerald-900' : 'text-slate-700'">联网搜索</span>
+                      <span v-if="enableWebSearch" class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-100 text-emerald-700">已开启</span>
+                    </div>
+                    <div class="text-xs" :class="enableWebSearch ? 'text-emerald-600' : 'text-slate-500'">实时获取互联网信息</div>
+                  </div>
+
+                  <!-- Toggle Switch -->
+                  <div
+                    :class="[
+                      'relative w-11 h-6 rounded-full transition-all duration-300 flex-shrink-0',
+                      enableWebSearch ? 'bg-gradient-to-r from-emerald-500 to-teal-500' : 'bg-slate-300'
+                    ]"
+                  >
+                    <div
+                      class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-all duration-300"
+                      :class="enableWebSearch ? 'translate-x-5' : 'translate-x-0'"
+                    />
+                  </div>
                 </div>
               </div>
 
               <!-- Synonym Search Toggle -->
               <div
                 @click="enableSynonymSearch = !enableSynonymSearch"
-                class="flex-1 flex items-center gap-3 px-4 py-3 rounded-xl border-2 cursor-pointer transition-all"
+                class="flex-1 flex items-center gap-3 px-4 py-3 rounded-xl border cursor-pointer transition-all duration-300 relative overflow-hidden"
                 :class="enableSynonymSearch
-                  ? 'bg-gradient-to-r from-emerald-50 to-green-50 border-emerald-300 shadow-sm'
-                  : 'bg-gray-50 border-gray-200 hover:border-gray-300'"
+                  ? 'border-emerald-300 bg-gradient-to-br from-emerald-50/80 to-green-50/50 shadow-sm'
+                  : 'border-slate-200 bg-white/50 hover:border-slate-300 hover:bg-slate-50/50'"
               >
-                <div :class="enableSynonymSearch ? 'bg-emerald-500' : 'bg-gray-400'" class="w-10 h-10 rounded-lg flex items-center justify-center shadow-sm transition-colors">
-                  <Sparkles :size="20" class="text-white" />
-                </div>
-                <div class="flex-1">
-                  <div class="font-medium" :class="enableSynonymSearch ? 'text-emerald-900' : 'text-gray-700'">同义词扩展</div>
-                  <div class="text-xs" :class="enableSynonymSearch ? 'text-emerald-600' : 'text-gray-500'">智能匹配相关词汇</div>
-                </div>
-                <div :class="enableSynonymSearch ? 'bg-emerald-500' : 'bg-gray-300'" class="w-12 h-6 rounded-full p-1 transition-colors">
+                <div v-if="enableSynonymSearch" class="absolute inset-0 bg-gradient-to-r from-emerald-500/5 to-green-500/5 pointer-events-none" />
+
+                <div class="relative flex items-center gap-3 w-full">
                   <div
-                    class="w-4 h-4 bg-white rounded-full shadow-sm transition-transform"
-                    :class="enableSynonymSearch ? 'translate-x-6' : 'translate-x-0'"
-                  ></div>
+                    :class="[
+                      'w-10 h-10 rounded-lg flex items-center justify-center shadow-sm transition-all duration-300',
+                      enableSynonymSearch ? 'bg-gradient-to-br from-emerald-500 to-green-600 shadow-emerald-200' : 'bg-slate-300'
+                    ]"
+                  >
+                    <Sparkles :size="20" class="text-white" />
+                  </div>
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2">
+                      <span class="font-medium text-sm" :class="enableSynonymSearch ? 'text-emerald-900' : 'text-slate-700'">同义词扩展</span>
+                      <span v-if="enableSynonymSearch" class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-100 text-emerald-700">已开启</span>
+                    </div>
+                    <div class="text-xs" :class="enableSynonymSearch ? 'text-emerald-600' : 'text-slate-500'">智能匹配相关词汇</div>
+                  </div>
+
+                  <div
+                    :class="[
+                      'relative w-11 h-6 rounded-full transition-all duration-300 flex-shrink-0',
+                      enableSynonymSearch ? 'bg-gradient-to-r from-emerald-500 to-green-500' : 'bg-slate-300'
+                    ]"
+                  >
+                    <div
+                      class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-all duration-300"
+                      :class="enableSynonymSearch ? 'translate-x-5' : 'translate-x-0'"
+                    />
+                  </div>
                 </div>
               </div>
             </div>
@@ -373,18 +402,23 @@ function getResultColor(type: 'local' | 'web') {
             <!-- Advanced Settings Panel -->
             <div
               v-if="showAdvancedSettings && enableSynonymSearch"
-              class="p-4 bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl border border-gray-200 space-y-4"
+              class="p-5 bg-gradient-to-br from-white to-emerald-50/30 rounded-xl border border-emerald-200/60 shadow-sm space-y-5"
             >
-              <div class="text-sm font-medium text-gray-700 mb-3">搜索权重配置</div>
+              <div class="flex items-center gap-2 pb-3 border-b border-emerald-200/40">
+                <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center">
+                  <Sliders :size="14" class="text-white" />
+                </div>
+                <span class="text-sm font-semibold text-slate-800">搜索权重配置</span>
+              </div>
 
               <!-- Vector Weight -->
               <div class="space-y-2">
                 <div class="flex items-center justify-between text-sm">
                   <div class="flex items-center gap-2">
                     <Cpu :size="14" class="text-emerald-600" />
-                    <span class="text-gray-600">向量搜索权重</span>
+                    <span class="text-slate-600 font-medium">向量搜索权重</span>
                   </div>
-                  <span class="font-medium text-emerald-600">{{ (vectorWeight * 100).toFixed(0) }}%</span>
+                  <span class="font-semibold gradient-text bg-gradient-to-r from-emerald-600 to-teal-600">{{ (vectorWeight * 100).toFixed(0) }}%</span>
                 </div>
                 <input
                   type="range"
@@ -392,9 +426,9 @@ function getResultColor(type: 'local' | 'web') {
                   min="0"
                   max="1"
                   step="0.1"
-                  class="w-full h-2 bg-emerald-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
+                  class="w-full h-2 bg-emerald-200/60 rounded-full appearance-none cursor-pointer accent-emerald-600 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-gradient-to-r [&::-webkit-slider-thumb]:from-emerald-500 [&::-webkit-slider-thumb]:to-teal-600 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer"
                 />
-                <div class="flex justify-between text-xs text-gray-400">
+                <div class="flex justify-between text-xs text-slate-400">
                   <span>注重语义理解</span>
                   <span>注重精确匹配</span>
                 </div>
@@ -405,9 +439,9 @@ function getResultColor(type: 'local' | 'web') {
                 <div class="flex items-center justify-between text-sm">
                   <div class="flex items-center gap-2">
                     <BookOpen :size="14" class="text-emerald-600" />
-                    <span class="text-gray-600">同义词权重</span>
+                    <span class="text-slate-600 font-medium">同义词权重</span>
                   </div>
-                  <span class="font-medium text-emerald-600">{{ (synonymWeight * 100).toFixed(0) }}%</span>
+                  <span class="font-semibold gradient-text bg-gradient-to-r from-emerald-600 to-teal-600">{{ (synonymWeight * 100).toFixed(0) }}%</span>
                 </div>
                 <input
                   type="range"
@@ -415,9 +449,9 @@ function getResultColor(type: 'local' | 'web') {
                   min="0"
                   max="1"
                   step="0.1"
-                  class="w-full h-2 bg-emerald-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
+                  class="w-full h-2 bg-emerald-200/60 rounded-full appearance-none cursor-pointer accent-emerald-600 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-gradient-to-r [&::-webkit-slider-thumb]:from-emerald-500 [&::-webkit-slider-thumb]:to-teal-600 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer"
                 />
-                <div class="flex justify-between text-xs text-gray-400">
+                <div class="flex justify-between text-xs text-slate-400">
                   <span>注重原词匹配</span>
                   <span>注重同义词扩展</span>
                 </div>
@@ -428,9 +462,9 @@ function getResultColor(type: 'local' | 'web') {
                 <div class="flex items-center justify-between text-sm">
                   <div class="flex items-center gap-2">
                     <Type :size="14" class="text-emerald-600" />
-                    <span class="text-gray-600">全文搜索权重</span>
+                    <span class="text-slate-600 font-medium">全文搜索权重</span>
                   </div>
-                  <span class="font-medium text-emerald-600">{{ (fulltextWeight * 100).toFixed(0) }}%</span>
+                  <span class="font-semibold gradient-text bg-gradient-to-r from-emerald-600 to-teal-600">{{ (fulltextWeight * 100).toFixed(0) }}%</span>
                 </div>
                 <input
                   type="range"
@@ -438,18 +472,20 @@ function getResultColor(type: 'local' | 'web') {
                   min="0"
                   max="1"
                   step="0.1"
-                  class="w-full h-2 bg-emerald-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
+                  class="w-full h-2 bg-emerald-200/60 rounded-full appearance-none cursor-pointer accent-emerald-600 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-gradient-to-r [&::-webkit-slider-thumb]:from-emerald-500 [&::-webkit-slider-thumb]:to-teal-600 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer"
                 />
-                <div class="flex justify-between text-xs text-gray-400">
+                <div class="flex justify-between text-xs text-slate-400">
                   <span>注重模糊匹配</span>
                   <span>注重精确短语</span>
                 </div>
               </div>
 
               <!-- Weight Summary -->
-              <div class="pt-2 border-t border-gray-200">
-                <div class="text-xs text-gray-500 text-center">
-                  当前权重配置：向量 {{ (vectorWeight * 100).toFixed(0) }}% · 同义词 {{ (synonymWeight * 100).toFixed(0) }}% · 全文 {{ (fulltextWeight * 100).toFixed(0) }}%
+              <div class="pt-3 border-t border-emerald-200/40">
+                <div class="text-xs text-slate-500 text-center bg-white/60 rounded-lg py-2">
+                  当前权重配置：向量 <span class="font-semibold text-emerald-600">{{ (vectorWeight * 100).toFixed(0) }}%</span>
+                  · 同义词 <span class="font-semibold text-emerald-600">{{ (synonymWeight * 100).toFixed(0) }}%</span>
+                  · 全文 <span class="font-semibold text-emerald-600">{{ (fulltextWeight * 100).toFixed(0) }}%</span>
                 </div>
               </div>
             </div>
@@ -811,19 +847,6 @@ function getResultColor(type: 'local' | 'web') {
 </template>
 
 <style scoped>
-.line-clamp-3 {
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.break-words {
-  word-wrap: break-word;
-  overflow-wrap: break-word;
-  word-break: break-word;
-}
-
 .markdown-content {
   word-wrap: break-word;
   overflow-wrap: break-word;

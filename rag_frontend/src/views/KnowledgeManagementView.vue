@@ -440,17 +440,28 @@ async function handlePreview(doc: any) {
     const filename = doc.filename || ''
     
     console.log('🔍 File type:', fileType, '| Filename:', filename)
-    console.log('🔍 Checking isPdfFile:', fileType.includes('pdf') || filename.endsWith('.pdf'))
-    console.log('🔍 Checking isHtmlFile:', filename.endsWith('.html') || filename.endsWith('.htm') || fileType.includes('html'))
-    console.log('🔍 Checking isWordFile:', fileType.includes('word') || filename.endsWith('.docx') || filename.endsWith('.doc'))
-    
+
+    // 🔧 修复：精确匹配 MIME 类型，避免 Word/Excel 互相误判
+    // .docx: application/vnd.openxmlformats-officedocument.wordprocessingml.document
+    // .xlsx: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
     const isPdfFile = fileType.includes('pdf') || filename.endsWith('.pdf')
     const isHtmlFile = filename.endsWith('.html') || filename.endsWith('.htm') || fileType.includes('html')
-    const isWordFile = fileType.includes('word') || 
-                       fileType.includes('msword') || 
-                       fileType.includes('openxmlformats') ||
-                       filename.endsWith('.docx') || 
+    const isWordFile = fileType.includes('wordprocessingml') ||    // .docx 专用
+                       fileType.includes('msword') ||              // .doc
+                       filename.endsWith('.docx') ||
                        filename.endsWith('.doc')
+    const isExcelFile = fileType.includes('spreadsheetml') ||     // .xlsx
+                        fileType.includes('ms-excel') ||           // .xls
+                        filename.endsWith('.xlsx') ||
+                        filename.endsWith('.xls') ||
+                        filename.endsWith('.csv')
+    const isImageFile = (fileType.startsWith('image/') && !fileType.includes('svg')) ||
+                        filename.endsWith('.png') ||
+                        filename.endsWith('.jpg') ||
+                        filename.endsWith('.jpeg') ||
+                        filename.endsWith('.gif') ||
+                        filename.endsWith('.bmp') ||
+                        filename.endsWith('.webp')
     
     if (isPdfFile) {
       const url = window.URL.createObjectURL(blob)
@@ -467,6 +478,13 @@ async function handlePreview(doc: any) {
       const url = window.URL.createObjectURL(blob)
       previewHtmlUrl.value = url
       console.log('HTML preview URL created')
+    } else if (isImageFile) {
+      const url = window.URL.createObjectURL(blob)
+      previewPdfUrl.value = url
+      console.log('Image preview URL created')
+    } else if (isExcelFile) {
+      previewContent.value = 'PREVIEW_UNAVAILABLE'
+      console.log('Excel/CSV preview: 需要专用渲染库，提示用户下载')
     } else {
       const text = await blob.text()
       previewContent.value = text

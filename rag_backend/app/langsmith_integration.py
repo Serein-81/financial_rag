@@ -237,7 +237,11 @@ class LangSmithTracer:
                 },
                 tags=["llm", model_name]
             )
-            
+
+            if run is None:
+                logger.debug("[LangSmith] create_run 返回 None，跳过 LLM 调用追踪")
+                return
+
             if token_usage:
                 self.client.create_feedback(
                     run_id=run.id,
@@ -293,7 +297,11 @@ class LangSmithTracer:
                 error=error,
                 tags=["tool", tool_name]
             )
-            
+
+            if run is None:
+                logger.debug("[LangSmith] create_run 返回 None，跳过工具调用追踪")
+                return
+
             logger.debug(f"[LangSmith] 追踪工具调用: {tool_name} -> {run.id}")
             
         except Exception as e:

@@ -158,8 +158,9 @@ export const useMultiAgentTaskStore = defineStore('multiAgentTask', () => {
     processing_time?: number
   }) {
     if (!activeTask.value) return
-    
+
     activeTask.value.isLoading = false
+    activeTask.value.currentStage = 'response'
     activeTask.value.currentResponse = finalContent
     
     const assistantMsg = activeTask.value.messages[activeTask.value.messages.length - 1]

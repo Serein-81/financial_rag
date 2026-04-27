@@ -1,7 +1,14 @@
 {
   "permissions": {
     "allow": [
-      "Bash(dir:*)"
+      "Bash(dir:*)",
+      "Bash(wmic process where processid=15256 get name,commandline 2)",
+      "Bash(nul)",
+      "Bash(npx:*)",
+      "Bash(python -c \"from app.observability.router import router; print(''Router imported successfully''); print(f''Routes: {len(router.routes)}'')\")",
+      "Bash(python -c \"\nfrom main import app\nroutes = [r.path for r in app.routes if ''observability'' in getattr(r, ''path'', '''')]\nprint(f''Observability routes registered: {len(routes)}'')\nfor r in routes:\n    print(f''  {r}'')\n\")",
+      "Bash(node -e:*)",
+      "Bash(python -c:*)"
     ],
     "deny": [],
     "ask": []

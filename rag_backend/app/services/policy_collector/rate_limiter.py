@@ -70,7 +70,8 @@ class RateLimiter:
         self._last_refill: Dict[str, float] = defaultdict(time.time)
         
         self._locks: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
-        
+        self._last_request_time: Dict[str, float] = {}
+
         self._rate_limit_events: List[RateLimitEvent] = []
         
         self._error_count: Dict[str, int] = defaultdict(int)
@@ -220,39 +221,6 @@ class RateLimiter:
         """
         self._configs[domain] = config
         logger.info(f"⚙️ [{domain}] 速率限制已配置: {config.requests_per_minute}次/分钟")
-    
-    async def acquire(self, domain: str) -> bool:
-        """
-        获取请求许可
-        
-        Args:
-            domain: 目标域名
-            
-        Returns:
-            bool: 是否获得许可
-        """
-        config = self._configs.get(domain, self.default_config)
-        lock = self._locks[domain]
-        
-        async with lock:
-            now = time.time()
-            
-            self._cleanup_old_requests(domain, now)
-            
-            if not self._check_limits(domain, config, now):
-                wait_time = self._calculate_wait_time(domain, config, now)
-                if wait_time > 0:
-                    logger.warning(f"⏳ [{domain}] 速率限制触发，等待 {wait_time:.2f} 秒")
-                    await asyncio.sleep(wait_time)
-                    now = time.time()
-                    self._cleanup_old_requests(domain, now)
-            
-            if self._check_limits(domain, config, now):
-                self._record_request(domain, now)
-                self._refill_tokens(domain, config, now)
-                return True
-            
-            return False
     
     def _cleanup_old_requests(self, domain: str, now: float):
         """清理过期的请求记录"""

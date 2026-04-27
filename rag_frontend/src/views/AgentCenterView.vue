@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch, nextTick } from 'vue'
-import { agentDiscoveryApi, type AgentSummary, type AgentDetail, type ToolInfo, type RegistrySummary, type AgentTrace, ToolLocation } from '@/api/agent-discovery'
+import { agentDiscoveryApi, type AgentSummary, type AgentDetail, type ToolInfo, type RegistrySummary, type AgentTrace, type AgentTraceEvent, type AgentTraceStep, ToolLocation } from '@/api/agent-discovery'
 import { multiAgentApi, type SystemHealth, type TaskPipeline, type AgentMetric, SessionState } from '@/api/multi-agent'
 import { langSmithApi, type LangSmithStatus, type LangSmithStats, type LangSmithDashboard, type LangSmithProjectInfo, type LangSmithTrace } from '@/api/langsmith'
 import {
@@ -127,6 +127,42 @@ const stepTypeColors = {
   end: 'bg-gray-100 text-gray-700 border-gray-300'
 }
 
+function mapTraceStepToEvent(step: AgentTraceStep): AgentTraceEvent {
+  const eventTypeMap: Record<string, AgentTraceEvent['event_type']> = {
+    thought: 'thinking',
+    action: 'tool_call',
+    observation: 'tool_result',
+    final_answer: 'response',
+  }
+
+  const timestamp = typeof step.timestamp === 'number'
+    ? new Date(step.timestamp * 1000).toISOString()
+    : new Date().toISOString()
+
+  return {
+    timestamp,
+    event_type: eventTypeMap[step.step_type] || 'thinking',
+    content: step.content,
+    metadata: {
+      step_number: step.step_number,
+      step_type: step.step_type,
+      tool_name: step.tool_name,
+      tool_input: step.tool_input,
+      tool_output: step.tool_output,
+      tool_duration: step.tool_duration,
+      confidence: step.confidence,
+    },
+  }
+}
+
+function normalizeTrace(trace: AgentTrace): AgentTrace {
+  if (trace.events?.length) return trace
+  return {
+    ...trace,
+    events: (trace.steps || []).map(mapTraceStepToEvent),
+  }
+}
+
 function getUniqueCategories(): string[] {
   const categories = new Set<string>()
   tools.value.forEach(tool => {
@@ -195,6 +231,21 @@ async function loadAgentDetail(agentId: string) {
     }
   } catch (err: any) {
     console.error('加载智能体详情失败', err)
+    error.value = err.message || '加载智能体详情失败，请稍后重试'
+    agentDetails.value.set(agentId, {
+      agent_id: agentId,
+      agent_name: '',
+      agent_type: '',
+      description: '加载失败',
+      tool_count: 0,
+      tool_breakdown: {},
+      enabled: false,
+      capabilities: [],
+      tools: [],
+      tool_summary: {},
+      created_at: '',
+      last_updated: '',
+    })
   }
 }
 
@@ -224,9 +275,13 @@ async function loadMonitorData() {
 
 async function loadHistoryData() {
   try {
+    isLoading.value = true
     pipelineHistory.value = await multiAgentApi.getPipelineHistory({ limit: 50 })
   } catch (err: any) {
+    console.error('加载历史数据失败', err)
     pipelineHistory.value = []
+  } finally {
+    isLoading.value = false
   }
 }
 
@@ -235,7 +290,7 @@ async function loadTraceData() {
     isLoading.value = true
     error.value = ''
     const result = await agentDiscoveryApi.getTraces(50)
-    traces.value = result.traces
+    traces.value = result.traces.map(normalizeTrace)
     lastRefresh.value = new Date()
   } catch (err: any) {
     error.value = err.message || '加载追踪数据失败'
@@ -245,7 +300,18 @@ async function loadTraceData() {
 }
 
 async function selectTrace(trace: AgentTrace) {
-  selectedTrace.value = trace
+  try {
+    isLoading.value = true
+    error.value = ''
+    const detail = await agentDiscoveryApi.getTrace(trace.trace_id)
+    selectedTrace.value = normalizeTrace({ ...trace, ...detail })
+  } catch (err: any) {
+    selectedTrace.value = normalizeTrace(trace)
+    error.value = err.message || '加载追踪详情失败'
+  } finally {
+    isLoading.value = false
+  }
+
   await loadVisualization(trace.trace_id)
 }
 
@@ -370,10 +436,19 @@ async function toggleAgent(agentId: string) {
 }
 
 function formatTime(timestamp: string): string {
-  return new Date(timestamp).toLocaleString('zh-CN')
+  if (!timestamp) return '-'
+  const d = new Date(timestamp)
+  if (isNaN(d.getTime())) return '-'
+  return d.toLocaleString('zh-CN')
+}
+
+function truncateText(text: string | null | undefined, maxLen: number): string {
+  if (!text) return '无查询'
+  return text.length > maxLen ? text.substring(0, maxLen) + '...' : text
 }
 
 function formatDuration(seconds: number): string {
+  if (!isFinite(seconds) || seconds < 0) return '-'
   if (seconds < 60) return `${seconds.toFixed(0)}秒`
   if (seconds < 3600) return `${(seconds / 60).toFixed(1)}分钟`
   return `${(seconds / 3600).toFixed(1)}小时`
@@ -925,7 +1000,7 @@ onMounted(() => {
                   >
                     <div class="flex items-center justify-between mb-2">
                       <div class="flex items-center gap-2">
-                        <span class="font-medium text-slate-900 text-sm">{{ pipeline.query?.substring(0, 30) || '无查询' }}...</span>
+                        <span class="font-medium text-slate-900 text-sm">{{ truncateText(pipeline.query, 30) }}</span>
                         <span :class="[
                           'px-2 py-0.5 rounded-full text-xs font-medium',
                           `bg-${stateLabels[pipeline.state]?.color}-100 text-${stateLabels[pipeline.state]?.color}-700`
@@ -1017,7 +1092,7 @@ onMounted(() => {
                   <div class="flex items-center justify-between mb-2">
                     <span :class="[
                       'px-2 py-0.5 rounded-full text-xs font-medium',
-                      trace.status === 'success' ? 'bg-emerald-100 text-emerald-700' :
+                      trace.status === 'completed' ? 'bg-emerald-100 text-emerald-700' :
                       trace.status === 'failed' ? 'bg-red-100 text-red-700' :
                       'bg-blue-100 text-blue-700'
                     ]">
@@ -1042,12 +1117,12 @@ onMounted(() => {
                     执行流程
                   </h2>
                   <div v-if="selectedTrace" class="flex items-center gap-2">
-                    <span class="text-sm text-slate-500">{{ selectedTrace.events.length }} 步骤</span>
+                    <span class="text-sm text-slate-500">{{ selectedTrace.events?.length || 0 }} 步骤</span>
                   </div>
                 </div>
               </div>
               <div class="p-5">
-                <div v-if="selectedTrace" class="space-y-3">
+                <div v-if="selectedTrace && selectedTrace.events?.length" class="space-y-3">
                   <div
                     v-for="(event, index) in selectedTrace.events"
                     :key="index"
@@ -1068,6 +1143,12 @@ onMounted(() => {
                       </div>
                       <p class="text-sm text-slate-700 line-clamp-2">{{ event.content }}</p>
                     </div>
+                  </div>
+                </div>
+                <div v-else-if="selectedTrace" class="flex items-center justify-center h-96 text-slate-400">
+                  <div class="text-center">
+                    <Activity :size="48" class="mx-auto mb-3 opacity-50" />
+                    <p>这条追踪暂无步骤详情</p>
                   </div>
                 </div>
                 <div v-else class="flex items-center justify-center h-96 text-slate-400">

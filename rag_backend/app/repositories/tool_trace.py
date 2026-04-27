@@ -38,6 +38,9 @@ class ToolCallTraceRepository(BaseRepository[ToolCallTrace]):
         trace_id: Optional[str] = None,
         parent_call_id: Optional[str] = None,
         input_params: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        session_id: Optional[str] = None,
         **kwargs
     ) -> ToolCallTrace:
         """
@@ -59,6 +62,9 @@ class ToolCallTraceRepository(BaseRepository[ToolCallTrace]):
             'tool_type': tool_type,
             'trace_id': trace_id,
             'parent_call_id': parent_call_id,
+            'user_id': user_id,
+            'tenant_id': tenant_id,
+            'session_id': session_id,
             'input_params': input_params,
             'status': 'running',
             **kwargs

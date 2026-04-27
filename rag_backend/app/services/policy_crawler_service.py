@@ -23,6 +23,10 @@ from datetime import datetime
 from typing import List, Optional
 from dataclasses import dataclass
 from enum import Enum
+from urllib.parse import urlparse
+from app.core.config import settings
+from app.services.policy_collector.robots_checker import robots_checker
+from app.services.policy_collector.rate_limiter import rate_limiter
 
 logger = logging.getLogger(__name__)
 
@@ -77,13 +81,71 @@ class PolicyCrawlerService:
             self._client = httpx.AsyncClient(
                 timeout=30.0,
                 headers={
-                    "User-Agent": "TaxPolicyResearchBot/1.0 (Non-Commercial Research)",
+                    "User-Agent": settings.POLICY_COLLECTOR_USER_AGENT,
                     "Accept": "application/json, text/html",
                 },
                 follow_redirects=True,
                 limits=httpx.Limits(max_keepalive_connections=5, max_connections=10)
             )
         return self._client
+
+    async def _robots_allows(self, url: str, source_name: str) -> bool:
+        """
+        严格 robots.txt 检查。
+
+        默认要求目标站点能获取 robots.txt；无法获取时不进行在线采集。
+        """
+        parsed = urlparse(url)
+        base_url = f"{parsed.scheme}://{parsed.netloc}"
+        robots_url = f"{base_url}/robots.txt"
+
+        rules = await robots_checker._get_robots_rules(base_url, robots_url)
+        if rules is None:
+            if settings.POLICY_REQUIRE_ROBOTS_TXT:
+                logger.warning(f"🚫 [{source_name}] 无法确认 robots.txt，跳过在线采集: {url}")
+                return False
+            logger.warning(f"⚠️ [{source_name}] 无法获取 robots.txt，按配置允许继续: {url}")
+
+        allowed = await robots_checker.check_allowed(url, source_name)
+        if not allowed:
+            logger.warning(f"🚫 [{source_name}] robots.txt 不允许采集: {url}")
+            return False
+
+        crawl_delay = robots_checker.get_crawl_delay(base_url)
+        rate_limiter.set_robots_crawl_delay(parsed.netloc, crawl_delay)
+        return True
+
+    async def _safe_get(
+        self,
+        url: str,
+        source_name: str,
+        *,
+        params: Optional[dict] = None,
+        timeout: float = 15.0
+    ) -> Optional[httpx.Response]:
+        """
+        合规 GET：robots 检查 -> 域名限速 -> 请求 -> 状态记录。
+
+        不绕过 403、验证码或反爬限制；非 2xx 响应交给调用方记录并放弃。
+        """
+        if not settings.POLICY_ONLINE_CRAWL_ENABLED:
+            logger.info(f"🛡️ [{source_name}] 在线采集未启用，跳过: {url}")
+            return None
+
+        if not await self._robots_allows(url, source_name):
+            return None
+
+        parsed = urlparse(url)
+        domain = parsed.netloc
+        allowed_by_rate = await rate_limiter.acquire(domain)
+        if not allowed_by_rate:
+            logger.warning(f"⏳ [{source_name}] 速率限制未放行，跳过本次请求: {domain}")
+            return None
+
+        client = await self._get_client()
+        response = await client.get(url, params=params, timeout=timeout)
+        rate_limiter.record_response_status(domain, response.status_code)
+        return response
 
     async def close(self):
         if self._client:
@@ -104,11 +166,12 @@ class PolicyCrawlerService:
         policies: List[CrawledPolicy] = []
 
         try:
-            client = await self._get_client()
             url = "https://www.chinatax.gov.cn/api/service/taxPolicy/list"
             params = {"page": 1, "pageSize": max_count, "serviceType": "taxPolicy"}
 
-            response = await client.get(url, params=params, timeout=15.0)
+            response = await self._safe_get(url, PolicySource.NATIONAL_TAX.value, params=params, timeout=15.0)
+            if response is None:
+                return policies
             response.raise_for_status()
             data = response.json()
 
@@ -143,11 +206,12 @@ class PolicyCrawlerService:
         policies: List[CrawledPolicy] = []
 
         try:
-            client = await self._get_client()
             url = "https://www.gov.cn/zhengce/xxgk/list.htm"
             params = {"catalogCode": "zbzc_2475", "pageSize": max_count}
 
-            response = await client.get(url, params=params, timeout=15.0)
+            response = await self._safe_get(url, PolicySource.GOVERNMENT_CN.value, params=params, timeout=15.0)
+            if response is None:
+                return policies
             response.raise_for_status()
             html = response.text
 
@@ -185,10 +249,11 @@ class PolicyCrawlerService:
         policies: List[CrawledPolicy] = []
 
         try:
-            client = await self._get_client()
             url = "https://www.mof.gov.cn/zhengwuxinxi/zhengcelist/index.htm"
 
-            response = await client.get(url, timeout=15.0)
+            response = await self._safe_get(url, PolicySource.MINISTRY_FINANCE.value, timeout=15.0)
+            if response is None:
+                return policies
             response.raise_for_status()
             html = response.text
 
@@ -299,26 +364,29 @@ class PolicyCrawlerService:
         all_policies: List[CrawledPolicy] = []
         online_sources_available = False
 
-        try:
-            tax_policies = await self.crawl_national_tax_policies(max_per_source)
-            if tax_policies:
-                all_policies.extend(tax_policies)
-                online_sources_available = True
-            await asyncio.sleep(1)
+        if not settings.POLICY_ONLINE_CRAWL_ENABLED:
+            logger.info("🛡️ 政策在线采集未启用，跳过公网政策站点访问")
+        else:
+            try:
+                tax_policies = await self.crawl_national_tax_policies(max_per_source)
+                if tax_policies:
+                    all_policies.extend(tax_policies)
+                    online_sources_available = True
+                await asyncio.sleep(1)
 
-            gov_policies = await self.crawl_chinatax_full_policies(max_per_source)
-            if gov_policies:
-                all_policies.extend(gov_policies)
-                online_sources_available = True
-            await asyncio.sleep(1)
+                gov_policies = await self.crawl_chinatax_full_policies(max_per_source)
+                if gov_policies:
+                    all_policies.extend(gov_policies)
+                    online_sources_available = True
+                await asyncio.sleep(1)
 
-            finance_policies = await self.crawl_finance_policies(max_per_source)
-            if finance_policies:
-                all_policies.extend(finance_policies)
-                online_sources_available = True
+                finance_policies = await self.crawl_finance_policies(max_per_source)
+                if finance_policies:
+                    all_policies.extend(finance_policies)
+                    online_sources_available = True
 
-        except Exception as e:
-            logger.warning(f"在线采集遇到问题: {e}")
+            except Exception as e:
+                logger.warning(f"在线采集遇到问题: {e}")
 
         if include_sample and not online_sources_available:
             logger.info("📋 官方API暂时不可用，添加示例政策数据用于演示...")

@@ -170,6 +170,12 @@ services:
       GAODE_API_KEY: ${GAODE_API_KEY}
       TAVILY_API_KEY: ${TAVILY_API_KEY}
       SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY}
+
+      # --- 政策采集合规配置 ---
+      POLICY_ONLINE_CRAWL_ENABLED: ${POLICY_ONLINE_CRAWL_ENABLED:-false}
+      POLICY_SAMPLE_FALLBACK_ENABLED: ${POLICY_SAMPLE_FALLBACK_ENABLED:-true}
+      POLICY_REQUIRE_ROBOTS_TXT: ${POLICY_REQUIRE_ROBOTS_TXT:-true}
+      POLICY_COLLECTOR_USER_AGENT: "${POLICY_COLLECTOR_USER_AGENT:-PolicyCollector/1.0 (Enterprise Tax System; Contact: support@example.com)}"
       
       # --- 安全配置 ---
       SECRET_KEY: ${SECRET_KEY}

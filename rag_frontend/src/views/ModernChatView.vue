@@ -67,7 +67,7 @@ const uploadResult = ref<any>(null)
 const sourcesCollapsed = ref<Map<number, boolean>>(new Map())
 const copiedMessageIndex = ref<number | null>(null)
 const likedMessages = ref<Set<number>>(new Set())
-const showSessionsPanel = ref(false)
+
 const streamingContent = ref<Map<number, string>>(new Map())
 
 const messages = computed(() => sessionStore.currentMessages)
@@ -313,6 +313,11 @@ function getInitials(name: string): string {
   return name.charAt(0).toUpperCase()
 }
 
+function isStreamingMessage(index: number): boolean {
+  const message = messages.value[index]
+  return isLoading.value && index === messages.value.length - 1 && message?.role === 'assistant'
+}
+
 function getAvatarColor(name: string): string {
   const colors = [
     'from-emerald-500 to-teal-600',
@@ -333,22 +338,6 @@ function formatFileSize(bytes: number | null): string {
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
 }
 
-function toggleSessionsPanel() {
-  showSessionsPanel.value = !showSessionsPanel.value
-  if (showSessionsPanel.value) {
-    sessionStore.fetchSessions()
-  }
-}
-
-async function loadSessionFromHistory(sessionId: string) {
-  try {
-    await sessionStore.loadSession(sessionId)
-    showSessionsPanel.value = false
-  } catch (error) {
-    console.error('加载会话失败:', error)
-  }
-}
-
 function createNewChat() {
   sessionStore.createNewSession()
   sessionStore.fetchSessions()
@@ -356,66 +345,19 @@ function createNewChat() {
 </script>
 
 <template>
-  <div class="h-full flex bg-gray-50">
-    <!-- Sessions History Panel -->
-    <Transition name="slide">
-      <div v-if="showSessionsPanel" class="w-80 bg-white border-r border-gray-200 flex flex-col">
-        <div class="p-4 border-b border-gray-200">
-          <div class="flex items-center justify-between mb-3">
-            <div class="flex items-center gap-2">
-              <History :size="20" class="text-emerald-600" />
-              <h3 class="font-semibold text-gray-900">会话历史</h3>
-            </div>
-            <button @click="toggleSessionsPanel" class="p-1 hover:bg-gray-100 rounded">
-              <X :size="18" class="text-gray-500" />
-            </button>
-          </div>
-          <button
-            @click="createNewChat"
-            class="w-full px-3 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center justify-center gap-2 text-sm font-medium"
-          >
-            <Plus :size="16" />
-            新建对话
-          </button>
-        </div>
-
-        <div class="flex-1 overflow-y-auto">
-          <div v-if="sessions.length === 0" class="p-4 text-center text-gray-500 text-sm">
-            暂无会话记录
-          </div>
-          <div v-else class="p-2 space-y-1">
-            <div
-              v-for="session in sessions"
-              :key="session.id"
-              class="p-3 rounded-lg cursor-pointer transition-colors hover:bg-gray-50"
-              :class="sessionStore.currentSessionId === session.id ? 'bg-emerald-50 border border-emerald-200' : ''"
-              @click="loadSessionFromHistory(session.id)"
-            >
-              <div class="flex items-start justify-between mb-1">
-                <h4 class="font-medium text-gray-900 truncate flex-1 text-sm">{{ session.title }}</h4>
-              </div>
-              <div class="flex items-center gap-2 text-xs text-gray-500">
-                <Clock :size="12" />
-                {{ formatChatTime(session.updated_at) }}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </Transition>
-
+  <div class="h-full flex bg-gradient-to-br from-slate-50 to-white">
     <!-- Chat Area -->
     <div class="flex-1 flex flex-col overflow-hidden">
       <!-- Messages -->
-      <div ref="chatContainerRef" class="flex-1 overflow-y-auto p-6 space-y-6">
+      <div ref="chatContainerRef" class="flex-1 overflow-y-auto px-4 py-5 sm:px-5 sm:py-6 space-y-4">
         <div v-if="messages.length === 0" class="flex flex-col items-center justify-center h-full text-center">
           <div class="absolute top-4 right-4">
             <button
-              @click="toggleSessionsPanel"
-              class="px-4 py-2 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 flex items-center gap-2 text-sm text-gray-700 shadow-sm"
+              @click="createNewChat"
+              class="px-4 py-2 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-emerald-300 flex items-center gap-2 text-sm text-gray-700 shadow-sm transition-all"
             >
-              <History :size="16" />
-              查看历史会话
+              <Plus :size="16" />
+              新建对话
             </button>
           </div>
           <div class="w-20 h-20 bg-gradient-to-br from-emerald-600 to-teal-600 rounded-2xl flex items-center justify-center mb-6 shadow-lg">
@@ -480,7 +422,10 @@ function createNewChat() {
                 <span class="text-xs text-gray-400">{{ message.created_at ? formatChatTime(message.created_at) : '' }}</span>
               </div>
               <div class="bg-white border border-gray-200 px-4 py-3 rounded-2xl rounded-bl-md">
-                <div v-if="message.content" class="prose prose-sm max-w-none" v-html="renderMarkdown(message.content)"></div>
+                <div v-if="message.content" class="prose prose-sm max-w-none">
+                  <span v-html="renderMarkdown(message.content)"></span>
+                  <span v-if="isStreamingMessage(index)" class="streaming-cursor" aria-hidden="true"></span>
+                </div>
                 <div v-else class="flex items-center gap-2">
                   <!-- 骨架屏加载动画 -->
                   <div class="space-y-2 animate-pulse">
@@ -558,23 +503,16 @@ function createNewChat() {
       </div>
 
       <!-- Input Area -->
-      <div class="bg-white border-t border-gray-200 p-4">
-        <div class="max-w-3xl mx-auto">
+      <div class="shrink-0 bg-white/90 backdrop-blur-sm border-t border-gray-200/80 px-4 py-3">
+        <div class="max-w-5xl mx-auto">
           <!-- Toolbar -->
-          <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center justify-between mb-2">
             <div class="flex items-center gap-2">
               <button
-                @click="toggleSessionsPanel"
-                class="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg flex items-center gap-2 transition-colors"
-              >
-                <History :size="16" />
-                历史会话
-              </button>
-              <button
                 @click="createNewChat"
-                class="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg flex items-center gap-2 transition-colors"
+                class="px-2.5 py-1 text-xs text-gray-600 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg flex items-center gap-1.5 transition-all"
               >
-                <Plus :size="16" />
+                <Plus :size="14" />
                 新对话
               </button>
             </div>
@@ -583,13 +521,13 @@ function createNewChat() {
             </div>
           </div>
 
-          <div class="flex gap-3">
-            <div class="flex-1 flex items-center gap-3 bg-slate-50 rounded-xl px-4 py-3 border border-slate-200 focus-within:border-emerald-500 focus-within:ring-2 focus-within:ring-emerald-200 transition-all">
-              <Database :size="20" class="text-gray-400" />
+          <div class="flex flex-col gap-2 lg:flex-row lg:items-end">
+            <div class="lg:w-72 flex items-center gap-2 bg-slate-50/80 rounded-xl px-3 py-2.5 border border-slate-200/80 focus-within:border-emerald-500 focus-within:ring-2 focus-within:ring-emerald-200/60 transition-all shadow-sm">
+              <Database :size="18" class="text-gray-400 flex-shrink-0" />
 
               <select
                 v-model="knowledgeStore.selectedKnowledgeBaseId"
-                class="flex-1 bg-transparent border-none outline-none text-gray-900"
+                class="min-w-0 flex-1 bg-transparent border-none outline-none text-gray-900 text-sm"
               >
                 <option :value="null" disabled>选择知识库...</option>
                 <option
@@ -601,12 +539,14 @@ function createNewChat() {
                 </option>
               </select>
 
+              <span class="w-px h-5 bg-slate-200" />
+
               <button
                 @click="showKBModal = true"
-                class="p-1 hover:bg-gray-200 rounded transition-colors"
+                class="p-1.5 hover:bg-slate-200/80 rounded-lg transition-all hover:text-emerald-600 text-gray-400 flex-shrink-0"
                 title="创建新知识库"
               >
-                <Plus :size="18" class="text-gray-500" />
+                <Plus :size="18" />
               </button>
             </div>
 
@@ -614,7 +554,7 @@ function createNewChat() {
               v-model="userInput"
               rows="1"
               placeholder="输入你的问题..."
-              class="w-96 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-200 focus:border-emerald-500 outline-none resize-none"
+              class="min-h-[44px] max-h-32 flex-1 px-4 py-2.5 bg-slate-50/80 border border-slate-200/80 rounded-xl focus:ring-2 focus:ring-emerald-200/60 focus:border-emerald-500 outline-none resize-none shadow-sm transition-all"
               @keydown.enter.exact.prevent="sendMessage"
               :disabled="isLoading"
             />
@@ -622,52 +562,59 @@ function createNewChat() {
             <button
               @click="sendMessage"
               :disabled="isLoading || !userInput.trim()"
-              class="px-5 py-3 bg-emerald-600 text-white font-medium rounded-xl hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              class="h-11 px-4 bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-medium rounded-xl hover:from-emerald-700 hover:to-teal-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-md hover:shadow-lg transition-all"
             >
               <Loader2 v-if="isLoading" :size="18" class="animate-spin" />
               <Send v-else :size="18" />
             </button>
           </div>
 
-          <div class="flex items-center justify-between mt-3 text-xs text-gray-500">
-            <span>按 Enter 发送，Shift + Enter 换行</span>
+          <div class="hidden sm:flex items-center justify-between mt-2 text-xs text-gray-500">
+            <span class="flex items-center gap-1.5">
+              <kbd class="px-1.5 py-0.5 bg-slate-100 rounded text-[10px] font-mono font-medium text-slate-500">Enter</kbd>
+              发送
+              <kbd class="px-1.5 py-0.5 bg-slate-100 rounded text-[10px] font-mono font-medium text-slate-500">Shift + Enter</kbd>
+              换行
+            </span>
             <span>{{ messages.length }} 条消息</span>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Sessions Sidebar - Always visible -->
-    <div class="w-72 bg-white border-l border-gray-200 flex flex-col">
-      <div class="p-4 border-b border-gray-200">
+    <!-- Sessions Sidebar -->
+    <div class="w-72 bg-white/80 backdrop-blur-sm border-l border-gray-200/80 flex flex-col">
+      <div class="p-4 border-b border-gray-200/80 bg-gradient-to-r from-white to-emerald-50/30">
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-2">
-            <History :size="18" class="text-emerald-600" />
-            <h2 class="font-semibold text-gray-900">会话列表</h2>
+            <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center">
+              <History :size="14" class="text-white" />
+            </div>
+            <h2 class="font-semibold text-gray-900 text-sm">会话列表</h2>
           </div>
           <button
             @click="createNewSession"
-            class="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
+            class="p-1.5 hover:bg-white rounded-lg transition-all hover:shadow-sm hover:text-emerald-600 text-gray-500"
             title="新建会话"
           >
-            <Plus :size="18" class="text-gray-500" />
+            <Plus :size="18" />
           </button>
         </div>
       </div>
 
-      <div class="flex-1 overflow-y-auto">
-        <div v-if="sessions.length === 0" class="p-4 text-center text-gray-500 text-sm">
+      <div class="flex-1 overflow-y-auto custom-scrollbar">
+        <div v-if="sessions.length === 0" class="p-6 text-center text-gray-500 text-sm">
           暂无会话记录
         </div>
-        <div v-else class="p-2 space-y-1">
+        <div v-else class="p-2 space-y-0.5">
           <div
             v-for="session in sessions"
             :key="session.id"
             :class="[
-              'p-3 rounded-lg cursor-pointer transition-colors group',
+              'p-3 rounded-lg cursor-pointer transition-all duration-150 group',
               sessionStore.currentSessionId === session.id
-                ? 'bg-emerald-50 border border-emerald-200'
-                : 'hover:bg-gray-50'
+                ? 'bg-gradient-to-r from-emerald-50 to-teal-50/50 border border-emerald-200/80 shadow-sm'
+                : 'hover:bg-gray-50 border border-transparent'
             ]"
             @click="loadSession(session.id)"
           >
@@ -675,12 +622,13 @@ function createNewChat() {
               <h3 class="font-medium text-gray-900 text-sm truncate flex-1">{{ session.title }}</h3>
               <button
                 @click.stop="deleteSession(session.id)"
-                class="p-1 hover:bg-red-100 rounded transition-colors opacity-0 group-hover:opacity-100"
+                class="p-1 hover:bg-red-100 rounded transition-all opacity-0 group-hover:opacity-100"
               >
-                <Trash2 :size="14" class="text-red-500" />
+                <Trash2 :size="14" class="text-red-400 hover:text-red-500" />
               </button>
             </div>
-            <p class="text-xs text-gray-500">
+            <p class="text-xs text-gray-500 flex items-center gap-1.5">
+              <Clock :size="11" />
               {{ formatChatTime(session.updated_at) }}
             </p>
           </div>
@@ -689,72 +637,71 @@ function createNewChat() {
     </div>
 
     <!-- Create KB Modal -->
-    <div
-      v-if="showKBModal"
-      class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
-      @click.self="showKBModal = false"
-    >
-      <div class="bg-white rounded-xl p-6 w-full max-w-md">
-        <div class="flex items-center justify-between mb-4">
-          <h3 class="text-lg font-semibold text-gray-900">创建知识库</h3>
-          <button @click="showKBModal = false" class="p-1 hover:bg-gray-100 rounded">
-            <X :size="20" class="text-gray-500" />
-          </button>
-        </div>
-
-        <div class="space-y-4">
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">知识库名称</label>
-            <input
-              v-model="newKBName"
-              type="text"
-              placeholder="输入知识库名称"
-              class="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-emerald-200 focus:border-emerald-500 outline-none"
-            />
+    <Teleport to="body">
+      <div
+        v-if="showKBModal"
+        class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
+        @click.self="showKBModal = false"
+      >
+        <div class="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl border border-slate-200/80 animate-message">
+          <div class="flex items-center justify-between mb-6">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center shadow-sm">
+                <Database :size="20" class="text-white" />
+              </div>
+              <div>
+                <h3 class="text-lg font-semibold text-gray-900">创建知识库</h3>
+                <p class="text-xs text-gray-500">添加一个新的知识库</p>
+              </div>
+            </div>
+            <button @click="showKBModal = false" class="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-gray-100 transition-colors">
+              <X :size="20" class="text-gray-500" />
+            </button>
           </div>
 
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">描述（可选）</label>
-            <textarea
-              v-model="newKBDesc"
-              rows="3"
-              placeholder="输入知识库描述"
-              class="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-emerald-200 focus:border-emerald-500 outline-none resize-none"
-            />
-          </div>
-        </div>
+          <div class="space-y-5">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1.5">知识库名称</label>
+              <input
+                v-model="newKBName"
+                type="text"
+                placeholder="输入知识库名称"
+                class="w-full px-4 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-200 focus:border-emerald-500 outline-none transition-all bg-slate-50/50"
+              />
+            </div>
 
-        <div class="flex justify-end gap-3 mt-6">
-          <button
-            @click="showKBModal = false"
-            class="px-4 py-2 text-gray-700 font-medium rounded-lg hover:bg-gray-100"
-          >
-            取消
-          </button>
-          <button
-            @click="createKnowledgeBase"
-            class="px-4 py-2 bg-emerald-600 text-white font-medium rounded-lg hover:bg-emerald-700"
-          >
-            创建
-          </button>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1.5">描述 <span class="text-gray-400 font-normal">（可选）</span></label>
+              <textarea
+                v-model="newKBDesc"
+                rows="3"
+                placeholder="输入知识库描述"
+                class="w-full px-4 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-200 focus:border-emerald-500 outline-none resize-none transition-all bg-slate-50/50"
+              />
+            </div>
+          </div>
+
+          <div class="flex justify-end gap-3 mt-8 pt-4 border-t border-slate-100">
+            <button
+              @click="showKBModal = false"
+              class="px-5 py-2 text-gray-700 font-medium rounded-xl hover:bg-gray-100 transition-colors"
+            >
+              取消
+            </button>
+            <button
+              @click="createKnowledgeBase"
+              class="px-5 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-medium rounded-xl hover:from-emerald-700 hover:to-teal-700 transition-all shadow-md hover:shadow-lg"
+            >
+              创建
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+    </Teleport>
   </div>
 </template>
 
 <style>
-.slide-enter-active,
-.slide-leave-active {
-  transition: transform 0.3s ease;
-}
-
-.slide-enter-from,
-.slide-leave-to {
-  transform: translateX(-100%);
-}
-
-/* 消息列表动画 */
 .message-list-enter-active {
   animation: messageSlideIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
@@ -894,5 +841,25 @@ pre.hljs code {
 
 .ai-paragraph {
   @apply my-3 text-gray-700 leading-relaxed;
+}
+
+.streaming-cursor {
+  display: inline-block;
+  width: 7px;
+  height: 1.1em;
+  margin-left: 3px;
+  vertical-align: -0.15em;
+  border-radius: 9999px;
+  background: #059669;
+  animation: streamingBlink 0.9s ease-in-out infinite;
+}
+
+@keyframes streamingBlink {
+  0%, 100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 </style>

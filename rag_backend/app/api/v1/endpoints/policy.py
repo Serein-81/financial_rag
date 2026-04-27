@@ -33,6 +33,13 @@ class PolicyListRequest(BaseModel):
     filters: Optional[dict] = Field(None, description="筛选条件")
 
 
+class EnterpriseMatchRequest(BaseModel):
+    """企业政策匹配请求"""
+    enterprise_id: str = Field(..., description="企业ID")
+    enterprise_profile: Optional[dict] = Field(None, description="企业画像")
+    top_k: int = Field(10, ge=1, le=50, description="返回数量")
+
+
 class PolicySearchResponse(BaseModel):
     """政策搜索响应"""
     results: List[dict]
@@ -162,8 +169,7 @@ async def sync_policies(
 
 @router.post("/match", response_model=PolicySearchResponse)
 async def match_enterprise_policies(
-    enterprise_profile: dict,
-    top_k: int = Query(10, ge=1, le=50),
+    request: EnterpriseMatchRequest,
     current_user: User = Depends(deps.get_current_user)
 ):
     """
@@ -172,9 +178,13 @@ async def match_enterprise_policies(
     根据企业画像推荐相关政策
     """
     try:
+        enterprise_profile = request.enterprise_profile or {}
+        enterprise_profile["enterprise_id"] = request.enterprise_id
+        enterprise_profile["tenant_id"] = str(current_user.tenant_id)
+        
         results = await policy_retrieval_service.match_enterprise_policies(
             enterprise_profile=enterprise_profile,
-            top_k=top_k
+            top_k=request.top_k
         )
         
         return PolicySearchResponse(

@@ -147,7 +147,7 @@ class AgentStepRepository(BaseRepository[AgentStep]):
         data = {
             'trace_id': trace_id,
             'step_type': step_type,
-            'step_data': step_data,
+            **step_data,
             **kwargs
         }
         

@@ -14,6 +14,48 @@ from app.services.agent_tracer import agent_tracer
 router = APIRouter()
 
 
+def _step_to_event(step: dict) -> dict:
+    event_type_map = {
+        "thought": "thinking",
+        "action": "tool_call",
+        "observation": "tool_result",
+        "final_answer": "response",
+    }
+    return {
+        "timestamp": step.get("timestamp"),
+        "event_type": event_type_map.get(step.get("step_type"), step.get("step_type", "response")),
+        "content": step.get("content", ""),
+        "metadata": {
+            "step_number": step.get("step_number"),
+            "step_type": step.get("step_type"),
+            "tool_name": step.get("tool_name"),
+            "tool_input": step.get("tool_input"),
+            "tool_output": step.get("tool_output"),
+            "tool_duration": step.get("tool_duration"),
+            "confidence": step.get("confidence"),
+        },
+    }
+
+
+def _trace_to_legacy(trace: dict) -> dict:
+    steps = trace.get("steps", [])
+    return {
+        "trace_id": trace.get("trace_id"),
+        "session_id": trace.get("session_id") or "",
+        "query": trace.get("user_query") or trace.get("query") or "",
+        "events": [_step_to_event(step) for step in steps],
+        "total_time": trace.get("total_time") or 0,
+        "created_at": trace.get("created_at"),
+        "status": trace.get("status"),
+        "agent_type": trace.get("agent_type"),
+        "user_query": trace.get("user_query"),
+        "final_answer": trace.get("final_answer"),
+        "steps": steps,
+        "total_iterations": trace.get("total_iterations"),
+        "tool_calls_count": trace.get("tool_calls_count"),
+    }
+
+
 @router.get("/traces/{session_id}")
 async def get_session_traces(
     session_id: str,
@@ -54,10 +96,22 @@ async def get_session_traces(
         raise HTTPException(status_code=500, detail=f"查询追踪记录失败: {str(e)}")
 
 
+@router.get("/session/{session_id}")
+async def get_session_traces_legacy(
+    session_id: str,
+    current_user: User = Depends(deps.get_current_user),
+    tenant_context: dict = Depends(deps.get_tenant_context)
+):
+    """Backward compatible session trace endpoint for older frontend clients."""
+    response = await get_session_traces(session_id, current_user, tenant_context)
+    return [_trace_to_legacy(trace) for trace in response.get("traces", [])]
+
+
 @router.get("/traces/{trace_id}/steps")
 async def get_trace_steps(
     trace_id: str,
-    current_user: User = Depends(deps.get_current_user)
+    current_user: User = Depends(deps.get_current_user),
+    tenant_context: dict = Depends(deps.get_tenant_context)
 ):
     """
     获取某次追踪的详细步骤（仅限本人）
@@ -74,7 +128,8 @@ async def get_trace_steps(
         
         trace_data = await agent_tracer.get_trace_with_steps(
             trace_id=trace_id,
-            user_id=user_id
+            user_id=user_id,
+            tenant_id=tenant_context["tenant_id"]
         )
         
         if not trace_data:
@@ -91,10 +146,22 @@ async def get_trace_steps(
         raise HTTPException(status_code=500, detail=f"查询追踪步骤失败: {str(e)}")
 
 
+@router.get("/{trace_id}")
+async def get_trace_legacy(
+    trace_id: str,
+    current_user: User = Depends(deps.get_current_user),
+    tenant_context: dict = Depends(deps.get_tenant_context)
+):
+    """Backward compatible trace detail endpoint for older frontend clients."""
+    trace_data = await get_trace_steps(trace_id, current_user, tenant_context)
+    return _trace_to_legacy(trace_data)
+
+
 @router.get("/traces/{trace_id}/visualization")
 async def get_trace_visualization(
     trace_id: str,
-    current_user: User = Depends(deps.get_current_user)
+    current_user: User = Depends(deps.get_current_user),
+    tenant_context: dict = Depends(deps.get_tenant_context)
 ):
     """
     获取追踪的可视化数据（用于前端绘制流程图，仅限本人）
@@ -111,7 +178,8 @@ async def get_trace_visualization(
         
         trace_data = await agent_tracer.get_trace_with_steps(
             trace_id=trace_id,
-            user_id=user_id
+            user_id=user_id,
+            tenant_id=tenant_context["tenant_id"]
         )
         
         if not trace_data:

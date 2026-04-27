@@ -212,6 +212,13 @@ class Settings(BaseSettings):
     
     # Tavily 搜索 API 配置
     TAVILY_API_KEY: str = ""
+
+    # 政策采集合规配置
+    # 默认不自动访问公网政策站点，避免在未确认官方授权/robots/频率要求前触发自动化采集。
+    POLICY_ONLINE_CRAWL_ENABLED: bool = False
+    POLICY_SAMPLE_FALLBACK_ENABLED: bool = True
+    POLICY_REQUIRE_ROBOTS_TXT: bool = True
+    POLICY_COLLECTOR_USER_AGENT: str = "PolicyCollector/1.0 (Enterprise Tax System; Contact: support@example.com)"
     
     # Redis 配置
     REDIS_HOST: str = "localhost"

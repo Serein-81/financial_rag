@@ -2,6 +2,7 @@ from app.utils.json_compat import json
 import time
 import asyncio
 import uuid
+import logging
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from starlette.concurrency import iterate_in_threadpool
@@ -36,6 +37,163 @@ class OrchestratorChatRequest(BaseModel):
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+async def execute_orchestrator_background(
+    task_id: str,
+    session_id: str,
+    tenant_id: str,
+    user_id: str,
+    query: str,
+    enable_reflection: bool = True,
+    enable_rag: bool = True
+):
+    """后台执行编排器任务，使用独立短生命周期会话更新状态。"""
+    from datetime import datetime
+    from sqlalchemy import update
+    from app.models.agent_task import AgentTaskStatus, TaskStatus
+    from app.db.session import AsyncSessionLocal
+
+    async def update_task_status(**values):
+        async with AsyncSessionLocal() as db:
+            await db.execute(
+                update(AgentTaskStatus)
+                .where(AgentTaskStatus.task_id == task_id)
+                .values(**values)
+            )
+            await db.commit()
+
+    try:
+        await update_task_status(
+            status=TaskStatus.RUNNING,
+            started_at=datetime.now(),
+            current_node="initializing",
+            progress_percent=5,
+            progress_message="正在初始化..."
+        )
+
+        logger.info("[编排器后台] 开始执行: task_id=%s", task_id)
+
+        from app.multi_agent_system import AgentOrchestrator
+
+        orchestrator = AgentOrchestrator(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            enable_reflection=enable_reflection,
+            enable_rag=enable_rag
+        )
+        await orchestrator.initialize()
+
+        await update_task_status(
+            current_node="intent",
+            progress_percent=30,
+            progress_message="正在分析意图..."
+        )
+
+        node_progress = {
+            "receptionist": 10,
+            "intent_router": 30,
+            "rag_retrieval": 45,
+            "finance_specialist": 60,
+            "tax_specialist": 60,
+            "legal_specialist": 60,
+            "reflection": 80,
+            "final": 95,
+        }
+        node_messages = {
+            "receptionist": "正在接收问题...",
+            "intent_router": "正在分析意图...",
+            "rag_retrieval": "正在检索知识库...",
+            "finance_specialist": "财务专家分析中...",
+            "tax_specialist": "税务专家分析中...",
+            "legal_specialist": "法务专家分析中...",
+            "reflection": "正在进行质量审核...",
+            "final": "正在生成最终回答...",
+        }
+
+        async def persist_progress(node_name, node_state):
+            await update_task_status(
+                current_node=node_name,
+                progress_percent=node_progress.get(node_name, 50),
+                progress_message=node_messages.get(node_name, "任务处理中...")
+            )
+
+        result_context = await orchestrator.process_user_request(
+            user_input=query,
+            session_id=session_id,
+            history=[],
+            progress_callback=persist_progress
+        )
+
+        await update_task_status(
+            current_node="specialists",
+            progress_percent=50,
+            progress_message="专家分析中..."
+        )
+
+        if result_context.needs_clarification and result_context.clarification_request:
+            clarification_dict = result_context.clarification_request
+            if hasattr(clarification_dict, "model_dump"):
+                clarification_dict = clarification_dict.model_dump()
+
+            intent_dict = None
+            if result_context.intent_result:
+                intent_dict = {
+                    "category": getattr(result_context.intent_result, "intent", None),
+                    "confidence": getattr(result_context.intent_result, "confidence", 0),
+                    "routing_strategy": getattr(result_context.intent_result, "routing_strategy", None),
+                }
+
+            await update_task_status(
+                status=TaskStatus.RUNNING,
+                current_node="clarification",
+                progress_percent=50,
+                progress_message="等待用户补充信息",
+                needs_clarification=True,
+                clarification_request=clarification_dict,
+                intent_analysis=intent_dict
+            )
+            logger.info("[编排器后台] 需要追问，状态已更新: task_id=%s", task_id)
+            return
+
+        await update_task_status(
+            status=TaskStatus.COMPLETED,
+            current_node="response",
+            progress_percent=100,
+            progress_message="任务完成",
+            final_response=result_context.final_response,
+            completed_at=datetime.now(),
+            execution_time_ms=0.0,
+            needs_clarification=False,
+            clarification_request=None
+        )
+        logger.info("[编排器后台] 执行完成: task_id=%s", task_id)
+
+    except Exception as e:
+        error_msg = str(e)
+        logger.error("[编排器后台] 执行失败: task_id=%s, error=%s", task_id, error_msg, exc_info=True)
+
+        sanitized_error = error_msg
+        if any(key in error_msg for key in ["enable_report_generation", "enable_reflection", "enable_rag"]):
+            sanitized_error = "系统配置加载失败"
+        elif any(key in error_msg for key in ["AttributeError", "object has no attribute", "'NoneType'"]):
+            sanitized_error = "智能体初始化失败"
+        elif len(error_msg) > 100 or any(key in error_msg for key in ["orchestrator", "AgentOrchestrator", "处理遇到问题"]):
+            sanitized_error = "处理过程中遇到问题"
+
+        try:
+            await update_task_status(
+                status=TaskStatus.FAILED,
+                current_node="error",
+                progress_percent=0,
+                progress_message="任务执行失败",
+                final_response=f"提示：{sanitized_error}，请稍后重试或刷新页面",
+                error_message=sanitized_error,
+                completed_at=datetime.now(),
+                needs_clarification=False,
+                clarification_request=None
+            )
+        except Exception as db_error:
+            logger.error("[编排器后台] 更新失败状态失败: %s", db_error, exc_info=True)
 
 
 # ==========================================
@@ -494,7 +652,7 @@ async def chat_with_orchestrator_async(
     2. GET /agent-task/status/{thread_id} -> 轮询获取进度
     3. 页面切换后 GET /agent-task/hydrate/{thread_id} -> 恢复状态
     """
-    print(f"🌊 [编排器异步接口被调用] 用户: {current_user.email} | 问题: {request.query}")
+    logger.info("[编排器异步] 接收请求: user=%s, query=%s", current_user.email, request.query[:80])
     
     tenant_id = tenant_context['tenant_id']
     session_id = request.session_id or str(uuid.uuid4())
@@ -539,7 +697,7 @@ async def chat_with_orchestrator_async(
             )
         )
         
-        print(f"✅ [编排器异步] 任务已提交: task_id={task_id}, session_id={session_id}")
+        logger.info("[编排器异步] 任务已提交: task_id=%s, session_id=%s", task_id, session_id)
         
         return {
             "task_id": task_id,
@@ -552,13 +710,11 @@ async def chat_with_orchestrator_async(
         }
         
     except Exception as e:
-        print(f"❌ [编排器异步] 提交任务失败: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error("[编排器异步] 提交任务失败: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=f"任务提交失败: {str(e)}")
 
 
-async def execute_orchestrator_background(
+async def _legacy_execute_orchestrator_background(
     task_id: str,
     session_id: str,
     tenant_id: str,
@@ -572,8 +728,16 @@ async def execute_orchestrator_background(
     from app.db.session import AsyncSessionLocal
     from sqlalchemy import update
     from datetime import datetime
-    import traceback
     
+    async def update_task_status(**values):
+        async with AsyncSessionLocal() as db:
+            await db.execute(
+                update(AgentTaskStatus)
+                .where(AgentTaskStatus.task_id == task_id)
+                .values(**values)
+            )
+            await db.commit()
+
     try:
         async with AsyncSessionLocal() as db:
         
@@ -590,7 +754,7 @@ async def execute_orchestrator_background(
             )
             await db.commit()
         
-        print(f"🚀 [后台] 开始执行编排器: task_id={task_id}")
+        logger.info("[编排器后台] 开始执行: task_id=%s", task_id)
         
         from app.multi_agent_system import AgentOrchestrator
         
@@ -659,7 +823,7 @@ async def execute_orchestrator_background(
                 )
             )
             await db.commit()
-            print(f"💬 [后台] 检测到需要追问，状态已更新: task_id={task_id}")
+            logger.info("[编排器后台] 需要追问，状态已更新: task_id=%s", task_id)
         else:
             await db.execute(
                 update(AgentTaskStatus)
@@ -676,12 +840,11 @@ async def execute_orchestrator_background(
             )
             await db.commit()
         
-        print(f"✅ [后台] 编排器执行完成: task_id={task_id}")
+        logger.info("[编排器后台] 执行完成: task_id=%s", task_id)
         
     except Exception as e:
         error_msg = str(e)
-        print(f"❌ [后台] 编排器执行失败: task_id={task_id}, error={error_msg}")
-        traceback.print_exc()
+        logger.error("[编排器后台] 执行失败: task_id=%s, error=%s", task_id, error_msg, exc_info=True)
         
         sanitized_error = error_msg
         if "enable_report_generation" in error_msg or "enable_reflection" in error_msg or "enable_rag" in error_msg:
@@ -707,8 +870,137 @@ async def execute_orchestrator_background(
             )
             await db.commit()
         except Exception as db_error:
-            print(f"⚠️ [后台] 更新失败状态失败: {db_error}")
+            logger.error("[编排器后台] 更新失败状态失败: %s", db_error, exc_info=True)
             await db.rollback()
+
+
+async def _legacy_execute_orchestrator_background(
+    task_id: str,
+    session_id: str,
+    tenant_id: str,
+    user_id: str,
+    query: str,
+    enable_reflection: bool = True,
+    enable_rag: bool = True
+):
+    """Execute the orchestrator task with short-lived DB sessions for status updates."""
+    from datetime import datetime
+    from sqlalchemy import update
+    from app.models.agent_task import AgentTaskStatus, TaskStatus
+    from app.db.session import AsyncSessionLocal
+
+    async def update_task_status(**values):
+        async with AsyncSessionLocal() as db:
+            await db.execute(
+                update(AgentTaskStatus)
+                .where(AgentTaskStatus.task_id == task_id)
+                .values(**values)
+            )
+            await db.commit()
+
+    try:
+        await update_task_status(
+            status=TaskStatus.RUNNING,
+            started_at=datetime.now(),
+            current_node="initializing",
+            progress_percent=5,
+            progress_message="正在初始化..."
+        )
+
+        logger.info("[OrchestratorBackground] started: task_id=%s", task_id)
+
+        from app.multi_agent_system import AgentOrchestrator
+
+        orchestrator = AgentOrchestrator(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            enable_reflection=enable_reflection,
+            enable_rag=enable_rag
+        )
+        await orchestrator.initialize()
+
+        await update_task_status(
+            current_node="intent",
+            progress_percent=30,
+            progress_message="正在分析意图..."
+        )
+
+        result_context = await orchestrator.process_user_request(
+            user_input=query,
+            session_id=session_id,
+            history=[]
+        )
+
+        await update_task_status(
+            current_node="specialists",
+            progress_percent=50,
+            progress_message="专家分析中..."
+        )
+
+        if result_context.needs_clarification and result_context.clarification_request:
+            clarification_dict = result_context.clarification_request
+            if hasattr(clarification_dict, "model_dump"):
+                clarification_dict = clarification_dict.model_dump()
+
+            intent_dict = None
+            if result_context.intent_result:
+                intent_dict = {
+                    "category": getattr(result_context.intent_result, "intent", None),
+                    "confidence": getattr(result_context.intent_result, "confidence", 0),
+                    "routing_strategy": getattr(result_context.intent_result, "routing_strategy", None),
+                }
+
+            await update_task_status(
+                status=TaskStatus.RUNNING,
+                current_node="clarification",
+                progress_percent=50,
+                progress_message="等待用户补充信息",
+                needs_clarification=True,
+                clarification_request=clarification_dict,
+                intent_analysis=intent_dict
+            )
+            logger.info("[OrchestratorBackground] waiting for clarification: task_id=%s", task_id)
+            return
+
+        await update_task_status(
+            status=TaskStatus.COMPLETED,
+            current_node="response",
+            progress_percent=100,
+            progress_message="任务完成",
+            final_response=result_context.final_response,
+            completed_at=datetime.now(),
+            execution_time_ms=0.0,
+            needs_clarification=False,
+            clarification_request=None
+        )
+        logger.info("[OrchestratorBackground] completed: task_id=%s", task_id)
+
+    except Exception as e:
+        error_msg = str(e)
+        logger.error("[OrchestratorBackground] failed: task_id=%s, error=%s", task_id, error_msg, exc_info=True)
+
+        sanitized_error = error_msg
+        if any(key in error_msg for key in ["enable_report_generation", "enable_reflection", "enable_rag"]):
+            sanitized_error = "系统配置加载失败"
+        elif any(key in error_msg for key in ["AttributeError", "object has no attribute", "'NoneType'"]):
+            sanitized_error = "智能体初始化失败"
+        elif len(error_msg) > 100 or any(key in error_msg for key in ["orchestrator", "AgentOrchestrator", "处理遇到问题"]):
+            sanitized_error = "处理过程中遇到问题"
+
+        try:
+            await update_task_status(
+                status=TaskStatus.FAILED,
+                current_node="error",
+                progress_percent=0,
+                progress_message="任务执行失败",
+                final_response=f"提示：{sanitized_error}，请稍后重试或刷新页面",
+                error_message=sanitized_error,
+                completed_at=datetime.now(),
+                needs_clarification=False,
+                clarification_request=None
+            )
+        except Exception as db_error:
+            logger.error("[OrchestratorBackground] failed to persist failure: %s", db_error, exc_info=True)
 
 
 # ==========================================

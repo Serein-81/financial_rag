@@ -256,33 +256,36 @@ class TaxSpecialist(BaseSpecialistAgent):
                 error_message=f"未提供有效的 tenant_id 或 user_id (tenant_id='{tenant_id}', user_id='{user_id}')"
             )
         
-        from app.mcp.financial_tools import get_financial_overview, query_financial_data
-        
+        # ─── 通过 ToolManager 路由工具调用（保证追踪/统计完整性） ───
         max_retries = 2
         last_error = None
-        
+
         for attempt in range(1, max_retries + 1):
             try:
                 logger.info(
-                    f"🔍 [税务专家] 正在通过 MCP 工具查询税务数据 "
+                    f"🔍 [税务专家] 正在通过 ToolManager 查询税务数据 "
                     f"(尝试 {attempt}/{max_retries}): tenant='{tenant_id}', year={fiscal_year}"
                 )
-                
-                # 1. 先获取财务概览（包含税务数据）
-                overview_result = await get_financial_overview(
-                    tenant_id=tenant_id,
-                    fiscal_year=fiscal_year if fiscal_year else None
+
+                tool_params = {
+                    "tenant_id": tenant_id,
+                    "fiscal_year": fiscal_year if fiscal_year else None,
+                }
+
+                overview_result = await self.tool_manager.call_tool_raw(
+                    "get_financial_overview",
+                    **tool_params
                 )
-                
-                logger.info(f"🔍 [税务专家] MCP 工具返回原始结果:")
+
+                logger.info(f"🔍 [税务专家] ToolManager 返回原始结果:")
                 logger.info(f"   - status: {overview_result.get('status')}")
                 logger.info(f"   - has 'data': {overview_result.get('data') is not None}")
                 logger.info(f"   - has 'summary': {overview_result.get('summary') is not None}")
-                
+
                 if overview_result.get('status') == 'success' and overview_result.get('data'):
                     data = overview_result['data']
                     logger.info(f"   - data keys: {list(data.keys())}")
-                    
+
                     # 提取税务相关数据
                     tax_data = {
                         "fiscal_year": overview_result.get('fiscal_year'),
@@ -297,9 +300,9 @@ class TaxSpecialist(BaseSpecialistAgent):
                         "is_small_enterprise": data.get("is_small_enterprise"),
                         "data_status": data.get("data_status"),
                     }
-                    
+
                     logger.info(f"✅ [税务专家] 成功提取税务数据: revenue={tax_data.get('total_revenue')}, vat={tax_data.get('total_vat')}")
-                    
+
                     return TaxQueryResult(
                         has_data=True,
                         tax_data=tax_data,
@@ -312,14 +315,14 @@ class TaxSpecialist(BaseSpecialistAgent):
                         error_message=overview_result.get('message', '税务数据为空'),
                         fiscal_year=overview_result.get('fiscal_year')
                     )
-                    
+
             except Exception as e:
                 last_error = str(e)
                 logger.error(f"❌ [税务专家] 第 {attempt} 次查询失败: {e}")
                 if attempt < max_retries:
                     import asyncio
                     await asyncio.sleep(0.5)  # 重试前等待
-        
+
         logger.error(f"❌ [税务专家] 税务数据查询最终失败: {last_error}")
         return TaxQueryResult(
             has_data=False,

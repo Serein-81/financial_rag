@@ -93,7 +93,7 @@ export const langSmithApi = {
   async updateConfig(config: LangSmithConfigUpdate): Promise<ConfigUpdateResponse> {
     return request<ConfigUpdateResponse>('/langsmith/config', {
       method: 'POST',
-      body: JSON.stringify(config)
+      data: config
     })
   },
 

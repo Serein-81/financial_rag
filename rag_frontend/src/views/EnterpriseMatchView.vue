@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { policyApi, type PolicyMatchResult } from '@/api/policy'
 import { getEnterpriseId } from '@/utils/request'
 import { ElMessage } from 'element-plus'
+import gsap from 'gsap'
+import StatCard from '@/components/StatCard.vue'
 import {
   Building2,
   Loader2,
@@ -14,10 +16,6 @@ import {
   Eye,
   ArrowRight,
   RefreshCw,
-  Settings,
-  Calendar,
-  Bell,
-  BarChart3,
   Sparkles,
   Brain,
   Zap,
@@ -59,6 +57,16 @@ const statistics = computed(() => ({
 onMounted(async () => {
   await loadMatches()
   await checkAgentStatus()
+  nextTick(() => {
+    gsap.fromTo('[data-animate="card"]',
+      { opacity: 0, y: 20 },
+      { opacity: 1, y: 0, duration: 0.45, stagger: 0.06, ease: 'power2.out' }
+    )
+    gsap.fromTo('[data-animate="result"]',
+      { opacity: 0, x: -10 },
+      { opacity: 1, x: 0, duration: 0.35, stagger: 0.04, ease: 'power2.out', delay: 0.15 }
+    )
+  })
 })
 
 async function checkAgentStatus() {
@@ -91,7 +99,7 @@ async function loadMatches() {
 async function refreshMatches() {
   isRefreshing.value = true
   try {
-    await policyApi.matchEnterprisePolicies(getEnterpriseId())
+    await policyApi.matchEnterprisePolicies(getEnterpriseId(), enterpriseProfile.value)
     await loadMatches()
     ElMessage.success('匹配结果已更新')
   } catch (error: any) {
@@ -247,56 +255,45 @@ function getDetailedMatch(policyId: string) {
       <div class="max-w-6xl mx-auto space-y-6">
         <!-- Statistics Cards -->
         <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-            <div class="flex items-center justify-between mb-4">
-              <div class="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
-                <Target :size="24" class="text-blue-600" />
-              </div>
-              <span class="px-2 py-1 bg-blue-50 text-blue-700 rounded-lg text-xs font-medium">
-                总计
-              </span>
-            </div>
-            <h3 class="text-2xl font-bold text-gray-900 mb-1">{{ statistics.total }}</h3>
-            <p class="text-xs text-gray-500">匹配政策数量</p>
+          <div data-animate="card">
+          <StatCard
+            :icon="Target"
+            label="匹配政策数量"
+            :value="statistics.total"
+            badge="总计"
+            badge-color="bg-blue-50 text-blue-700"
+            icon-gradient="from-blue-500 to-indigo-600"
+          />
           </div>
-
-          <div class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-            <div class="flex items-center justify-between mb-4">
-              <div class="w-12 h-12 bg-emerald-100 rounded-xl flex items-center justify-center">
-                <CheckCircle :size="24" class="text-emerald-600" />
-              </div>
-              <span class="px-2 py-1 bg-emerald-50 text-emerald-700 rounded-lg text-xs font-medium">
-                高度匹配
-              </span>
-            </div>
-            <h3 class="text-2xl font-bold text-emerald-600 mb-1">{{ statistics.highMatch }}</h3>
-            <p class="text-xs text-gray-500">匹配度 ≥ 80%</p>
+          <div data-animate="card">
+          <StatCard
+            :icon="CheckCircle"
+            label="匹配度 ≥ 80%"
+            :value="statistics.highMatch"
+            badge="高度匹配"
+            badge-color="bg-emerald-50 text-emerald-700"
+            icon-gradient="from-emerald-500 to-teal-600"
+          />
           </div>
-
-          <div class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-            <div class="flex items-center justify-between mb-4">
-              <div class="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
-                <TrendingUp :size="24" class="text-blue-600" />
-              </div>
-              <span class="px-2 py-1 bg-blue-50 text-blue-700 rounded-lg text-xs font-medium">
-                良好匹配
-              </span>
-            </div>
-            <h3 class="text-2xl font-bold text-blue-600 mb-1">{{ statistics.mediumMatch }}</h3>
-            <p class="text-xs text-gray-500">匹配度 60% - 80%</p>
+          <div data-animate="card">
+          <StatCard
+            :icon="TrendingUp"
+            label="匹配度 60% - 80%"
+            :value="statistics.mediumMatch"
+            badge="良好匹配"
+            badge-color="bg-blue-50 text-blue-700"
+            icon-gradient="from-blue-500 to-cyan-600"
+          />
           </div>
-
-          <div class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-            <div class="flex items-center justify-between mb-4">
-              <div class="w-12 h-12 bg-amber-100 rounded-xl flex items-center justify-center">
-                <AlertCircle :size="24" class="text-amber-600" />
-              </div>
-              <span class="px-2 py-1 bg-amber-50 text-amber-700 rounded-lg text-xs font-medium">
-                一般匹配
-              </span>
-            </div>
-            <h3 class="text-2xl font-bold text-amber-600 mb-1">{{ statistics.lowMatch }}</h3>
-            <p class="text-xs text-gray-500">匹配度 &lt; 60%</p>
+          <div data-animate="card">
+          <StatCard
+            :icon="AlertCircle"
+            label="匹配度 &lt; 60%"
+            :value="statistics.lowMatch"
+            badge="一般匹配"
+            badge-color="bg-amber-50 text-amber-700"
+            icon-gradient="from-amber-500 to-orange-600"
+          />
           </div>
         </div>
 
@@ -321,6 +318,7 @@ function getDetailedMatch(policyId: string) {
             <div
               v-for="match in matches"
               :key="match.policy_id"
+              data-animate="result"
               @click="viewPolicyDetail(match.policy_id)"
               :class="[
                 'bg-white rounded-2xl p-6 shadow-sm border-2 transition-all cursor-pointer group hover:shadow-lg',
@@ -564,12 +562,3 @@ function getDetailedMatch(policyId: string) {
     </div>
   </div>
 </template>
-
-<style scoped>
-.line-clamp-2 {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-</style>

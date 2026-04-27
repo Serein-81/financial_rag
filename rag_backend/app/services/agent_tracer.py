@@ -357,8 +357,11 @@ class AgentTracer:
             if not trace:
                 return None
             
-            if user_id and trace.user_id != user_id:
+            if user_id and str(trace.user_id) != str(user_id):
                 logger.warning(f"⚠️ 用户 {user_id} 无权访问追踪记录 {trace_id}")
+                return None
+            if tenant_id and trace.tenant_id != tenant_id:
+                logger.warning(f"⚠️ 租户 {tenant_id} 无权访问追踪记录 {trace_id}")
                 return None
             
             result = await db.execute(
@@ -370,6 +373,8 @@ class AgentTracer:
             
             return {
                 "trace_id": str(trace.id),
+                "session_id": str(trace.session_id) if trace.session_id else None,
+                "message_id": str(trace.message_id) if trace.message_id else None,
                 "agent_type": trace.agent_type,
                 "user_query": trace.user_query,
                 "final_answer": trace.final_answer,
@@ -425,6 +430,8 @@ class AgentTracer:
             return [
                 {
                     "trace_id": str(t.id),
+                    "session_id": str(t.session_id) if t.session_id else None,
+                    "message_id": str(t.message_id) if t.message_id else None,
                     "agent_type": t.agent_type,
                     "user_query": t.user_query,
                     "status": t.status,
@@ -468,6 +475,8 @@ class AgentTracer:
             return [
                 {
                     "trace_id": str(t.id),
+                    "session_id": str(t.session_id) if t.session_id else None,
+                    "message_id": str(t.message_id) if t.message_id else None,
                     "agent_type": t.agent_type,
                     "user_query": t.user_query,
                     "status": t.status,

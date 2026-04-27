@@ -27,6 +27,9 @@ class ToolCallTrace(Base):
     # 关联信息
     trace_id = Column(UUID, ForeignKey("agent_traces.id"), nullable=True)  # 关联到 Agent 追踪
     parent_call_id = Column(UUID, ForeignKey("tool_call_traces.id"), nullable=True)  # 父调用（支持嵌套）
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    tenant_id = Column(String(50), nullable=True, index=True)
+    session_id = Column(UUID, ForeignKey("chat_sessions.id"), nullable=True, index=True)
     
     # 工具信息
     tool_name = Column(String, nullable=False)

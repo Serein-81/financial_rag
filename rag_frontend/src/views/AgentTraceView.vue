@@ -74,11 +74,17 @@ const stepTypeColors = {
   end: 'bg-gray-100 text-gray-700 border-gray-300'
 }
 
-function formatTime(timestamp: string): string {
+function formatTime(timestamp: string | number): string {
+  if (!timestamp) return '-'
+  if (typeof timestamp === 'number') {
+    const millis = timestamp < 1000000000000 ? timestamp * 1000 : timestamp
+    return new Date(millis).toLocaleString('zh-CN')
+  }
   return new Date(timestamp).toLocaleString('zh-CN')
 }
 
 function formatDuration(ms: number): string {
+  if (!ms) return '0ms'
   if (ms < 1000) return `${ms}ms`
   if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`
   return `${(ms / 60000).toFixed(1)}min`
@@ -107,17 +113,23 @@ async function loadTraces() {
 }
 
 async function selectTrace(trace: AgentTrace) {
-  selectedTrace.value = trace
-  activeTab.value = 'visualization'
-  await loadVisualization(trace.trace_id)
+  try {
+    isLoading.value = true
+    selectedTrace.value = await agentTraceApi.getTrace(trace.trace_id)
+    activeTab.value = 'visualization'
+    await loadVisualization(trace.trace_id)
+  } catch (err: any) {
+    selectedTrace.value = trace
+    error.value = err.message || '加载追踪详情失败'
+  } finally {
+    isLoading.value = false
+  }
 }
 
 async function loadVisualization(traceId: string) {
   try {
     isLoading.value = true
-    const response = await fetch(`/api/v1/agent-trace/traces/${traceId}/visualization`)
-    if (!response.ok) throw new Error('获取可视化数据失败')
-    visualizationData.value = await response.json()
+    visualizationData.value = await agentTraceApi.getVisualization(traceId)
     await nextTick()
     drawFlowChart()
   } catch (err: any) {

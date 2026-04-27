@@ -17,6 +17,7 @@ from app.models import tax_report, user_financial_data, tenant_settings, policy,
 from app.api.v1.endpoints import document as document_router, search, chat, auth, session, knowledge, agent_trace, tool_trace, prompt_optimization, memory, knowledge_graph, audit, invite_code, enterprise, logs, chat_logs, tax_report, human_review, multi_agent, group_chat, user_financial_data, tenant_settings, policy, rate_limit, streaming, snapshot, suggestion, tax_intelligence, financial_health, policy_tracking, contract_review, task_manager, agent_llm_config, agent_discovery, financial_tools_test, workflow_events, policy_notifications, policy_agent, workflow, security
 from app.api.v1.endpoints import agent_task as agent_task_endpoint
 from app.api.v1.endpoints import circuit_breaker_router
+from app.observability.router import router as observability_router
 
 # 🔒 导入租户中间件
 from app.middleware.tenant_middleware import TenantContextMiddleware
@@ -256,8 +257,10 @@ app.include_router(chat.router, prefix="/api/v1/chat", tags=["Chat"])
 app.include_router(session.router, prefix="/api/v1/sessions", tags=["Session"]) # 🆕
 app.include_router(knowledge.router, prefix="/api/v1/knowledge", tags=["Knowledge Base"]) # 🆕
 app.include_router(agent_trace.router, prefix="/api/v1/agent_trace", tags=["Agent Trace"]) # 🆕 Agent 追踪
+app.include_router(agent_trace.router, prefix="/api/v1/agent-trace", tags=["Agent Trace"]) # 兼容前端 hyphen 路径
 app.include_router(agent_discovery.router, prefix="/api/v1/agent-discovery", tags=["Agent Discovery"]) # 🆕 Agent 发现与追踪
 app.include_router(tool_trace.router, prefix="/api/v1/tool_trace", tags=["Tool Trace"]) # 🆕 工具追踪
+app.include_router(tool_trace.router, prefix="/api/v1/tool-trace", tags=["Tool Trace"]) # 兼容前端 hyphen 路径
 app.include_router(prompt_optimization.router, prefix="/api/v1/prompt", tags=["Prompt Optimization"]) # 🆕 Prompt 优化
 app.include_router(financial_tools_test.router, prefix="/api/v1/financial-tools-test", tags=["财务工具测试"]) # 🆕 财务工具测试
 app.include_router(memory.router, prefix="/api/v1/memory", tags=["Memory System"]) # 🆕 记忆系统
@@ -276,6 +279,9 @@ app.include_router(human_review.router, prefix="/api/v1/human-review", tags=["Hu
 app.include_router(multi_agent.router, prefix="/api/v1/multi-agent", tags=["Multi-Agent System"]) # 🆕 多智能体系统
 app.include_router(security.router, prefix="/api/v1", tags=["Security Monitor"]) # 🆕 安全监控
 app.include_router(user_financial_data.router, prefix="/api/v1", tags=["Financial Data Management"]) # 🆕 财务数据管理
+
+# 可观测性 API
+app.include_router(observability_router, prefix="/api/v1", tags=["Observability"]) # 🆕 可观测性
 
 try:
     from app.api.v1.endpoints.langsmith_api import router as langsmith_router

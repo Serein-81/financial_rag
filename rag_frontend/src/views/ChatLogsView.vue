@@ -841,6 +841,18 @@ function getLevelIcon(level: string | undefined) {
 
 }
 
+function getLevelIconClass(level: string | undefined): string {
+  return level === 'DEBUG' ? 'text-gray-500' : 'text-gray-600'
+}
+
+function getLevelIconBgClass(level: string | undefined): string {
+  return level === 'DEBUG' ? 'bg-gray-100' : 'bg-gray-200'
+}
+
+function getLevelBadgeClass(level: string | undefined): string {
+  return level === 'DEBUG' ? 'bg-gray-100 text-gray-700' : 'bg-gray-200 text-gray-700'
+}
+
 
 
 
@@ -2046,22 +2058,12 @@ function getEnterpriseLogLevelIcon(level: string) {
 
 
                 class="w-8 h-8 rounded-full flex items-center justify-center"
-                :class="{
-                  'bg-gray-200': log.level === 'INFO',
-                  'bg-gray-200': log.level === 'WARNING',
-                  'bg-gray-200': log.level === 'ERROR',
-                  'bg-gray-100': log.level === 'DEBUG'
-                }"
+                :class="getLevelIconBgClass(log.level)"
               >
                 <component
                   :is="getLevelIcon(log.level)"
                   :size="16"
-                  :class="{
-                    'text-gray-600': log.level === 'INFO',
-                    'text-gray-600': log.level === 'WARNING',
-                    'text-gray-600': log.level === 'ERROR',
-                    'text-gray-500': log.level === 'DEBUG'
-                  }"
+                  :class="getLevelIconClass(log.level)"
 
 
                 />
@@ -2089,12 +2091,7 @@ function getEnterpriseLogLevelIcon(level: string) {
 
 
                   class="px-2 py-0.5 text-xs rounded-full font-medium"
-                  :class="{
-                    'bg-gray-200 text-gray-700': log.level === 'INFO',
-                    'bg-gray-200 text-gray-700': log.level === 'WARNING',
-                    'bg-gray-200 text-gray-700': log.level === 'ERROR',
-                    'bg-gray-100 text-gray-700': log.level === 'DEBUG'
-                  }"
+                  :class="getLevelBadgeClass(log.level)"
                 >
                   {{ log.level || 'INFO' }}
                 </span>
@@ -2421,12 +2418,7 @@ function getEnterpriseLogLevelIcon(level: string) {
               <td class="px-3 py-2">
                 <span
                   class="px-2 py-0.5 text-xs rounded-full font-medium"
-                  :class="{
-                    'bg-gray-200 text-gray-700': log.level === 'INFO',
-                    'bg-gray-200 text-gray-700': log.level === 'WARNING',
-                    'bg-gray-200 text-gray-700': log.level === 'ERROR',
-                    'bg-gray-100 text-gray-700': log.level === 'DEBUG'
-                  }"
+                  :class="getLevelBadgeClass(log.level)"
                 >
                   {{ log.level || 'INFO' }}
                 </span>
@@ -3590,22 +3582,12 @@ function getEnterpriseLogLevelIcon(level: string) {
                     class="w-10 h-10 rounded-full flex items-center justify-center"
 
 
-                    :class="{
-                      'bg-gray-200': log.level === 'INFO',
-                      'bg-gray-200': log.level === 'WARNING',
-                      'bg-gray-200': log.level === 'ERROR',
-                      'bg-gray-100': log.level === 'DEBUG'
-                    }"
+                    :class="getLevelIconBgClass(log.level)"
                   >
                     <component
                       :is="getLevelIcon(log.level)"
                       :size="20"
-                      :class="{
-                        'text-gray-600': log.level === 'INFO',
-                        'text-gray-600': log.level === 'WARNING',
-                        'text-gray-600': log.level === 'ERROR',
-                        'text-gray-500': log.level === 'DEBUG'
-                      }"
+                      :class="getLevelIconClass(log.level)"
                     />
 
 
@@ -3631,12 +3613,7 @@ function getEnterpriseLogLevelIcon(level: string) {
 
 
                       class="px-2 py-0.5 text-xs rounded-full"
-                      :class="{
-                        'bg-gray-200 text-gray-700': log.level === 'INFO',
-                        'bg-gray-200 text-gray-700': log.level === 'WARNING',
-                        'bg-gray-200 text-gray-700': log.level === 'ERROR',
-                        'bg-gray-100 text-gray-700': log.level === 'DEBUG'
-                      }"
+                      :class="getLevelBadgeClass(log.level)"
                     >
                       {{ log.level || 'INFO' }}
                     </span>
