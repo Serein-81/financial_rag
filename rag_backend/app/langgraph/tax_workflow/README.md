@@ -1,343 +1,163 @@
-# 税务提交工作流实现文档
+# Tax Submission LangGraph Workflow
 
-## 概述
+本模块实现税务提交/税务分析的 LangGraph 状态机。它不是纯线性脚本，也不是让 LLM 自由决定所有步骤的 agent；当前设计是“固定业务骨架 + 条件分支 + 可恢复状态”的工作流，更适合税务这类需要审计、复核和稳定结果的流程。
 
-本文档描述了基于 LangGraph 的税务提交工作流实现。该工作流替代了原有的线性硬编码流程，提供了更灵活、可维护、可观测的税务处理能力。
+## 当前入口
 
-## 核心特性
+文件位置：`app/langgraph/tax_workflow/`
 
-### 1. 状态管理
-- **TaxSubmissionState**: 完整的状态定义，包含所有税务提交流程的数据
-- **SubmissionStatus**: 清晰的状态枚举，追踪工作流执行进度
-- **ValidationResult**: 验证结果模型，包含错误和警告
+主要入口：
 
-### 2. 工作流节点
+- `TaxSubmissionWorkflow`：工作流类，负责构建、编译和执行 LangGraph。
+- `tax_submission_workflow`：模块级默认实例。
+- `TaxIntelligenceService`：业务服务层优先调用该工作流，失败或不可用时回退到 legacy workflow。
 
-#### 2.1 validate_submission_node
-- 验证输入数据的完整性和合法性
-- 支持三种验证级别：严格、正常、宽松
-- 返回详细的验证错误和警告信息
+服务层调用位置：`app/services/tax_intelligence_service.py`
 
-#### 2.2 fetch_financial_data_node
-- 使用 LangChain 工具从本地 PostgreSQL 数据库获取财务数据
-- 支持增值税和企业所得税数据的获取
-- 处理数据缺失情况并生成警告
+```python
+if self.tax_workflow:
+    result = await self._execute_langgraph_workflow(request, analysis_id, trace_id)
+else:
+    result = await self._execute_legacy_workflow(request, analysis_id, trace_id)
+```
 
-#### 2.3 calculate_taxes_node
-- 使用 MCP 云端工具执行税务计算
-- 支持多种税种：增值税、企业所得税、个人所得税等
-- 计算总税负和税负率
+API 入口：`POST /api/v1/tax-intelligence/analyze`
 
-#### 2.4 assess_risk_node
-- 自动识别税务风险项
-- 风险分级：高、中、低
-- 基于业务规则的风险检测
+## 文件说明
 
-#### 2.5 request_human_review_node
-- 检测到高风险项时触发人工审核
-- 自动创建审核请求并添加到队列
-- 支持优先级设置
+```text
+tax_workflow/
+  state.py        # TaxSubmissionState、状态枚举、Pydantic 数据模型和状态辅助函数
+  nodes.py        # 工作流节点：验证、取数、计算、风险评估、人工审核、保存、错误处理
+  conditional.py  # 条件路由函数
+  graph.py        # LangGraph StateGraph 组装和执行入口
+  test_workflow.py
+```
 
-#### 2.6 handle_human_review_node
-- 处理人工审核结果
-- 支持审核通过/拒绝
-- 提供默认通过机制（当审核结果未及时返回时）
+## 工作流节点
 
-#### 2.7 save_submission_node
-- 保存税务分析结果
-- 生成执行摘要
-- 标记工作流完成
+当前 `graph.py` 注册的节点如下：
 
-#### 2.8 handle_error_node
-- 集中处理工作流中的错误
-- 生成错误摘要
-- 确保工作流优雅结束
+1. `validate_submission`：校验租户、用户、年度、税种等输入。
+2. `fetch_financial_data`：通过 `FinancialDataQueryTool` 查询本地财务数据。
+3. `calculate_taxes`：调用 `TaxIntelligenceService` / `TaxSpecialist` 计算并解释税务结果。
+4. `assess_risk`：结合 LLM 分析结果和规则判断风险项。
+5. `request_human_review`：高风险时创建人工审核请求。
+6. `handle_human_review`：读取审核结果，决定通过或失败。
+7. `save_submission`：生成摘要并标记完成。
+8. `handle_error`：集中错误收口。
 
-### 3. 条件路由
+## 路由逻辑
 
-#### 3.1 route_after_validation
-验证后根据结果路由：
-- 验证通过 → fetch_financial_data
-- 验证失败 → handle_error
+```text
+validate_submission
+  |-- valid --> fetch_financial_data
+  |-- invalid --> handle_error
 
-#### 3.2 route_after_financial_data
-财务数据获取后路由：
-- 数据获取成功 → calculate_taxes
-- 数据获取失败 → handle_error
+fetch_financial_data
+  |-- has data --> calculate_taxes
+  |-- no data --> handle_error
 
-#### 3.3 route_after_risk_assessment
-风险评估后路由：
-- 有高风险项 → request_human_review
-- 无高风险项 → save_submission
+calculate_taxes --> assess_risk
 
-#### 3.4 route_after_human_review
-人工审核后路由：
-- 审核通过 → save_submission
-- 审核拒绝 → handle_error
+assess_risk
+  |-- high_risk_count > 0 --> request_human_review --> handle_human_review
+  |-- no high risk --> save_submission
 
-### 4. 工具分层策略
+handle_human_review
+  |-- approved --> save_submission
+  |-- rejected --> handle_error
 
-#### LangChain 工具（本地数据库访问）
-- **FinancialDataQueryTool**: 直接访问 PostgreSQL 数据库
-- 优点：高性能、低延迟、支持复杂查询
-- 使用场景：需要查询本地项目财务数据时
+save_submission
+  |-- continue ok --> END
+  |-- critical errors --> handle_error
 
-#### MCP 工具（云端服务）
-- **VATCalculatorTool**: 增值税计算
-- **CorporateIncomeTaxTool**: 企业所得税计算
-- **PersonalIncomeTaxTool**: 个人所得税计算
-- 优点：集中管理、版本控制、易于扩展
-- 使用场景：需要调用云端计算服务时
+handle_error --> END
+```
 
-## 使用方法
+对应代码在 `conditional.py`：
 
-### 方式一：直接使用工作流
+- `route_after_validation`
+- `route_after_financial_data`
+- `route_after_risk_assessment`
+- `route_after_human_review`
+- `check_continue_workflow`
+
+## 直接调用示例
 
 ```python
 from app.langgraph.tax_workflow import TaxSubmissionWorkflow
 
 workflow = TaxSubmissionWorkflow()
 
-result = await workflow.execute(
-    session_id="session_001",
-    tenant_id="tenant_001",
-    user_id="user_001",
-    fiscal_year=2024,
-    fiscal_period="Q4",
+state = await workflow.execute(
+    session_id="analysis-001",
+    tenant_id="tenant-001",
+    user_id="user-001",
+    fiscal_year=2026,
+    fiscal_period="Q1",
     tax_types=["vat", "income_tax"],
     include_policy_benefits=True,
-    include_risk_assessment=True
+    include_risk_assessment=True,
 )
 
-print(f"总税负: ¥{result['total_tax_burden']:,.2f}")
-print(f"风险评分: {result['overall_risk_score']}")
+print(state["current_status"])
+print(state["total_tax_burden"])
+print(state["overall_risk_score"])
 ```
 
-### 方式二：通过 TaxIntelligenceService
+## 状态持久化
 
-```python
-from app.services.tax_intelligence_service import TaxIntelligenceService
-
-service = TaxIntelligenceService()
-
-request = TaxAnalysisRequest(
-    analysis_type=TaxAnalysisType.COMPREHENSIVE,
-    fiscal_year=2024,
-    tax_types=["vat", "income_tax"],
-    include_policy_benefits=True,
-    include_risk_assessment=True
-)
-
-result = await service.execute_analysis_workflow(request)
-```
-
-## 工作流图
-
-```
-┌─────────────────┐
-│ validate_submission │
-└────────┬────────┘
-         │
-    ┌────┴────┐
-    │  验证结果  │
-    └────┬────┘
-         │
-    通过 │ 失败
-    ┌────┴────┐
-    │         │
-    ▼         ▼
-┌──────────┐  ┌──────────┐
-│ fetch_   │  │ handle_  │
-│ financial│  │ error    │
-│ _data    │  └────┬─────┘
-└────┬─────┘       │
-     │         ┌────┴────┐
- 成功 │ 失败    │    END   │
-┌────┴────┐   └──────────┘
-│        │
-▼        ▼
-┌─────────────────┐
-│ calculate_taxes │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ assess_risk     │
-└────────┬────────┘
-         │
-    ┌────┴────┐
-    │ 风险评估  │
-    └────┬────┘
-         │
-  有风险 │ 无风险
-┌────┴────┐    ┌──────────────┐
-│request_ │    │save_submission│
-│human_   │    └────┬─────────┘
-│review   │         │
-└────┬─────┘         │
-     │          ┌────┴────┐
-     ▼          │  END    │
-┌─────────────────┐└────────┘
-│handle_human_    │
-│review           │
-└────┬────────────┘
-     │
-通过 │拒绝
-┌────┴────┐    ┌──────────┐
-▼         ▼    │handle_   │
-┌──────────────┐│error     │
-│save_submission│└────┬─────┘
-└────┬─────────┘    │
-     │          ┌────┴────┐
-     └──────────│  END    │
-                └─────────┘
-```
-
-## 集成说明
-
-### 与现有系统集成
-
-1. **保持 API 兼容性**
-   - TaxIntelligenceService 的所有公共方法保持不变
-   - API 端点无需修改
-   - 现有调用方无感知
-
-2. **渐进式迁移**
-   - 默认启用 LangGraph 工作流
-   - 如果工作流初始化失败，自动回退到原有流程
-   - 通过 `tax_workflow` 属性检查是否使用新工作流
-
-3. **监控和追踪**
-   - 集成现有的 AgentTracer
-   - 支持 LangGraph 内置的状态持久化
-   - 可中断恢复
-
-### 状态持久化
-
-使用 MemorySaver 实现状态持久化：
+默认使用 `langgraph.checkpoint.memory.MemorySaver`。调用方可以传入自定义 checkpointer，并通过 `configurable.thread_id` 关联一次可恢复执行。
 
 ```python
 from langgraph.checkpoint.memory import MemorySaver
 from app.langgraph.tax_workflow import TaxSubmissionWorkflow
 
-checkpointer = MemorySaver()
-workflow = TaxSubmissionWorkflow(checkpointer=checkpointer)
-
-# 可以中断后恢复
-result = await workflow.execute(..., config={"configurable": {"thread_id": "session_id"}})
+workflow = TaxSubmissionWorkflow(checkpointer=MemorySaver())
+state = await workflow.execute(
+    session_id="analysis-001",
+    tenant_id="tenant-001",
+    user_id="user-001",
+    fiscal_year=2026,
+    config={"configurable": {"thread_id": "analysis-001"}},
+)
 ```
 
-## 测试
+项目中还存在更通用的 LangGraph、多智能体和任务持久化模块，如 `app/langgraph/`、`app/api/v1/endpoints/langgraph_api.py`、`app/api/v1/endpoints/agent_task.py`，但税务提交工作流当前由 `TaxIntelligenceService` 接入。
 
-运行测试：
+## 注意事项
+
+- 当前流程骨架仍在代码中固定，不是配置化 DSL。
+- 人工审核节点目前会读取审核队列结果；如果结果未及时返回，代码中存在默认通过逻辑，生产环境需谨慎评估。
+- 税额计算中仍有 LLM 结果提取逻辑，关键税额建议优先使用确定性计算工具，LLM 负责解释和风险建议。
+- 前端 `TaxSubmissionView.vue` 中仍有模拟工作流进度逻辑，和真实 LangGraph 工作流事件尚未完全统一。
+- 文档、日志或源码中的历史乱码不应再复制扩散，新文档统一使用 UTF-8。
+
+## 扩展建议
+
+新增节点：
+
+1. 在 `nodes.py` 实现 `async def xxx_node(state)`。
+2. 在 `graph.py` 调用 `workflow.add_node(...)`。
+3. 在 `conditional.py` 增加必要的路由函数。
+4. 更新 `TaxSubmissionState` 中需要持久化的字段。
+5. 增加单元测试或集成测试。
+
+新增税种：
+
+1. 更新 `validate_submission_node` 中的 `valid_tax_types`。
+2. 更新 `_get_tax_type_name` 和 `_get_default_tax_rate`。
+3. 在 `calculate_taxes_node` 和 `assess_risk_node` 中补充计算/风险逻辑。
+4. 确认 `TaxAnalysisRequest` schema 和前端传参一致。
+
+## 测试
 
 ```bash
 cd rag_backend
 python -m app.langgraph.tax_workflow.test_workflow
+pytest tests/api/test_tax_workflow_monitor.py
+pytest tests/api/test_tax_logic_validator_standalone.py
 ```
 
-## 性能考虑
-
-1. **异步执行**
-   - 所有节点函数都是异步的
-   - 支持并发执行
-   - 最大化 I/O 效率
-
-2. **错误处理**
-   - 完善的异常捕获
-   - 优雅的错误恢复
-   - 详细的日志记录
-
-3. **可观测性**
-   - 完整的日志追踪
-   - 状态变更记录
-   - 性能指标收集
-
-## 扩展性
-
-### 添加新税种
-
-1. 在 `calculate_taxes_node` 中添加处理逻辑
-2. 在 `assess_risk_node` 中添加风险规则
-3. 更新状态定义
-
-### 添加新节点
-
-1. 实现节点函数
-2. 添加条件路由
-3. 更新工作流图
-
-### 自定义验证规则
-
-在 `validate_submission_node` 中添加新的验证逻辑：
-
-```python
-async def validate_submission_node(state: TaxSubmissionState) -> TaxSubmissionState:
-    # 现有验证逻辑
-    ...
-    
-    # 添加自定义验证
-    if custom_validation(state):
-        errors.append("自定义验证失败")
-    
-    return state
-```
-
-## 最佳实践
-
-1. **状态管理**
-   - 保持状态简洁，只存储必要数据
-   - 使用 Pydantic 模型进行数据验证
-   - 避免在状态中存储大对象
-
-2. **错误处理**
-   - 区分可恢复和不可恢复错误
-   - 提供有意义的错误消息
-   - 记录完整的错误上下文
-
-3. **日志记录**
-   - 使用结构化日志
-   - 记录关键决策点
-   - 包含足够的上下文信息
-
-4. **性能优化**
-   - 避免在节点中进行复杂计算
-   - 使用异步 I/O 操作
-   - 合理设置超时时间
-
-## 故障排查
-
-### 工作流初始化失败
-
-检查：
-1. LangGraph 依赖是否正确安装
-2. 状态模型定义是否正确
-3. 节点函数签名是否匹配
-
-### 节点执行失败
-
-检查：
-1. 日志中的具体错误信息
-2. 输入状态是否包含必要字段
-3. 外部服务是否可用
-
-### 状态持久化问题
-
-检查：
-1. MemorySaver 是否正确初始化
-2. thread_id 是否唯一
-3. checkpointer 配置是否正确
-
-## 未来改进
-
-1. **支持更多验证规则**
-2. **添加性能监控**
-3. **实现工作流版本控制**
-4. **支持工作流可视化**
-5. **添加 A/B 测试能力**
-
-## 相关文档
-
-- [LangGraph 官方文档](https://langchain-ai.github.io/langgraph/)
-- [LangChain 工具文档](https://python.langchain.com/docs/modules/agents/tools/)
-- [项目工具架构](./TOOL_ARCHITECTURE.md)
+部分测试依赖数据库、LLM 配置或业务测试数据，运行失败时先检查 `.env.example`、数据库连接和模型 API Key。
