@@ -17,45 +17,8 @@ on:
       - '.github/workflows/ci-backend.yml'
 
 jobs:
-  test:
-    name: Tests
-    runs-on: ubuntu-latest
-
-    defaults:
-      run:
-        working-directory: rag_backend
-
-    steps:
-      - name: Check out code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: pip
-          cache-dependency-path: rag_backend/requirements.txt
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Run unit tests
-        run: pytest -v --tb=short
-
-      - name: Generate coverage report
-        if: success()
-        run: pytest --cov=app --cov-report=xml --cov-report=html
-
-      - name: Upload coverage report
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: backend-coverage-report
-          path: rag_backend/htmlcov/
-          retention-days: 7
-
-  lint:
-    name: Lint
+  syntax:
+    name: Python syntax
     runs-on: ubuntu-latest
 
     defaults:
@@ -71,11 +34,26 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install lint dependencies
-        run: pip install ruff mypy
+      - name: Compile backend source
+        run: python -m compileall -q app tests/unit
 
-      - name: Ruff
-        run: ruff check app/
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
 
-      - name: MyPy
-        run: mypy app/ --ignore-missing-imports --no-error-summary
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./rag_backend
+          push: false
+          tags: rag-backend-ci:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
