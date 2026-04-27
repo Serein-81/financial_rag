@@ -1,84 +1,48 @@
 #!/bin/bash
-# set -e 指令确保脚本在任何命令执行失败时立即退出，防止带病运行
 set -e
 
-echo "🐳 RAG Backend 容器启动中..."
+echo "Starting RAG backend container..."
 
-# ---------------------------------------------------------
-# 第零步：修复上传目录权限（确保 appuser 可写）
-# ---------------------------------------------------------
-echo "🔧 检查并修复上传目录权限..."
+echo "Preparing writable directories..."
 mkdir -p /app/uploads/tax_reports
 mkdir -p /app/uploads/chat_files
 mkdir -p /app/uploads/avatars
 mkdir -p /app/uploads/documents
 mkdir -p /app/logs
 
-# 如果目录属于 root，将其所有权改为 appuser
-if [ "$(stat -c '%U' /app/uploads 2>/dev/null)" = "root" ]; then
-    echo "   将 /app/uploads 目录权限从 root 改为 appuser..."
+if [ "$(stat -c '%U' /app/uploads 2>/dev/null || true)" = "root" ]; then
+    echo "Changing /app/uploads ownership from root to appuser..."
     chown -R appuser:appuser /app/uploads 2>/dev/null || true
     chmod -R 755 /app/uploads 2>/dev/null || true
 fi
 
-if [ -d "/app/logs" ] && [ "$(stat -c '%U' /app/logs 2>/dev/null)" = "root" ]; then
-    echo "   将 /app/logs 目录权限从 root 改为 appuser..."
+if [ -d "/app/logs" ] && [ "$(stat -c '%U' /app/logs 2>/dev/null || true)" = "root" ]; then
+    echo "Changing /app/logs ownership from root to appuser..."
     chown -R appuser:appuser /app/logs 2>/dev/null || true
     chmod -R 755 /app/logs 2>/dev/null || true
 fi
 
-# ---------------------------------------------------------
-# 第一步：数据库/索引初始化 (带重试机制)
-# ---------------------------------------------------------
-echo "📊 检查并创建向量索引 (最多重试 3 次)..."
+echo "Checking vector index, retrying up to 3 times..."
 for i in 1 2 3; do
-    echo "   尝试 $i/3..."
-    # 尝试运行迁移脚本。在内存受限时，初始化动作最容易失败。
+    echo "Attempt $i/3..."
+
     if python3 -m app.migrations.auto_create_vector_index 2>&1; then
-        echo "✅ 索引检查/创建完成"
+        echo "Vector index check completed."
         break
     fi
-    
-    if [ $i -lt 3 ]; then
-        echo "⚠️ 索引创建失败（可能是数据库尚未就绪或内存抖动），5秒后重试..."
+
+    if [ "$i" -lt 3 ]; then
+        echo "Vector index check failed, retrying in 5 seconds..."
         sleep 5
     else
-        echo "❌ 索引创建连续失败，请检查数据库连接或日志"
+        echo "Vector index check failed after 3 attempts."
         exit 1
     fi
 done
 
-# ---------------------------------------------------------
-# 第二步：启动 FastAPI 应用
-# ---------------------------------------------------------
-
-# 【当前模式：单核/开发模式】
-# 优点：内存占用最小（约 200MB-400MB），且支持代码热更新
-# 缺点：无法利用多核 CPU 算力
-echo "🚀 启动应用 (uvloop 高性能模式 + 单进程)..."
-
-# 注意：--reload-dir 排除不需要热重载监控的目录
-# 避免权限问题和性能开销
+echo "Starting FastAPI application..."
 exec uvicorn app.main:app \
     --host 0.0.0.0 \
     --port 8000 \
     --loop uvloop \
-    --http h11 \
-    # --reload \
-    # --reload-dir app \
-    # --reload-dir tests
-
-# ---------------------------------------------------------
-# 【后续扩容建议：生产/多核模式】
-# ---------------------------------------------------------
-# 如果未来迁移到大内存服务器 (如 16G+)，请注释掉上面的单核启动命令，
-# 并取消下面命令的注释。这将显著提升高并发下的吞吐量。
-#
-# exec uvicorn app.main:app \
-#     --host 0.0.0.0 \
-#     --port 8000 \
-#     --loop uvloop \
-#     --http httptools \
-#     --workers 4 \
-#     --no-access-log
-# ---------------------------------------------------------
+    --http h11

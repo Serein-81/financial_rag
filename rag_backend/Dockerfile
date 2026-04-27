@@ -62,6 +62,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 # 安全降权！
 # 创建普通用户 appuser，把 /app 文件夹的所有权交给他，然后切换身份。
 RUN useradd -m -s /bin/bash appuser && \
+    chmod +x /app/docker-entrypoint.sh && \
     chown -R appuser:appuser /app
 USER appuser
 # 从这行往下，容器就再也不是危险的 root 权限了！哪怕被黑客攻破，也无法破坏宿主机。
