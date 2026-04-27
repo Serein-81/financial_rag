@@ -3,7 +3,7 @@
 <div align="center">
 
 ![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.128+-green.svg)
 ![Vue.js](https://img.shields.io/badge/Vue.js-3.4+-42b883.svg)
 ![License](https://img.shields.io/badge/License-MIT-yellow.svg)
 
@@ -219,6 +219,7 @@ app/agent_framework/
 | `/contract-review`、`/enterprise-match` | 合同审查与企业政策匹配 |
 | `/group-chat`、`/notifications` | 群组聊天与通知中心 |
 | `/analytics`、`/agent-center`、`/hitl-approval`、`/intent-debug`、`/security-audit`、`/logs` | 分析、Agent 管理、人机审核、意图调试、安全审计与日志 |
+| `/task-management`、`/chat-logs`、`/profile`、`/test-data-guide` | 任务管理、对话日志、个人资料与测试数据指南 |
 
 ### 🔌 当前后端 API 分组
 
@@ -229,11 +230,14 @@ app/agent_framework/
 | `/api/v1/auth` | 认证、登录、注册 |
 | `/api/v1/documents`、`/api/v1/knowledge`、`/api/v1/search`、`/api/v1/knowledge_graph` | 文档、知识库、搜索、知识图谱 |
 | `/api/v1/chat`、`/api/v1/sessions`、`/api/v1/groups`、`/api/v1/ws/groups` | 对话、会话、群聊与 WebSocket |
-| `/api/v1/multi-agent`、`/api/v1/human-review`、`/api/v1/agent_trace`、`/api/v1/tool_trace` | 多智能体、人机审核、Agent/工具追踪 |
-| `/api/v1/tax-reports`、`/api/v1/policy`、`/api/v1/financial-tools-test` | 税务报告、政策管理、财务工具测试 |
+| `/api/v1/multi-agent`、`/api/v1/human-review`、`/api/v1/agent_trace`、`/api/v1/agent-trace`、`/api/v1/tool_trace`、`/api/v1/tool-trace` | 多智能体、人机审核、Agent/工具追踪 |
+| `/api/v1/agents`、`/api/v1/agent-discovery`、`/api/v1/agent-task` | 智能体 LLM 配置、智能体发现与任务状态恢复 |
+| `/api/v1/tax-reports`、`/api/v1/tax-intelligence`、`/api/v1/policy`、`/api/v1/policy-tracking`、`/api/v1/financial-tools-test` | 税务报告、税务智能分析、政策管理、政策追踪、财务工具测试 |
+| `/api/v1/financial-health`、`/api/v1/financial-data`、`/api/v1/contract-review` | 财务健康、财务数据管理、合同审查 |
 | `/api/v1/enterprise`、`/api/v1/invite-codes`、`/api/v1/tenant-settings` | 企业管理、邀请码、租户设置 |
-| `/api/v1/logs`、`/api/v1/chat-logs`、`/api/v1/security`、`/api/v1/rate-limit` | 系统日志、对话日志、安全监控、限流管理 |
-| `/api/v1/workflow*`、`/api/v1/task-manager`、`/api/v1/notifications` | 工作流事件、任务管理、通知与政策通知 |
+| `/api/v1/logs`、`/api/v1/chat-logs`、`/api/v1/security`、`/api/v1/rate-limit`、`/api/v1/observability` | 系统日志、对话日志、安全监控、限流管理与可观测性 |
+| `/api/v1/workflow*`、`/api/v1/task-manager`、`/api/v1/notifications`、`/api/v1/policy-notifications`、`/api/v1/policy-agent` | 工作流事件、任务管理、通知、政策通知与政策通知智能体 |
+| `/api/v1/a2a*`、`/api/v1/circuit-breaker*`、`/api/v1/langsmith` | A2A 协议、熔断器管理与 LangSmith 集成 |
 | `/health`、`/health/quick`、`/health/{component}`、`/api/health` | 健康检查与组件级诊断 |
 
 ---
@@ -1080,16 +1084,16 @@ class Reranker:
 
 | 层级 | 技术选型 | 说明 |
 |------|---------|------|
-| **后端框架** | FastAPI 0.100+ | 异步高性能 API 框架 |
-| **数据库** | PostgreSQL 15+ | 关系型数据存储 |
+| **后端框架** | FastAPI 0.128+ | 异步高性能 API 框架 |
+| **数据库** | PostgreSQL 16 + pgvector | 关系型数据存储与向量扩展 |
 | **缓存** | Redis 7+ | 会话缓存、频率限制 |
-| **向量库** | Milvus / Qdrant | 语义向量检索 |
+| **向量检索** | PostgreSQL pgvector / ChromaDB | 语义向量检索，当前 Docker Compose 默认使用 pgvector |
 | **图数据库** | Neo4j | 知识图谱存储 |
 | **对象存储** | MinIO | 文档、图片存储 |
 | **前端框架** | Vue 3.4+ | 渐进式 JavaScript 框架 |
 | **UI 库** | Element Plus | Vue 3 组件库 |
 | **状态管理** | Pinia | Vue 3 状态管理 |
-| **LLM** | DeepSeek | 当前推荐和主要自测的大语言模型 |
+| **LLM** | DeepSeek / OpenRouter 兼容接口等 | 当前推荐 DeepSeek，默认配置可走 OpenRouter 兼容接口 |
 | **向量模型** | SiliconFlow / 智谱 / OpenAI 等 | 文档向量化，按环境变量选择 |
 
 > 说明：当前项目推荐使用 DeepSeek。代码中也保留了 OpenAI、Claude、智谱、Qwen、MiniMax 等 LLM 适配器，已检查其导入和初始化路径；真实调用仍取决于用户自己的 API Key、Base URL、模型权限和网络环境。
@@ -1196,7 +1200,7 @@ My_rag/
 │  ┌────────────────────┐    │  │  ┌────────────────────┐    │
 │  │  MCP Server         │    │  │  │  Frontend (Nginx)  │    │
 │  │  (Docker)           │    │  │  │  npm build         │    │    │
-│  │  - 税务计算工具     │    │  │  │  端口 80/5500       │    │
+│  │  - 税务计算工具     │    │  │  │  端口 80/5173       │    │
 │  │  - 法律匹配工具     │    │  │  └────────────────────┘    │
 │  │  - 财务分析工具     │    │  │                            │
 │  │  - 企业查询工具     │    │  │                            │
@@ -1292,8 +1296,8 @@ docker compose up -d
 ### 1. 克隆项目
 
 ```bash
-git clone https://github.com/yourusername/your-repo.git
-cd your-repo
+git clone https://github.com/Serein-81/My_rag.git
+cd My_rag
 ```
 
 ### 2. 配置后端环境变量
@@ -1318,13 +1322,13 @@ cp .env.example .env
 cd rag_backend
 
 # 使用 Docker Compose 启动所有服务
-docker-compose up -d
+docker compose up -d
 
 # 查看服务状态
-docker-compose ps
+docker compose ps
 
 # 查看日志
-docker-compose logs -f backend
+docker compose logs -f backend
 ```
 
 **Docker Compose 包含的服务：**
@@ -1679,7 +1683,7 @@ cp .env.example .env
 # 启动开发服务器
 npm run dev
 
-# 访问 http://localhost:5500
+# Vite 默认访问 http://localhost:5173
 ```
 
 ### 方式二：Docker 部署生产环境
@@ -1833,7 +1837,7 @@ VITE_API_BASE_URL=http://localhost:8000
 - [ ] 后端 API 可访问： http://localhost:8000/docs
 - [ ] MinIO Web 控制台可访问： http://localhost:9001 （账号：minioadmin）
 - [ ] Neo4j Web 控制台可访问： http://localhost:7474
-- [ ] 健康检查接口正常： `curl http://localhost:8000/api/v1/health`
+- [ ] 健康检查接口正常：`curl http://localhost:8000/health/quick`
 
 ### 功能测试
 - [ ] 用户注册/登录功能正常
@@ -1885,10 +1889,10 @@ OLLAMA_BASE_URL=http://localhost:11434
 ### 数据库连接失败
 ```bash
 # 检查 PostgreSQL 容器状态
-docker-compose ps db
+docker compose ps db
 
 # 查看 PostgreSQL 日志
-docker-compose logs db
+docker compose logs db
 
 # 测试数据库连接
 docker exec -it rag_db psql -U rag_user -d rag_db -c "SELECT 1;"
@@ -1897,7 +1901,7 @@ docker exec -it rag_db psql -U rag_user -d rag_db -c "SELECT 1;"
 ### 后端启动失败
 ```bash
 # 查看后端日志
-docker-compose logs backend
+docker compose logs backend
 
 # 常见原因：
 # 1. .env 文件未配置或配置错误
@@ -1908,7 +1912,7 @@ docker-compose logs backend
 ### MinIO 无法访问
 ```bash
 # 检查 MinIO 容器状态
-docker-compose ps minio
+docker compose ps minio
 
 # 验证 MinIO 健康状态
 docker exec -it rag_minio mc ready local
@@ -1920,7 +1924,7 @@ docker exec -it rag_minio mc ready local
 grep SECRET_KEY rag_backend/.env
 
 # 重启后端服务
-docker-compose restart backend
+docker compose restart backend
 ```
 
 ---
@@ -2216,11 +2220,11 @@ class AdminNotificationService:
 
 ```bash
 # 获取待审批请求
-curl -X GET http://localhost:5500/api/v1/multi-agent/hitl/pending \
+curl -X GET http://localhost:8000/api/v1/multi-agent/hitl/pending \
   -H "Authorization: Bearer $TOKEN"
 
 # 批准审批请求
-curl -X POST http://localhost:5500/api/v1/multi-agent/hitl/{approval_id}/review \
+curl -X POST http://localhost:8000/api/v1/multi-agent/hitl/{approval_id}/review \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -2262,7 +2266,7 @@ RISK_THRESHOLDS = {
 
 ```javascript
 // 前端 WebSocket 连接
-const ws = new WebSocket('ws://localhost:5500/api/v1/ws/notifications');
+const ws = new WebSocket('ws://localhost:8000/api/v1/ws/groups/{group_id}?token=YOUR_JWT');
 
 ws.onmessage = (event) => {
   const notification = JSON.parse(event.data);
