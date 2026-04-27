@@ -1272,11 +1272,25 @@ docker compose down
 
 #### 使用已发布的后端镜像（可选）
 
-如果不想在本地重新构建后端镜像，可以拉取 GitHub Container Registry 中由 CI 构建好的镜像：
+如果不想在本地重新构建后端镜像，可以拉取 GitHub Container Registry 中发布好的镜像。该镜像由 GitHub Actions 的 **Docker Build** 工作流手动发布，成功发布后会生成以下标签：
+
+- `main`：主分支最新发布镜像
+- `latest`：最新发布镜像
+- `<commit-sha>`：对应提交的精确镜像
+
+先确认镜像可以匿名拉取：
 
 ```bash
 docker pull ghcr.io/serein-81/rag-backend:main
 ```
+
+也可以拉取：
+
+```bash
+docker pull ghcr.io/serein-81/rag-backend:latest
+```
+
+如果出现 `unauthorized`，说明 GHCR package 还没有公开，或 `Docker Build` 工作流尚未成功发布该标签。此时仍可使用默认的 `docker compose up -d` 在本地构建并运行项目。
 
 要让 Docker Compose 使用这个远端镜像，需要把 `rag_backend/docker-compose.yml` 中 `backend` 服务的 `build:` 配置改为：
 
