@@ -10,6 +10,7 @@ from sqlalchemy import select
 from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
 from app.models.knowledge_base import KnowledgeBase
+from app.models.tenant_settings import TenantSettings
 # --- 导入基础服务 ---
 from app.schemas.chat import ChatRequest, ChatResponse
 from app.services.search_service import search_service
@@ -554,6 +555,43 @@ async def chat_with_agent_stream(
         # 先把 session_id 发给前端，让前端知道当前会话的 ID
         init_data = json.dumps({"type": "init", "session_id": session_id})
         yield f"data: {init_data}\n\n"
+
+        normalized_query = (request.query or "").strip()
+        enterprise_question_keywords = ("哪个企业", "哪個企業", "所属企业", "所屬企業", "当前企业", "當前企業")
+        if any(keyword in normalized_query for keyword in enterprise_question_keywords):
+            tenant_id = (
+                tenant_context.get("tenant_id")
+                or getattr(current_user, "tenant_id", None)
+                or ""
+            ).strip()
+            company_name = ""
+            async with AsyncSessionLocal() as db:
+                if tenant_id:
+                    tenant_settings_result = await db.execute(
+                        select(TenantSettings.company_name).where(TenantSettings.tenant_id == tenant_id)
+                    )
+                    company_name = (tenant_settings_result.scalar_one_or_none() or "").strip()
+
+                if not company_name:
+                    company_name = (getattr(current_user, "company_name", None) or "").strip()
+
+            if company_name:
+                direct_answer = f"你当前所在企业是：{company_name}。"
+            elif tenant_id:
+                direct_answer = f"我没有查到企业名称，但你当前所在的企业租户 ID 是：{tenant_id}。"
+            else:
+                direct_answer = "我没有查到你当前账号绑定的企业信息。"
+
+            async with AsyncSessionLocal() as db:
+                db.add(ChatMessage(session_id=uuid.UUID(session_id), role="user", content=request.query))
+                db.add(ChatMessage(session_id=uuid.UUID(session_id), role="assistant", content=direct_answer))
+                await db.commit()
+
+            chunk_data = json.dumps({"type": "chunk", "content": direct_answer}, ensure_ascii=False)
+            yield f"data: {chunk_data}\n\n"
+            done_data = json.dumps({"type": "done"})
+            yield f"data: {done_data}\n\n"
+            return
 
         # 缓冲区
         text_buffer = ""

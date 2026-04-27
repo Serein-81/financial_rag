@@ -667,7 +667,7 @@ LANGSMITH_TRACING=true
 LANGSMITH_ENDPOINT=https://api.smith.langchain.com
 
 # LangSmith API Key
-LANGSMITH_API_KEY=REDACTED_LANGSMITH_KEY
+LANGSMITH_API_KEY=your_langsmith_api_key
 
 # LangSmith 项目名称
 LANGSMITH_PROJECT=financial_rag

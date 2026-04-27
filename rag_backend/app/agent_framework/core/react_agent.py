@@ -453,8 +453,13 @@ class ReActAgent(BaseAgent):
                 # 支持 ReAct 格式 (Action Input) 和 MiniMax XML 格式
                 has_react_format = "Action Input:" in response_text
                 has_xml_format = "<invoke" in response_text and "</invoke>" in response_text
+                has_inline_tool_call = bool(re.search(
+                    r'(?:##\s*Action\s*\n\s*|Action:\s*)?\w+\s*\(\s*\{[^()]*\}\s*\)',
+                    response_text,
+                    re.DOTALL | re.IGNORECASE
+                ))
                 
-                if tool_call and (has_react_format or has_xml_format):
+                if tool_call and (has_react_format or has_xml_format or has_inline_tool_call):
                     # 🔧 Bug1修复：参数为空说明流式接收结束时 JSON 仍未完整
                     # 此时不应 continue（会跳过 current_prompt 更新导致无限循环）
                     # 而应该添加引导让 LLM 重试

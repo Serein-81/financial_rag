@@ -102,6 +102,7 @@ class AgentState(TypedDict):
     
     # 反思结果
     reflection_result: Optional[Dict[str, Any]]
+    enable_reflection: bool
     
     # 聚合响应
     aggregated_response: Optional[str]
@@ -170,6 +171,7 @@ def create_initial_state(
         rag_context=[],
         specialist_results=[],
         reflection_result=None,
+        enable_reflection=metadata.get("enable_reflection", True),
         aggregated_response=None,
         iteration=0,
         max_iterations=max_iterations,

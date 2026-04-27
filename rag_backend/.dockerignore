@@ -30,6 +30,7 @@ venv/
 ENV/
 
 # IDE
+.claude/
 .vscode/
 .idea/
 *.swp
@@ -37,6 +38,9 @@ ENV/
 *~
 
 # 测试
+tests/
+.mypy_cache/
+.ruff_cache/
 .pytest_cache/
 .coverage
 htmlcov/
@@ -67,6 +71,13 @@ docker-compose*.yml
 .gitattributes
 
 # 数据文件
+backups/
+mass_/
+migrations/
+sql/
+test_templates/
+model_context_cache.json
+synonym.json
 postgres_data/
 redis_data/
 neo4j_data/

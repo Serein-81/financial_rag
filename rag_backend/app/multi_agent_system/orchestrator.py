@@ -393,6 +393,14 @@ class Nodes:
     async def reflection(self, state: AgentState) -> AgentState:
         logger.info("[节点] reflection 审核开始")
         
+        if not state.get("enable_reflection", self.orchestrator.enable_reflection):
+            logger.info("[reflection] disabled, skip quality review")
+            return {
+                **state,
+                "reflection_result": {"score": 1.0, "acceptable": True, "skipped": True},
+                "retry_count": state.get("retry_count", 0)
+            }
+
         specialist_results = state.get("specialist_results", [])
         current_retry = state.get("retry_count", 0)
         
@@ -1216,6 +1224,7 @@ class AgentOrchestrator:
             rag_context=[],
             metadata=metadata or {}
         )
+        initial_state["enable_reflection"] = self.enable_reflection
         
         logger.debug("[黑板] 初始状态已创建: messages=%s, entities=%s", len(messages), entities)
         
@@ -1355,10 +1364,19 @@ class AgentOrchestrator:
         )
         logger.debug("[边定义] intent_router → (条件边) → specialist/final")
         
-        workflow.add_edge("finance_specialist", "reflection")
-        workflow.add_edge("tax_specialist", "reflection")
-        workflow.add_edge("legal_specialist", "reflection")
-        workflow.add_edge("rag_retrieval", "reflection")
+        def route_after_analysis(state: AgentState) -> str:
+            enable_reflection = state.get("enable_reflection", self.enable_reflection)
+            logger.debug("[analysis route] enable_reflection=%s", enable_reflection)
+            return "reflection" if enable_reflection else "final"
+
+        analysis_routes = {
+            "reflection": "reflection",
+            "final": "final"
+        }
+        workflow.add_conditional_edges("finance_specialist", route_after_analysis, analysis_routes)
+        workflow.add_conditional_edges("tax_specialist", route_after_analysis, analysis_routes)
+        workflow.add_conditional_edges("legal_specialist", route_after_analysis, analysis_routes)
+        workflow.add_conditional_edges("rag_retrieval", route_after_analysis, analysis_routes)
         
         def check_reflection(state: AgentState) -> str:
             """反思审核后的条件路由：根据质量评估结果决定下一步"""

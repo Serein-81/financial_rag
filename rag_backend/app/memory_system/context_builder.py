@@ -294,17 +294,18 @@ class EnhancedContextBuilder:
                 use_semantic=True,
                 top_k=10
             )
+            memories = memories or {}
 
             # 转换工作记忆
-            for m in memories.get("working", []):
+            for m in (memories.get("working") or []):
                 packets.append(self._memory_to_packet(m, "working"))
 
             # 转换情景记忆
-            for m in memories.get("episodic", []):
+            for m in (memories.get("episodic") or []):
                 packets.append(self._memory_to_packet(m, "episodic"))
 
             # 转换语义记忆
-            for m in memories.get("semantic", []):
+            for m in (memories.get("semantic") or []):
                 packets.append(self._memory_to_packet(m, "semantic"))
 
         except (ValueError, KeyError) as e:

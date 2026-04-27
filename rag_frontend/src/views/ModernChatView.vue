@@ -390,7 +390,7 @@ function createNewChat() {
                 <span class="text-xs text-gray-400">{{ message.created_at ? formatChatTime(message.created_at) : '' }}</span>
                 <span class="text-sm font-medium text-gray-700">{{ message.sender_name || authStore.userName || '用户' }}</span>
               </div>
-              <div class="bg-zinc-800 text-white px-4 py-3 rounded-2xl rounded-br-md max-w-xl shadow-sm">
+              <div class="bg-white border border-gray-200 text-gray-900 px-4 py-3 rounded-2xl rounded-br-md max-w-xl shadow-sm">
                 <p class="whitespace-pre-wrap">{{ message.content }}</p>
               </div>
             </div>
