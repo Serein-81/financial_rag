@@ -81,7 +81,60 @@ class Nodes:
     
     def __init__(self, orchestrator: 'AgentOrchestrator'):
         self.orchestrator = orchestrator
-    
+
+    def _simple_finance_markdown(self, result: dict) -> str:
+        """财务结果降级格式化（当 _format_finance_result 不可用时使用）"""
+        if not isinstance(result, dict):
+            return str(result)
+
+        parts = []
+        parts.append("## 💰 财务专家分析报告\n")
+
+        domain = result.get('domain')
+        if domain:
+            domain_name = domain.value if hasattr(domain, 'value') else str(domain)
+            parts.append(f"**分析领域**: {domain_name}\n\n")
+
+        success = result.get('success', False)
+        parts.append(f"**查询状态**: {'✅ 成功' if success else '❌ 失败'}\n\n")
+
+        data_summary = result.get('data_summary', {})
+        if data_summary:
+            parts.append("### 📊 企业财务数据\n")
+            for key in ['total_revenue', 'total_expenses', 'total_profit']:
+                val = data_summary.get(key, 0) or 0
+                label = {'total_revenue': '营业收入', 'total_expenses': '总支出', 'total_profit': '营业利润'}[key]
+                parts.append(f"- **{label}**: {val:,.2f} 元\n")
+            profit_margin = data_summary.get('profit_margin', 0) or 0
+            parts.append(f"- **利润率**: {profit_margin:.2f}%\n")
+            avg_margin = data_summary.get('avg_profit_margin')
+            if avg_margin:
+                parts.append(f"- **平均利润率**: {avg_margin:.2f}%\n")
+            total_tax = data_summary.get('total_corporate_tax')
+            if total_tax:
+                parts.append(f"- **企业所得税**: {total_tax:,.2f} 元\n")
+            parts.append("\n")
+
+        for section, title in [('key_metrics', '🎯 关键发现'), ('risk_factors', '⚠️ 风险因素'), ('recommendations', '💡 建议')]:
+            items = result.get(section, [])
+            if items:
+                parts.append(f"### {title}\n")
+                for i, item in enumerate(items[:5], 1):
+                    parts.append(f"{i}. {item}\n")
+                parts.append("\n")
+
+        return "".join(parts) if parts else str(result)
+
+    def _simple_specialist_markdown(self, result: dict, title: str) -> str:
+        """通用专家结果降级格式化"""
+        if not isinstance(result, dict):
+            return str(result)
+        parts = [f"## {title}\n", f"**查询状态**: {'✅ 成功' if result.get('success') else '❌ 失败'}\n\n"]
+        for key, value in result.items():
+            if key not in ['success', 'domain'] and value:
+                parts.append(f"- **{key}**: {value}\n")
+        return "".join(parts) if parts else str(result)
+
     async def receptionist(self, state: AgentState) -> AgentState:
         logger.info("[节点] receptionist 开始")
         
@@ -183,92 +236,15 @@ class Nodes:
             )
             logger.info(f"[财务专家] 分析完成")
             
-            # 🔧 修复病灶二：将字典翻译成人类可读的 Markdown 文本
-            # 反思节点期望看到的是可读的报告，而不是 Python 字典
-            def format_as_markdown(result: dict) -> str:
-                """将专家结果字典格式化为 Markdown 文本"""
-                if not isinstance(result, dict):
-                    return str(result)
-                
-                parts = []
-                parts.append("## 💰 财务专家分析报告\n")
-                
-                # 领域信息
-                domain = result.get('domain')
-                if domain:
-                    domain_name = domain.value if hasattr(domain, 'value') else str(domain)
-                    parts.append(f"**分析领域**: {domain_name}\n\n")
-                
-                # 成功状态
-                success = result.get('success', False)
-                parts.append(f"**查询状态**: {'✅ 成功' if success else '❌ 失败'}\n\n")
-                
-                # 直接从 data_summary 中提取财务数据（来自数据库）
-                data_summary = result.get('data_summary', {})
-                if data_summary:
-                    parts.append("### 📊 企业财务数据\n")
-                    total_revenue = data_summary.get('total_revenue', 0) or 0
-                    total_expenses = data_summary.get('total_expenses', 0) or 0
-                    total_profit = data_summary.get('total_profit', 0) or 0
-                    profit_margin = data_summary.get('profit_margin', 0) or 0
-                    
-                    parts.append(f"- **营业收入**: {total_revenue:,.2f} 元\n")
-                    parts.append(f"- **总支出**: {total_expenses:,.2f} 元\n")
-                    parts.append(f"- **营业利润**: {total_profit:,.2f} 元\n")
-                    parts.append(f"- **利润率**: {profit_margin:.2f}%\n")
-                    
-                    avg_margin = data_summary.get('avg_profit_margin')
-                    if avg_margin:
-                        parts.append(f"- **平均利润率**: {avg_margin:.2f}%\n")
-                    
-                    total_vat = data_summary.get('total_vat')
-                    if total_vat:
-                        parts.append(f"- **增值税合计**: {total_vat:,.2f} 元\n")
-                    
-                    total_tax = data_summary.get('total_corporate_tax')
-                    if total_tax:
-                        parts.append(f"- **企业所得税**: {total_tax:,.2f} 元\n")
-                    
-                    fiscal_years = data_summary.get('fiscal_years', [])
-                    if fiscal_years:
-                        parts.append(f"- **财务年度**: {', '.join(str(y) for y in fiscal_years[:5])}\n")
-                    
-                    parts.append("\n")
-                
-                # 关键指标
-                key_metrics = result.get('key_metrics', [])
-                if key_metrics:
-                    parts.append("### 🎯 关键发现\n")
-                    for i, metric in enumerate(key_metrics[:5], 1):
-                        parts.append(f"{i}. {metric}\n")
-                    parts.append("\n")
-                
-                # 风险因素
-                risk_factors = result.get('risk_factors', [])
-                if risk_factors:
-                    parts.append("### ⚠️ 风险因素\n")
-                    for factor in risk_factors[:5]:
-                        parts.append(f"- {factor}\n")
-                    parts.append("\n")
-                
-                # 建议
-                recommendations = result.get('recommendations', [])
-                if recommendations:
-                    parts.append("### 💡 建议\n")
-                    for i, rec in enumerate(recommendations[:5], 1):
-                        parts.append(f"{i}. {rec}\n")
-                    parts.append("\n")
-                
-                # 数据来源说明
-                has_data = result.get('has_financial_db_data', False)
-                data_error = result.get('financial_data_error')
-                if not has_data and data_error:
-                    parts.append(f"⚠️ **注意**: {data_error}\n")
-                
-                return "".join(parts) if parts else str(result)
-            
-            # 将字典转换为 Markdown 文本
-            markdown_report = format_as_markdown(result)
+            # 🔧 使用 ResultSynthesizer 级别的丰富格式化（与流式路径保持一致）
+            # 优先使用 orchestrator 的 _format_finance_result 方法生成结构化报告
+            try:
+                markdown_report = self.orchestrator._format_finance_result(result)
+                logger.debug(f"[财务专家] 使用 _format_finance_result 生成丰富报告，长度: {len(markdown_report)}")
+            except Exception as format_err:
+                logger.warning(f"[财务专家] _format_finance_result 失败，降级到简单格式: {format_err}")
+                # 降级：将字典翻译成人类可读的 Markdown 文本
+                markdown_report = self._simple_finance_markdown(result)
             
             specialist_data = {
                 "source": "finance",
@@ -311,21 +287,13 @@ class Nodes:
             result = await self.orchestrator.tax_specialist.run(user_input=state["user_query"], context=specialist_context)
             logger.info("[税务专家] 分析完成")
             
-            def format_tax_as_markdown(result: dict) -> str:
-                if not isinstance(result, dict):
-                    return str(result)
-                parts = []
-                parts.append("## 📋 税务专家分析报告\n")
-                if result.get('success'):
-                    parts.append("**查询状态**: ✅ 成功\n\n")
-                else:
-                    parts.append("**查询状态**: ❌ 失败\n\n")
-                for key, value in result.items():
-                    if key not in ['success', 'domain'] and value:
-                        parts.append(f"- **{key}**: {value}\n")
-                return "".join(parts) if parts else str(result)
-            
-            markdown_content = format_tax_as_markdown(result)
+            # 🔧 使用 orchestrator 的 _format_tax_result 生成结构化税务报告
+            try:
+                markdown_content = self.orchestrator._format_tax_result(result)
+                logger.debug(f"[税务专家] 使用 _format_tax_result 生成报告，长度: {len(markdown_content)}")
+            except Exception as format_err:
+                logger.warning(f"[税务专家] _format_tax_result 失败，降级: {format_err}")
+                markdown_content = self._simple_specialist_markdown(result, "📋 税务专家分析报告")
             
             specialist_data = {
                 "source": "tax",
@@ -358,21 +326,13 @@ class Nodes:
             result = await self.orchestrator.legal_specialist.run(user_input=state["user_query"], context=specialist_context)
             logger.info("[法律专家] 分析完成")
             
-            def format_legal_as_markdown(result: dict) -> str:
-                if not isinstance(result, dict):
-                    return str(result)
-                parts = []
-                parts.append("## ⚖️ 法律专家分析报告\n")
-                if result.get('success'):
-                    parts.append("**查询状态**: ✅ 成功\n\n")
-                else:
-                    parts.append("**查询状态**: ❌ 失败\n\n")
-                for key, value in result.items():
-                    if key not in ['success', 'domain'] and value:
-                        parts.append(f"- **{key}**: {value}\n")
-                return "".join(parts) if parts else str(result)
-            
-            markdown_content = format_legal_as_markdown(result)
+            # 🔧 使用 orchestrator 的 _format_legal_result 生成结构化法务报告
+            try:
+                markdown_content = self.orchestrator._format_legal_result(result)
+                logger.debug(f"[法律专家] 使用 _format_legal_result 生成报告，长度: {len(markdown_content)}")
+            except Exception as format_err:
+                logger.warning(f"[法律专家] _format_legal_result 失败，降级: {format_err}")
+                markdown_content = self._simple_specialist_markdown(result, "⚖️ 法律专家分析报告")
             
             existing_results = state.get("specialist_results", [])
             specialist_data = {
@@ -607,15 +567,8 @@ class Nodes:
                     "output": "抱歉，未能获取到有效的分析结果。"
                 }
             
-            if len(raw_results) == 1 and raw_results[0].get("content"):
-                single_content = self._clean_markdown_output(str(raw_results[0]["content"]))
-                logger.info("[最终答案] 单专家结果直接返回，跳过 ResultSynthesizer，长度: %s", len(single_content))
-                return {
-                    **state,
-                    "final_answer": single_content,
-                    "output": single_content,
-                }
-
+            # 🔧 移除单专家跳过 ResultSynthesizer 的优化
+            # 所有结果（包括单专家）统一通过 ResultSynthesizer 生成结构化报告
             from app.agent_framework.components.result_synthesizer import ResultSynthesizer
             synthesizer = ResultSynthesizer(llm_adapter=self.orchestrator.llm_adapter)
             
