@@ -81,6 +81,16 @@ async def lifespan(app: FastAPI):
         logger.info("✅ 定时任务调度器已启动")
         
         try:
+            from app.db.session import AsyncSessionLocal
+            from app.services.custom_tool_service import custom_tool_service
+
+            async with AsyncSessionLocal() as session:
+                loaded_tools = await custom_tool_service.load_published_tools(session)
+            logger.info(f"Loaded published custom tools: {loaded_tools}")
+        except Exception as e:
+            logger.warning(f"Custom tool bootstrap skipped: {e}")
+
+        try:
             from app.a2a_protocol.initializer import initialize_a2a_protocol
             initializer, registry = await initialize_a2a_protocol()
             app.state.a2a_initializer = initializer
@@ -94,16 +104,6 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"⚠️ A2A 协议初始化失败: {e}")
         
-        try:
-            from app.db.session import AsyncSessionLocal
-            from app.services.custom_tool_service import custom_tool_service
-
-            async with AsyncSessionLocal() as session:
-                loaded_tools = await custom_tool_service.load_published_tools(session)
-            logger.info(f"Loaded published custom tools: {loaded_tools}")
-        except Exception as e:
-            logger.warning(f"Custom tool bootstrap skipped: {e}")
-
         try:
             from app.a2a_protocol import get_transport_manager
             transport_manager = await get_transport_manager()

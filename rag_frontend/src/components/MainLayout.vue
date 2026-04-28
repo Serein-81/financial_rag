@@ -247,8 +247,8 @@ const menuGroups = computed<MenuGroup[]>(() => {
       icon: Wrench,
       defaultExpanded: false,
       items: [
-        { path: '/agent-center', icon: Bot, label: '智能体中心', name: 'agent-center', permission: 'admin' },
         { path: '/custom-tools', icon: Wrench, label: '智能体工具', name: 'custom-tools', permission: 'admin' },
+        { path: '/agent-center', icon: Bot, label: '智能体中心', name: 'agent-center', permission: 'admin' },
         { path: '/intent-debug', icon: Brain, label: '意图调试', name: 'intent-debug', permission: 'admin' },
         { path: '/security-audit', icon: AlertTriangle, label: '安全审计', name: 'security-audit', permission: 'admin' },
         { path: '/enterprise', icon: Users, label: '企业管理', name: 'enterprise', permission: 'admin' },

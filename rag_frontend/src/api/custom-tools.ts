@@ -49,6 +49,13 @@ export const customToolsApi = {
     })
   },
 
+  generateCode(spec: CustomToolSpec, instruction?: string) {
+    return request<CustomToolSpec>('/custom-tools/generate-code', {
+      method: 'POST',
+      data: { spec, instruction },
+    })
+  },
+
   create(payload: CustomToolSpec) {
     return request<CustomTool>('/custom-tools', {
       method: 'POST',

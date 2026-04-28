@@ -1,0 +1,36 @@
+name: evidence_gap_check
+display_name: 证据缺口检查
+description: 对比任务所需证据和当前已提供材料，输出缺失项、风险等级和补充材料建议。
+version: 1.0.0
+domains:
+  - compliance
+  - evidence
+  - review
+allowed_agents:
+  - orchestrator
+  - react
+  - tax
+  - legal
+  - finance
+  - policy_notification
+triggers:
+  keywords:
+    - 证据
+    - 材料
+    - 缺失
+    - 还需要什么
+    - 补充材料
+    - evidence
+    - missing
+  intents:
+    - evidence_gap
+    - material_check
+    - review_readiness
+  file_types:
+    - checklist
+tools:
+  - analyze_evidence_gaps
+optional_tools:
+  - analyze_evidence_gaps
+priority: 82
+risk_level: medium

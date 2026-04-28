@@ -117,6 +117,7 @@ class UserActionLogItem(BaseModel):
     created_at: Optional[str] = None
     level: Optional[str] = None
     risk_level: Optional[str] = None
+    extra_info: Optional[Dict[str, Any]] = None
 
 
 class UserActionLogListResponse(BaseModel):

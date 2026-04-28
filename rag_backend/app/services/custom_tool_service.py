@@ -40,6 +40,26 @@ class CustomToolService:
         except Exception:
             return self._fallback_spec(request, preferred_kind)
 
+    async def generate_code_draft(self, spec: CustomToolSpec, instruction: Optional[str] = None) -> CustomToolSpec:
+        prompt = self._build_code_generation_prompt(spec, instruction)
+        try:
+            from app.services.llm_service import llm_service
+
+            content = await llm_service.get_answer(prompt, [], [], add_truncation_notification=False)
+            code = self._extract_code(content)
+        except Exception:
+            code = self._fallback_code(spec)
+
+        data = spec.model_dump()
+        data["kind"] = CustomToolKind.PYTHON_CODE.value
+        data["generated_code"] = code
+        data["safety_policy"] = {
+            **(data.get("safety_policy") or {}),
+            "code_execution": False,
+            "requires_sandbox_review": True,
+        }
+        return CustomToolSpec(**data)
+
     async def create_tool(
         self,
         db: AsyncSession,
@@ -72,10 +92,14 @@ class CustomToolService:
         await db.refresh(tool)
         return tool
 
-    async def list_tools(self, db: AsyncSession, tenant_id: str) -> List[CustomTool]:
-        result = await db.execute(
-            select(CustomTool).where(CustomTool.tenant_id == tenant_id).order_by(CustomTool.created_at.desc())
-        )
+    async def list_tools(self, db: AsyncSession, tenant_id: str, include_unpublished: bool = False) -> List[CustomTool]:
+        query = select(CustomTool).where(CustomTool.tenant_id == tenant_id)
+        if not include_unpublished:
+            query = query.where(
+                CustomTool.status == CustomToolStatus.PUBLISHED.value,
+                CustomTool.enabled.is_(True),
+            )
+        result = await db.execute(query.order_by(CustomTool.created_at.desc()))
         return list(result.scalars().all())
 
     async def load_published_tools(self, db: AsyncSession) -> int:
@@ -109,9 +133,14 @@ class CustomToolService:
         arguments: Dict[str, Any],
     ) -> Dict[str, Any]:
         tool = await self.get_tool(db, tenant_id, tool_id)
-        if not tool.enabled and tool.status != CustomToolStatus.PUBLISHED.value:
+        if not (tool.enabled and tool.status == CustomToolStatus.PUBLISHED.value):
             raise CustomToolServiceError("Custom tool is not published")
-        return await custom_tool_runtime.execute(tool, arguments)
+        result = await custom_tool_runtime.execute(tool, arguments)
+        output_schema = tool.output_schema or {}
+        result.setdefault("arguments", arguments)
+        result.setdefault("output_schema", output_schema)
+        result.setdefault("output", self._format_output(output_schema, result))
+        return result
 
     async def publish_tool(
         self,
@@ -177,6 +206,17 @@ class CustomToolService:
             if not (spec.runtime_config or {}).get("url"):
                 raise CustomToolServiceError("HTTP tools require runtime_config.url")
 
+    def _format_output(self, output_schema: Dict[str, Any], result: Dict[str, Any]) -> Any:
+        data = result.get("data", result)
+        if not output_schema:
+            return data
+        schema_keys = list(output_schema.keys())
+        if schema_keys == ["data"]:
+            return {"data": data}
+        if isinstance(data, dict):
+            return {key: data.get(key) for key in schema_keys}
+        return {schema_keys[0]: data}
+
     def _default_safety_policy(self, spec: CustomToolSpec) -> Dict[str, Any]:
         policy = dict(spec.safety_policy or {})
         policy.setdefault("allow_private_network", False)
@@ -213,6 +253,25 @@ Schema:
 }}
 """
 
+    def _build_code_generation_prompt(self, spec: CustomToolSpec, instruction: Optional[str]) -> str:
+        return f"""
+Generate a safe Python async function draft for this custom agent tool.
+Return only one Python code block or plain Python code. Do not include filesystem, subprocess, eval, exec, network, database, or import side effects.
+The code is for human review only and will not be executed by the runtime.
+
+Tool spec JSON:
+{json.dumps(spec.model_dump(), ensure_ascii=False, indent=2)}
+
+Additional instruction:
+{instruction or ""}
+
+Requirements:
+- Define: async def run(**kwargs) -> dict
+- Validate required inputs from kwargs.
+- Return a JSON-serializable dict with keys: status, data.
+- Use only Python standard control flow and simple calculations.
+"""
+
     def _extract_json(self, content: str) -> Dict[str, Any]:
         text = content.strip()
         if text.startswith("```"):
@@ -223,6 +282,34 @@ Schema:
         if start >= 0 and end >= start:
             text = text[start : end + 1]
         return json.loads(text)
+
+    def _extract_code(self, content: str) -> str:
+        text = content.strip()
+        match = re.search(r"```(?:python)?\s*(.*?)```", text, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+        return text
+
+    def _fallback_code(self, spec: CustomToolSpec) -> str:
+        required_fields = [
+            name
+            for name, field in (spec.input_schema or {}).items()
+            if getattr(field, "required", True)
+        ]
+        checks = "\n".join([
+            f"    if {field!r} not in kwargs:\n        raise ValueError('Missing required argument: {field}')"
+            for field in required_fields
+        ])
+        return f"""async def run(**kwargs) -> dict:
+{checks or "    # No required arguments declared."}
+    return {{
+        "status": "success",
+        "data": {{
+            "tool": {spec.name!r},
+            "inputs": kwargs,
+        }},
+    }}
+"""
 
     def _fallback_spec(self, request: GenerateToolRequest, preferred_kind: str) -> CustomToolSpec:
         raw = request.natural_language.strip().lower()

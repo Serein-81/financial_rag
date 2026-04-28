@@ -44,6 +44,11 @@
 - 🔧 **MCP 服务**：[查看 MCP 服务](./mcp_server)
 - 🐳 **Docker 部署**：[docker-compose.yml](./rag_backend/docker-compose.yml)
 
+### 🔎 重点功能入口
+
+- 🧰 **智能体工具构建器**：管理员可在 `/custom-tools` 通过自然语言生成工具规格和代码草稿，发布后的配置型工具可供同企业成员查看和使用。
+- 📥 **拉取项目并启动**：执行 `git clone https://github.com/Serein-81/My_rag.git` 后进入 `My_rag/rag_backend`，可用 `docker compose up -d` 快速启动后端依赖与服务；完整步骤见下方“本地快速启动”。
+
 ### 💡 前端亮点
 
 前端采用 **Vue 3 + TypeScript** 构建，提供企业级用户体验：
@@ -51,6 +56,7 @@
 | 功能模块 | 说明 |
 |---------|------|
 | 🤖 **智能对话** | 单/多智能体对话、群组聊天、流式输出 |
+| 🧰 **智能体工具** | 自然语言生成工具、测试入参、发布配置型工具、企业内共享 |
 | 💼 **企业管理** | 知识库管理、财务数据、政策服务 |
 | 📊 **工作流** | 税务申报、合同审查、安全审计 |
 | 🔧 **系统工具** | Agent 监控、意图分类、人机协作 |
@@ -204,6 +210,7 @@ app/agent_framework/
 | **知识库与 RAG** | 文档上传、知识库管理、向量检索、混合检索、查询改写、MMR、知识图谱增强、检索结果缓存 |
 | **文档解析** | 文本、Markdown、Word、PDF、Excel、图片解析；支持 OCR、MinerU、Unstructured API 等解析路径 |
 | **智能体框架** | ReAct / Plan / Reflect Agent、智能体 LLM 独立配置、工具路由、工具调用追踪、Agent Trace |
+| **智能体工具构建器** | 管理员可通过自然语言生成工具规格与代码草稿，支持配置型工具发布、企业内可见、操作日志追踪；生成代码默认仅保存待审核，不直接执行 |
 | **多智能体系统** | 意图路由、任务拆解、税务/法务/财务专家、结果合并、报告生成、人机审核、A2A 协议与多传输适配 |
 | **财税法务业务** | 税务申报、税务智能分析、政策检索与通知、合同审查、财务数据录入、财务健康监控、企业政策匹配 |
 | **协作与实时能力** | 群组聊天、WebSocket 在线状态、SSE 流式响应、工作流事件推送、后台任务状态持久化 |
@@ -227,6 +234,7 @@ app/agent_framework/
 | `/contract-review`、`/enterprise-match` | 合同审查与企业政策匹配 |
 | `/group-chat`、`/notifications` | 群组聊天与通知中心 |
 | `/analytics`、`/agent-center`、`/hitl-approval`、`/intent-debug`、`/security-audit`、`/logs` | 分析、Agent 管理、人机审核、意图调试、安全审计与日志 |
+| `/custom-tools` | 智能体工具构建器：自然语言生成工具、发布配置型工具、测试入参、查看企业已发布工具 |
 | `/task-management`、`/chat-logs`、`/profile`、`/test-data-guide` | 任务管理、对话日志、个人资料与测试数据指南 |
 
 ### 🔌 当前后端 API 分组
@@ -240,6 +248,7 @@ app/agent_framework/
 | `/api/v1/chat`、`/api/v1/sessions`、`/api/v1/groups`、`/api/v1/ws/groups` | 对话、会话、群聊与 WebSocket |
 | `/api/v1/multi-agent`、`/api/v1/human-review`、`/api/v1/agent_trace`、`/api/v1/agent-trace`、`/api/v1/tool_trace`、`/api/v1/tool-trace` | 多智能体、人机审核、Agent/工具追踪 |
 | `/api/v1/agents`、`/api/v1/agent-discovery`、`/api/v1/agent-task` | 智能体 LLM 配置、智能体发现与任务状态恢复 |
+| `/api/v1/custom-tools` | 自定义智能体工具：生成规格、生成代码草稿、创建、发布、测试执行；管理接口仅管理员可用，企业成员可查看和使用已发布工具 |
 | `/api/v1/tax-reports`、`/api/v1/tax-intelligence`、`/api/v1/policy`、`/api/v1/policy-tracking`、`/api/v1/financial-tools-test` | 税务报告、税务智能分析、政策管理、政策追踪、财务工具测试 |
 | `/api/v1/financial-health`、`/api/v1/financial-data`、`/api/v1/contract-review` | 财务健康、财务数据管理、合同审查 |
 | `/api/v1/enterprise`、`/api/v1/invite-codes`、`/api/v1/tenant-settings` | 企业管理、邀请码、租户设置 |

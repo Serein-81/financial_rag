@@ -1,0 +1,35 @@
+name: table_data_profile
+display_name: 表格文本质量概览
+description: 对 CSV 或分隔符文本做轻量质量检查，输出行列数量、缺失值、重复行和字段概览。
+version: 1.0.0
+domains:
+  - data
+  - audit
+  - finance
+allowed_agents:
+  - orchestrator
+  - react
+  - finance
+  - tax
+triggers:
+  keywords:
+    - 表格
+    - CSV
+    - 数据质量
+    - 缺失值
+    - 重复行
+    - 台账
+    - 明细
+  intents:
+    - data_profile
+    - table_quality_check
+  file_types:
+    - csv
+    - table
+    - ledger
+tools:
+  - profile_table_text
+optional_tools:
+  - profile_table_text
+priority: 76
+risk_level: low

@@ -172,6 +172,10 @@ class Nodes:
         actual_user_id = self.orchestrator.user_id
         
         specialist_context = {"tenant_id": actual_tenant_id, "user_id": actual_user_id}
+        trace_id = state.get("trace_id") or state.get("metadata", {}).get("trace_id")
+        previous_trace_id = getattr(self.orchestrator.finance_specialist, "current_trace_id", None)
+        if trace_id:
+            self.orchestrator.finance_specialist.current_trace_id = trace_id
         try:
             result = await self.orchestrator.finance_specialist.run(
                 user_input=state["user_query"],
@@ -296,6 +300,8 @@ class Nodes:
                 "specialist_results": [{"source": "finance", "data": {"error": str(e)}, "confidence": 0.0, "success": False}]
             }
             return updated_state
+        finally:
+            self.orchestrator.finance_specialist.current_trace_id = previous_trace_id
     
     async def tax_specialist(self, state: AgentState) -> AgentState:
         logger.info("[节点] tax_specialist 开始")
@@ -601,6 +607,15 @@ class Nodes:
                     "output": "抱歉，未能获取到有效的分析结果。"
                 }
             
+            if len(raw_results) == 1 and raw_results[0].get("content"):
+                single_content = self._clean_markdown_output(str(raw_results[0]["content"]))
+                logger.info("[最终答案] 单专家结果直接返回，跳过 ResultSynthesizer，长度: %s", len(single_content))
+                return {
+                    **state,
+                    "final_answer": single_content,
+                    "output": single_content,
+                }
+
             from app.agent_framework.components.result_synthesizer import ResultSynthesizer
             synthesizer = ResultSynthesizer(llm_adapter=self.orchestrator.llm_adapter)
             
@@ -977,6 +992,9 @@ class AgentOrchestrator:
                 history=history,
                 metadata=metadata
             )
+            if trace_id:
+                initial_state["trace_id"] = trace_id
+                initial_state.setdefault("metadata", {})["trace_id"] = trace_id
             
             # 2️⃣ 执行 LangGraph 状态机（带超时保护）
             logger.debug("[状态机] 执行 LangGraph 工作流")

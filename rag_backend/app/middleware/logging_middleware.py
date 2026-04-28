@@ -99,6 +99,11 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             )
             span.set_attribute("http.status_code", response.status_code)
             tracer.end_span(span, "ok" if response.status_code < 500 else "error")
+            user_id = getattr(request.state, "user_id", None)
+            if not user_id and hasattr(request.state, "user"):
+                user = request.state.user
+                user_id = str(getattr(user, "email", None) or getattr(user, "id", "") or "")
+            log_prefix = f"{user_id[:32] if user_id else 'anonymous'}"
             
             access_message = (
                 f"[API] [{log_prefix}] {request.method} {request.url.path} "

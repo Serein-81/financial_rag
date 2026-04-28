@@ -332,7 +332,155 @@ class PolicyCrawlerService:
                 "source_url": "https://www.chinatax.gov.cn/",
                 "document_number": "财政部 税务总局公告2022年第32号",
                 "tax_types": ["企业所得税"],
-                "summary": "企业投入基础研究可享受税收加计扣除优惠"
+                "summary": "企业投入基础研究可享受税收加计扣除优惠",
+                "industries": ["科技服务业", "制造业", "软件和信息技术服务业"]
+            },
+            {
+                "title": "关于先进制造业企业增值税加计抵减政策的公告",
+                "content": "为促进先进制造业高质量发展，符合条件的先进制造业企业可按规定享受增值税加计抵减政策...",
+                "source_url": "https://www.chinatax.gov.cn/",
+                "document_number": "财政部 税务总局公告2023年第43号",
+                "tax_types": ["增值税"],
+                "summary": "先进制造业企业按规定享受增值税加计抵减",
+                "industries": ["制造业", "高端装备", "电子信息"]
+            },
+            {
+                "title": "关于研发费用税前加计扣除政策有关问题的公告",
+                "content": "企业开展研发活动中实际发生的研发费用，未形成无形资产计入当期损益的，可按规定在税前加计扣除...",
+                "source_url": "https://www.chinatax.gov.cn/",
+                "document_number": "财政部 税务总局公告2023年第7号",
+                "tax_types": ["企业所得税"],
+                "summary": "明确研发费用税前加计扣除适用口径和管理要求",
+                "industries": ["全行业", "科技服务业", "制造业"]
+            },
+            {
+                "title": "关于继续实施物流企业大宗商品仓储设施用地城镇土地使用税优惠政策的公告",
+                "content": "为支持物流业健康发展，对符合条件的物流企业大宗商品仓储设施用地，按规定减征城镇土地使用税...",
+                "source_url": "https://www.mof.gov.cn/",
+                "document_number": "财政部 税务总局公告2023年第5号",
+                "tax_types": ["城镇土地使用税"],
+                "summary": "物流企业大宗商品仓储设施用地继续享受土地使用税优惠",
+                "industries": ["交通运输、仓储和邮政业", "批发和零售业"]
+            },
+            {
+                "title": "关于延续新能源汽车车辆购置税减免政策的公告",
+                "content": "为支持新能源汽车产业发展，延续和优化新能源汽车车辆购置税减免政策，明确分阶段减免安排...",
+                "source_url": "https://www.mof.gov.cn/",
+                "document_number": "财政部 税务总局 工业和信息化部公告2023年第10号",
+                "tax_types": ["车辆购置税"],
+                "summary": "新能源汽车车辆购置税减免政策延续实施",
+                "industries": ["汽车制造业", "新能源产业", "交通运输业"]
+            },
+            {
+                "title": "关于支持居民换购住房有关个人所得税政策的公告",
+                "content": "对符合条件的出售自有住房并在规定期限内重新购买住房的纳税人，按规定退还已缴纳的个人所得税...",
+                "source_url": "https://www.chinatax.gov.cn/",
+                "document_number": "财政部 税务总局 住房城乡建设部公告2023年第28号",
+                "tax_types": ["个人所得税"],
+                "summary": "居民换购住房可按条件享受个人所得税退税",
+                "industries": ["房地产业", "居民服务业"]
+            },
+            {
+                "title": "关于继续实施公共租赁住房税收优惠政策的公告",
+                "content": "为继续支持公共租赁住房建设和运营，对公共租赁住房建设、经营涉及的有关税费按规定给予优惠...",
+                "source_url": "https://www.mof.gov.cn/",
+                "document_number": "财政部 税务总局公告2023年第33号",
+                "tax_types": ["房产税", "城镇土地使用税", "印花税", "契税", "增值税"],
+                "summary": "公共租赁住房建设运营相关税收优惠延续",
+                "industries": ["房地产业", "租赁和商务服务业"]
+            },
+            {
+                "title": "关于支持货物期货市场对外开放有关增值税政策的公告",
+                "content": "为支持货物期货市场对外开放，对境外机构投资境内特定品种货物期货取得的收入，按规定适用增值税政策...",
+                "source_url": "https://www.chinatax.gov.cn/",
+                "document_number": "财政部 税务总局公告2023年第21号",
+                "tax_types": ["增值税"],
+                "summary": "明确货物期货市场对外开放相关增值税处理",
+                "industries": ["金融业", "批发和零售业"]
+            },
+            {
+                "title": "关于延续实施创业投资企业和天使投资个人有关税收政策的公告",
+                "content": "创业投资企业和天使投资个人投资初创科技型企业，符合条件的可按投资额一定比例抵扣应纳税所得额...",
+                "source_url": "https://www.mof.gov.cn/",
+                "document_number": "财政部 税务总局公告2023年第17号",
+                "tax_types": ["企业所得税", "个人所得税"],
+                "summary": "创业投资和天使投资支持初创科技型企业的税收优惠延续",
+                "industries": ["金融业", "科技服务业", "软件和信息技术服务业"]
+            },
+            {
+                "title": "关于支持小型微利企业和个体工商户发展所得税优惠政策的公告",
+                "content": "对符合条件的小型微利企业和个体工商户，按规定减免所得税，进一步降低经营主体税费负担...",
+                "source_url": "https://www.chinatax.gov.cn/",
+                "document_number": "财政部 税务总局公告2023年第12号",
+                "tax_types": ["企业所得税", "个人所得税"],
+                "summary": "小型微利企业和个体工商户所得税优惠延续优化",
+                "industries": ["全行业", "批发和零售业", "住宿和餐饮业"]
+            },
+            {
+                "title": "关于生产和装配伤残人员专门用品企业免征企业所得税的公告",
+                "content": "符合条件的生产和装配伤残人员专门用品企业，可按规定免征企业所得税...",
+                "source_url": "https://www.mof.gov.cn/",
+                "document_number": "财政部 税务总局 民政部公告2023年第57号",
+                "tax_types": ["企业所得税"],
+                "summary": "伤残人员专门用品生产装配企业继续享受所得税优惠",
+                "industries": ["制造业", "社会工作"]
+            },
+            {
+                "title": "关于继续实施农产品批发市场农贸市场房产税城镇土地使用税优惠政策的公告",
+                "content": "为支持农产品流通体系建设，对符合条件的农产品批发市场、农贸市场使用的房产和土地给予税收优惠...",
+                "source_url": "https://www.mof.gov.cn/",
+                "document_number": "财政部 税务总局公告2023年第50号",
+                "tax_types": ["房产税", "城镇土地使用税"],
+                "summary": "农产品批发市场和农贸市场相关房产土地税收优惠延续",
+                "industries": ["农、林、牧、渔业", "批发和零售业"]
+            },
+            {
+                "title": "关于支持文化企业发展若干税收政策的公告",
+                "content": "为促进文化产业发展，对符合条件的文化企业和出版发行等业务按规定给予税收支持...",
+                "source_url": "https://www.mof.gov.cn/",
+                "document_number": "财政部 税务总局公告2023年第71号",
+                "tax_types": ["增值税", "企业所得税"],
+                "summary": "文化企业发展相关增值税和企业所得税优惠政策延续",
+                "industries": ["文化、体育和娱乐业", "新闻和出版业"]
+            },
+            {
+                "title": "关于边销茶增值税政策的公告",
+                "content": "为保障边销茶供应，对符合条件的边销茶生产销售环节按规定适用增值税优惠政策...",
+                "source_url": "https://www.chinatax.gov.cn/",
+                "document_number": "财政部 税务总局公告2023年第59号",
+                "tax_types": ["增值税"],
+                "summary": "边销茶相关增值税优惠政策延续",
+                "industries": ["农、林、牧、渔业", "制造业", "批发和零售业"],
+                "regions": ["内蒙古", "西藏", "青海", "新疆", "全国"]
+            },
+            {
+                "title": "关于继续实施科技企业孵化器大学科技园和众创空间税收政策的公告",
+                "content": "对国家级、省级科技企业孵化器、大学科技园和备案众创空间，符合条件的收入和房产土地可享受税收优惠...",
+                "source_url": "https://www.mof.gov.cn/",
+                "document_number": "财政部 税务总局 科技部 教育部公告2023年第42号",
+                "tax_types": ["增值税", "房产税", "城镇土地使用税"],
+                "summary": "科技企业孵化器、大学科技园和众创空间税收优惠延续",
+                "industries": ["科技服务业", "教育", "租赁和商务服务业"]
+            },
+            {
+                "title": "关于继续实施金融机构农户贷款利息收入免征增值税政策的公告",
+                "content": "为支持普惠金融发展，金融机构向农户发放小额贷款取得的利息收入，符合条件的免征增值税...",
+                "source_url": "https://www.chinatax.gov.cn/",
+                "document_number": "财政部 税务总局公告2023年第67号",
+                "tax_types": ["增值税"],
+                "summary": "金融机构农户小额贷款利息收入增值税优惠延续",
+                "industries": ["金融业", "农、林、牧、渔业"],
+                "regions": ["全国", "县域地区", "农村地区"]
+            },
+            {
+                "title": "关于继续实施支持农村金融发展企业所得税政策的公告",
+                "content": "对金融机构农户小额贷款利息收入以及保险公司种植业、养殖业保险业务收入，按规定计算企业所得税优惠...",
+                "source_url": "https://www.mof.gov.cn/",
+                "document_number": "财政部 税务总局公告2023年第55号",
+                "tax_types": ["企业所得税"],
+                "summary": "农村金融相关企业所得税优惠政策延续",
+                "industries": ["金融业", "农、林、牧、渔业"],
+                "regions": ["全国", "农村地区"]
             }
         ]
 
@@ -348,8 +496,8 @@ class PolicyCrawlerService:
                 document_number=p["document_number"],
                 tax_types=p.get("tax_types", []),
                 summary=p.get("summary", ""),
-                industries=["全行业"],
-                regions=["全国"]
+                industries=p.get("industries", ["全行业"]),
+                regions=p.get("regions", ["全国"])
             )
             policies.append(policy)
 

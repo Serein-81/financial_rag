@@ -858,6 +858,7 @@ class ChatLogService:
                         "created_at": log.created_at.isoformat() if log.created_at else None,
                         "level": log.level,
                         "risk_level": log.risk_level,
+                        "extra_info": log.extra_info,
                     })
 
                 return {

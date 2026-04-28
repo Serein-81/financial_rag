@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Bot, CheckCircle2, FlaskConical, Play, RefreshCw, Wand2 } from 'lucide-vue-next'
 import { agentDiscoveryApi, type AgentSummary } from '@/api/agent-discovery'
@@ -7,6 +7,7 @@ import { customToolsApi, type CustomTool, type CustomToolKind, type CustomToolSp
 
 const isLoading = ref(false)
 const isGenerating = ref(false)
+const isGeneratingCode = ref(false)
 const isSaving = ref(false)
 const tools = ref<CustomTool[]>([])
 const agents = ref<AgentSummary[]>([])
@@ -36,6 +37,97 @@ const draftJson = computed({
 })
 
 const selectedTool = computed(() => tools.value.find(tool => tool.id === selectedToolId.value))
+const publishedTools = computed(() => tools.value.filter(tool => tool.enabled && tool.status === 'published' && tool.kind !== 'python_code'))
+const selectedToolInputSchema = computed(() => selectedTool.value?.input_schema || {})
+const selectedToolOutputSchema = computed(() => selectedTool.value?.output_schema || {})
+const isSelectedToolExecutable = computed(() => Boolean(
+  selectedTool.value &&
+  selectedTool.value.enabled &&
+  selectedTool.value.status === 'published' &&
+  selectedTool.value.kind !== 'python_code'
+))
+const testRequestPreview = computed(() => {
+  let args: Record<string, any> = {}
+  try {
+    args = JSON.parse(testArgumentsText.value || '{}')
+  } catch {
+    args = {}
+  }
+  return JSON.stringify({ arguments: args }, null, 2)
+})
+const outputSchemaPreview = computed(() => JSON.stringify(selectedToolOutputSchema.value, null, 2))
+
+function getSampleValue(field: any, name: string): any {
+  if (field?.default !== undefined && field.default !== null) return field.default
+  const type = String(field?.type || 'string').toLowerCase()
+  const normalizedName = name.toLowerCase()
+  if (type === 'integer' || type === 'int') return 1
+  if (type === 'number' || type === 'float') return 1.23
+  if (type === 'boolean' || type === 'bool') return true
+  if (type === 'array' || type === 'list') return []
+  if (type === 'object' || type === 'dict') return {}
+  if (normalizedName.includes('phone')) return '13800000000'
+  if (normalizedName.includes('email')) return 'demo@example.com'
+  if (normalizedName.includes('url')) return 'https://example.com'
+  if (normalizedName.includes('amount') || normalizedName.includes('price')) return 100
+  if (normalizedName.includes('query') || normalizedName.includes('question')) return '测试查询'
+  return `测试${name}`
+}
+
+function buildSampleArguments(tool?: CustomTool | CustomToolSpec | null): string {
+  const schema = tool?.input_schema || {}
+  const sample = Object.fromEntries(
+    Object.entries(schema).map(([name, field]) => [name, getSampleValue(field, name)])
+  )
+  return JSON.stringify(Object.keys(sample).length ? sample : { query: '测试查询' }, null, 2)
+}
+
+function getFieldMetaText(field: any): string {
+  const parts = [field?.type || 'string']
+  parts.push(field?.required === false ? '可选' : '必填')
+  if (field?.description) parts.push(field.description)
+  return parts.join(' · ')
+}
+
+function truncateText(text: string, maxLength = 72): string {
+  if (!text) return ''
+  return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text
+}
+
+function parseTestArguments(): Record<string, any> | null {
+  try {
+    const parsed = JSON.parse(testArgumentsText.value || '{}')
+    if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
+      ElMessage.warning('测试入参必须是 JSON 对象')
+      return null
+    }
+    return parsed
+  } catch {
+    ElMessage.warning('测试 JSON 格式不正确')
+    return null
+  }
+}
+
+function fillTestArguments() {
+  if (!selectedTool.value) {
+    ElMessage.warning('请先选择一个工具')
+    return
+  }
+  testArgumentsText.value = buildSampleArguments(selectedTool.value)
+  testResult.value = ''
+  ElMessage.success('已按入参 Schema 填充测试 JSON')
+}
+
+function formatTestResult(result: any, args: Record<string, any>): string {
+  return JSON.stringify({
+    tool: result?.tool || selectedTool.value?.name,
+    status: result?.status,
+    input: result?.arguments || args,
+    output_schema: result?.output_schema || selectedToolOutputSchema.value,
+    output: result?.output ?? result?.data ?? null,
+    raw_response: result,
+  }, null, 2)
+}
 
 async function loadPage() {
   isLoading.value = true
@@ -46,7 +138,10 @@ async function loadPage() {
     ])
     tools.value = toolResponse.tools
     agents.value = agentResponse
-    if (!selectedToolId.value && tools.value.length) selectedToolId.value = tools.value[0].id
+    if (!selectedToolId.value && tools.value.length) {
+      selectedToolId.value = publishedTools.value[0]?.id || tools.value[0].id
+    }
+    if (selectedTool.value) testArgumentsText.value = buildSampleArguments(selectedTool.value)
   } finally {
     isLoading.value = false
   }
@@ -60,9 +155,24 @@ async function generateSpec() {
   isGenerating.value = true
   try {
     draftSpec.value = await customToolsApi.generate(generatorForm.value)
+    testArgumentsText.value = buildSampleArguments(draftSpec.value)
     ElMessage.success('工具规格已生成')
   } finally {
     isGenerating.value = false
+  }
+}
+
+async function generateCodeDraft() {
+  if (!draftSpec.value) return
+  isGeneratingCode.value = true
+  try {
+    draftSpec.value = await customToolsApi.generateCode(
+      draftSpec.value,
+      generatorForm.value.natural_language
+    )
+    ElMessage.success('代码草稿已生成，仅保存待审核，不会执行')
+  } finally {
+    isGeneratingCode.value = false
   }
 }
 
@@ -86,16 +196,40 @@ async function publishTool(tool: CustomTool) {
 
 async function runTest() {
   if (!selectedTool.value) return
+  if (!isSelectedToolExecutable.value) {
+    testResult.value = JSON.stringify({
+      status: 'error',
+      tool: selectedTool.value.name,
+      input: parseTestArguments() || {},
+      output_schema: selectedToolOutputSchema.value,
+      error: '当前工具尚未发布或不可执行，请先发布后再测试。',
+    }, null, 2)
+    return
+  }
+  const args = parseTestArguments()
+  if (!args) return
   try {
-    const args = JSON.parse(testArgumentsText.value || '{}')
     const result = await customToolsApi.execute(selectedTool.value.id, args)
-    testResult.value = JSON.stringify(result, null, 2)
+    testResult.value = formatTestResult(result, args)
   } catch (error: any) {
-    testResult.value = error?.response?.data?.detail || error.message || String(error)
+    testResult.value = JSON.stringify({
+      status: 'error',
+      tool: selectedTool.value.name,
+      input: args,
+      output_schema: selectedToolOutputSchema.value,
+      error: error?.response?.data?.detail || error.message || String(error),
+    }, null, 2)
   }
 }
 
 onMounted(loadPage)
+
+watch(selectedTool, (tool) => {
+  if (tool) {
+    testArgumentsText.value = buildSampleArguments(tool)
+    testResult.value = ''
+  }
+})
 </script>
 
 <template>
@@ -111,6 +245,13 @@ onMounted(loadPage)
           刷新
         </button>
       </header>
+
+      <section class="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+        <div class="font-medium">使用说明</div>
+        <div class="mt-1 leading-6">
+          先描述工具用途、入参和出参，再生成规格并检查 JSON；创建草稿后点击发布，工具会注册为当前进程内的本地 Agent 工具。HTTP 工具默认禁止访问内网地址；python_code 只保存为待审核代码，不会直接执行。
+        </div>
+      </section>
 
       <section class="grid gap-4 lg:grid-cols-[420px_1fr]">
         <div class="rounded-lg border border-slate-200 bg-white p-4">
@@ -137,6 +278,10 @@ onMounted(loadPage)
               <Wand2 class="h-4 w-4" />
               生成规格
             </button>
+            <button class="inline-flex w-full items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 disabled:opacity-60" :disabled="!draftSpec || isGeneratingCode" @click="generateCodeDraft">
+              <Wand2 class="h-4 w-4" />
+              生成代码草稿
+            </button>
           </div>
         </div>
 
@@ -155,7 +300,7 @@ onMounted(loadPage)
         </div>
       </section>
 
-      <section class="grid gap-4 lg:grid-cols-[1fr_420px]">
+      <section class="grid gap-4 lg:grid-cols-[minmax(0,0.75fr)_minmax(460px,0.95fr)]">
         <div class="rounded-lg border border-slate-200 bg-white">
           <div class="border-b border-slate-200 px-4 py-3 text-sm font-medium text-slate-800">工具列表</div>
           <div class="divide-y divide-slate-100">
@@ -167,7 +312,7 @@ onMounted(loadPage)
                   <span class="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{{ tool.kind }}</span>
                   <span class="rounded px-2 py-0.5 text-xs" :class="tool.enabled ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'">{{ tool.status }}</span>
                 </div>
-                <p class="mt-1 truncate text-xs text-slate-500">{{ tool.name }} · {{ tool.description }}</p>
+                <p class="mt-1 truncate text-xs text-slate-500" :title="tool.description">{{ tool.name }} · {{ truncateText(tool.description) }}</p>
               </div>
               <button class="inline-flex items-center gap-2 rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-700 disabled:opacity-50" :disabled="tool.enabled || tool.kind === 'python_code'" @click="publishTool(tool)">
                 <Play class="h-4 w-4" />
@@ -183,12 +328,36 @@ onMounted(loadPage)
           <select v-model="selectedToolId" class="mb-3 w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
             <option v-for="tool in tools" :key="tool.id" :value="tool.id">{{ tool.display_name }}</option>
           </select>
+          <div v-if="selectedTool && !isSelectedToolExecutable" class="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            当前工具未发布或不可执行，发布后才能得到真实出参。
+          </div>
+          <div v-if="selectedTool" class="mb-3 rounded-md border border-slate-200 bg-slate-50 p-3">
+            <div class="mb-2 text-xs font-medium text-slate-700">入参说明</div>
+            <div v-if="Object.keys(selectedToolInputSchema).length" class="space-y-1">
+              <div v-for="(field, name) in selectedToolInputSchema" :key="name" class="text-xs text-slate-600">
+                <span class="font-mono font-medium text-slate-800">{{ name }}</span>
+                <span class="ml-1">{{ getFieldMetaText(field) }}</span>
+              </div>
+            </div>
+            <div v-else class="text-xs text-slate-500">未声明入参，默认使用 query 测试。</div>
+          </div>
+          <div class="mb-2 flex items-center justify-between">
+            <span class="text-xs font-medium text-slate-700">入参测试 JSON</span>
+            <button class="rounded px-2 py-1 text-xs text-blue-600 hover:bg-blue-50 disabled:text-slate-400" type="button" :disabled="!selectedTool" @click="fillTestArguments">
+              自动填充
+            </button>
+          </div>
           <textarea v-model="testArgumentsText" class="h-32 w-full rounded-md border border-slate-300 p-3 font-mono text-xs" spellcheck="false"></textarea>
-          <button class="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white" :disabled="!selectedTool" @click="runTest">
+          <div class="mt-3 text-xs font-medium text-slate-700">实际请求体</div>
+          <pre class="mt-2 max-h-28 overflow-auto rounded-md bg-slate-100 p-3 text-xs text-slate-700">{{ testRequestPreview }}</pre>
+          <div class="mt-3 text-xs font-medium text-slate-700">预期出参 Schema</div>
+          <pre class="mt-2 max-h-28 overflow-auto rounded-md bg-slate-100 p-3 text-xs text-slate-700">{{ outputSchemaPreview }}</pre>
+          <button class="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-50" :disabled="!selectedTool" @click="runTest">
             <Play class="h-4 w-4" />
             执行测试
           </button>
-          <pre class="mt-3 max-h-64 overflow-auto rounded-md bg-slate-950 p-3 text-xs text-slate-100">{{ testResult }}</pre>
+          <div class="mt-3 text-xs font-medium text-slate-700">出参结果</div>
+          <pre class="mt-2 max-h-64 overflow-auto rounded-md bg-slate-950 p-3 text-xs text-slate-100">{{ testResult || '执行后将在这里显示 input / output_schema / output。' }}</pre>
         </div>
       </section>
     </div>

@@ -257,7 +257,7 @@ def load_agent_prompt(
     from app.prompts.loader import load_agent_prompt as unified_load
     
     normalized_name = _normalize_agent_name(agent_name)
-    prompt = unified_load(normalized_name)
+    prompt = unified_load(normalized_name, context=context, load_skills=bool(context))
     
     if context and prompt:
         import re

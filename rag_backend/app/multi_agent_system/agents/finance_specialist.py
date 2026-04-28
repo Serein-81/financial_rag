@@ -17,6 +17,7 @@ import traceback
 import asyncio
 import time
 import os
+from datetime import datetime
 from typing import Dict, List, Any, Optional
 from enum import Enum
 from dataclasses import dataclass
@@ -336,9 +337,13 @@ class FinanceSpecialist(BaseSpecialistAgent):
     
     def _get_prompt_context(self) -> Dict[str, Any]:
         """获取提示词渲染上下文"""
-        tools_description = ""
-        if self.tool_manager:
-            tools_description = self.tool_manager.get_tools_description()
+        tools_description = "\n".join([
+            "- get_financial_overview：获取企业财务概览摘要",
+            "- query_financial_data：按收入、成本、利润等类型查询明细",
+            "- get_financial_trend：查询收入、利润、成本等趋势",
+            "- search_financial_data：按关键词检索财务数据",
+            "- get_current_time_and_context：获取当前时间基准",
+        ])
         
         return {
             "financial_domains": [d.value for d in FinancialDomain],
@@ -489,7 +494,7 @@ class FinanceSpecialist(BaseSpecialistAgent):
             user_id = context.get("user_id")
             fiscal_year = context.get("fiscal_year")
         
-        logger.warning(f"🔍 [FinanceSpecialist] _query_user_financial_data 接收到的 tenant_id = '{tenant_id}', user_id = '{user_id}'")
+        logger.debug(f"🔍 [FinanceSpecialist] _query_user_financial_data 接收到的 tenant_id = '{tenant_id}', user_id = '{user_id}'")
 
         if not tenant_id or not user_id or tenant_id == "default" or user_id == "default":
             logger.warning(f"🔍 [FinanceSpecialist] 跳过财务数据查询：tenant_id='{tenant_id}', user_id='{user_id}'")
@@ -504,7 +509,7 @@ class FinanceSpecialist(BaseSpecialistAgent):
 
         for attempt in range(1, max_retries + 1):
             try:
-                logger.warning(
+                logger.info(
                     f"🔍 [FinanceSpecialist] 正在通过 ToolManager 查询财务数据 "
                     f"(尝试 {attempt}/{max_retries}): tenant='{tenant_id}', year={fiscal_year}"
                 )
@@ -516,36 +521,37 @@ class FinanceSpecialist(BaseSpecialistAgent):
 
                 raw_result = await self.tool_manager.call_tool_raw(
                     "get_financial_overview",
+                    trace_id=self.current_trace_id,
                     **tool_params
                 )
 
-                logger.warning(f"🔍 [FinanceSpecialist] ToolManager 返回原始结果:")
-                logger.warning(f"   - status: {raw_result.get('status')}")
-                logger.warning(f"   - has 'data': {raw_result.get('data') is not None}")
-                logger.warning(f"   - has 'summary': {raw_result.get('summary') is not None}")
-                logger.warning(f"   - message: {raw_result.get('message', 'N/A')[:100]}")
+                logger.debug(f"🔍 [FinanceSpecialist] ToolManager 返回原始结果:")
+                logger.debug(f"   - status: {raw_result.get('status')}")
+                logger.debug(f"   - has 'data': {raw_result.get('data') is not None}")
+                logger.debug(f"   - has 'summary': {raw_result.get('summary') is not None}")
+                logger.debug(f"   - message: {raw_result.get('message', 'N/A')[:100]}")
 
                 if raw_result.get('data'):
-                    logger.warning(f"   - data keys: {list(raw_result['data'].keys())}")
-                    logger.warning(f"   - data.total_revenue: {raw_result['data'].get('total_revenue')}")
-                    logger.warning(f"   - data.total_profit: {raw_result['data'].get('total_profit')}")
+                    logger.debug(f"   - data keys: {list(raw_result['data'].keys())}")
+                    logger.debug(f"   - data.total_revenue: {raw_result['data'].get('total_revenue')}")
+                    logger.debug(f"   - data.total_profit: {raw_result['data'].get('total_profit')}")
                 if raw_result.get('summary'):
-                    logger.warning(f"   - summary keys: {list(raw_result['summary'].keys())}")
-                    logger.warning(f"   - summary.total_revenue: {raw_result['summary'].get('total_revenue')}")
-                    logger.warning(f"   - summary.total_profit: {raw_result['summary'].get('total_profit')}")
+                    logger.debug(f"   - summary keys: {list(raw_result['summary'].keys())}")
+                    logger.debug(f"   - summary.total_revenue: {raw_result['summary'].get('total_revenue')}")
+                    logger.debug(f"   - summary.total_profit: {raw_result['summary'].get('total_profit')}")
 
                 validated = FinancialToolOutput(**raw_result)
                 logger.info("✅ [FinanceSpecialist] Pydantic 验证通过")
 
                 financial_data = validated.get_financial_data()
 
-                logger.warning(f"🔍 [FinanceSpecialist] get_financial_data() 返回:")
-                logger.warning(f"   - financial_data is None: {financial_data is None}")
+                logger.debug(f"🔍 [FinanceSpecialist] get_financial_data() 返回:")
+                logger.debug(f"   - financial_data is None: {financial_data is None}")
                 if financial_data:
-                    logger.warning(f"   - financial_data keys: {list(financial_data.keys())}")
-                    logger.warning(f"   - total_revenue: {financial_data.get('total_revenue')}")
-                    logger.warning(f"   - total_profit: {financial_data.get('total_profit')}")
-                    logger.warning(f"   - avg_profit_margin: {financial_data.get('avg_profit_margin')}")
+                    logger.debug(f"   - financial_data keys: {list(financial_data.keys())}")
+                    logger.debug(f"   - total_revenue: {financial_data.get('total_revenue')}")
+                    logger.debug(f"   - total_profit: {financial_data.get('total_profit')}")
+                    logger.debug(f"   - avg_profit_margin: {financial_data.get('avg_profit_margin')}")
 
                 data_summary = None
                 if financial_data:
@@ -555,6 +561,12 @@ class FinanceSpecialist(BaseSpecialistAgent):
 
                     if total_profit is None:
                         total_profit = total_revenue - total_expenses
+                    fiscal_years = financial_data.get("fiscal_years", [])
+                    current_year = datetime.now().year
+                    future_fiscal_years = [
+                        year for year in fiscal_years
+                        if isinstance(year, int) and year > current_year
+                    ]
 
                     data_summary = {
                         "fiscal_year": validated.fiscal_year,
@@ -565,9 +577,14 @@ class FinanceSpecialist(BaseSpecialistAgent):
                         "avg_profit_margin": financial_data.get("avg_profit_margin"),
                         "total_vat": financial_data.get("total_vat"),
                         "total_corporate_tax": financial_data.get("total_corporate_tax"),
-                        "fiscal_years": financial_data.get("fiscal_years", []),
+                        "fiscal_years": fiscal_years,
+                        "future_fiscal_years": future_fiscal_years,
                         "period_types": financial_data.get("period_types", []),
                     }
+                    if future_fiscal_years:
+                        data_summary["data_quality_notes"] = [
+                            f"数据包含未来年度/测试年度：{', '.join(str(year) for year in future_fiscal_years)}。分析时应明确标注，避免当作已发生经营结果。"
+                        ]
                     logger.info(f"✅ [FinanceSpecialist] 成功提取财务数据: revenue={total_revenue:,.2f}, profit={total_profit:,.2f}")
                 else:
                     logger.warning("⚠️ [FinanceSpecialist] 财务工具返回了成功状态但 data 和 summary 都为空")
@@ -838,10 +855,10 @@ class FinanceSpecialist(BaseSpecialistAgent):
             
             query_result: FinancialQueryResult = await self._query_user_financial_data(context)
 
-            logger.warning(f"🔍 [FinanceSpecialist] 数据查询结果:")
-            logger.warning(f"   - query_result.has_data: {query_result.has_data}")
-            logger.warning(f"   - query_result.data_summary: {query_result.data_summary}")
-            logger.warning(f"   - query_result.fiscal_year: {query_result.fiscal_year}")
+            logger.debug(f"🔍 [FinanceSpecialist] 数据查询结果:")
+            logger.debug(f"   - query_result.has_data: {query_result.has_data}")
+            logger.debug(f"   - query_result.data_summary: {query_result.data_summary}")
+            logger.debug(f"   - query_result.fiscal_year: {query_result.fiscal_year}")
 
             financial_context = rag_context.copy() if rag_context else {}
             rag_has_data = bool(rag_context and rag_context.get("documents"))
@@ -850,24 +867,24 @@ class FinanceSpecialist(BaseSpecialistAgent):
             if query_result.has_data:
                 financial_context["data_summary"] = query_result.data_summary
                 financial_context["data_error"] = None
-                logger.warning(f"✅ [FinanceSpecialist] data_summary 已添加到 financial_context:")
-                logger.warning(f"   - total_revenue: {query_result.data_summary.get('total_revenue')}")
-                logger.warning(f"   - total_profit: {query_result.data_summary.get('total_profit')}")
-                logger.warning(f"   - profit_margin: {query_result.data_summary.get('profit_margin')}")
+                logger.debug(f"✅ [FinanceSpecialist] data_summary 已添加到 financial_context:")
+                logger.debug(f"   - total_revenue: {query_result.data_summary.get('total_revenue')}")
+                logger.debug(f"   - total_profit: {query_result.data_summary.get('total_profit')}")
+                logger.debug(f"   - profit_margin: {query_result.data_summary.get('profit_margin')}")
             else:
                 financial_context["data_summary"] = None
                 financial_context["data_error"] = query_result.error_message
                 logger.warning(f"⚠️ [FinanceSpecialist] 无有效数据: {query_result.error_message}")
 
             prompt = self._build_finance_prompt(user_input, entities, domain, financial_context)
-            logger.warning(f"📝 [_build_finance_prompt] 提示词构建完成，长度: {len(prompt)} 字符")
-            logger.warning(f"📝 [FinanceSpecialist] 开始调用 LLM (timeout=60s)...")
+            logger.info(f"📝 [_build_finance_prompt] 提示词构建完成，长度: {len(prompt)} 字符")
+            logger.info(f"📝 [FinanceSpecialist] 开始调用 LLM (timeout=60s)...")
             
             full_prompt = f"{self.system_prompt}\n\n{prompt}" if self.system_prompt else prompt
-            logger.warning(f"📝 [FinanceSpecialist] LLM 调用详情:")
-            logger.warning(f"   - prompt length: {len(full_prompt)} chars")
-            logger.warning(f"   - temperature: 0.3")
-            logger.warning(f"   - has system_prompt: {bool(self.system_prompt)}")
+            logger.info(f"📝 [FinanceSpecialist] LLM 调用详情:")
+            logger.info(f"   - prompt length: {len(full_prompt)} chars")
+            logger.debug(f"   - temperature: 0.3")
+            logger.debug(f"   - has system_prompt: {bool(self.system_prompt)}")
             
             start_time = time.time()
             try:
@@ -879,7 +896,7 @@ class FinanceSpecialist(BaseSpecialistAgent):
                     timeout=60.0
                 )
                 elapsed = time.time() - start_time
-                logger.warning(f"✅ [FinanceSpecialist] LLM 调用成功，耗时: {elapsed:.2f}秒")
+                logger.info(f"✅ [FinanceSpecialist] LLM 调用成功，耗时: {elapsed:.2f}秒")
             except asyncio.TimeoutError:
                 elapsed = time.time() - start_time
                 logger.error(f"❌ [FinanceSpecialist] LLM 调用超时 ({elapsed:.2f}秒)")
@@ -993,11 +1010,11 @@ class FinanceSpecialist(BaseSpecialistAgent):
         has_financial_data = rag_context.get('has_financial_data', False) if rag_context else False
         data_error = rag_context.get('data_error') if rag_context else None
 
-        logger.warning(f"📝 [_build_finance_prompt] 检查财务数据:")
-        logger.warning(f"   - has_financial_data: {has_financial_data}")
-        logger.warning(f"   - user_financial_data: {user_financial_data is not None}")
+        logger.debug(f"📝 [_build_finance_prompt] 检查财务数据:")
+        logger.debug(f"   - has_financial_data: {has_financial_data}")
+        logger.debug(f"   - user_financial_data: {user_financial_data is not None}")
         if user_financial_data:
-            logger.warning(f"   - 可用字段: {list(user_financial_data.keys())}")
+            logger.debug(f"   - 可用字段: {list(user_financial_data.keys())}")
 
         if has_financial_data and user_financial_data:
             prompt_parts.extend([
@@ -1019,6 +1036,15 @@ class FinanceSpecialist(BaseSpecialistAgent):
             total_corporate_tax = user_financial_data.get('total_corporate_tax') or 0
             fiscal_years = user_financial_data.get('fiscal_years', [])
             period_types = user_financial_data.get('period_types', [])
+            future_fiscal_years = user_financial_data.get('future_fiscal_years', [])
+            data_quality_notes = user_financial_data.get('data_quality_notes', [])
+            if future_fiscal_years:
+                prompt_parts.append(
+                    f"- **数据质量提示**: 包含未来年度/测试年度 {', '.join(str(y) for y in future_fiscal_years)}，"
+                    "请在结论中明确说明这些年度属于测试或未发生数据，不要当作真实历史经营结果。\n"
+                )
+            for note in data_quality_notes:
+                prompt_parts.append(f"- **数据备注**: {note}\n")
             
             prompt_parts.append(f"- **营业收入**: {total_revenue:,.2f} 元\n")
             prompt_parts.append(f"- **总支出**: {total_expenses:,.2f} 元\n")
@@ -1036,7 +1062,7 @@ class FinanceSpecialist(BaseSpecialistAgent):
                 prompt_parts.append(f"- **周期类型**: {', '.join(period_types)}\n")
 
             prompt_parts.append("\n⚠️ **重要提示**：以上数据为企业真实财务记录，请基于这些实际数据进行分析，不要使用假设性数据。\n")
-            logger.warning(f"✅ [_build_finance_prompt] 已添加真实财务数据到提示词")
+            logger.debug(f"✅ [_build_finance_prompt] 已添加真实财务数据到提示词")
         else:
             reason = f"（{data_error}）" if data_error else ""
             logger.warning(f"⚠️ [FinanceSpecialist] 无财务数据: {reason or '未提供企业名称或财务数据'}")

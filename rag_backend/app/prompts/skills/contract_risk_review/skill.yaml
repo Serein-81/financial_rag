@@ -1,0 +1,44 @@
+name: contract_risk_review
+display_name: 合同风险审查
+description: 审查合同中的缺失条款、风险义务、争议条款和法务/合规暴露。
+version: 1.0.0
+domains:
+  - legal
+  - contract
+  - compliance
+allowed_agents:
+  - orchestrator
+  - react
+  - legal
+triggers:
+  keywords:
+    - contract
+    - clause
+    - breach
+    - liability
+    - dispute
+    - 合同
+    - 条款
+    - 违约
+    - 责任
+    - 争议
+    - 法务
+  intents:
+    - contract_review
+    - legal_review
+    - contract_risk
+  file_types:
+    - contract
+    - agreement
+tools:
+  - check_contract_essentials
+  - match_legal_provisions
+  - extract_contract_clauses
+  - search_enterprise_knowledge
+optional_tools:
+  - check_contract_essentials
+  - match_legal_provisions
+  - extract_contract_clauses
+  - search_enterprise_knowledge
+priority: 88
+risk_level: high

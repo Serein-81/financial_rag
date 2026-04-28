@@ -17,6 +17,13 @@ from .loader import (
     load_prompt_file,
     load_prompt_template,
 )
+from .skill_loader import (
+    SkillDefinition,
+    SkillLibraryImporter,
+    SkillLoader,
+    SkillToolDefinition,
+    get_skill_loader,
+)
 
 __all__ = [
     'AgentPromptLoader',
@@ -30,6 +37,11 @@ __all__ = [
     'PromptLoader',
     'load_prompt_file',
     'load_prompt_template',
+    'SkillDefinition',
+    'SkillLibraryImporter',
+    'SkillLoader',
+    'SkillToolDefinition',
+    'get_skill_loader',
     'TriageFunction',
     'triage_document',
     'QualityReviewFunction',

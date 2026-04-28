@@ -1,0 +1,43 @@
+name: policy_impact_analysis
+display_name: 政策影响分析
+description: 分析政策是否适用于企业，以及企业应采取的后续动作。
+version: 1.0.0
+domains:
+  - policy
+  - compliance
+  - enterprise
+allowed_agents:
+  - orchestrator
+  - react
+  - policy_notification
+  - legal
+  - tax
+triggers:
+  keywords:
+    - policy
+    - subsidy
+    - eligibility
+    - declaration
+    - 政策
+    - 补贴
+    - 申报
+    - 适用
+    - 匹配
+    - 企业画像
+  intents:
+    - policy_impact
+    - policy_match
+    - policy_notification
+  file_types:
+    - policy
+    - policy_document
+tools:
+  - search_enterprise_knowledge
+  - search_web
+  - enterprise_policy_matcher
+optional_tools:
+  - search_enterprise_knowledge
+  - search_web
+  - enterprise_policy_matcher
+priority: 85
+risk_level: medium

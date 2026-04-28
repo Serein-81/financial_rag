@@ -124,9 +124,11 @@ class PolicyNotificationService:
         db = SessionLocal()
         
         try:
-            from app.models.tenant import Tenant
+            from app.models.tenant_settings import TenantSettings
             
-            tenants = db.execute(select(Tenant)).scalars().all()
+            tenants = db.execute(
+                select(TenantSettings).where(TenantSettings.is_active.is_(True))
+            ).scalars().all()
             
             logger.info(f"🏢 匹配 {len(tenants)} 个企业")
             
@@ -148,7 +150,7 @@ class PolicyNotificationService:
                 
                 if match_score >= self.match_threshold:
                     await self._create_match_and_notification(
-                        str(tenant.id),
+                        enterprise_profile["enterprise_id"],
                         policy_data,
                         match_result
                     )
@@ -326,10 +328,10 @@ class PolicyNotificationService:
         db = SessionLocal()
         
         try:
-            from app.models.tenant import Tenant
+            from app.models.tenant_settings import TenantSettings
             
             tenant = db.execute(
-                select(Tenant).where(Tenant.id == enterprise_id)
+                select(TenantSettings).where(TenantSettings.tenant_id == enterprise_id)
             ).scalar_one_or_none()
             
             if tenant:
@@ -351,8 +353,8 @@ class PolicyNotificationService:
             Dict: 企业画像
         """
         profile = {
-            "enterprise_id": str(getattr(tenant, "id", "")),
-            "name": getattr(tenant, "name", "未知企业"),
+            "enterprise_id": str(getattr(tenant, "tenant_id", "") or getattr(tenant, "id", "")),
+            "name": getattr(tenant, "company_name", None) or getattr(tenant, "name", "未知企业"),
             "industry": getattr(tenant, "industry", None),
             "region": getattr(tenant, "region", None),
             "scale": getattr(tenant, "scale", None),
@@ -362,6 +364,8 @@ class PolicyNotificationService:
         
         if hasattr(tenant, "meta_info") and tenant.meta_info:
             profile["keywords"] = tenant.meta_info.get("keywords", [])
+        elif hasattr(tenant, "extra_settings") and tenant.extra_settings:
+            profile["keywords"] = tenant.extra_settings.get("keywords", [])
         
         return profile
 

@@ -12,6 +12,8 @@ import yaml
 from pathlib import Path
 from typing import Optional, Dict, List, Any
 
+from app.prompts.skill_loader import get_skill_loader
+
 logger = logging.getLogger(__name__)
 
 PROMPTS_ROOT = Path(__file__).parent
@@ -251,7 +253,8 @@ class AgentPromptLoader:
         self,
         agent_name: str,
         context: Dict[str, Any],
-        use_cache: bool = True
+        use_cache: bool = True,
+        load_skills: bool = True,
     ) -> Optional[str]:
         """
         渲染提示词（替换变量）
@@ -264,7 +267,9 @@ class AgentPromptLoader:
         Returns:
             渲染后的提示词
         """
-        cache_key = f"render:{agent_name}:{self._make_context_cache_key(context)}"
+        render_context = dict(context or {})
+        render_context.setdefault("agent_name", agent_name)
+        cache_key = f"render:{agent_name}:{self._make_context_cache_key(render_context)}:skills={load_skills}"
 
         if use_cache and cache_key in self._prompt_cache:
             return self._prompt_cache[cache_key]
@@ -274,7 +279,9 @@ class AgentPromptLoader:
             return None
 
         try:
-            rendered = self.render_text(prompt, context)
+            rendered = self.render_text(prompt, render_context)
+            if load_skills:
+                rendered = self._append_selected_skills(rendered, render_context)
 
             if use_cache:
                 self._prompt_cache[cache_key] = rendered
@@ -284,6 +291,23 @@ class AgentPromptLoader:
         except Exception as e:
             logger.error(f"Failed to render prompt {agent_name}: {e}")
             return prompt
+
+    def _append_selected_skills(self, prompt: str, context: Dict[str, Any]) -> str:
+        skill_loader = get_skill_loader()
+        skill_text = skill_loader.render_selected_skills(
+            user_input=str(context.get("user_input") or context.get("query") or ""),
+            tools=context.get("tools") or context.get("available_tools") or [],
+            explicit_skills=context.get("skills") or context.get("skill_names") or [],
+            active_skills=context.get("active_skills") or context.get("previous_skills") or [],
+            agent_name=str(context.get("agent_name") or context.get("agent") or ""),
+            intent=str(context.get("intent") or context.get("user_intent") or ""),
+            file_type=str(context.get("file_type") or context.get("document_type") or ""),
+            skill_strategy=str(context.get("skill_strategy") or "refresh"),
+            limit=int(context.get("skill_limit", 5) or 5),
+        )
+        if not skill_text:
+            return prompt
+        return "\n\n".join([prompt, skill_text])
 
     def render_text(self, template: str, context: Dict[str, Any]) -> str:
         """
@@ -347,6 +371,7 @@ class AgentPromptLoader:
         """清空所有缓存"""
         self._config_cache.clear()
         self._prompt_cache.clear()
+        get_skill_loader().clear_cache()
         logger.info("Prompt cache cleared")
 
     def reload_agent(self, agent_name: str):
@@ -377,7 +402,11 @@ def get_agent_prompt_loader() -> AgentPromptLoader:
     return _agent_prompt_loader
 
 
-def load_agent_prompt(agent_name: str) -> Optional[str]:
+def load_agent_prompt(
+    agent_name: str,
+    context: Optional[Dict[str, Any]] = None,
+    load_skills: bool = False,
+) -> Optional[str]:
     """
     快捷函数：加载指定Agent的系统提示词
 
@@ -388,6 +417,8 @@ def load_agent_prompt(agent_name: str) -> Optional[str]:
         系统提示词文本
     """
     loader = get_agent_prompt_loader()
+    if context is not None:
+        return loader.render_prompt(agent_name, context, load_skills=load_skills)
     return loader.load_system_prompt(agent_name)
 
 

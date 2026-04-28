@@ -1,0 +1,33 @@
+name: enterprise_knowledge_search
+display_name: 企业知识库检索
+description: 检索企业内部知识库，并基于证据来源回答问题。
+version: 1.0.0
+domains:
+  - knowledge
+  - rag
+allowed_agents:
+  - orchestrator
+  - react
+  - tax
+  - legal
+  - finance
+  - policy_notification
+triggers:
+  keywords:
+    - knowledge base
+    - internal document
+    - company policy
+    - enterprise knowledge
+    - 知识库
+    - 内部文档
+    - 公司制度
+    - 企业资料
+tools:
+  - search_enterprise_knowledge
+  - list_knowledge_documents
+required_tools:
+  - search_enterprise_knowledge
+optional_tools:
+  - list_knowledge_documents
+priority: 70
+risk_level: medium

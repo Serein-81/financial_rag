@@ -1,0 +1,34 @@
+name: business_deadline_planner
+display_name: 工作日截止期计算
+description: 根据起始日期、工作日数量和节假日清单，计算业务截止日期和提醒节点。
+version: 1.0.0
+domains:
+  - workflow
+  - compliance
+  - deadline
+allowed_agents:
+  - orchestrator
+  - react
+  - policy_notification
+  - tax
+  - legal
+triggers:
+  keywords:
+    - 截止日期
+    - 工作日
+    - 期限
+    - 申报期限
+    - 到期
+    - deadline
+  intents:
+    - deadline_planning
+    - workflow_schedule
+  file_types:
+    - policy
+    - contract
+tools:
+  - calculate_business_deadline
+optional_tools:
+  - calculate_business_deadline
+priority: 78
+risk_level: medium

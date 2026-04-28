@@ -1,0 +1,33 @@
+name: web_research
+display_name: 联网公开信息检索
+description: 检索公网来源，用于获取实时信息、外部资料或可能变化的信息。
+version: 1.0.0
+domains:
+  - web
+  - research
+allowed_agents:
+  - orchestrator
+  - react
+  - tax
+  - legal
+  - finance
+  - policy_notification
+triggers:
+  keywords:
+    - latest
+    - recent
+    - news
+    - price
+    - search web
+    - 最新
+    - 最近
+    - 新闻
+    - 价格
+    - 联网
+tools:
+  - search_web
+required_tools:
+  - search_web
+optional_tools: []
+priority: 60
+risk_level: medium

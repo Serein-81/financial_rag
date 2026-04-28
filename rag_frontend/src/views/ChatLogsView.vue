@@ -3727,6 +3727,14 @@ function getEnterpriseLogLevelIcon(level: string) {
 
                   </div>
 
+                  <div
+                    v-if="log.extra_info && Object.keys(log.extra_info).length"
+                    class="mt-3 rounded-md bg-gray-50 p-3 text-xs text-gray-600"
+                  >
+                    <div class="mb-1 font-medium text-gray-700">详情</div>
+                    <pre class="whitespace-pre-wrap break-words">{{ JSON.stringify(log.extra_info, null, 2) }}</pre>
+                  </div>
+
 
                 </div>
 

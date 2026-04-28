@@ -44,6 +44,7 @@ rag_backend/mypy_cache/
 
 # Pytest 缓存和覆盖率
 rag_backend/.pytest_cache/
+rag_backend/tests/.tmp_skill_loader/
 rag_backend/.coverage
 rag_backend/htmlcov/
 rag_backend/coverage.xml

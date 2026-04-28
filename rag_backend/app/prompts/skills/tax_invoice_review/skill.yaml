@@ -1,0 +1,44 @@
+name: tax_invoice_review
+display_name: 税务发票审查
+description: 审查发票和税务材料的一致性、抵扣依据和合规风险。
+version: 1.0.0
+domains:
+  - tax
+  - invoice
+  - compliance
+allowed_agents:
+  - orchestrator
+  - react
+  - tax
+  - finance
+triggers:
+  keywords:
+    - invoice
+    - vat
+    - tax amount
+    - deduction
+    - 发票
+    - 增值税
+    - 税额
+    - 抵扣
+    - 进项
+    - 销项
+    - 税务
+  intents:
+    - tax_review
+    - invoice_review
+    - tax_compliance
+  file_types:
+    - invoice
+    - tax_report
+    - vat_invoice
+tools:
+  - search_enterprise_knowledge
+  - calculate_tax_vat
+  - tax_compliance_checker
+optional_tools:
+  - search_enterprise_knowledge
+  - calculate_tax_vat
+  - tax_compliance_checker
+priority: 90
+risk_level: high

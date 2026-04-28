@@ -405,6 +405,21 @@ class ToolManager:
                     duration=(time.time() - start_time) * 1000,
                     status="success"
                 )
+            if trace_id:
+                try:
+                    from app.services.agent_tracer import agent_tracer
+                    await agent_tracer.add_step(
+                        trace_id=trace_id,
+                        step_number=len(self._current_sequence) + 1,
+                        step_type="action",
+                        content=f"调用工具: {tool_name}",
+                        tool_name=tool_name,
+                        tool_input=kwargs,
+                        tool_output=result[:1000],
+                        tool_duration=(time.time() - start_time) * 1000,
+                    )
+                except Exception as trace_error:
+                    logger.debug("[ToolManager] 写入 AgentTrace 工具步骤失败: %s", trace_error)
             
             # LangSmith 追踪
             langsmith_tracer = _get_langsmith_tracer()
@@ -439,6 +454,21 @@ class ToolManager:
                     status="error",
                     error_message=error_msg
                 )
+            if trace_id:
+                try:
+                    from app.services.agent_tracer import agent_tracer
+                    await agent_tracer.add_step(
+                        trace_id=trace_id,
+                        step_number=len(self._current_sequence) + 1,
+                        step_type="action",
+                        content=f"工具调用失败: {tool_name}",
+                        tool_name=tool_name,
+                        tool_input=kwargs,
+                        tool_output=error_msg[:1000],
+                        tool_duration=(time.time() - start_time) * 1000,
+                    )
+                except Exception as trace_error:
+                    logger.debug("[ToolManager] 写入 AgentTrace 工具错误步骤失败: %s", trace_error)
             
             # LangSmith 追踪错误
             langsmith_tracer = _get_langsmith_tracer()
@@ -521,6 +551,21 @@ class ToolManager:
                     duration=(time.time() - start_time) * 1000,
                     status="success"
                 )
+            if trace_id:
+                try:
+                    from app.services.agent_tracer import agent_tracer
+                    await agent_tracer.add_step(
+                        trace_id=trace_id,
+                        step_number=len(self._current_sequence) + 1,
+                        step_type="action",
+                        content=f"调用工具: {tool_name}",
+                        tool_name=tool_name,
+                        tool_input=kwargs,
+                        tool_output=str(result)[:1000],
+                        tool_duration=(time.time() - start_time) * 1000,
+                    )
+                except Exception as trace_error:
+                    logger.debug("[ToolManager] 写入 AgentTrace 工具步骤失败: %s", trace_error)
 
             # LangSmith 追踪
             langsmith_tracer = _get_langsmith_tracer()
@@ -549,6 +594,21 @@ class ToolManager:
                     status="error",
                     error_message=error_msg
                 )
+            if trace_id:
+                try:
+                    from app.services.agent_tracer import agent_tracer
+                    await agent_tracer.add_step(
+                        trace_id=trace_id,
+                        step_number=len(self._current_sequence) + 1,
+                        step_type="action",
+                        content=f"工具调用失败: {tool_name}",
+                        tool_name=tool_name,
+                        tool_input=kwargs,
+                        tool_output=error_msg[:1000],
+                        tool_duration=(time.time() - start_time) * 1000,
+                    )
+                except Exception as trace_error:
+                    logger.debug("[ToolManager] 写入 AgentTrace 工具错误步骤失败: %s", trace_error)
 
             langsmith_tracer = _get_langsmith_tracer()
             if langsmith_tracer and langsmith_tracer.client:

@@ -326,6 +326,7 @@ export interface UserActionLog {
   created_at: string
   level?: string
   risk_level?: string
+  extra_info?: Record<string, any>
 }
 
 export interface EnterpriseLogEntry {

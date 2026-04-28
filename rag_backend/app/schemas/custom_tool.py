@@ -42,6 +42,14 @@ class GenerateToolRequest(BaseModel):
     agent_id: Optional[str] = None
 
 
+class GenerateToolCodeRequest(BaseModel):
+    spec: CustomToolSpec
+    instruction: Optional[str] = Field(
+        default=None,
+        description="Additional implementation notes for the generated code draft",
+    )
+
+
 class CreateCustomToolRequest(CustomToolSpec):
     pass
 
