@@ -234,17 +234,63 @@ class Nodes:
                 user_input=state["user_query"],
                 context=specialist_context
             )
-            logger.info(f"[财务专家] 分析完成")
-            
-            # 🔧 使用 ResultSynthesizer 级别的丰富格式化（与流式路径保持一致）
-            # 优先使用 orchestrator 的 _format_finance_result 方法生成结构化报告
-            try:
-                markdown_report = self.orchestrator._format_finance_result(result)
-                logger.debug(f"[财务专家] 使用 _format_finance_result 生成丰富报告，长度: {len(markdown_report)}")
-            except Exception as format_err:
-                logger.warning(f"[财务专家] _format_finance_result 失败，降级到简单格式: {format_err}")
-                # 降级：将字典翻译成人类可读的 Markdown 文本
-                markdown_report = self._simple_finance_markdown(result)
+            logger.info(f"[财务专家] 分析完成, success={result.get('success')}")
+
+            # 🔧 检查专家是否分析失败，失败时生成清晰的错误报告而非误导性 JSON
+            if not result.get('success', True):
+                error_type = result.get('error_type', 'unknown')
+                error_msg = result.get('error', '未知错误')
+                fallback = result.get('fallback', '建议您稍后重试')
+                logger.warning(f"[财务专家] 分析失败 (type={error_type}): {error_msg}")
+
+                # 根据错误类型生成用户可读的报告
+                if error_type == 'timeout':
+                    markdown_report = f"""## 💰 财务专家分析报告
+
+### ⚠️ 分析处理超时
+
+**原因**：财务分析请求处理时间超过系统上限，未能按时完成。
+
+**建议**：
+1. 稍后重新提交查询
+2. 尝试缩短或简化您的问题描述
+3. 如持续出现此问题，请联系系统管理员
+
+---
+*⏱️ 超时时间: 60秒*"""
+                elif error_type == 'data_error':
+                    markdown_report = f"""## 💰 财务专家分析报告
+
+### ⚠️ 数据获取异常
+
+**原因**：{error_msg}
+
+**建议**：
+1. 确认企业财务数据已正确导入系统
+2. 检查数据格式是否符合要求
+3. 如需帮助，请联系系统管理员
+
+---
+*📊 数据来源: 企业财务数据库*"""
+                else:
+                    markdown_report = f"""## 💰 财务专家分析报告
+
+### ⚠️ 分析处理失败
+
+**原因**：{error_msg}
+
+**建议**：{fallback}
+
+---
+*🔍 请稍后重试*"""
+            else:
+                # 🔧 使用 ResultSynthesizer 级别的丰富格式化（与流式路径保持一致）
+                try:
+                    markdown_report = self.orchestrator._format_finance_result(result)
+                    logger.debug(f"[财务专家] 使用 _format_finance_result 生成丰富报告，长度: {len(markdown_report)}")
+                except Exception as format_err:
+                    logger.warning(f"[财务专家] _format_finance_result 失败，降级到简单格式: {format_err}")
+                    markdown_report = self._simple_finance_markdown(result)
             
             specialist_data = {
                 "source": "finance",
@@ -286,14 +332,27 @@ class Nodes:
         try:
             result = await self.orchestrator.tax_specialist.run(user_input=state["user_query"], context=specialist_context)
             logger.info("[税务专家] 分析完成")
-            
-            # 🔧 使用 orchestrator 的 _format_tax_result 生成结构化税务报告
-            try:
-                markdown_content = self.orchestrator._format_tax_result(result)
-                logger.debug(f"[税务专家] 使用 _format_tax_result 生成报告，长度: {len(markdown_content)}")
-            except Exception as format_err:
-                logger.warning(f"[税务专家] _format_tax_result 失败，降级: {format_err}")
-                markdown_content = self._simple_specialist_markdown(result, "📋 税务专家分析报告")
+
+            if not result.get('success', True):
+                error_msg = result.get('error', '未知错误')
+                logger.warning(f"[税务专家] 分析失败: {error_msg}")
+                markdown_content = f"""## 📋 税务专家分析报告
+
+### ⚠️ 分析处理失败
+
+**原因**：{error_msg}
+
+**建议**：请稍后重试，或联系系统管理员获取帮助。
+
+---
+*🔍 税务分析未能完成*"""
+            else:
+                try:
+                    markdown_content = self.orchestrator._format_tax_result(result)
+                    logger.debug(f"[税务专家] 使用 _format_tax_result 生成报告，长度: {len(markdown_content)}")
+                except Exception as format_err:
+                    logger.warning(f"[税务专家] _format_tax_result 失败，降级: {format_err}")
+                    markdown_content = self._simple_specialist_markdown(result, "📋 税务专家分析报告")
             
             specialist_data = {
                 "source": "tax",
@@ -325,14 +384,27 @@ class Nodes:
         try:
             result = await self.orchestrator.legal_specialist.run(user_input=state["user_query"], context=specialist_context)
             logger.info("[法律专家] 分析完成")
-            
-            # 🔧 使用 orchestrator 的 _format_legal_result 生成结构化法务报告
-            try:
-                markdown_content = self.orchestrator._format_legal_result(result)
-                logger.debug(f"[法律专家] 使用 _format_legal_result 生成报告，长度: {len(markdown_content)}")
-            except Exception as format_err:
-                logger.warning(f"[法律专家] _format_legal_result 失败，降级: {format_err}")
-                markdown_content = self._simple_specialist_markdown(result, "⚖️ 法律专家分析报告")
+
+            if not result.get('success', True):
+                error_msg = result.get('error', '未知错误')
+                logger.warning(f"[法律专家] 分析失败: {error_msg}")
+                markdown_content = f"""## ⚖️ 法律专家分析报告
+
+### ⚠️ 分析处理失败
+
+**原因**：{error_msg}
+
+**建议**：请稍后重试，或联系系统管理员获取帮助。
+
+---
+*🔍 法律分析未能完成*"""
+            else:
+                try:
+                    markdown_content = self.orchestrator._format_legal_result(result)
+                    logger.debug(f"[法律专家] 使用 _format_legal_result 生成报告，长度: {len(markdown_content)}")
+                except Exception as format_err:
+                    logger.warning(f"[法律专家] _format_legal_result 失败，降级: {format_err}")
+                    markdown_content = self._simple_specialist_markdown(result, "⚖️ 法律专家分析报告")
             
             existing_results = state.get("specialist_results", [])
             specialist_data = {
@@ -543,44 +615,73 @@ class Nodes:
             }
         
         try:
+            # 🔧 过滤原始结果：只保留成功且有实际分析数据的专家结果
             raw_results = []
+            failed_sources = []
             for sr in specialist_results:
                 if isinstance(sr, dict) and "data" in sr:
+                    data = sr.get("data", {})
+                    success = sr.get("success") or data.get("success")
+                    if success is False:
+                        # 专家分析失败，记录失败信息但不传给合成器
+                        failed_sources.append(sr.get("source", "unknown"))
+                        logger.warning(f"[最终答案] 专家 {sr.get('source', 'unknown')} 分析失败，已跳过")
+                        continue
                     raw_results.append(sr)
-            
+
+            # 检查是否有任何成功的结果
             if not raw_results:
-                logger.warning("[最终答案] raw_results 为空，返回降级响应")
-                
-                if state.get("needs_clarification") and state.get("clarification_request"):
-                    logger.info("[最终答案] 需要追问")
-                    return {
-                        **state,
-                        "final_answer": "",
-                        "output": "",
-                        "needs_clarification": True,
-                        "clarification_request": state.get("clarification_request")
-                    }
-                
+                logger.warning(f"[最终答案] 所有专家分析均失败 (failed: {failed_sources})，返回错误信息")
+
+                # 构建清晰的用户错误消息
+                error_detail = "分析处理失败"
+                if failed_sources:
+                    source_names = {"finance": "财务", "tax": "税务", "legal": "法律"}
+                    failed_names = [source_names.get(s, s) for s in failed_sources]
+                    error_detail = f"{'、'.join(failed_names)}分析处理失败"
+
                 return {
                     **state,
-                    "final_answer": "抱歉，未能获取到有效的分析结果。",
-                    "output": "抱歉，未能获取到有效的分析结果。"
+                    "final_answer": f"⚠️ 抱歉，{error_detail}。建议您简化查询或稍后重试。如需帮助，请联系系统管理员。",
+                    "output": f"⚠️ 抱歉，{error_detail}。建议您简化查询或稍后重试。如需帮助，请联系系统管理员。"
                 }
-            
+
+            # 如果有部分专家成功、部分失败，记录日志
+            if failed_sources:
+                logger.info(f"[最终答案] 部分专家失败 (failed: {failed_sources})，仅合成成功结果")
+
             # 🔧 移除单专家跳过 ResultSynthesizer 的优化
             # 所有结果（包括单专家）统一通过 ResultSynthesizer 生成结构化报告
             from app.agent_framework.components.result_synthesizer import ResultSynthesizer
             synthesizer = ResultSynthesizer(llm_adapter=self.orchestrator.llm_adapter)
-            
-            logger.info("[最终答案] 开始调用 ResultSynthesizer...")
+
+            logger.info("[最终答案] 开始调用 ResultSynthesizer，成功结果数: %s", len(raw_results))
+            # 🔧 只传入成功的专家数据，避免错误数据污染合成结果
+            synthesis_data = {}
+            for r in raw_results:
+                data = r.get("data", {})
+                # 如果 data 中只有 error/fallback/success 等错误字段，跳过
+                error_only_keys = {'success', 'error', 'fallback', 'error_type'}
+                if isinstance(data, dict) and error_only_keys.issuperset(data.keys()):
+                    logger.warning(f"[最终答案] 跳过无效数据 (keys: {list(data.keys())})")
+                    continue
+                synthesis_data[r.get("source", "unknown")] = data
+
+            if not synthesis_data:
+                return {
+                    **state,
+                    "final_answer": "⚠️ 抱歉，分析结果无效，无法生成报告。请稍后重试。",
+                    "output": "⚠️ 抱歉，分析结果无效，无法生成报告。请稍后重试。"
+                }
+
             final_markdown = await synthesizer.synthesize_and_format(
-                specialist_results={r.get("source", "unknown"): r.get("data", {}) for r in raw_results},
+                specialist_results=synthesis_data,
                 user_query=state.get("user_query", "")
             )
-            
+
             final_markdown = self._clean_markdown_output(final_markdown)
             logger.debug(f"[最终答案] 清洗后长度: {len(final_markdown)}")
-            
+
             if final_markdown:
                 logger.info(f"[最终答案] 合成成功，长度: {len(final_markdown)}")
                 updated_state = {
@@ -595,7 +696,7 @@ class Nodes:
                     "final_answer": "抱歉，生成报告时遇到问题。",
                     "output": "抱歉，生成报告时遇到问题。"
                 }
-            
+
         except Exception as e:
             logger.error(f"[最终答案] 合成器异常: {e}")
             updated_state = {

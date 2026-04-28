@@ -951,13 +951,23 @@ class FinanceSpecialist(BaseSpecialistAgent):
             return {
                 "success": False,
                 "error": f"数据错误: {str(e)}",
+                "error_type": "data_error",
                 "fallback": "建议您咨询专业财务顾问获取准确信息"
+            }
+        except asyncio.TimeoutError as e:
+            logger.error(f"财务分析 LLM 调用超时 ({self.timeout}秒): {e}")
+            return {
+                "success": False,
+                "error": f"LLM 调用超时（{self.timeout}秒），请稍后重试",
+                "error_type": "timeout",
+                "fallback": "系统处理超时，建议您简化查询或稍后重试"
             }
         except (OSError, IOError) as e:
             logger.error(f"财务分析IO失败: {e}")
             return {
                 "success": False,
                 "error": f"IO错误: {str(e)}",
+                "error_type": "io_error",
                 "fallback": "建议您咨询专业财务顾问获取准确信息"
             }
         except Exception as e:
