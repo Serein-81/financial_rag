@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { policyApi, type Policy, type PolicySearchParams } from '@/api/policy'
+import { tenantSettingsApi, type TenantSettings } from '@/api/tenant-settings'
 import { ElMessage } from 'element-plus'
 import {
   FileText,
@@ -51,6 +52,7 @@ const totalPolicies = ref(0)
 const currentPage = ref(1)
 const pageSize = ref(20)
 const isLoading = ref(false)
+const tenantSettings = ref<TenantSettings | null>(null)
 
 // PolicyNotificationAgent 状态
 const agentStatus = ref<any>(null)
@@ -123,11 +125,32 @@ const activeFilterCount = computed(() => {
 })
 
 onMounted(async () => {
+  await loadTenantSettings()
   await Promise.all([
     fetchPolicies(),
     checkAgentStatus()
   ])
 })
+
+async function loadTenantSettings() {
+  try {
+    tenantSettings.value = await tenantSettingsApi.getMySettings()
+  } catch (error) {
+    console.warn('Failed to load tenant settings:', error)
+  }
+}
+
+function getEnterpriseProfile(policy?: Policy) {
+  return {
+    enterprise_id: tenantSettings.value?.tenant_id || 'default',
+    enterprise_name: tenantSettings.value?.company_name || '企业',
+    industry: tenantSettings.value?.industry || '通用',
+    region: tenantSettings.value?.region || '全国',
+    scale: tenantSettings.value?.scale || '中型企业',
+    tax_types: tenantSettings.value?.tax_types || policy?.tax_types || [],
+    qualifications: []
+  }
+}
 
 async function fetchPolicies() {
   isLoading.value = true
@@ -184,15 +207,7 @@ async function generateLLMSummary(policyId: string, policy: Policy) {
         content: policy.content || policy.summary || '',
         source: policy.source_name || 'policy_center'
       },
-      enterprise_profile: {
-        enterprise_id: 'default',
-        enterprise_name: '企业',
-        industry: '通用',
-        region: '全国',
-        scale: '中型企业',
-        tax_types: policy.tax_types || [],
-        qualifications: []
-      },
+      enterprise_profile: getEnterpriseProfile(policy),
       match_result: {
         match_score: 0.5,
         industry_match: true,

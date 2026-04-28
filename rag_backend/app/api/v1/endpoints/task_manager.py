@@ -16,7 +16,7 @@ from app.db.session import get_db
 from app.models.user import User
 from app.api.deps import get_current_user
 from app.models.scheduled_task import ScheduledTask, TaskExecutionLog
-from app.services.task_scheduler import task_scheduler
+from app.services.task_scheduler import TaskFrequency, TaskType, task_scheduler
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,22 @@ class TaskCreateRequest(BaseModel):
     params: Optional[dict] = None
     enabled: bool = True
 
+    @field_validator('task_type')
+    @classmethod
+    def validate_task_type(cls, v):
+        allowed = {item.value for item in TaskType if item != TaskType.CUSTOM}
+        if v not in allowed:
+            raise ValueError(f"unsupported task_type: {v}")
+        return v
+
+    @field_validator('frequency')
+    @classmethod
+    def validate_frequency(cls, v):
+        allowed = {item.value for item in TaskFrequency}
+        if v not in allowed:
+            raise ValueError(f"unsupported frequency: {v}")
+        return v
+
 
 class TaskUpdateRequest(BaseModel):
     name: Optional[str] = None
@@ -40,6 +56,16 @@ class TaskUpdateRequest(BaseModel):
     next_run_time: Optional[datetime] = None
     params: Optional[dict] = None
     enabled: Optional[bool] = None
+
+    @field_validator('frequency')
+    @classmethod
+    def validate_frequency(cls, v):
+        if v is None:
+            return v
+        allowed = {item.value for item in TaskFrequency}
+        if v not in allowed:
+            raise ValueError(f"unsupported frequency: {v}")
+        return v
 
 
 class TaskToggleRequest(BaseModel):
@@ -309,7 +335,9 @@ async def update_task(
 
         update_data = request.model_dump(exclude_unset=True)
         for field, value in update_data.items():
-            if hasattr(task, field):
+            if field == "params":
+                task.task_params = value
+            elif hasattr(task, field):
                 setattr(task, field, value)
 
         task.updated_at = datetime.now(timezone.utc)

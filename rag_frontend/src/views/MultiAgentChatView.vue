@@ -713,6 +713,7 @@ async function sendMessage() {
   if (!userInput.value.trim() || isLoading.value) return
 
   streamInterrupted.value = false
+  let handedOffToPolling = false
   const query = userInput.value.trim()
   userInput.value = ''
 
@@ -738,8 +739,6 @@ async function sendMessage() {
   scrollToBottom()
 
   try {
-    const token = localStorage.getItem('rag_token')
-    
     taskStore.initTask({
       query,
       sessionId: sessionId.value,
@@ -748,7 +747,7 @@ async function sendMessage() {
     })
     
     // 使用新的异步端点
-    await submitAsyncQuery(query, assistantMsg)
+    handedOffToPolling = await submitAsyncQuery(query, assistantMsg)
     
   } catch (error: any) {
     console.error('请求错误:', error)
@@ -766,14 +765,16 @@ async function sendMessage() {
     assistantMsg.content = `?**请求失败**\n\n${errorMessage}\n\n💡 **建议**：\n1. 检查服务器是否正在运行\n2. 稍后重试您的问题\n3. 如果问题持续存在，请联系管理员`
     taskStore.failTask(errorMessage, currentResponse.value)
   } finally {
-    isLoading.value = false
+    if (!handedOffToPolling) {
+      isLoading.value = false
+    }
     scrollToBottom()
   }
 }
 
 
 // 使用异步端点提交查询（支持页面切换不断开）
-async function submitAsyncQuery(query: string, assistantMsg: Message) {
+async function submitAsyncQuery(query: string, assistantMsg: Message): Promise<boolean> {
   const token = localStorage.getItem('rag_token')
   
   try {
@@ -814,11 +815,13 @@ async function submitAsyncQuery(query: string, assistantMsg: Message) {
     
     // 4. 开始轮询状态
     startPolling(assistantMsg)
+    return true
     
   } catch (error) {
     console.error('❌ 异步提交失败，回退到SSE模式:', error)
     // 如果异步端点失败，回退到SSE模式
     await submitWithSSE(query, assistantMsg)
+    return false
   }
 }
 
@@ -843,13 +846,20 @@ function startPolling(assistantMsg: Message) {
       stopPolling()
       isLoading.value = false
       assistantMsg.content = '⏱️ **任务执行超时**\n\n后台任务处理时间过长，请稍后重新发起请求'
+      taskStore.failTask('任务执行超时', currentResponse.value)
       localStorage.removeItem('multi_agent_task_id')
       localStorage.removeItem('multi_agent_thread_id')
+      currentTaskId = null
+      currentThreadId = null
       console.warn('⏱️ 轮询超时，已停止')
       return
     }
 
     try {
+      if (!currentThreadId) {
+        throw new Error('缺少任务线程ID，无法查询进度')
+      }
+
       const token = localStorage.getItem('rag_token')
       
       const response = await fetch(`/api/v1/agent-task/status/${currentThreadId}`, {
@@ -859,8 +869,7 @@ function startPolling(assistantMsg: Message) {
       })
       
       if (!response.ok) {
-        console.error('轮询状态失败:', response.status)
-        return
+        throw new Error(`轮询状态失败: HTTP ${response.status}`)
       }
       
       const status = await response.json()
@@ -910,6 +919,8 @@ function startPolling(assistantMsg: Message) {
         // 清理 localStorage
         localStorage.removeItem('multi_agent_task_id')
         localStorage.removeItem('multi_agent_thread_id')
+        currentTaskId = null
+        currentThreadId = null
 
       } else if (status.status === 'failed') {
         stopPolling()
@@ -921,14 +932,19 @@ function startPolling(assistantMsg: Message) {
 
         localStorage.removeItem('multi_agent_task_id')
         localStorage.removeItem('multi_agent_thread_id')
+        currentTaskId = null
+        currentThreadId = null
 
       } else if (status.status === 'cancelled') {
         stopPolling()
         isLoading.value = false
 
         assistantMsg.content = '❌ 任务已被取消'
+        taskStore.failTask('任务已被取消', currentResponse.value)
         localStorage.removeItem('multi_agent_task_id')
         localStorage.removeItem('multi_agent_thread_id')
+        currentTaskId = null
+        currentThreadId = null
       }
       // running 或 pending 状态继续轮询
       

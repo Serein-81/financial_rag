@@ -18,13 +18,6 @@ from .loader import (
     load_prompt_template,
 )
 
-from .llm_functions import (
-    TriageFunction,
-    triage_document,
-    QualityReviewFunction,
-    review_quality,
-)
-
 __all__ = [
     'AgentPromptLoader',
     'AgentPromptRegistry',
@@ -42,3 +35,29 @@ __all__ = [
     'QualityReviewFunction',
     'review_quality'
 ]
+
+
+def __getattr__(name):
+    """Lazily import LLM helper functions to keep prompt loading lightweight."""
+    if name in {
+        'TriageFunction',
+        'triage_document',
+        'QualityReviewFunction',
+        'review_quality',
+    }:
+        from .llm_functions import (
+            TriageFunction,
+            triage_document,
+            QualityReviewFunction,
+            review_quality,
+        )
+
+        values = {
+            'TriageFunction': TriageFunction,
+            'triage_document': triage_document,
+            'QualityReviewFunction': QualityReviewFunction,
+            'review_quality': review_quality,
+        }
+        return values[name]
+
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

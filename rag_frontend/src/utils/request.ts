@@ -6,6 +6,16 @@ import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import router from '@/router'
 
+function normalizeApiBase(base?: string): string {
+  if (!base) return '/api/v1'
+  const trimmed = base.replace(/\/+$/, '')
+  return trimmed.endsWith('/api/v1') ? trimmed : `${trimmed}/api/v1`
+}
+
+const API_BASE_URL = normalizeApiBase(
+  import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_BASE
+)
+
 // 获取 token
 export function getToken(): string | null {
   return localStorage.getItem('rag_token')
@@ -75,7 +85,7 @@ export function getEnterpriseId(): string {
 
 // 创建全局 axios 实例
 const instance = axios.create({
-  baseURL: '/api/v1',
+  baseURL: API_BASE_URL,
 })
 
 // 全局请求拦截器
@@ -167,7 +177,7 @@ export async function request<T = any>(
 ): Promise<T> {
   const response = await instance.request<T>({
     url,
-    baseURL: '/api/v1',
+    baseURL: API_BASE_URL,
     timeout: 120000,
     headers: {
       'Content-Type': 'application/json',
@@ -185,7 +195,7 @@ export async function requestForm<T = any>(
 ): Promise<T> {
   const response = await instance.request<T>({
     url,
-    baseURL: '/api/v1',
+    baseURL: API_BASE_URL,
     method: 'POST',
     data: formData,
     headers: {
@@ -260,7 +270,7 @@ export async function register(
     token_type: string
     user_name: string
     avatar_url?: string
-  }>('/api/v1/auth/register', {
+  }>('/auth/register', {
     email,
     password,
     full_name,
@@ -295,7 +305,7 @@ export async function registerAdmin(
     token_type: string
     user_name: string
     avatar_url?: string
-  }>('/api/v1/auth/register/admin', {
+  }>('/auth/register/admin', {
     email,
     password,
     full_name,

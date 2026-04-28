@@ -58,6 +58,7 @@ class SystemLog(Base):
     
     # 关联信息
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
+    tenant_id = Column(String(50), nullable=True, index=True)
     session_id = Column(String(100), nullable=True, index=True)  # 会话ID
     request_id = Column(String(100), nullable=True, index=True)  # 请求ID
     
@@ -118,6 +119,7 @@ class SystemLog(Base):
             "action": self.action,
             "message": self.message,
             "user_id": str(self.user_id) if self.user_id else None,
+            "tenant_id": self.tenant_id,
             "session_id": self.session_id,
             "request_id": self.request_id,
             "module": self.module,
@@ -157,6 +159,7 @@ class UserActionLog(Base):
     # 用户信息
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
     user_email = Column(String(255), nullable=True)  # 冗余存储，防止用户删除后无法追踪
+    tenant_id = Column(String(50), nullable=True, index=True)
     
     # 操作信息
     action_type = Column(String(50), nullable=False, index=True)  # 操作类型
@@ -174,6 +177,7 @@ class UserActionLog(Base):
 
     # 日志等级
     level = Column(String(20), nullable=False, default='INFO', index=True)  # INFO, WARNING, ERROR, DEBUG
+    risk_level = Column(String(20), nullable=False, default='low', index=True)
 
     # 请求信息
     ip_address = Column(String(45), nullable=True)
@@ -191,6 +195,8 @@ class UserActionLog(Base):
     # 创建索引
     __table_args__ = (
         Index('idx_action_logs_user_time', 'user_id', 'created_at'),
+        Index('idx_action_logs_tenant_time', 'tenant_id', 'created_at'),
+        Index('idx_action_logs_tenant_risk_time', 'tenant_id', 'risk_level', 'created_at'),
         Index('idx_action_logs_type_time', 'action_type', 'created_at'),
         Index('idx_action_logs_resource', 'resource_type', 'resource_id'),
     )

@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, status,
 from app.db import AsyncSessionLocal
 from app.api import deps
 from app.models.user import User
+from app.models.tenant_settings import TenantSettings
 from app.services.minio_service import minio_service
 from app.services.sms_service import sms_service
 from app.services.invite_code_service import InviteCodeService
@@ -271,6 +272,14 @@ async def register_admin(
         )
 
         db.add(new_admin)
+        db.add(TenantSettings(
+            tenant_id=new_admin.tenant_id,
+            company_name=admin_in.company_name,
+            admin_name=admin_in.full_name or admin_in.nickname,
+            admin_email=admin_in.email,
+            admin_phone=admin_in.phone,
+            is_trial=True
+        ))
         await db.commit()
         await db.refresh(new_admin)
 
@@ -903,10 +912,16 @@ async def get_enterprise_info(
             raise HTTPException(status_code=404, detail="用户不存在")
         
         is_personal = db_user.tenant_id.startswith("user_")
+        settings_result = await db.execute(
+            select(TenantSettings.company_name).where(
+                TenantSettings.tenant_id == db_user.tenant_id
+            )
+        )
+        company_name = settings_result.scalar_one_or_none() or db_user.company_name
         
         return {
             "tenant_id": db_user.tenant_id,
-            "company_name": db_user.company_name,
+            "company_name": company_name,
             "is_personal": is_personal,
             "is_admin": db_user.is_admin,
             "is_enterprise_member": not is_personal

@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { policyApi, type PolicyNotification, type SSEPolicyNotification } from '@/api/policy'
 import { policyTrackingApi } from '@/api/policy-tracking'
+import { tenantSettingsApi, type TenantSettings } from '@/api/tenant-settings'
 import { getEnterpriseId, getTenantIdFromToken, isAuthenticated } from '@/utils/request'
 import { ElMessage } from 'element-plus'
 import {
@@ -46,6 +47,7 @@ const agentStatus = ref<any>(null)
 const isCheckingAgent = ref(false)
 const llmGeneratedContent = ref<Map<string, any>>(new Map())
 const isGeneratingContent = ref(false)
+const tenantSettings = ref<TenantSettings | null>(null)
 
 // SSE Real-time Push State
 const sseConnected = ref(false)
@@ -187,6 +189,7 @@ onMounted(async () => {
     await Promise.all([
       loadNotifications(),
       loadSubscriptions(),
+      loadTenantSettings(),
       connectSSE(),
       checkAgentStatus()
     ])
@@ -196,6 +199,24 @@ onMounted(async () => {
     }
   }
 })
+
+async function loadTenantSettings() {
+  try {
+    tenantSettings.value = await tenantSettingsApi.getMySettings()
+    enterpriseProfile.value = {
+      ...enterpriseProfile.value,
+      industry: tenantSettings.value.industry || enterpriseProfile.value.industry,
+      region: tenantSettings.value.region || enterpriseProfile.value.region,
+      company_size: tenantSettings.value.scale || enterpriseProfile.value.company_size
+    }
+  } catch (error) {
+    console.warn('Failed to load tenant settings:', error)
+  }
+}
+
+function getEnterpriseName() {
+  return tenantSettings.value?.company_name || '企业'
+}
 
 onUnmounted(() => {
   disconnectSSE()
@@ -394,7 +415,7 @@ async function generateLLMNotificationContent(policyId: string, policy: any) {
       },
       enterprise_profile: {
         enterprise_id: enterpriseId,
-        enterprise_name: enterpriseProfile.value.industry || '企业',
+        enterprise_name: getEnterpriseName(),
         industry: enterpriseProfile.value.industry || '通用',
         region: enterpriseProfile.value.region || '全国',
         scale: enterpriseProfile.value.scale || '中型企业',

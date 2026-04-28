@@ -5,8 +5,10 @@
 支持配置缓存、热更新和变量替换
 """
 
-import yaml
 import logging
+import json
+import re
+import yaml
 from pathlib import Path
 from typing import Optional, Dict, List, Any
 
@@ -130,7 +132,7 @@ class AgentPromptLoader:
         if not config:
             return None
 
-        prompt_file_name = config.get('agent', {}).get('prompts', {}).get('system', 'system.md')
+        prompt_file_name = self._get_system_prompt_file(config)
         agent_dir = self.agents_dir / agent_name
         prompt_file = agent_dir / prompt_file_name
 
@@ -142,12 +144,76 @@ class AgentPromptLoader:
             with open(prompt_file, 'r', encoding='utf-8') as f:
                 prompt = f.read()
 
+            prompt = self._append_configured_includes(prompt, config)
+
             self._prompt_cache[cache_key] = prompt
             return prompt
 
         except Exception as e:
             logger.error(f"Failed to load system prompt {agent_name}: {e}")
             return None
+
+    def _append_configured_includes(self, prompt: str, config: Dict[str, Any]) -> str:
+        includes = self._get_prompt_includes(config)
+        if not includes:
+            return prompt
+
+        include_parts = []
+        for include_name in includes:
+            content = self.load_shared_component(str(include_name))
+            if content:
+                include_parts.append(content)
+
+        if not include_parts:
+            return prompt
+
+        return "\n\n".join([prompt, *include_parts])
+
+    def _get_prompt_includes(self, config: Dict[str, Any]) -> List[str]:
+        includes = (
+            config.get("agent", {})
+            .get("prompts", {})
+            .get("includes")
+        )
+        if includes is None:
+            includes = config.get("prompt", {}).get("includes")
+
+        if not includes:
+            return []
+
+        if isinstance(includes, str):
+            return [includes]
+
+        if isinstance(includes, list):
+            return [str(item) for item in includes if item]
+
+        logger.warning(f"Invalid prompt includes config: {includes}")
+        return []
+
+    def _get_system_prompt_file(self, config: Dict[str, Any]) -> str:
+        """
+        Resolve the configured system prompt file.
+
+        Supported schemas:
+        - agent.prompts.system: system.md
+        - prompt.system_file: system.md
+
+        The second form exists in several newer agent configs, so keeping both
+        here makes the loader the compatibility boundary.
+        """
+        agent_prompt_file = (
+            config.get("agent", {})
+            .get("prompts", {})
+            .get("system")
+        )
+        if agent_prompt_file:
+            return str(agent_prompt_file)
+
+        prompt_file = config.get("prompt", {}).get("system_file")
+        if prompt_file:
+            return str(prompt_file)
+
+        return "system.md"
 
     def load_shared_component(self, component_name: str) -> Optional[str]:
         """
@@ -159,9 +225,15 @@ class AgentPromptLoader:
         Returns:
             组件内容，失败返回None
         """
-        component_file = self.shared_dir / f"{component_name}.yaml"
+        component_path = Path(component_name)
+        if component_path.suffix:
+            component_file = self.prompts_root / component_path
+            if not component_file.exists():
+                component_file = self.shared_dir / component_path.name
+        else:
+            component_file = self.shared_dir / f"{component_name}.yaml"
 
-        if not component_file.exists():
+        if not component_file.exists() and not component_path.suffix:
             component_file = self.shared_dir / f"{component_name}.md"
 
         if not component_file.exists():
@@ -192,7 +264,7 @@ class AgentPromptLoader:
         Returns:
             渲染后的提示词
         """
-        cache_key = f"render:{agent_name}:{hash(frozenset(context.items()))}"
+        cache_key = f"render:{agent_name}:{self._make_context_cache_key(context)}"
 
         if use_cache and cache_key in self._prompt_cache:
             return self._prompt_cache[cache_key]
@@ -202,16 +274,62 @@ class AgentPromptLoader:
             return None
 
         try:
-            rendered = prompt.format(**context)
+            rendered = self.render_text(prompt, context)
 
             if use_cache:
                 self._prompt_cache[cache_key] = rendered
 
             return rendered
 
-        except KeyError as e:
-            logger.error(f"Missing template variable in {agent_name}: {e}")
+        except Exception as e:
+            logger.error(f"Failed to render prompt {agent_name}: {e}")
             return prompt
+
+    def render_text(self, template: str, context: Dict[str, Any]) -> str:
+        """
+        Render prompt variables without treating every brace as a template.
+
+        This intentionally supports only identifier-style placeholders:
+        {name}, {object.property}, {{ name }}, and {{ object.property }}.
+        JSON examples such as {"field": "value"} are left unchanged.
+        Unknown variables are also left unchanged so prompt files do not lose
+        information when a caller provides a partial context.
+        """
+        if not template:
+            return template
+
+        double_brace_pattern = re.compile(
+            r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*\}\}"
+        )
+        single_brace_pattern = re.compile(
+            r"(?<!\{)\{\s*([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*\}(?!\})"
+        )
+
+        def replace(match: re.Match) -> str:
+            var_path = match.group(1)
+            found, value = self._lookup_context_value(context, var_path)
+            if not found:
+                return match.group(0)
+            return str(value)
+
+        rendered = double_brace_pattern.sub(replace, template)
+        rendered = single_brace_pattern.sub(replace, rendered)
+        return rendered
+
+    def _lookup_context_value(self, context: Dict[str, Any], var_path: str) -> tuple[bool, Any]:
+        value: Any = context
+        for key in var_path.split("."):
+            if isinstance(value, dict) and key in value:
+                value = value[key]
+            else:
+                return False, None
+        return True, "" if value is None else value
+
+    def _make_context_cache_key(self, context: Dict[str, Any]) -> str:
+        try:
+            return json.dumps(context, ensure_ascii=False, sort_keys=True, default=str)
+        except TypeError:
+            return repr(sorted((str(k), repr(v)) for k, v in context.items()))
 
     def get_available_agents(self) -> List[str]:
         """获取所有可用的Agent列表"""
@@ -238,6 +356,10 @@ class AgentPromptLoader:
             del self._config_cache[key]
 
         keys_to_remove = [k for k in self._prompt_cache if k.startswith(f"prompt:{agent_name}")]
+        for key in keys_to_remove:
+            del self._prompt_cache[key]
+
+        keys_to_remove = [k for k in self._prompt_cache if k.startswith(f"render:{agent_name}:")]
         for key in keys_to_remove:
             del self._prompt_cache[key]
 
@@ -330,7 +452,7 @@ class PromptLoader:
             格式化后的提示词
         """
         content = self.load(file_path)
-        return content.format(**kwargs)
+        return AgentPromptLoader().render_text(content, kwargs)
     
     @classmethod
     def clear_cache(cls):

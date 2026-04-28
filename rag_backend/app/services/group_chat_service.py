@@ -5,6 +5,7 @@ from sqlalchemy import select, and_, cast, String
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.utils.json_compat import json
 import logging
+import uuid
 
 from app.models.group_chat import ChatGroup, GroupMember, GroupInvitation, GroupMessage
 from app.models.group_chat import GroupMemberStatus, GroupRole, MessageReadReceipt
@@ -961,11 +962,20 @@ class GroupChatWebSocketManager:
     ):
         if self.redis:
             notification_key = f"notification:user:{user_id}"
+            now = datetime.utcnow().isoformat()
+            notification_type = message.get("notification_type") or message.get("type") or "info"
             self.redis.client.lpush(
                 notification_key,
                 json.dumps({
+                    "id": message.get("id") or str(uuid.uuid4()),
                     **message,
-                    "timestamp": datetime.utcnow().isoformat()
+                    "notification_type": notification_type,
+                    "type": message.get("type") or notification_type,
+                    "source": message.get("source") or "system",
+                    "created_at": message.get("created_at") or message.get("timestamp") or now,
+                    "timestamp": message.get("timestamp") or now,
+                    "is_read": message.get("is_read", message.get("read", False)),
+                    "read": message.get("read", message.get("is_read", False)),
                 })
             )
             self.redis.client.expire(notification_key, 604800)

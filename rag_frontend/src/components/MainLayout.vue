@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import { ElNotification } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import { useSessionStore } from '@/stores/session'
 import { useGroupChatStore } from '@/stores/group-chat'
 import { useEnterpriseTheme } from '@/composables/useEnterpriseTheme'
+import { useUnifiedNotifications } from '@/composables/useUnifiedNotifications'
 import BackgroundTaskIndicator from './BackgroundTaskIndicator.vue'
 import {
   MessageSquare,
@@ -75,6 +77,12 @@ const route = useRoute()
 const authStore = useAuthStore()
 const sessionStore = useSessionStore()
 const groupChatStore = useGroupChatStore()
+const {
+  notifications: unifiedNotifications,
+  unreadCount: notificationUnreadCount,
+  loadNotifications: loadUnifiedNotifications,
+  refresh: refreshUnifiedNotifications
+} = useUnifiedNotifications()
 
 const { enterpriseTheme } = useEnterpriseTheme()
 
@@ -91,13 +99,22 @@ function hexToRgba(hex: string, alpha: number): string {
 const isSidebarCollapsed = ref(localStorage.getItem('sidebar_collapsed') === 'true')
 const showUserMenu = ref(false)
 const showNotificationPanel = ref(false)
+let unifiedNotificationPollTimer: ReturnType<typeof setInterval> | null = null
+const notifiedInvitationIds = new Set<string>()
+const hasInitializedInvitationNotifications = ref(false)
 
 const expandedGroups = ref<Set<string>>(new Set(['collaboration', 'knowledge', 'finance']))
 
 onMounted(async () => {
   try {
-    await groupChatStore.fetchNotifications()
+    await Promise.all([
+      groupChatStore.fetchNotifications(),
+      loadUnifiedNotifications('all', true)
+    ])
     groupChatStore.startNotificationPoll()
+    unifiedNotificationPollTimer = setInterval(() => {
+      refreshUnifiedNotifications()
+    }, 30000)
   } catch (error) {
     console.error('❌ MainLayout mounted hook 错误:', error)
     // 即使 fetchNotifications 失败，也继续运行，不阻塞整个应用
@@ -106,6 +123,10 @@ onMounted(async () => {
 
 onUnmounted(() => {
   groupChatStore.stopNotificationPoll()
+  if (unifiedNotificationPollTimer) {
+    clearInterval(unifiedNotificationPollTimer)
+    unifiedNotificationPollTimer = null
+  }
 })
 
 watch(() => sessionStore.showSessionsPanel, (showSessions) => {
@@ -120,6 +141,39 @@ watch(isSidebarCollapsed, (collapsed) => {
     expandedGroups.value.clear()
   }
 })
+
+watch(
+  unifiedNotifications,
+  (notifications) => {
+    const invitations = notifications.filter(notification =>
+      notification.category === 'chat' &&
+      notification.metadata?.type === 'invitation' &&
+      !notification.isRead
+    )
+
+    if (!hasInitializedInvitationNotifications.value) {
+      invitations.forEach(notification => notifiedInvitationIds.add(notification.id))
+      hasInitializedInvitationNotifications.value = true
+      return
+    }
+
+    for (const invitation of invitations) {
+      if (notifiedInvitationIds.has(invitation.id)) continue
+      notifiedInvitationIds.add(invitation.id)
+      ElNotification({
+        title: '群聊邀请',
+        message: invitation.message || '你收到了一条新的群聊邀请',
+        type: 'info',
+        duration: 8000,
+        position: 'bottom-right',
+        onClick: () => {
+          router.push('/notifications')
+        }
+      })
+    }
+  },
+  { deep: true }
+)
 
 const isAdmin = computed(() => authStore.isAdmin || localStorage.getItem('rag_user_role') === 'admin')
 const userRole = computed<MenuRole>(() => isAdmin.value ? 'admin' : 'user')
@@ -184,6 +238,7 @@ const menuGroups = computed<MenuGroup[]>(() => {
       items: [
         { path: '/analytics', icon: TrendingUp, label: '运营分析', name: 'analytics' },
         { path: '/chat-logs', icon: ScrollText, label: '日志详情', name: 'chat-logs' },
+        { path: '/notifications', icon: Bell, label: '通知中心', name: 'notifications' },
         { path: '/task-management', icon: Clock, label: '定时任务', name: 'task-management' },
       ]
     },
@@ -254,7 +309,9 @@ function toggleSidebar() {
 }
 
 function toggleNotificationsInSidebar() {
-  showNotificationPanel.value = !showNotificationPanel.value
+  showNotificationPanel.value = false
+  router.push('/notifications')
+  refreshUnifiedNotifications()
 }
 
 function logout() {
@@ -406,11 +463,11 @@ function goToProfile() {
           <Bell :size="17" class="text-slate-400" />
           <span v-if="!isSidebarCollapsed" class="text-sm text-slate-600">通知中心</span>
           <span
-            v-if="groupChatStore.unreadCount > 0"
+            v-if="notificationUnreadCount > 0"
             class="absolute right-3 top-1/2 -translate-y-1/2 min-w-[16px] h-[16px] bg-red-500 text-white text-xs font-bold rounded-full flex items-center justify-center px-1"
             :style="isSidebarCollapsed ? 'position: absolute; top: 2px; right: 2px;' : ''"
           >
-            {{ groupChatStore.unreadCount > 99 ? '99+' : groupChatStore.unreadCount }}
+            {{ notificationUnreadCount > 99 ? '99+' : notificationUnreadCount }}
           </span>
         </button>
 

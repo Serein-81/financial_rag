@@ -192,7 +192,12 @@ async def get_metrics(
             first_point = points[0]
             labels = first_point.labels if hasattr(first_point, "labels") else {}
 
-            if "requests_total" in name or "invocations" in name or "errors" in name:
+            if (
+                "requests_total" in name
+                or "requests.total" in name
+                or "invocations" in name
+                or "errors" in name
+            ):
                 counters.append(
                     {
                         "name": name,

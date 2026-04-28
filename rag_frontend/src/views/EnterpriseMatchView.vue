@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { policyApi, type PolicyMatchResult } from '@/api/policy'
+import { tenantSettingsApi, type TenantSettings } from '@/api/tenant-settings'
 import { getEnterpriseId } from '@/utils/request'
 import { ElMessage } from 'element-plus'
 import gsap from 'gsap'
@@ -28,6 +29,7 @@ const isLoading = ref(false)
 const isRefreshing = ref(false)
 const matches = ref<PolicyMatchResult[]>([])
 const selectedMatch = ref<PolicyMatchResult | null>(null)
+const tenantSettings = ref<TenantSettings | null>(null)
 
 // PolicyNotificationAgent 状态
 const useLLM = ref(true)
@@ -55,6 +57,7 @@ const statistics = computed(() => ({
 }))
 
 onMounted(async () => {
+  await loadTenantSettings()
   await loadMatches()
   await checkAgentStatus()
   nextTick(() => {
@@ -68,6 +71,26 @@ onMounted(async () => {
     )
   })
 })
+
+async function loadTenantSettings() {
+  try {
+    tenantSettings.value = await tenantSettingsApi.getMySettings()
+    enterpriseProfile.value = {
+      ...enterpriseProfile.value,
+      enterprise_name: getEnterpriseName(),
+      industry: tenantSettings.value.industry || enterpriseProfile.value.industry,
+      region: tenantSettings.value.region || enterpriseProfile.value.region,
+      scale: tenantSettings.value.scale || enterpriseProfile.value.scale,
+      tax_types: tenantSettings.value.tax_types || enterpriseProfile.value.tax_types
+    }
+  } catch (error) {
+    console.warn('Failed to load tenant settings:', error)
+  }
+}
+
+function getEnterpriseName() {
+  return tenantSettings.value?.company_name || enterpriseProfile.value.enterprise_name || '企业'
+}
 
 async function checkAgentStatus() {
   isCheckingAgent.value = true
@@ -99,8 +122,8 @@ async function loadMatches() {
 async function refreshMatches() {
   isRefreshing.value = true
   try {
-    await policyApi.matchEnterprisePolicies(getEnterpriseId(), enterpriseProfile.value)
-    await loadMatches()
+    enterpriseProfile.value.enterprise_name = getEnterpriseName()
+    matches.value = await policyApi.matchEnterprisePolicies(getEnterpriseId(), enterpriseProfile.value)
     ElMessage.success('匹配结果已更新')
   } catch (error: any) {
     ElMessage.error('刷新匹配结果失败')
@@ -122,6 +145,7 @@ async function loadDetailedMatches() {
   try {
     for (const match of matches.value.slice(0, 5)) {
       const policy = match.policy
+      if (!policy) continue
 
       const matchRequest = {
         policy: {
@@ -175,6 +199,15 @@ function getMatchStatusLabel(score: number) {
   if (score >= 0.6) return '良好匹配'
   if (score >= 0.4) return '一般匹配'
   return '低匹配'
+}
+
+function getMatchScoreLabel(score: number) {
+  return getMatchStatusLabel(score)
+}
+
+function getReasonText(reason: string | { reason?: string; category?: string; items?: string[] }) {
+  if (typeof reason === 'string') return reason
+  return reason.reason || reason.category || ''
 }
 
 function toggleLLMMode() {
@@ -387,10 +420,10 @@ function getDetailedMatch(policyId: string) {
                     <div class="flex flex-wrap gap-2">
                       <span
                         v-for="reason in match.match_reasons.slice(0, 4)"
-                        :key="reason"
+                        :key="getReasonText(reason)"
                         class="px-2 py-1 bg-white rounded-lg text-xs text-gray-600 border border-gray-200"
                       >
-                        {{ reason }}
+                        {{ getReasonText(reason) }}
                       </span>
                     </div>
                   </div>

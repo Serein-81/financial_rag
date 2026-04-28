@@ -9,10 +9,11 @@
 
 from typing import Optional, List
 from datetime import datetime
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.tenant_settings import TenantSettings
+from app.models.user import User
 from app.schemas.tenant_settings import (
     TenantSettingsCreate,
     TenantSettingsUpdate
@@ -133,6 +134,13 @@ class TenantSettingsService:
             for key, value in update_data.items():
                 logger.info(f"设置属性: {key} = {value}")
                 setattr(db_settings, key, value)
+
+            if "company_name" in update_data and update_data["company_name"]:
+                await db.execute(
+                    update(User)
+                    .where(User.tenant_id == tenant_id)
+                    .values(company_name=update_data["company_name"])
+                )
 
             db_settings.updated_at = datetime.utcnow()
             await db.commit()
@@ -324,6 +332,16 @@ class TenantSettingsService:
             existing = await self.get_settings_by_tenant_id(tenant_id, db)
             if existing:
                 logger.info(f"租户设置已存在: tenant_id={tenant_id}")
+                if company_name and existing.company_name != company_name:
+                    existing.company_name = company_name
+                    existing.updated_at = datetime.utcnow()
+                    await db.execute(
+                        update(User)
+                        .where(User.tenant_id == tenant_id)
+                        .values(company_name=company_name)
+                    )
+                    await db.commit()
+                    await db.refresh(existing)
                 return existing
 
             settings = TenantSettings(
@@ -333,6 +351,12 @@ class TenantSettingsService:
                 is_trial=True
             )
             db.add(settings)
+            if company_name:
+                await db.execute(
+                    update(User)
+                    .where(User.tenant_id == tenant_id)
+                    .values(company_name=company_name)
+                )
             await db.commit()
             await db.refresh(settings)
 

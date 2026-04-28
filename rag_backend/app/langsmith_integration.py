@@ -344,7 +344,7 @@ class LangSmithTracer:
         
         try:
             # 创建 Agent Run
-            run_id = self.client.create_run(
+            run = self.client.create_run(
                 name=f"agent_{agent_name}",
                 run_type="chain",
                 project_name=self.project_name,
@@ -359,6 +359,7 @@ class LangSmithTracer:
                     **(metadata or {})
                 }
             )
+            run_id = str(run.id) if hasattr(run, "id") else str(run) if run else None
             
             logger.debug(f"[LangSmith] 开始追踪 Agent: {agent_name} -> {run_id}")
             yield run_id

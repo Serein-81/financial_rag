@@ -10,6 +10,11 @@ from uuid import UUID
 import uuid
 
 from app.models.policy import Policy, PolicyStatus, PolicyPriority
+from app.models.enterprise_policy_match import (
+    EnterprisePolicyMatch,
+    MatchStatus,
+    NotificationStatus,
+)
 from app.db.session import SessionLocal
 from sqlalchemy import select, and_, or_, desc
 
@@ -274,6 +279,13 @@ class PolicyRetrievalService:
             top_k=top_k,
             filters=filters
         )
+
+        if not results:
+            results = await self._rule_based_policy_search(
+                enterprise_profile=enterprise_profile,
+                top_k=top_k,
+                filters=filters
+            )
         
         for result in results:
             result["match_reasons"] = self._explain_match(
@@ -295,8 +307,164 @@ class PolicyRetrievalService:
                           f"profile={'有数据' if enterprise_profile else '为空'}")
         
         results.sort(key=lambda x: x.get("match_score", 0), reverse=True)
+
+        results = self._normalize_match_results(results)
+        await self._save_enterprise_matches(
+            enterprise_id=enterprise_profile.get("enterprise_id"),
+            results=results,
+        )
         
         return results
+
+    async def _rule_based_policy_search(
+        self,
+        enterprise_profile: Dict[str, Any],
+        top_k: int,
+        filters: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
+        """Fallback matcher used when vector embeddings are unavailable."""
+        db = SessionLocal()
+        try:
+            query = select(Policy).where(Policy.status == PolicyStatus.ACTIVE)
+
+            if filters:
+                if filters.get("industries"):
+                    query = query.where(Policy.industries.overlap(filters["industries"]))
+                if filters.get("regions"):
+                    query = query.where(Policy.regions.overlap(filters["regions"]))
+                if filters.get("tax_types"):
+                    query = query.where(Policy.tax_types.overlap(filters["tax_types"]))
+
+            policies = db.execute(query).scalars().all()
+
+            scored = []
+            for policy in policies:
+                score = 0.0
+                if enterprise_profile.get("industry") and policy.industries:
+                    if enterprise_profile["industry"] in policy.industries:
+                        score += 0.35
+                if enterprise_profile.get("region") and policy.regions:
+                    if enterprise_profile["region"] in policy.regions or "全国" in policy.regions:
+                        score += 0.25
+                if enterprise_profile.get("scale") and policy.scales:
+                    if enterprise_profile["scale"] in policy.scales:
+                        score += 0.15
+                if enterprise_profile.get("tax_types") and policy.tax_types:
+                    if set(enterprise_profile["tax_types"]) & set(policy.tax_types):
+                        score += 0.25
+                if policy.priority in (PolicyPriority.CRITICAL, PolicyPriority.HIGH):
+                    score += 0.05
+
+                if score > 0:
+                    scored.append({
+                        "policy_id": str(policy.id),
+                        "title": policy.title,
+                        "summary": policy.summary,
+                        "content": policy.content,
+                        "score": min(score, 1.0),
+                        "match_score": min(score, 1.0),
+                        "source_name": policy.source_name,
+                        "source_url": policy.source_url,
+                        "published_date": policy.published_date.isoformat() if policy.published_date else None,
+                        "effective_date": policy.effective_date.isoformat() if policy.effective_date else None,
+                        "expiry_date": policy.expiry_date.isoformat() if policy.expiry_date else None,
+                        "priority": policy.priority.value if policy.priority else None,
+                        "industries": policy.industries or [],
+                        "regions": policy.regions or [],
+                        "scales": policy.scales or [],
+                        "tax_types": policy.tax_types or [],
+                        "tags": policy.tags or [],
+                    })
+
+            scored.sort(key=lambda x: x.get("match_score", 0), reverse=True)
+            return scored[:top_k]
+        finally:
+            db.close()
+
+    def _normalize_match_results(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        normalized = []
+        for result in results:
+            policy_id = result.get("policy_id") or result.get("id")
+            title = result.get("title") or result.get("policy_title") or ""
+            score = result.get("match_score", result.get("score", 0))
+            policy = {
+                "id": policy_id,
+                "policy_id": result.get("policy_id_external") or policy_id,
+                "title": title,
+                "content": result.get("content") or result.get("summary") or "",
+                "summary": result.get("summary"),
+                "source_name": result.get("source_name") or "",
+                "source_url": result.get("source_url"),
+                "published_date": result.get("published_date"),
+                "effective_date": result.get("effective_date"),
+                "expiry_date": result.get("expiry_date"),
+                "status": result.get("status", "active"),
+                "priority": result.get("priority", "medium"),
+                "industries": result.get("industries") or [],
+                "regions": result.get("regions") or [],
+                "scales": result.get("scales") or [],
+                "tax_types": result.get("tax_types") or [],
+                "tags": result.get("tags") or [],
+                "view_count": result.get("view_count", 0),
+                "meta_info": result.get("meta_info") or {},
+                "created_at": result.get("created_at"),
+                "updated_at": result.get("updated_at"),
+            }
+            result["policy_id"] = policy_id
+            result["policy_title"] = title
+            result["match_score"] = float(score or 0)
+            result["policy"] = policy
+            normalized.append(result)
+        return normalized
+
+    async def _save_enterprise_matches(
+        self,
+        enterprise_id: Optional[str],
+        results: List[Dict[str, Any]]
+    ) -> None:
+        if not enterprise_id or not results:
+            return
+
+        db = SessionLocal()
+        try:
+            for result in results:
+                policy_id = result.get("policy_id")
+                if not policy_id:
+                    continue
+                try:
+                    policy_uuid = UUID(str(policy_id))
+                except ValueError:
+                    continue
+
+                existing = db.execute(
+                    select(EnterprisePolicyMatch).where(
+                        and_(
+                            EnterprisePolicyMatch.enterprise_id == enterprise_id,
+                            EnterprisePolicyMatch.policy_id == policy_uuid
+                        )
+                    )
+                ).scalar_one_or_none()
+
+                reasons = result.get("match_reasons") or []
+                if existing:
+                    existing.match_score = result.get("match_score", 0)
+                    existing.match_reasons = reasons
+                    existing.match_status = MatchStatus.ACTIVE
+                else:
+                    db.add(EnterprisePolicyMatch(
+                        enterprise_id=enterprise_id,
+                        policy_id=policy_uuid,
+                        match_score=result.get("match_score", 0),
+                        match_reasons=reasons,
+                        notification_status=NotificationStatus.PENDING,
+                        match_status=MatchStatus.ACTIVE
+                    ))
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            logger.warning(f"⚠️ 保存企业政策匹配结果失败: {e}", exc_info=True)
+        finally:
+            db.close()
     
     async def _enhance_with_notification_service(
         self,

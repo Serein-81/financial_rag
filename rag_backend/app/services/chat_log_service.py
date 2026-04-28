@@ -14,6 +14,7 @@ from sqlalchemy.orm import selectinload
 from app.db.session import AsyncSessionLocal
 from app.models.chat import ChatSession, ChatMessage
 from app.models.user import User
+from app.models.tenant_settings import TenantSettings
 from app.models.system_log import UserActionLog
 from app.services.log_service import log_service
 
@@ -115,9 +116,14 @@ class ChatLogService:
         """获取租户信息（ID、名称等）"""
         async with AsyncSessionLocal() as session:
             result = await session.execute(
-                select(User.company_name).where(User.tenant_id == tenant_id).limit(1)
+                select(TenantSettings.company_name).where(TenantSettings.tenant_id == tenant_id)
             )
             company_name = result.scalar_one_or_none()
+            if not company_name:
+                result = await session.execute(
+                    select(User.company_name).where(User.tenant_id == tenant_id).limit(1)
+                )
+                company_name = result.scalar_one_or_none()
             return {
                 "tenant_id": tenant_id,
                 "company_name": company_name or tenant_id
@@ -791,9 +797,22 @@ class ChatLogService:
         """
         try:
             async with AsyncSessionLocal() as session:
-                base_query = select(UserActionLog).where(
-                    UserActionLog.user_id == current_user_id
+                current_user_result = await session.execute(
+                    select(User).where(User.id == current_user_id)
                 )
+                current_user = current_user_result.scalar_one_or_none()
+
+                if current_user and current_user.is_admin:
+                    accessible_tenant_ids = current_user.all_tenant_ids
+                    tenant_user_ids_query = select(User.id).where(User.tenant_id.in_(accessible_tenant_ids))
+                    base_query = select(UserActionLog).where(
+                        (UserActionLog.tenant_id.in_(accessible_tenant_ids))
+                        | (UserActionLog.user_id.in_(tenant_user_ids_query))
+                    )
+                else:
+                    base_query = select(UserActionLog).where(
+                        UserActionLog.user_id == current_user_id
+                    )
 
                 if start_date:
                     base_query = base_query.where(UserActionLog.created_at >= start_date)
@@ -825,6 +844,7 @@ class ChatLogService:
                         "id": str(log.id),
                         "user_id": str(log.user_id),
                         "user_email": log.user_email,
+                        "tenant_id": log.tenant_id,
                         "action_type": log.action_type,
                         "action_name": log.action_name,
                         "description": log.description,
@@ -837,6 +857,7 @@ class ChatLogService:
                         "user_agent": log.user_agent,
                         "created_at": log.created_at.isoformat() if log.created_at else None,
                         "level": log.level,
+                        "risk_level": log.risk_level,
                     })
 
                 return {

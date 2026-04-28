@@ -21,6 +21,7 @@ from datetime import datetime
 from uuid import UUID
 
 from app.models.enterprise_policy_match import EnterprisePolicyMatch, NotificationStatus, MatchStatus
+from app.models.policy import Policy
 from app.db.session import SessionLocal
 from sqlalchemy import select, and_
 
@@ -368,7 +369,8 @@ class PolicyNotificationService:
         self,
         enterprise_id: str,
         policy_data: Dict[str, Any],
-        match_result: Dict[str, Any]
+        match_result: Optional[Dict[str, Any]] = None,
+        match_score: Optional[float] = None
     ):
         """
         创建匹配记录和通知
@@ -381,13 +383,28 @@ class PolicyNotificationService:
         db = SessionLocal()
         
         try:
-            policy_id = policy_data.get("policy_id") or policy_data.get("id", "")
+            match_result = match_result or {
+                "match_score": match_score or 0,
+                "match_reasons": [],
+                "use_llm": False,
+            }
+            policy_id = policy_data.get("id") or policy_data.get("policy_id", "")
+            try:
+                policy_uuid = UUID(str(policy_id))
+            except (TypeError, ValueError):
+                policy = db.execute(
+                    select(Policy).where(Policy.policy_id == str(policy_id))
+                ).scalar_one_or_none()
+                if not policy:
+                    logger.warning(f"⚠️ 无法找到匹配记录对应的政策: {policy_id}")
+                    return
+                policy_uuid = policy.id
             
             existing = db.execute(
                 select(EnterprisePolicyMatch).where(
                     and_(
                         EnterprisePolicyMatch.enterprise_id == enterprise_id,
-                        EnterprisePolicyMatch.policy_id == str(policy_id)
+                        EnterprisePolicyMatch.policy_id == policy_uuid
                     )
                 )
             ).scalar_one_or_none()
@@ -403,21 +420,16 @@ class PolicyNotificationService:
             
             match = EnterprisePolicyMatch(
                 enterprise_id=enterprise_id,
-                policy_id=str(policy_id),
+                policy_id=policy_uuid,
                 match_score=match_result.get("match_score", 0),
-                match_status=MatchStatus.MATCHED,
+                match_status=MatchStatus.ACTIVE,
                 notification_status=NotificationStatus.PENDING,
-                match_reasons=match_reasons,
-                meta_info={
-                    "policy_title": policy_data.get("title", ""),
-                    "priority": policy_data.get("priority"),
-                    "source": policy_data.get("source_name"),
-                    "use_llm": match_result.get("use_llm", False)
-                }
+                match_reasons=match_reasons
             )
             
             db.add(match)
-            await db.commit()
+            db.commit()
+            db.refresh(match)
             
             logger.info(
                 f"📬 创建匹配: {enterprise_id} - "
@@ -436,7 +448,7 @@ class PolicyNotificationService:
             
         except Exception as e:
             logger.error(f"❌ 创建匹配失败: {e}", exc_info=True)
-            await db.rollback()
+            db.rollback()
         finally:
             db.close()
 
@@ -648,7 +660,7 @@ class PolicyNotificationService:
             if match:
                 match.notification_status = NotificationStatus.SENT
                 match.notified_at = datetime.now()
-                await db.commit()
+                db.commit()
                 
         except Exception as e:
             logger.error(f"❌ 更新通知状态失败: {e}", exc_info=True)
@@ -675,7 +687,9 @@ class PolicyNotificationService:
         db = SessionLocal()
         
         try:
-            query = select(EnterprisePolicyMatch).where(
+            query = select(EnterprisePolicyMatch, Policy).join(
+                Policy, EnterprisePolicyMatch.policy_id == Policy.id
+            ).where(
                 EnterprisePolicyMatch.enterprise_id == enterprise_id
             )
             
@@ -688,13 +702,38 @@ class PolicyNotificationService:
                 EnterprisePolicyMatch.created_at.desc()
             ).limit(limit)
             
-            matches = db.execute(query).scalars().all()
+            rows = db.execute(query).all()
             
             results = []
-            for match in matches:
+            for match, policy in rows:
+                policy_data = {
+                    "id": str(policy.id),
+                    "policy_id": policy.policy_id,
+                    "title": policy.title,
+                    "content": policy.content,
+                    "summary": policy.summary,
+                    "source_name": policy.source_name,
+                    "source_url": policy.source_url,
+                    "published_date": policy.published_date.isoformat() if policy.published_date else None,
+                    "effective_date": policy.effective_date.isoformat() if policy.effective_date else None,
+                    "expiry_date": policy.expiry_date.isoformat() if policy.expiry_date else None,
+                    "status": policy.status.value if policy.status else None,
+                    "priority": policy.priority.value if policy.priority else None,
+                    "industries": policy.industries or [],
+                    "regions": policy.regions or [],
+                    "scales": policy.scales or [],
+                    "tax_types": policy.tax_types or [],
+                    "tags": policy.tags or [],
+                    "view_count": policy.view_count or 0,
+                    "meta_info": policy.meta_info or {},
+                    "created_at": policy.created_at.isoformat() if policy.created_at else None,
+                    "updated_at": policy.updated_at.isoformat() if policy.updated_at else None,
+                }
                 results.append({
                     "id": str(match.id),
-                    "policy_id": match.policy_id,
+                    "policy_id": str(match.policy_id),
+                    "policy_title": policy.title,
+                    "policy": policy_data,
                     "match_score": match.match_score,
                     "match_status": match.match_status.value,
                     "notification_status": match.notification_status.value,

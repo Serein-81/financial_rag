@@ -853,6 +853,25 @@ function getLevelBadgeClass(level: string | undefined): string {
   return level === 'DEBUG' ? 'bg-gray-100 text-gray-700' : 'bg-gray-200 text-gray-700'
 }
 
+function getRiskBadgeClass(riskLevel: string | undefined): string {
+  const classes: Record<string, string> = {
+    medium: 'bg-yellow-100 text-yellow-700',
+    high: 'bg-orange-100 text-orange-700',
+    critical: 'bg-red-100 text-red-700'
+  }
+  return classes[riskLevel || ''] || 'bg-gray-100 text-gray-600'
+}
+
+function getRiskLabel(riskLevel: string | undefined): string {
+  const labels: Record<string, string> = {
+    low: '低风险',
+    medium: '中风险',
+    high: '高风险',
+    critical: '严重风险'
+  }
+  return labels[riskLevel || ''] || riskLevel || '低风险'
+}
+
 
 
 
@@ -2139,6 +2158,14 @@ function getEnterpriseLogLevelIcon(level: string) {
 
 
 
+              <span
+                v-if="log.risk_level && log.risk_level !== 'low'"
+                class="inline-flex mb-2 px-2 py-0.5 text-xs rounded-full font-medium"
+                :class="getRiskBadgeClass(log.risk_level)"
+              >
+                {{ getRiskLabel(log.risk_level) }}
+              </span>
+
               <div class="text-gray-500 text-xs mb-2">
 
 
@@ -2151,7 +2178,7 @@ function getEnterpriseLogLevelIcon(level: string) {
 
 
 
-              <div class="flex items-center gap-4 text-xs text-gray-400">
+              <div class="flex items-center gap-4 text-xs text-gray-400 flex-wrap">
 
 
                 <div class="flex items-center gap-1">
@@ -2175,6 +2202,10 @@ function getEnterpriseLogLevelIcon(level: string) {
                   <span>IP: {{ log.ip_address }}</span>
 
 
+                </div>
+
+                <div v-if="log.tenant_id" class="flex items-center gap-1">
+                  <span>企业: {{ log.tenant_id }}</span>
                 </div>
 
 
@@ -3661,6 +3692,14 @@ function getEnterpriseLogLevelIcon(level: string) {
 
 
 
+                  <span
+                    v-if="log.risk_level && log.risk_level !== 'low'"
+                    class="inline-flex mb-2 px-2 py-0.5 text-xs rounded-full font-medium"
+                    :class="getRiskBadgeClass(log.risk_level)"
+                  >
+                    {{ getRiskLabel(log.risk_level) }}
+                  </span>
+
                   <div class="text-sm text-gray-600 mb-1">
 
 
@@ -3673,13 +3712,14 @@ function getEnterpriseLogLevelIcon(level: string) {
 
 
 
-                  <div class="flex items-center gap-4 text-xs text-gray-400">
+                  <div class="flex items-center gap-4 text-xs text-gray-400 flex-wrap">
 
 
                     <span>{{ formatDate(log.created_at) }}</span>
 
 
                     <span v-if="log.ip_address">IP: {{ log.ip_address }}</span>
+                    <span v-if="log.tenant_id">企业: {{ log.tenant_id }}</span>
 
 
                     <span v-if="log.result_message" class="text-red-500">{{ log.result_message }}</span>

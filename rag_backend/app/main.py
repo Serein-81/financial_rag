@@ -16,7 +16,7 @@ from app.core.resource_manager import make_resource_manager, RedisConnectionPool
 from app.models import tax_report, user_financial_data, tenant_settings, policy, financial_health, contract_review, agent_task
 from app.api.v1.endpoints import document as document_router, search, chat, auth, session, knowledge, agent_trace, tool_trace, prompt_optimization, memory, knowledge_graph, audit, invite_code, enterprise, logs, chat_logs, tax_report, human_review, multi_agent, group_chat, user_financial_data, tenant_settings, policy, rate_limit, streaming, snapshot, suggestion, tax_intelligence, financial_health, policy_tracking, contract_review, task_manager, agent_llm_config, agent_discovery, financial_tools_test, workflow_events, policy_notifications, policy_agent, workflow, security
 from app.api.v1.endpoints import agent_task as agent_task_endpoint
-from app.api.v1.endpoints import circuit_breaker_router
+from app.api.v1.endpoints.circuit_breaker_api import router as circuit_breaker_router
 from app.observability.router import router as observability_router
 
 # 🔒 导入租户中间件

@@ -97,19 +97,19 @@
         <div class="bg-white border border-slate-200 rounded-lg p-4">
           <div class="text-sm text-slate-600 mb-1">请求数</div>
           <div class="text-2xl font-bold text-slate-900">
-            {{ metricsSummary?.counters?.find(c => c.name === 'requests_total')?.value || 0 }}
+            {{ getMetricValue('counter', 'rag.requests.total') }}
           </div>
         </div>
         <div class="bg-white border border-slate-200 rounded-lg p-4">
           <div class="text-sm text-slate-600 mb-1">Agent 调用数</div>
           <div class="text-2xl font-bold text-slate-900">
-            {{ metricsSummary?.counters?.find(c => c.name === 'agent_invocations_total')?.value || 0 }}
+            {{ getMetricValue('counter', 'rag.agents.invocations') }}
           </div>
         </div>
         <div class="bg-white border border-slate-200 rounded-lg p-4">
-          <div class="text-sm text-slate-600 mb-1">活跃会话数</div>
+          <div class="text-sm text-slate-600 mb-1">运行中任务</div>
           <div class="text-2xl font-bold text-slate-900">
-            {{ metricsSummary?.gauges?.find(g => g.name === 'active_sessions')?.value || 0 }}
+            {{ getMetricValue('gauge', 'rag.tasks.running') }}
           </div>
         </div>
       </div>
@@ -262,6 +262,12 @@ const metricsSummary = ref<MetricsSummary | null>(null)
 const logs = ref<LogEntry[]>([])
 const logLevel = ref('')
 const healthReport = ref<HealthReport | null>(null)
+
+function getMetricValue(type: 'counter' | 'gauge', name: string): number {
+  if (!metricsSummary.value) return 0
+  const source = type === 'counter' ? metricsSummary.value.counters : metricsSummary.value.gauges
+  return source.find(metric => metric.name === name)?.value || 0
+}
 
 async function loadTraces() {
   try {

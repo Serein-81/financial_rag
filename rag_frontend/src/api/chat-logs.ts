@@ -312,6 +312,7 @@ export interface UserActionLog {
   id: string
   user_id: string
   user_email?: string
+  tenant_id?: string
   action_type: string
   action_name: string
   description?: string
@@ -324,6 +325,7 @@ export interface UserActionLog {
   user_agent?: string
   created_at: string
   level?: string
+  risk_level?: string
 }
 
 export interface EnterpriseLogEntry {

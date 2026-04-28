@@ -9,6 +9,7 @@ from sqlalchemy import and_, or_, desc, func, select
 
 from app.api import deps
 from app.models.user import User
+from app.models.tenant_settings import TenantSettings
 from app.schemas.auth_response import UserProfile
 from app.db.session import get_db
 
@@ -20,6 +21,45 @@ def require_admin_user(current_user: User = Depends(deps.get_current_user)) -> U
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="需要管理员权限")
     return current_user
+
+
+async def _get_company_name(
+    db: AsyncSession,
+    tenant_id: str,
+    fallback: Optional[str] = None
+) -> str:
+    result = await db.execute(
+        select(TenantSettings.company_name).where(TenantSettings.tenant_id == tenant_id)
+    )
+    settings_company_name = result.scalar_one_or_none()
+    return settings_company_name or fallback or "未命名企业"
+
+
+async def _sync_company_name(
+    db: AsyncSession,
+    tenant_id: str,
+    company_name: str,
+    admin_user: User
+) -> None:
+    result = await db.execute(
+        select(TenantSettings).where(TenantSettings.tenant_id == tenant_id)
+    )
+    tenant_settings = result.scalar_one_or_none()
+    if tenant_settings:
+        tenant_settings.company_name = company_name
+    else:
+        tenant_settings = TenantSettings(
+            tenant_id=tenant_id,
+            company_name=company_name,
+            admin_email=admin_user.email,
+            admin_name=admin_user.full_name or admin_user.nickname,
+            admin_phone=admin_user.phone
+        )
+        db.add(tenant_settings)
+
+    users_result = await db.execute(select(User).where(User.tenant_id == tenant_id))
+    for user in users_result.scalars().all():
+        user.company_name = company_name
 
 
 @router.get("/users", response_model=List[UserProfile])
@@ -284,9 +324,14 @@ async def get_enterprise_info(
     """
     获取企业信息（所有用户可用）
     """
+    company_name = await _get_company_name(
+        db,
+        current_user.tenant_id,
+        current_user.company_name
+    )
     company_info = {
         "id": current_user.tenant_id,
-        "name": current_user.company_name or "未命名企业",
+        "name": company_name,
         "tenant_id": current_user.tenant_id,
         "admin_name": current_user.full_name or current_user.nickname,
         "admin_email": current_user.email,
@@ -325,7 +370,7 @@ async def update_enterprise_info(
     更新企业信息
     """
     if company_name:
-        admin_user.company_name = company_name
+        await _sync_company_name(db, admin_user.tenant_id, company_name, admin_user)
         await db.commit()
     
     return {"message": "企业信息更新成功"}

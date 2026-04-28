@@ -12,7 +12,7 @@ import logging
 import traceback
 import uuid
 from dataclasses import dataclass
-from typing import Dict, Any, List, Optional, Callable
+from typing import Dict, Any, List, Optional, Callable, Set
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 
@@ -247,6 +247,10 @@ class TaskScheduler:
         self._tasks: Dict[str, ScheduledTask] = {}
         self._task_queue: asyncio.Queue = asyncio.Queue()
         self._running = False
+        self._scheduler_task: Optional[asyncio.Task] = None
+        self._execution_task: Optional[asyncio.Task] = None
+        self._running_tasks: Set[asyncio.Task] = set()
+        self._queued_task_ids: Set[str] = set()
         self._execution_history: List[Dict[str, Any]] = []
         logger.info("✅ 定时任务调度器初始化完成")
 
@@ -256,16 +260,73 @@ class TaskScheduler:
             logger.warning("⚠️ 调度器已在运行中")
             return
 
+        await self.load_tasks_from_db()
         self._running = True
         logger.info("🚀 定时任务调度器已启动")
 
-        asyncio.create_task(self._scheduler_loop())
-        asyncio.create_task(self._execution_loop())
+        self._scheduler_task = asyncio.create_task(self._scheduler_loop())
+        self._execution_task = asyncio.create_task(self._execution_loop())
 
     async def stop(self):
         """停止调度器"""
         self._running = False
+        for loop_task in (self._scheduler_task, self._execution_task):
+            if loop_task and not loop_task.done():
+                loop_task.cancel()
+
+        await asyncio.gather(
+            *(task for task in (self._scheduler_task, self._execution_task) if task),
+            return_exceptions=True
+        )
+
+        for task in list(self._running_tasks):
+            task.cancel()
+
+        if self._running_tasks:
+            await asyncio.gather(*self._running_tasks, return_exceptions=True)
+
+        self._scheduler_task = None
+        self._execution_task = None
+        self._queued_task_ids.clear()
         logger.info("⏹️ 定时任务调度器已停止")
+
+    async def load_tasks_from_db(self) -> int:
+        """Load enabled database tasks into the in-memory scheduler."""
+        try:
+            from sqlalchemy import and_, select
+            from app.db.session import AsyncSessionLocal
+            from app.models.scheduled_task import ScheduledTask as DBTaskModel
+
+            async with AsyncSessionLocal() as db:
+                query = select(DBTaskModel).where(
+                    and_(
+                        DBTaskModel.enabled.is_(True),
+                        DBTaskModel.next_run_time.is_not(None),
+                        DBTaskModel.status != TaskStatus.CANCELLED.value
+                    )
+                )
+                result = await db.execute(query)
+                db_tasks = result.scalars().all()
+
+            loaded = 0
+            for db_task in db_tasks:
+                try:
+                    task = self._convert_to_dataclass(db_task)
+                    self._tasks[task.task_id] = task
+                    loaded += 1
+                except Exception as exc:
+                    logger.error(
+                        "Failed to load scheduled task %s: %s",
+                        getattr(db_task, "task_id", None),
+                        exc,
+                        exc_info=True
+                    )
+
+            logger.info("Loaded %s scheduled tasks from database", loaded)
+            return loaded
+        except Exception as e:
+            logger.error("Failed to load scheduled tasks from database: %s", e, exc_info=True)
+            return 0
 
     async def _scheduler_loop(self):
         """调度循环"""
@@ -273,11 +334,11 @@ class TaskScheduler:
             try:
                 current_time = datetime.now(timezone.utc)
 
-                for task_id, task in self._tasks.items():
+                for task_id, task in list(self._tasks.items()):
                     if not task.enabled:
                         continue
 
-                    if task.status == TaskStatus.RUNNING:
+                    if task.status in (TaskStatus.RUNNING, TaskStatus.FAILED, TaskStatus.CANCELLED) or task_id in self._queued_task_ids:
                         continue
 
                     if task.next_run_time:
@@ -309,7 +370,10 @@ class TaskScheduler:
                     timeout=1.0
                 )
 
-                asyncio.create_task(self._execute_task(task))
+                self._queued_task_ids.discard(task.task_id)
+                running_task = asyncio.create_task(self._execute_task(task))
+                self._running_tasks.add(running_task)
+                running_task.add_done_callback(self._running_tasks.discard)
 
             except asyncio.TimeoutError:
                 continue
@@ -327,8 +391,13 @@ class TaskScheduler:
         """将任务加入执行队列"""
         if not isinstance(task, ScheduledTask):
             task = self._convert_to_dataclass(task)
+
+        if task.task_id in self._queued_task_ids or task.status == TaskStatus.RUNNING:
+            logger.info("Task already queued or running, skip duplicate enqueue: %s", task.task_id)
+            return
         
         task.status = TaskStatus.PENDING
+        self._queued_task_ids.add(task.task_id)
         await self._task_queue.put(task)
 
     async def _execute_task(self, task: ScheduledTask, is_manual: bool = False):
@@ -336,7 +405,9 @@ class TaskScheduler:
         if not isinstance(task, ScheduledTask):
             task = self._convert_to_dataclass(task)
         
-        start_time = datetime.now()
+        start_time = datetime.now(timezone.utc)
+        task.status = TaskStatus.RUNNING
+        await self._sync_task_to_db(task)
         
         execution_record = {
             "task_id": task.task_id,
@@ -347,6 +418,9 @@ class TaskScheduler:
 
         try:
             callback_result = None
+            if not task.callback:
+                raise ValueError(f"No callback registered for task type: {task.task_type}")
+
             if hasattr(task, 'callback') and task.callback:
                 if asyncio.iscoroutinefunction(task.callback):
                     callback_result = await task.callback(task.params or {})
@@ -358,8 +432,8 @@ class TaskScheduler:
             task.retry_count = 0
 
             execution_record["status"] = "completed"
-            execution_record["end_time"] = datetime.now().isoformat()
-            execution_record["duration"] = (datetime.now() - start_time).total_seconds()
+            execution_record["end_time"] = datetime.now(timezone.utc).isoformat()
+            execution_record["duration"] = (datetime.now(timezone.utc) - start_time).total_seconds()
 
             self._update_next_run_time(task)
 
@@ -367,7 +441,7 @@ class TaskScheduler:
             
             await self._sync_task_to_db(task)
             
-            end_time = datetime.now()
+            end_time = datetime.now(timezone.utc)
             result_message = "任务执行成功"
             callback_data = None
             if callback_result is not None:
@@ -392,7 +466,9 @@ class TaskScheduler:
 
         except (ValueError, KeyError) as e:
             logger.error(f"❌ 任务执行数据错误: {task.name} ({task.task_id}): {e}", exc_info=True)
-            end_time = datetime.now()
+            task.status = TaskStatus.FAILED
+            await self._sync_task_to_db(task)
+            end_time = datetime.now(timezone.utc)
             await self._save_execution_log_to_db(
                 task=task,
                 status="failed",
@@ -404,7 +480,9 @@ class TaskScheduler:
             )
         except (OSError, IOError) as e:
             logger.error(f"❌ 任务执行IO错误: {task.name} ({task.task_id}): {e}", exc_info=True)
-            end_time = datetime.now()
+            task.status = TaskStatus.FAILED
+            await self._sync_task_to_db(task)
+            end_time = datetime.now(timezone.utc)
             await self._save_execution_log_to_db(
                 task=task,
                 status="failed",
@@ -418,7 +496,7 @@ class TaskScheduler:
             logger.error(f"❌ 任务执行失败: {task.name} ({task.task_id}): {e}", exc_info=True)
 
             task.retry_count += 1
-            end_time = datetime.now()
+            end_time = datetime.now(timezone.utc)
 
             if task.retry_count < task.max_retries:
                 task.status = TaskStatus.PENDING
@@ -454,8 +532,8 @@ class TaskScheduler:
 
             await self._sync_task_to_db(task)
 
-            execution_record["end_time"] = datetime.now().isoformat()
-            execution_record["duration"] = (datetime.now() - start_time).total_seconds()
+            execution_record["end_time"] = datetime.now(timezone.utc).isoformat()
+            execution_record["duration"] = (datetime.now(timezone.utc) - start_time).total_seconds()
 
         self._execution_history.append(execution_record)
 
@@ -510,7 +588,7 @@ class TaskScheduler:
             description=description,
             frequency=frequency,
             next_run_time=next_run_time,
-            callback=callback,
+            callback=callback or self._get_callback_for_type(task_type),
             params=params or {},
             enabled=enabled
         )
@@ -528,12 +606,24 @@ class TaskScheduler:
         self._tasks[task.task_id] = task
         logger.info(f"📋 添加定时任务: {task.name} ({task.task_id}), 下次执行: {task.next_run_time}")
     
+    def _get_callback_for_type(self, task_type: TaskType) -> Optional[Callable]:
+        callbacks = {
+            TaskType.TAX_REMINDER: tax_reminder_task,
+            TaskType.FINANCIAL_REPORT: financial_health_report_task,
+            TaskType.POLICY_UPDATE: policy_update_push_task,
+            TaskType.ANOMALY_CHECK: anomaly_check_task,
+        }
+        return callbacks.get(task_type)
+
     def _convert_to_dataclass(self, db_task) -> ScheduledTask:
         """将数据库模型转换为调度器数据类"""
         
         task_type = TaskType(db_task.task_type) if isinstance(db_task.task_type, str) else db_task.task_type
         frequency = TaskFrequency(db_task.frequency) if isinstance(db_task.frequency, str) else db_task.frequency
         status = TaskStatus(db_task.status) if isinstance(db_task.status, str) else db_task.status
+        params = dict(db_task.task_params or {})
+        params.setdefault("user_id", str(db_task.user_id))
+        params.setdefault("tenant_id", str(db_task.tenant_id))
         
         return ScheduledTask(
             task_id=db_task.task_id,
@@ -543,7 +633,8 @@ class TaskScheduler:
             frequency=frequency,
             next_run_time=db_task.next_run_time,
             last_run_time=db_task.last_run_time,
-            params=db_task.task_params or {},
+            callback=self._get_callback_for_type(task_type),
+            params=params,
             status=status,
             enabled=db_task.enabled,
             retry_count=db_task.retry_count,
@@ -574,9 +665,16 @@ class TaskScheduler:
         execution_id = f"exec_{uuid.uuid4().hex[:12]}"
         logger.info(f"▶️ 手动执行任务: {task.name} ({task.task_id}), execution_id: {execution_id}")
         
-        asyncio.create_task(self._execute_task(task, is_manual=True))
+        running_task = asyncio.create_task(self._execute_task(task, is_manual=True))
+        self._running_tasks.add(running_task)
+        running_task.add_done_callback(self._running_tasks.discard)
         
         return execution_id
+
+    def _coerce_uuid(self, value: Any):
+        if value is None or isinstance(value, uuid.UUID):
+            return value
+        return uuid.UUID(str(value))
 
     async def _sync_task_to_db(self, task: ScheduledTask):
         """同步任务状态到数据库"""
@@ -622,8 +720,8 @@ class TaskScheduler:
                 
                 execution_log = TaskExecutionLog(
                     task_id=task.task_id,
-                    scheduled_task_id=task.db_id,
-                    user_id=task.user_id,
+                    scheduled_task_id=self._coerce_uuid(task.db_id),
+                    user_id=self._coerce_uuid(task.user_id),
                     tenant_id=task.tenant_id,
                     task_type=task.task_type.value if hasattr(task.task_type, 'value') else str(task.task_type),
                     start_time=start_time,

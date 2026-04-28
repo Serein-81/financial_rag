@@ -327,19 +327,26 @@ class AdminNotificationService:
         """
         try:
             async with get_db_context() as db:
-                from app.models.system_log import SystemLog
-                
+                from app.models.system_log import SystemLog, LogCategory, LogLevel
+
+                level_map = {
+                    "low": LogLevel.INFO,
+                    "medium": LogLevel.WARNING,
+                    "high": LogLevel.ERROR,
+                    "critical": LogLevel.CRITICAL,
+                }
                 log_entry = SystemLog(
-                    id=f"sec_{uuid.uuid4().hex[:12]}",
-                    tenant_id=tenant_id,
-                    level=severity,
-                    source="hitl_system",
-                    message=f"HITL安全事件: {event_type}",
-                    details={
+                    level=level_map.get(str(severity).lower(), LogLevel.WARNING).value,
+                    category=LogCategory.SECURITY.value,
+                    action=event_type,
+                    message=f"HITL security event: {event_type}",
+                    user_id=user_id,
+                    extra_data={
+                        "tenant_id": tenant_id,
+                        "risk_level": severity,
                         "event_type": event_type,
-                        "user_id": user_id,
-                        "details": details
-                    }
+                        "details": details,
+                    },
                 )
                 db.add(log_entry)
                 await db.commit()
@@ -379,14 +386,22 @@ class AdminNotificationService:
             webhook_url: Webhook地址
         """
         try:
+            now = datetime.now().isoformat()
             notification_payload = {
+                "id": str(uuid.uuid4()),
                 "user_id": user_id,
                 "title": title,
                 "message": message,
+                "notification_type": notification_type.value,
                 "type": notification_type.value,
                 "priority": priority.value,
+                "source": self._notification_source(notification_type),
                 "metadata": metadata or {},
-                "timestamp": datetime.now().isoformat()
+                "created_at": now,
+                "timestamp": now,
+                "is_read": False,
+                "read": False,
+                "is_archived": False
             }
             
             if notification_type == NotificationType.IN_APP or notification_type == NotificationType.TAX_REMINDER or notification_type == NotificationType.POLICY_UPDATE or notification_type == NotificationType.ANOMALY_ALERT:
@@ -401,14 +416,20 @@ class AdminNotificationService:
             if notification_type == NotificationType.WEBHOOK and webhook_url:
                 await self._send_webhook_notification(webhook_url, notification_payload)
             
-            await self._save_notification_record(
-                user_id=user_id,
-                title=title,
-                message=message,
-                notification_type=notification_type.value,
-                priority=priority.value,
-                metadata=metadata
-            )
+            if notification_type not in (
+                NotificationType.IN_APP,
+                NotificationType.TAX_REMINDER,
+                NotificationType.POLICY_UPDATE,
+                NotificationType.ANOMALY_ALERT,
+            ):
+                await self._save_notification_record(
+                    user_id=user_id,
+                    title=title,
+                    message=message,
+                    notification_type=notification_type.value,
+                    priority=priority.value,
+                    metadata=metadata
+                )
             
             logger.info(f"✅ 通知已发送: {user_id}, 类型: {notification_type.value}, 标题: {title}")
             
@@ -527,6 +548,15 @@ class AdminNotificationService:
         
         return html
 
+    def _notification_source(self, notification_type: NotificationType) -> str:
+        if notification_type == NotificationType.TAX_REMINDER:
+            return "task"
+        if notification_type == NotificationType.POLICY_UPDATE:
+            return "policy"
+        if notification_type in (NotificationType.ANOMALY_ALERT, NotificationType.SYSTEM_ALERT):
+            return "system"
+        return "system"
+
     async def _save_notification_record(
         self,
         user_id: str,
@@ -542,14 +572,22 @@ class AdminNotificationService:
                 return
             
             notification_key = f"notification:user:{user_id}"
+            now = datetime.now().isoformat()
             notification_record = {
+                "id": str(uuid.uuid4()),
+                "user_id": user_id,
                 "title": title,
                 "message": message,
+                "notification_type": notification_type,
                 "type": notification_type,
                 "priority": priority,
+                "source": "system",
                 "metadata": metadata,
-                "timestamp": datetime.now().isoformat(),
-                "read": False
+                "created_at": now,
+                "timestamp": now,
+                "is_read": False,
+                "read": False,
+                "is_archived": False
             }
             
             self.redis.client.lpush(
@@ -646,6 +684,5 @@ class AdminNotificationService:
             "detected_behaviors": behavior_names,
             "message": "操作已挂起，等待管理员审批"
         }
-
 
 admin_notification_service = AdminNotificationService()

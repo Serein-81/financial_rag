@@ -90,6 +90,7 @@ class AgentTracer:
         self._current_user_id: Optional[str] = None
         self._current_tenant_id: Optional[str] = None
         self._pending_steps: List[AgentStep] = []
+        self._langsmith_run_ids: Dict[str, str] = {}
         self._lock = asyncio.Lock()
     
     def _init_langsmith(self):
@@ -151,6 +152,7 @@ class AgentTracer:
                 tenant_id=tenant_id,
                 session_id=session_id,
                 message_id=message_id,
+                langsmith_run_id=langsmith_run_id,
                 status="running"
             )
             
@@ -163,6 +165,8 @@ class AgentTracer:
                 self._current_user_id = user_id
                 self._current_tenant_id = tenant_id
                 self._pending_steps = []
+                if langsmith_run_id:
+                    self._langsmith_run_ids[str(trace.id)] = str(langsmith_run_id)
             
             logger.info(f"🎬 开始追踪: {trace.id} | Agent: {agent_type} | User: {user_id}")
             if langsmith_run_id:
@@ -228,10 +232,11 @@ class AgentTracer:
             icon = self._get_step_icon(step_type)
             logger.debug(f"{icon} Step {step_number} ({step_type}): {content[:50]}...")
         
-        if self.langsmith_enabled and self.langsmith_tracer:
+        langsmith_run_id = self._langsmith_run_ids.get(str(trace_id))
+        if self.langsmith_enabled and self.langsmith_tracer and langsmith_run_id:
             try:
                 self.langsmith_tracer.add_agent_step(
-                    parent_run_id=trace_id,
+                    parent_run_id=langsmith_run_id,
                     step_type=step_type,
                     content=content,
                     tool_name=tool_name,
@@ -284,6 +289,7 @@ class AgentTracer:
                     logger.warning(f"⚠️ 追踪记录不存在: {trace_id}")
                     return
                 
+                langsmith_run_id = trace.langsmith_run_id or self._langsmith_run_ids.get(str(trace_id))
                 all_steps = pending_steps_to_commit.copy()
                 result = await db.execute(
                     select(AgentStep)
@@ -315,11 +321,11 @@ class AgentTracer:
                 logger.info(f"   工具调用: {trace.tool_calls_count}")
                 logger.info(f"   总耗时: {trace.total_time:.2f}s" if trace.total_time else "   总耗时: 0.00s")
                 
-                if self.langsmith_enabled and self.langsmith_tracer:
+                if self.langsmith_enabled and self.langsmith_tracer and langsmith_run_id:
                     try:
                         final_answer_preview = final_answer[:500] if final_answer else ""
                         self.langsmith_tracer.end_agent_run(
-                            run_id=str(trace_id),
+                            run_id=str(langsmith_run_id),
                             final_answer=final_answer_preview,
                             success=success,
                             error_message=error_message,

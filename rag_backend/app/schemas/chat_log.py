@@ -103,6 +103,7 @@ class UserActionLogItem(BaseModel):
     id: str
     user_id: str
     user_email: Optional[str] = None
+    tenant_id: Optional[str] = None
     action_type: str
     action_name: str
     description: Optional[str] = None
@@ -115,6 +116,7 @@ class UserActionLogItem(BaseModel):
     user_agent: Optional[str] = None
     created_at: Optional[str] = None
     level: Optional[str] = None
+    risk_level: Optional[str] = None
 
 
 class UserActionLogListResponse(BaseModel):

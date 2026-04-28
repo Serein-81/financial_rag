@@ -137,6 +137,36 @@ def _policy_input_to_dict(policy_input: PolicyInput) -> dict[str, Any]:
     }
 
 
+def _normalize_match_response(
+    match_result: dict[str, Any],
+    policy_id: str,
+    enterprise_id: str,
+    use_llm: bool
+) -> dict[str, Any]:
+    reasons = match_result.get("reasons")
+    if reasons is None:
+        reasons = []
+        for item in match_result.get("match_reasons", []):
+            if isinstance(item, dict):
+                reasons.append(item.get("reason", ""))
+            else:
+                reasons.append(str(item))
+
+    return {
+        "match_score": match_result.get("match_score", 0),
+        "semantic_score": match_result.get("semantic_score", match_result.get("match_score", 0)),
+        "industry_score": match_result.get("industry_score", 0),
+        "region_score": match_result.get("region_score", 0),
+        "scale_score": match_result.get("scale_score", 0),
+        "tax_type_score": match_result.get("tax_type_score", 0),
+        "urgency_score": match_result.get("urgency_score", 0),
+        "reasons": reasons,
+        "policy_id": policy_id,
+        "enterprise_id": enterprise_id,
+        "use_llm": match_result.get("use_llm", use_llm),
+    }
+
+
 @router.post("/match", response_model=PolicyMatchResponse)
 async def match_policy(
     request: PolicyMatchRequest,
@@ -180,11 +210,17 @@ async def match_policy(
         enterprise_profile = _create_enterprise_profile(request.enterprise)
 
         match_result = await policy_notification_service._llm_match(
-            policy=policy_dict,
+            policy_data=policy_dict,
             enterprise_profile=enterprise_profile
         ) if request.use_llm else policy_notification_service._rule_based_match(
-            policy=policy_dict,
+            policy_data=policy_dict,
             enterprise_profile=enterprise_profile
+        )
+        response_data = _normalize_match_response(
+            match_result,
+            request.policy.policy_id,
+            request.enterprise.enterprise_id,
+            request.use_llm
         )
 
         logger.info(
@@ -193,12 +229,12 @@ async def match_policy(
                 "event": "policy_match_success",
                 "policy_id": request.policy.policy_id,
                 "enterprise_id": request.enterprise.enterprise_id,
-                "match_score": match_result['match_score'],
-                "use_llm": match_result['use_llm']
+                "match_score": response_data['match_score'],
+                "use_llm": response_data['use_llm']
             }
         )
 
-        if match_result['match_score'] >= 0.6:
+        if response_data['match_score'] >= 0.6:
             try:
                 from app.services.policy_notification_service import policy_notification_service
                 from app.services.policy_event_service import policy_event_service
@@ -212,7 +248,7 @@ async def match_policy(
                 await policy_notification_service._create_match_and_notification(
                     enterprise_id=request.enterprise.enterprise_id,
                     policy_data=policy_dict,
-                    match_score=match_result['match_score']
+                    match_result=match_result
                 )
                 
                 await policy_event_service.emit_notification_sent(
@@ -228,13 +264,13 @@ async def match_policy(
                         "event": "notification_published",
                         "policy_id": request.policy.policy_id,
                         "enterprise_id": request.enterprise.enterprise_id,
-                        "match_score": match_result['match_score']
+                        "match_score": response_data['match_score']
                     }
                 )
             except Exception as e:
                 logger.error(f"❌ 推送通知失败: {e}", exc_info=True)
 
-        return PolicyMatchResponse(**match_result)
+        return PolicyMatchResponse(**response_data)
 
     except ValueError as e:
         logger.warning(f"无效的请求参数: {e}", exc_info=True)
@@ -282,7 +318,7 @@ async def generate_notification(
         enterprise_profile = _create_enterprise_profile(request.enterprise_profile)
 
         notification = await policy_notification_service.generate_notification(
-            policy=request.policy,
+            policy_data=request.policy.model_dump(),
             enterprise_profile=enterprise_profile,
             match_result=request.match_result
         )
@@ -471,16 +507,21 @@ async def test_policy_agent(
             policy_dict = _policy_input_to_dict(policy_input)
 
             match_result = await policy_notification_service._llm_match(
-                policy=policy_dict,
+                policy_data=policy_dict,
                 enterprise_profile=enterprise_profile
             ) if request.use_llm else policy_notification_service._rule_based_match(
-                policy=policy_dict,
+                policy_data=policy_dict,
                 enterprise_profile=enterprise_profile
             )
-            matches.append(PolicyMatchResponse(**match_result))
+            matches.append(PolicyMatchResponse(**_normalize_match_response(
+                match_result,
+                policy_input.policy_id,
+                request.enterprise.enterprise_id,
+                request.use_llm
+            )))
 
             notification = await policy_notification_service.generate_notification(
-                policy=policy_dict,
+                policy_data=policy_dict,
                 enterprise_profile=enterprise_profile,
                 match_result=match_result
             )

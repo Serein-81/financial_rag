@@ -416,6 +416,15 @@ def _extract_request_info(args: tuple, kwargs: dict) -> Dict[str, Any]:
     for key in ['ip_address', 'user_agent', 'session_id']:
         if key in kwargs:
             request_info[key] = kwargs[key]
+
+    current_user = kwargs.get('current_user')
+    if not current_user:
+        for arg in args:
+            if hasattr(arg, 'tenant_id') and hasattr(arg, 'id'):
+                current_user = arg
+                break
+    if current_user and hasattr(current_user, 'tenant_id'):
+        request_info["tenant_id"] = current_user.tenant_id
     
     return request_info
 

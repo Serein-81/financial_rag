@@ -56,7 +56,7 @@ export interface PolicyMatchResult {
   policy_id: string
   policy_title: string
   match_score: number
-  match_reasons: string[]
+  match_reasons: Array<string | { category?: string; reason?: string; items?: string[] }>
   policy: Policy
 }
 
@@ -74,7 +74,7 @@ export interface MatchRecord {
   enterprise_id: string
   policy_id: string
   match_score: number
-  match_reasons: string[]
+  match_reasons: Array<string | { category?: string; reason?: string; items?: string[] }>
   notification_status: 'pending' | 'sent' | 'acknowledged' | 'dismissed' | 'failed'
   match_status: 'active' | 'inactive' | 'expired'
   created_at: string
@@ -290,7 +290,7 @@ export const policyApi = {
   },
 
   matchEnterprisePolicies: async (enterpriseId: string, enterpriseProfile?: any, topK?: number): Promise<PolicyMatchResult[]> => {
-    return request('/policy/match', {
+    const res = await request('/policy/match', {
       method: 'POST',
       data: {
         enterprise_id: enterpriseId,
@@ -298,9 +298,10 @@ export const policyApi = {
         top_k: topK || 10
       }
     })
+    return res?.results || []
   },
 
-  getEnterpriseMatches: async (enterpriseId: string): Promise<MatchRecord[]> => {
+  getEnterpriseMatches: async (enterpriseId: string): Promise<PolicyMatchResult[]> => {
     const res = await request(`/policy/notifications/${enterpriseId}`, {
       method: 'GET'
     })

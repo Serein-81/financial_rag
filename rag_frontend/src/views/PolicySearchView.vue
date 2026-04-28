@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { policyApi, type Policy, type PolicyMatchResult } from '@/api/policy'
+import { tenantSettingsApi, type TenantSettings } from '@/api/tenant-settings'
 import { getEnterpriseId } from '@/utils/request'
 import { useAuthStore } from '@/stores/auth'
 import { ElMessage } from 'element-plus'
@@ -36,6 +37,7 @@ const isSearching = ref(false)
 const searchResults = ref<PolicyMatchResult[]>([])
 const recommendations = ref<PolicyMatchResult[]>([])
 const isLoadingRecommendations = ref(false)
+const tenantSettings = ref<TenantSettings | null>(null)
 
 // PolicyNotificationAgent 状态
 const agentStatus = ref<any>(null)
@@ -63,11 +65,32 @@ const filterOptions = {
 }
 
 onMounted(async () => {
+  await loadTenantSettings()
   await Promise.all([
     loadRecommendations(),
     checkAgentStatus()
   ])
 })
+
+async function loadTenantSettings() {
+  try {
+    tenantSettings.value = await tenantSettingsApi.getMySettings()
+  } catch (error) {
+    console.warn('Failed to load tenant settings:', error)
+  }
+}
+
+function getEnterpriseProfile(enterpriseId: string) {
+  return {
+    enterprise_id: enterpriseId,
+    enterprise_name: tenantSettings.value?.company_name || '企业',
+    industry: tenantSettings.value?.industry || '通用',
+    region: tenantSettings.value?.region || '全国',
+    scale: tenantSettings.value?.scale || '中型企业',
+    tax_types: tenantSettings.value?.tax_types || [],
+    qualifications: []
+  }
+}
 
 async function checkAgentStatus() {
   isCheckingAgent.value = true
@@ -102,15 +125,7 @@ async function generateSearchSuggestions() {
     if (policies.length > 0) {
       const request = {
         policies: policies,
-        enterprise_profile: {
-          enterprise_id: enterpriseId,
-          enterprise_name: '企业',
-          industry: '通用',
-          region: '全国',
-          scale: '中型企业',
-          tax_types: [],
-          qualifications: []
-        }
+        enterprise_profile: getEnterpriseProfile(enterpriseId)
       }
 
       const result = await policyApi.prioritizePolicies(request)
@@ -143,14 +158,7 @@ async function loadSemanticDetails(policyId: string, policy: any) {
         content: policy.content || '',
         source: 'policy_center'
       },
-      enterprise: {
-        enterprise_id: enterpriseId,
-        enterprise_name: '企业',
-        industry: '通用',
-        region: '全国',
-        scale: '中型企业',
-        tax_types: []
-      },
+      enterprise: getEnterpriseProfile(enterpriseId),
       use_llm: true
     }
 

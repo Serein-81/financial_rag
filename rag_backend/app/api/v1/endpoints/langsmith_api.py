@@ -10,8 +10,12 @@ from typing import Optional, Dict
 from datetime import datetime
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from sqlalchemy import func, select
 from app.api import deps
+from app.db.session import AsyncSessionLocal
 from app.models.user import User
+from app.models.agent_trace import AgentTrace
+from app.models.tool_trace import ToolCallTrace
 from app.langsmith_integration import get_langsmith_config, get_tracer, LangSmithTracer
 
 logger = logging.getLogger(__name__)
@@ -95,6 +99,25 @@ def get_dashboard_url(project: str, endpoint: str = "https://smith.langchain.com
     }
 
 
+def _run_time_iso(run) -> Optional[str]:
+    """Return a stable timestamp for different LangSmith SDK Run shapes."""
+    value = (
+        getattr(run, "created_at", None)
+        or getattr(run, "start_time", None)
+        or getattr(run, "created_time", None)
+        or getattr(run, "first_token_time", None)
+    )
+    return value.isoformat() if hasattr(value, "isoformat") else value
+
+
+def _run_field(run, name: str, default=None):
+    if hasattr(run, name):
+        return getattr(run, name)
+    if isinstance(run, dict):
+        return run.get(name, default)
+    return default
+
+
 @router.get("/status", response_model=LangSmithStatusResponse)
 async def get_langsmith_status(
     current_user: User = Depends(deps.get_current_user)
@@ -128,14 +151,39 @@ async def get_langsmith_stats(
     返回追踪统计、LLM 调用统计和工具调用统计
     """
     uptime = time.time() - _stats_tracker["start_time"]
-    
+    total_traces = _stats_tracker["total_traces"]
+    total_tool_calls = _stats_tracker["total_tool_calls"]
+    active_runs = 0
+    error_count = _stats_tracker["error_count"]
+    last_trace_time = _stats_tracker["last_trace_time"]
+
+    try:
+        async with AsyncSessionLocal() as db:
+            total_traces = await db.scalar(select(func.count()).select_from(AgentTrace)) or 0
+            total_tool_calls = await db.scalar(select(func.count()).select_from(ToolCallTrace)) or 0
+            active_runs = await db.scalar(
+                select(func.count()).select_from(AgentTrace).where(AgentTrace.status == "running")
+            ) or 0
+            failed_traces = await db.scalar(
+                select(func.count()).select_from(AgentTrace).where(AgentTrace.status == "failed")
+            ) or 0
+            failed_tools = await db.scalar(
+                select(func.count()).select_from(ToolCallTrace).where(ToolCallTrace.status != "success")
+            ) or 0
+            error_count = int(failed_traces) + int(failed_tools)
+            latest_trace = await db.scalar(select(func.max(AgentTrace.created_at)))
+            if latest_trace:
+                last_trace_time = latest_trace.isoformat()
+    except Exception as e:
+        logger.warning(f"[LangSmith] 读取本地追踪统计失败，回退到内存统计: {e}")
+
     return {
-        "total_traces": _stats_tracker["total_traces"],
+        "total_traces": total_traces,
         "total_llm_calls": _stats_tracker["total_llm_calls"],
-        "total_tool_calls": _stats_tracker["total_tool_calls"],
-        "active_runs": 0,
-        "error_count": _stats_tracker["error_count"],
-        "last_trace_time": _stats_tracker["last_trace_time"],
+        "total_tool_calls": total_tool_calls,
+        "active_runs": active_runs,
+        "error_count": error_count,
+        "last_trace_time": last_trace_time,
         "uptime_seconds": round(uptime, 2)
     }
 
@@ -191,7 +239,7 @@ async def get_langsmith_project_info(
         return {
             "project_name": project_name,
             "run_count": len(runs),
-            "last_run_time": last_run.created_at.isoformat() if last_run else None,
+            "last_run_time": _run_time_iso(last_run) if last_run else None,
             "trace_count": _stats_tracker["total_traces"]
         }
         
@@ -350,14 +398,14 @@ async def get_recent_langsmith_traces(
         traces = []
         for run in runs:
             traces.append({
-                "run_id": str(run.id),
-                "name": run.name,
-                "run_type": run.run_type,
-                "created_at": run.created_at.isoformat() if run.created_at else None,
-                "inputs": run.inputs,
-                "outputs": run.outputs,
-                "error": run.error,
-                "tags": run.tags or []
+                "run_id": str(_run_field(run, "id", "")),
+                "name": _run_field(run, "name", ""),
+                "run_type": _run_field(run, "run_type", ""),
+                "created_at": _run_time_iso(run),
+                "inputs": _run_field(run, "inputs", {}) or {},
+                "outputs": _run_field(run, "outputs", {}) or {},
+                "error": _run_field(run, "error"),
+                "tags": _run_field(run, "tags", []) or []
             })
         
         return {

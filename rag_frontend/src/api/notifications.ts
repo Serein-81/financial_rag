@@ -2,17 +2,21 @@ import { request } from '@/utils/request'
 
 export interface Notification {
   id: string
-  user_id: string
+  user_id?: string
   title: string
-  message: string
-  notification_type: 'info' | 'warning' | 'error' | 'success'
-  priority: 'low' | 'medium' | 'high' | 'urgent'
-  is_read: boolean
-  is_archived: boolean
+  message?: string
+  content?: string
+  type?: string
+  notification_type?: 'info' | 'warning' | 'error' | 'success' | string
+  priority?: 'low' | 'medium' | 'high' | 'urgent'
+  is_read?: boolean
+  read?: boolean
+  is_archived?: boolean
   metadata?: Record<string, any>
-  source: 'system' | 'task' | 'policy' | 'financial' | 'contract' | 'manual'
+  source?: 'system' | 'task' | 'policy' | 'financial' | 'contract' | 'manual' | string
   action_url?: string
-  created_at: string
+  created_at?: string
+  timestamp?: string
   read_at?: string
 }
 
@@ -49,6 +53,7 @@ export interface CreateNotificationParams {
 
 export interface NotificationFilter {
   is_read?: boolean
+  is_archived?: boolean
   notification_type?: string
   priority?: string
   source?: string
@@ -87,7 +92,7 @@ export const notificationsApi = {
 
   markAsRead: async (notificationId: string): Promise<void> => {
     return request(`/notifications/${notificationId}/read`, {
-      method: 'POST'
+      method: 'PUT'
     })
   },
 

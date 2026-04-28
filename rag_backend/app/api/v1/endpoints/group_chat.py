@@ -1,11 +1,12 @@
 """群聊 API 端点"""
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, cast, String
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field, field_serializer
 from datetime import datetime
 from app.utils.json_compat import json
+import hashlib
 import logging
 
 from app.api.deps import get_current_user, get_db, User
@@ -573,6 +574,99 @@ async def decline_invitation(
 notification_router = APIRouter(tags=["通知"])
 
 
+def _notification_id(notification: Dict, raw: Optional[Any] = None) -> str:
+    existing_id = notification.get("id")
+    if existing_id:
+        return str(existing_id)
+
+    seed = raw or json.dumps(notification, ensure_ascii=False, sort_keys=True)
+    if isinstance(seed, bytes):
+        seed = seed.decode("utf-8", errors="replace")
+    else:
+        seed = str(seed)
+    return f"notif_{hashlib.sha1(seed.encode('utf-8')).hexdigest()[:16]}"
+
+
+def _normalize_notification(notification: Dict, raw: Optional[Any] = None) -> Dict:
+    notification_id = _notification_id(notification, raw)
+    notification_type = notification.get("notification_type") or notification.get("type") or "info"
+    created_at = notification.get("created_at") or notification.get("timestamp") or datetime.utcnow().isoformat()
+    is_read = notification.get("is_read")
+    if is_read is None:
+        is_read = notification.get("read", False)
+
+    source = notification.get("source")
+    if not source:
+        source = {
+            "invitation": "chat",
+            "message": "chat",
+            "member_joined": "chat",
+            "member_left": "chat",
+            "tax_reminder": "task",
+            "policy_update": "policy",
+        }.get(str(notification_type), "system")
+
+    return {
+        **notification,
+        "id": notification_id,
+        "message": notification.get("message") or notification.get("content") or "",
+        "notification_type": notification_type,
+        "type": notification.get("type") or notification_type,
+        "priority": notification.get("priority") or "medium",
+        "source": source,
+        "created_at": created_at,
+        "timestamp": notification.get("timestamp") or created_at,
+        "is_read": bool(is_read),
+        "read": bool(is_read),
+        "is_archived": bool(notification.get("is_archived", False)),
+    }
+
+
+def _load_notifications(raw_notifications: List[Any]) -> List[Dict]:
+    notifications = []
+    for raw in raw_notifications:
+        try:
+            notifications.append(_normalize_notification(json.loads(raw), raw))
+        except Exception as e:
+            logger.warning(f"Failed to parse notification record: {e}")
+    return notifications
+
+
+def _default_notification_preferences() -> Dict:
+    return {
+        "in_app": True,
+        "email": False,
+        "sms": False,
+        "webhook": False,
+        "email_address": None,
+        "phone_number": None,
+        "webhook_url": None,
+        "quiet_hours_start": None,
+        "quiet_hours_end": None,
+        "notification_types": {
+            "info": True,
+            "warning": True,
+            "error": True,
+            "success": True,
+        },
+        "priority_threshold": "low",
+    }
+
+
+def _merge_notification_preferences(base: Dict, update: Dict) -> Dict:
+    merged = {**base, **update}
+    merged["notification_types"] = {
+        **base.get("notification_types", {}),
+        **update.get("notification_types", {}),
+    }
+    return merged
+
+
+def _notification_matches_id(raw: Any, notification_id: str) -> tuple[Dict, bool]:
+    notification = _normalize_notification(json.loads(raw), raw)
+    return notification, notification.get("id") == notification_id
+
+
 @notification_router.get("/")
 async def get_notifications(
     current_user: User = Depends(get_current_user),
@@ -585,7 +679,7 @@ async def get_notifications(
         if redis.client:
             notifications = redis.client.lrange(key, 0, 19) or []
             if isinstance(notifications, list):
-                return [json.loads(n) for n in notifications]
+                return [n for n in _load_notifications(notifications) if not n.get("is_archived")]
             else:
                 logger.error(f"❌ Redis lrange 返回类型错误: {type(notifications)}, value: {notifications}")
                 return []
@@ -602,7 +696,10 @@ async def list_notifications(
     page: int = Query(1, ge=1),
     page_size: int = Query(100, ge=1, le=1000),
     notification_type: Optional[str] = None,
+    priority: Optional[str] = None,
+    source: Optional[str] = None,
     is_read: Optional[bool] = None,
+    is_archived: Optional[bool] = False,
     current_user: User = Depends(get_current_user),
     redis: RedisService = Depends(get_redis_service)
 ):
@@ -610,13 +707,25 @@ async def list_notifications(
     key = f"notification:user:{user_id_str}"
     all_notifications = redis.client.lrange(key, 0, -1) if redis.client else []
     
-    notifications = [json.loads(n) for n in all_notifications]
+    notifications = _load_notifications(all_notifications)
     
     if notification_type:
-        notifications = [n for n in notifications if n.get("type") == notification_type]
+        notifications = [
+            n for n in notifications
+            if n.get("type") == notification_type or n.get("notification_type") == notification_type
+        ]
     
     if is_read is not None:
         notifications = [n for n in notifications if n.get("is_read") == is_read]
+
+    if is_archived is not None:
+        notifications = [n for n in notifications if n.get("is_archived") == is_archived]
+
+    if priority:
+        notifications = [n for n in notifications if n.get("priority") == priority]
+
+    if source:
+        notifications = [n for n in notifications if n.get("source") == source]
     
     total = len(notifications)
     start_idx = (page - 1) * page_size
@@ -642,7 +751,7 @@ async def get_unread_count(
     
     count = 0
     for n in all_notifications:
-        notif = json.loads(n)
+        notif = _normalize_notification(json.loads(n), n)
         if not notif.get("is_read", False):
             count += 1
     
@@ -660,9 +769,11 @@ async def mark_all_notifications_read(
     
     updated_count = 0
     for notif_json in all_notifications:
-        notif = json.loads(notif_json)
+        notif = _normalize_notification(json.loads(notif_json), notif_json)
         if not notif.get("is_read", False):
             notif["is_read"] = True
+            notif["read"] = True
+            notif["read_at"] = datetime.utcnow().isoformat()
             if redis.client:
                 redis.client.lrem(key, 1, notif_json)
                 redis.client.lpush(key, json.dumps(notif))
@@ -690,7 +801,7 @@ async def get_notification_statistics(
     today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     
     for n in all_notifications:
-        notif = json.loads(n)
+        notif = _normalize_notification(json.loads(n), n)
         if not notif.get("is_read", False):
             unread += 1
         
@@ -698,7 +809,7 @@ async def get_notification_statistics(
         if created_at.startswith(today_str):
             today += 1
         
-        notif_type = notif.get("type", "other")
+        notif_type = notif.get("notification_type") or notif.get("type", "other")
         by_type[notif_type] = by_type.get(notif_type, 0) + 1
         
         priority = notif.get("priority", "low")
@@ -713,6 +824,164 @@ async def get_notification_statistics(
     }
 
 
+@notification_router.get("/preferences")
+async def get_notification_preferences(
+    current_user: User = Depends(get_current_user),
+    redis: RedisService = Depends(get_redis_service)
+):
+    user_id_str = str(current_user.id)
+    key = f"notification:preferences:user:{user_id_str}"
+    preferences = _default_notification_preferences()
+
+    if redis.client:
+        stored = redis.client.get(key)
+        if stored:
+            try:
+                preferences = _merge_notification_preferences(preferences, json.loads(stored))
+            except Exception as e:
+                logger.warning(f"Failed to parse notification preferences: {e}")
+
+    return preferences
+
+
+@notification_router.put("/preferences")
+async def update_notification_preferences(
+    preferences_update: Dict = Body(...),
+    current_user: User = Depends(get_current_user),
+    redis: RedisService = Depends(get_redis_service)
+):
+    user_id_str = str(current_user.id)
+    key = f"notification:preferences:user:{user_id_str}"
+    preferences = _default_notification_preferences()
+
+    if redis.client:
+        stored = redis.client.get(key)
+        if stored:
+            try:
+                preferences = _merge_notification_preferences(preferences, json.loads(stored))
+            except Exception as e:
+                logger.warning(f"Failed to parse notification preferences: {e}")
+
+        preferences = _merge_notification_preferences(preferences, preferences_update)
+        redis.client.set(key, json.dumps(preferences))
+
+    return preferences
+
+
+@notification_router.post("/test")
+async def test_notification_channel(
+    payload: Dict = Body(...),
+    current_user: User = Depends(get_current_user),
+    redis: RedisService = Depends(get_redis_service)
+):
+    channel = payload.get("channel")
+    if channel not in {"email", "sms", "webhook"}:
+        raise HTTPException(status_code=400, detail="Unsupported notification channel")
+
+    preferences = await get_notification_preferences(current_user, redis)
+    channel_targets = {
+        "email": preferences.get("email_address"),
+        "sms": preferences.get("phone_number"),
+        "webhook": preferences.get("webhook_url"),
+    }
+
+    if not preferences.get(channel):
+        return {"success": False, "message": f"{channel} channel is disabled"}
+
+    if not channel_targets[channel]:
+        return {"success": False, "message": f"{channel} channel target is not configured"}
+
+    return {"success": True, "message": f"{channel} notification settings are ready"}
+
+
+@notification_router.post("/send")
+async def send_notification(
+    payload: Dict = Body(...),
+    current_user: User = Depends(get_current_user),
+    redis: RedisService = Depends(get_redis_service)
+):
+    target_user_id = str(payload.get("user_id") or current_user.id)
+    current_user_id = str(current_user.id)
+    if target_user_id != current_user_id and not getattr(current_user, "is_admin", False):
+        raise HTTPException(status_code=403, detail="Cannot send notifications to other users")
+
+    now = datetime.utcnow().isoformat()
+    notification = _normalize_notification({
+        "id": payload.get("id"),
+        "user_id": target_user_id,
+        "title": payload.get("title") or "通知",
+        "message": payload.get("message") or "",
+        "notification_type": payload.get("notification_type") or "info",
+        "priority": payload.get("priority") or "medium",
+        "source": payload.get("source") or "manual",
+        "metadata": payload.get("metadata") or {},
+        "action_url": payload.get("action_url"),
+        "created_at": now,
+        "timestamp": now,
+        "is_read": False,
+    })
+
+    if redis.client:
+        key = f"notification:user:{target_user_id}"
+        redis.client.lpush(key, json.dumps(notification))
+        redis.client.expire(key, 604800)
+
+    return notification
+
+
+@notification_router.get("/source/{source}")
+async def get_notifications_by_source(
+    source: str,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(100, ge=1, le=1000),
+    is_archived: Optional[bool] = False,
+    current_user: User = Depends(get_current_user),
+    redis: RedisService = Depends(get_redis_service)
+):
+    user_id_str = str(current_user.id)
+    key = f"notification:user:{user_id_str}"
+    all_notifications = redis.client.lrange(key, 0, -1) if redis.client else []
+
+    notifications = [
+        n for n in _load_notifications(all_notifications)
+        if n.get("source") == source and (is_archived is None or n.get("is_archived") == is_archived)
+    ]
+
+    total = len(notifications)
+    start_idx = (page - 1) * page_size
+    end_idx = start_idx + page_size
+
+    return {
+        "notifications": notifications[start_idx:end_idx],
+        "total": total,
+        "page": page,
+        "page_size": page_size
+    }
+
+
+@notification_router.post("/{notification_id}/archive")
+async def archive_notification(
+    notification_id: str,
+    current_user: User = Depends(get_current_user),
+    redis: RedisService = Depends(get_redis_service)
+):
+    user_id_str = str(current_user.id)
+    key = f"notification:user:{user_id_str}"
+    notifications = redis.client.lrange(key, 0, -1) if redis.client else []
+
+    for notif_json in notifications:
+        notif = _normalize_notification(json.loads(notif_json), notif_json)
+        if notif.get("id") == notification_id:
+            notif["is_archived"] = True
+            notif["archived_at"] = datetime.utcnow().isoformat()
+            if redis.client:
+                redis.client.lrem(key, 1, notif_json)
+                redis.client.lpush(key, json.dumps(notif))
+            return {"message": "通知已归档"}
+
+    raise HTTPException(status_code=404, detail="通知不存在")
+
+
 @notification_router.put("/{notification_id}/read")
 async def mark_notification_read(
     notification_id: str,
@@ -724,10 +993,12 @@ async def mark_notification_read(
     notifications = redis.client.lrange(key, 0, -1) if redis.client else []
     
     for notif_json in notifications:
-        notif = json.loads(notif_json)
+        notif = _normalize_notification(json.loads(notif_json), notif_json)
         if notif.get("id") == notification_id:
             if not notif.get("is_read", False):
                 notif["is_read"] = True
+                notif["read"] = True
+                notif["read_at"] = datetime.utcnow().isoformat()
                 if redis.client:
                     redis.client.lrem(key, 1, notif_json)
                     redis.client.lpush(key, json.dumps(notif))
@@ -748,7 +1019,7 @@ async def delete_notification(
     notifications = redis.client.lrange(key, 0, -1) if redis.client else []
     
     for notif_json in notifications:
-        notif = json.loads(notif_json)
+        notif = _normalize_notification(json.loads(notif_json), notif_json)
         if notif.get("id") == notification_id:
             invitation_id = notif.get("invitation_id")
             if invitation_id and notif.get("type") == "invitation":
@@ -779,7 +1050,7 @@ async def clear_all_notifications(
     pending_invitations = []
     
     for notif_json in notifications:
-        notif = json.loads(notif_json)
+        notif = _normalize_notification(json.loads(notif_json), notif_json)
         invitation_id = notif.get("invitation_id")
         if invitation_id and notif.get("type") == "invitation":
             invitation = await db.get(GroupInvitation, invitation_id)
@@ -849,7 +1120,7 @@ async def delete_notifications_batch(
     blocked_count = 0
     
     for notif_json in notifications:
-        notif = json.loads(notif_json)
+        notif = _normalize_notification(json.loads(notif_json), notif_json)
         if notif.get("id") in notification_ids:
             invitation_id = notif.get("invitation_id")
             if invitation_id and notif.get("type") == "invitation":

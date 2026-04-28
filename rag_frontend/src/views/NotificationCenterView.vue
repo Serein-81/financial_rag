@@ -4,6 +4,8 @@ import { ref, computed, onMounted, watch } from 'vue'
 
 import { useUnifiedNotifications, type UnifiedNotification, type NotificationCategory } from '@/composables/useUnifiedNotifications'
 
+import { notificationsApi, type NotificationPreferences } from '@/api/notifications'
+
 import { isAuthenticated } from '@/utils/request'
 
 import {
@@ -15,6 +17,8 @@ import {
   CheckCheck,
 
   Trash2,
+
+  Archive,
 
   Check,
 
@@ -66,6 +70,7 @@ const {
   loadNotifications,
   markAsRead,
   markAllAsRead,
+  archiveNotification,
   deleteNotification,
   acceptInvitation,
   declineInvitation,
@@ -94,8 +99,33 @@ const filters = ref({
 
   priority: '' as string,
 
-  isRead: '' as string
+  isRead: '' as string,
 
+  isArchived: 'false' as string
+
+})
+
+const showSettings = ref(false)
+
+const isSavingPreferences = ref(false)
+
+const notificationPreferences = ref<NotificationPreferences>({
+  in_app: true,
+  email: false,
+  sms: false,
+  webhook: false,
+  email_address: '',
+  phone_number: '',
+  webhook_url: '',
+  quiet_hours_start: '',
+  quiet_hours_end: '',
+  notification_types: {
+    info: true,
+    warning: true,
+    error: true,
+    success: true
+  },
+  priority_threshold: 'low'
 })
 
 
@@ -162,6 +192,14 @@ const filteredNotifications = computed(() => {
 
   }
 
+  if (filters.value.isArchived !== '') {
+
+    const isArchived = filters.value.isArchived === 'true'
+
+    result = result.filter(n => (n.isArchived ?? false) === isArchived)
+
+  }
+
 
 
   if (sortOrder.value === 'newest') {
@@ -190,9 +228,27 @@ const filteredNotifications = computed(() => {
 
 onMounted(() => {
   if (isAuthenticated()) {
-    loadNotifications()
+    loadCurrentNotifications()
+    loadNotificationPreferences()
   }
 })
+
+watch(
+  () => [activeCategory.value, filters.value.isArchived],
+  () => {
+    if (isAuthenticated()) {
+      loadCurrentNotifications()
+      selectedNotifications.value.clear()
+      isSelectionMode.value = false
+    }
+  }
+)
+
+function loadCurrentNotifications() {
+  return loadNotifications(activeCategory.value, true, {
+    isArchived: filters.value.isArchived === 'true'
+  })
+}
 
 
 
@@ -395,6 +451,17 @@ async function deleteSelected() {
   }
 }
 
+async function archiveSelected() {
+  try {
+    for (const id of selectedNotifications.value) {
+      await archiveNotification(id)
+    }
+    selectedNotifications.value.clear()
+    isSelectionMode.value = false
+  } catch {
+  }
+}
+
 async function handleAcceptInvitation(notification: UnifiedNotification) {
   const invitationId = notification.metadata?.invitation_id || notification.metadata?.id
   if (invitationId) {
@@ -491,8 +558,57 @@ function clearFilters() {
 
   searchQuery.value = ''
 
-  filters.value = { priority: '', isRead: '' }
+  filters.value = { priority: '', isRead: '', isArchived: 'false' }
 
+}
+
+async function loadNotificationPreferences() {
+  try {
+    const preferences = await notificationsApi.getPreferences()
+    notificationPreferences.value = {
+      ...notificationPreferences.value,
+      ...preferences,
+      notification_types: {
+        ...notificationPreferences.value.notification_types,
+        ...preferences.notification_types
+      }
+    }
+  } catch (error) {
+    console.error('Failed to load notification preferences:', error)
+  }
+}
+
+async function openNotificationSettings() {
+  showSettings.value = true
+  await loadNotificationPreferences()
+}
+
+async function saveNotificationPreferences() {
+  try {
+    isSavingPreferences.value = true
+    await notificationsApi.updatePreferences(notificationPreferences.value)
+    ElMessage.success('通知设置已保存')
+    showSettings.value = false
+  } catch (error) {
+    console.error('Failed to save notification preferences:', error)
+    ElMessage.error('保存通知设置失败')
+  } finally {
+    isSavingPreferences.value = false
+  }
+}
+
+async function testNotificationChannel(channel: 'email' | 'sms' | 'webhook') {
+  try {
+    const result = await notificationsApi.testNotification(channel)
+    if (result.success) {
+      ElMessage.success(result.message)
+    } else {
+      ElMessage.warning(result.message)
+    }
+  } catch (error) {
+    console.error('Failed to test notification channel:', error)
+    ElMessage.error('测试通知渠道失败')
+  }
 }
 
 </script>
@@ -522,6 +638,20 @@ function clearFilters() {
           </div>
 
           <div class="flex items-center gap-3">
+
+            <button
+
+              @click="openNotificationSettings"
+
+              class="px-4 py-2 bg-white border border-gray-200 rounded-xl text-gray-600 hover:bg-gray-50 transition-colors flex items-center gap-2 shadow-sm"
+
+            >
+
+              <Settings :size="16" />
+
+              设置
+
+            </button>
 
             <button
 
@@ -769,6 +899,20 @@ function clearFilters() {
 
                     <button
 
+                      @click="archiveSelected"
+
+                      :disabled="selectedNotifications.size === 0 || filters.isArchived === 'true'"
+
+                      class="px-4 py-2 bg-amber-50 text-amber-700 rounded-xl text-sm font-medium hover:bg-amber-100 transition-colors disabled:opacity-50"
+
+                    >
+
+                      归档 ({{ selectedNotifications.size }})
+
+                    </button>
+
+                    <button
+
                       @click="isSelectionMode = false; selectedNotifications.clear()"
 
                       class="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl text-sm font-medium hover:bg-gray-200 transition-colors"
@@ -813,7 +957,7 @@ function clearFilters() {
 
                       'px-4 py-2 rounded-xl text-sm font-medium transition-colors flex items-center gap-2',
 
-                      showFilters || filters.priority || filters.isRead
+                      showFilters || filters.priority || filters.isRead || filters.isArchived === 'true'
 
                         ? 'bg-blue-100 text-blue-600'
 
@@ -880,6 +1024,26 @@ function clearFilters() {
                       <option value="false">未读</option>
 
                       <option value="true">已读</option>
+
+                    </select>
+
+                  </div>
+
+                  <div class="flex items-center gap-2">
+
+                    <label class="text-sm text-gray-600">归档</label>
+
+                    <select
+
+                      v-model="filters.isArchived"
+
+                      class="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-sm"
+
+                    >
+
+                      <option value="false">未归档</option>
+
+                      <option value="true">已归档</option>
 
                     </select>
 
@@ -1110,7 +1274,15 @@ function clearFilters() {
                           </button>
                         </template>
                         <button
-                          v-else
+                          v-if="filters.isArchived !== 'true' && !isInvitationNotification(notification)"
+                          @click.stop="archiveNotification(notification.id)"
+                          class="p-2 text-gray-400 hover:text-amber-700 hover:bg-amber-50 rounded-lg transition-colors"
+                          title="归档"
+                        >
+                          <Archive :size="16" />
+                        </button>
+                        <button
+                          v-if="!isInvitationNotification(notification)"
                           @click.stop="deleteNotification(notification.id)"
                           class="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                           title="删除"
@@ -1151,6 +1323,131 @@ function clearFilters() {
 
       </div>
 
+    </div>
+
+    <div
+      v-if="showSettings"
+      class="fixed inset-0 z-[120] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center px-4"
+      @click.self="showSettings = false"
+    >
+      <div class="w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden">
+        <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+          <div>
+            <h3 class="text-lg font-semibold text-gray-900">通知设置</h3>
+            <p class="text-sm text-gray-500 mt-1">配置接收渠道、免打扰时间和通知类型</p>
+          </div>
+          <button
+            @click="showSettings = false"
+            class="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+            title="关闭"
+          >
+            <X :size="18" />
+          </button>
+        </div>
+
+        <div class="p-6 space-y-6 max-h-[70vh] overflow-y-auto">
+          <div>
+            <h4 class="text-sm font-semibold text-gray-800 mb-3">接收渠道</h4>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <label class="flex items-center justify-between px-4 py-3 bg-gray-50 rounded-xl">
+                <span class="text-sm font-medium text-gray-700">站内通知</span>
+                <input v-model="notificationPreferences.in_app" type="checkbox" class="w-4 h-4 accent-blue-600" />
+              </label>
+              <label class="flex items-center justify-between px-4 py-3 bg-gray-50 rounded-xl">
+                <span class="text-sm font-medium text-gray-700">邮件通知</span>
+                <input v-model="notificationPreferences.email" type="checkbox" class="w-4 h-4 accent-blue-600" />
+              </label>
+              <label class="flex items-center justify-between px-4 py-3 bg-gray-50 rounded-xl">
+                <span class="text-sm font-medium text-gray-700">短信通知</span>
+                <input v-model="notificationPreferences.sms" type="checkbox" class="w-4 h-4 accent-blue-600" />
+              </label>
+              <label class="flex items-center justify-between px-4 py-3 bg-gray-50 rounded-xl">
+                <span class="text-sm font-medium text-gray-700">Webhook</span>
+                <input v-model="notificationPreferences.webhook" type="checkbox" class="w-4 h-4 accent-blue-600" />
+              </label>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div>
+              <label class="text-sm font-medium text-gray-700">邮箱地址</label>
+              <div class="mt-2 flex gap-2">
+                <input v-model="notificationPreferences.email_address" type="email" class="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
+                <button @click="testNotificationChannel('email')" class="px-3 py-2 text-sm text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-xl">测试</button>
+              </div>
+            </div>
+            <div>
+              <label class="text-sm font-medium text-gray-700">手机号</label>
+              <div class="mt-2 flex gap-2">
+                <input v-model="notificationPreferences.phone_number" type="tel" class="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
+                <button @click="testNotificationChannel('sms')" class="px-3 py-2 text-sm text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-xl">测试</button>
+              </div>
+            </div>
+            <div>
+              <label class="text-sm font-medium text-gray-700">Webhook URL</label>
+              <div class="mt-2 flex gap-2">
+                <input v-model="notificationPreferences.webhook_url" type="url" class="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
+                <button @click="testNotificationChannel('webhook')" class="px-3 py-2 text-sm text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-xl">测试</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label class="text-sm font-medium text-gray-700">免打扰开始</label>
+              <input v-model="notificationPreferences.quiet_hours_start" type="time" class="mt-2 w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
+            </div>
+            <div>
+              <label class="text-sm font-medium text-gray-700">免打扰结束</label>
+              <input v-model="notificationPreferences.quiet_hours_end" type="time" class="mt-2 w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
+            </div>
+            <div>
+              <label class="text-sm font-medium text-gray-700">最低优先级</label>
+              <select v-model="notificationPreferences.priority_threshold" class="mt-2 w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20">
+                <option value="low">低</option>
+                <option value="medium">中</option>
+                <option value="high">高</option>
+                <option value="urgent">紧急</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <h4 class="text-sm font-semibold text-gray-800 mb-3">通知类型</h4>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <label class="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-xl text-sm text-gray-700">
+                <input v-model="notificationPreferences.notification_types.info" type="checkbox" class="w-4 h-4 accent-blue-600" />
+                信息
+              </label>
+              <label class="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-xl text-sm text-gray-700">
+                <input v-model="notificationPreferences.notification_types.warning" type="checkbox" class="w-4 h-4 accent-blue-600" />
+                警告
+              </label>
+              <label class="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-xl text-sm text-gray-700">
+                <input v-model="notificationPreferences.notification_types.error" type="checkbox" class="w-4 h-4 accent-blue-600" />
+                错误
+              </label>
+              <label class="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-xl text-sm text-gray-700">
+                <input v-model="notificationPreferences.notification_types.success" type="checkbox" class="w-4 h-4 accent-blue-600" />
+                成功
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="px-6 py-4 bg-gray-50 border-t border-gray-100 flex items-center justify-end gap-3">
+          <button @click="showSettings = false" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-xl">
+            取消
+          </button>
+          <button
+            @click="saveNotificationPreferences"
+            :disabled="isSavingPreferences"
+            class="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-xl"
+          >
+            {{ isSavingPreferences ? '保存中...' : '保存设置' }}
+          </button>
+        </div>
+      </div>
     </div>
 
   </div>

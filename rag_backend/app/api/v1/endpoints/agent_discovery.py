@@ -322,7 +322,8 @@ async def get_session_traces(
 @router.get("/traces/{trace_id}/steps")
 async def get_trace_steps(
     trace_id: str,
-    current_user: User = Depends(deps.get_current_user)
+    current_user: User = Depends(deps.get_current_user),
+    tenant_context: dict = Depends(deps.get_tenant_context)
 ):
     """
     获取某次追踪的详细步骤
@@ -332,7 +333,11 @@ async def get_trace_steps(
         current_user: 当前用户
     """
     try:
-        trace_data = await agent_tracer.get_trace_with_steps(trace_id)
+        trace_data = await agent_tracer.get_trace_with_steps(
+            trace_id=trace_id,
+            user_id=str(current_user.id),
+            tenant_id=tenant_context["tenant_id"],
+        )
 
         if not trace_data:
             raise HTTPException(status_code=404, detail="追踪记录不存在")
@@ -351,7 +356,8 @@ async def get_trace_steps(
 @router.get("/traces/{trace_id}/visualization")
 async def get_trace_visualization(
     trace_id: str,
-    current_user: User = Depends(deps.get_current_user)
+    current_user: User = Depends(deps.get_current_user),
+    tenant_context: dict = Depends(deps.get_tenant_context)
 ):
     """
     获取追踪的可视化数据（用于前端绘制流程图）
@@ -361,7 +367,11 @@ async def get_trace_visualization(
         current_user: 当前用户
     """
     try:
-        trace_data = await agent_tracer.get_trace_with_steps(trace_id)
+        trace_data = await agent_tracer.get_trace_with_steps(
+            trace_id=trace_id,
+            user_id=str(current_user.id),
+            tenant_id=tenant_context["tenant_id"],
+        )
 
         if not trace_data:
             raise HTTPException(status_code=404, detail="追踪记录不存在")
@@ -387,6 +397,8 @@ async def get_trace_visualization(
                 edge = {
                     "from": f"step_{i}",
                     "to": f"step_{i+1}",
+                    "source": f"step_{i}",
+                    "target": f"step_{i+1}",
                     "label": f"{step.get('tool_duration', 0):.0f}ms" if step.get("tool_duration") else ""
                 }
                 edges.append(edge)
@@ -451,7 +463,8 @@ async def list_recent_traces(
 @router.get("/traces/{trace_id}")
 async def get_trace_detail(
     trace_id: str,
-    current_user: User = Depends(deps.get_current_user)
+    current_user: User = Depends(deps.get_current_user),
+    tenant_context: dict = Depends(deps.get_tenant_context)
 ):
     """
     获取单条追踪记录的详细信息（仅限本人）
@@ -465,7 +478,8 @@ async def get_trace_detail(
         
         trace_data = await agent_tracer.get_trace_with_steps(
             trace_id=trace_id,
-            user_id=user_id
+            user_id=user_id,
+            tenant_id=tenant_context["tenant_id"],
         )
 
         if not trace_data:

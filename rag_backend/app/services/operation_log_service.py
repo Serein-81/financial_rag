@@ -6,6 +6,7 @@
 
 import json
 import logging
+import asyncio
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
 from enum import Enum
@@ -133,7 +134,88 @@ class OperationLogger:
         except Exception as e:
             logger.warning(f"记录安全事件失败: {str(e)}")
 
+        self._persist_operation_log(
+            operation_type=operation_type,
+            user_id=user_id,
+            tenant_id=tenant_id,
+            resource=resource,
+            details=details or {},
+            ip_address=ip_address,
+            user_agent=user_agent,
+            risk_level=risk_level,
+        )
+
         return log_entry
+
+    def _persist_operation_log(
+        self,
+        operation_type: OperationType,
+        user_id: str,
+        tenant_id: Optional[str],
+        resource: Optional[str],
+        details: Dict[str, Any],
+        ip_address: Optional[str],
+        user_agent: Optional[str],
+        risk_level: str,
+    ) -> None:
+        """Best-effort durable audit copy for operation logs."""
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(
+                self._persist_operation_log_async(
+                    operation_type=operation_type,
+                    user_id=user_id,
+                    tenant_id=tenant_id,
+                    resource=resource,
+                    details=details,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                    risk_level=risk_level,
+                )
+            )
+        except RuntimeError:
+            logger.debug("No running event loop; skipped durable operation log copy")
+
+    async def _persist_operation_log_async(
+        self,
+        operation_type: OperationType,
+        user_id: str,
+        tenant_id: Optional[str],
+        resource: Optional[str],
+        details: Dict[str, Any],
+        ip_address: Optional[str],
+        user_agent: Optional[str],
+        risk_level: str,
+    ) -> None:
+        try:
+            from app.services.log_service import log_service
+
+            level = "WARNING" if risk_level in {"medium", "high"} else "INFO"
+            if risk_level == "critical":
+                level = "ERROR"
+
+            await log_service.create_user_action_log(
+                user_id=user_id,
+                tenant_id=tenant_id,
+                action_type=operation_type.value,
+                action_name=operation_type.value,
+                description=f"Operation {operation_type.value}",
+                resource_id=details.get("resource_id") or resource,
+                resource_name=details.get("resource_name") or details.get("document_name") or details.get("filename"),
+                success=True,
+                result_message="Operation recorded",
+                ip_address=ip_address,
+                user_agent=user_agent,
+                level=level,
+                risk_level=risk_level,
+                extra_info={
+                    "source": "operation_logger",
+                    "resource": resource,
+                    "details": details,
+                },
+            )
+        except Exception as e:
+            logger.warning(f"鎿嶄綔鏃ュ織鎸佷箙鍖栧け璐? {str(e)}")
 
     def get_user_operations(
         self,

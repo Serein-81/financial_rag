@@ -132,15 +132,19 @@ class LogService:
             # 转换user_id为UUID对象
             user_uuid = None
             user_email = None
+            user_tenant_id = kwargs.get("tenant_id")
             
             if user_id:
                 try:
                     user_uuid = uuid.UUID(str(user_id))
                     # 获取用户邮箱
                     user_result = await session.execute(
-                        select(User.email).where(User.id == user_uuid)
+                        select(User.email, User.tenant_id).where(User.id == user_uuid)
                     )
-                    user_email = user_result.scalar_one_or_none()
+                    user_row = user_result.one_or_none()
+                    if user_row:
+                        user_email = user_row.email
+                        user_tenant_id = user_tenant_id or user_row.tenant_id
                 except (ValueError, TypeError) as e:
                     self.logger.warning(f"user_id格式无效: {user_id}, 错误: {e}")
                     user_uuid = None
@@ -151,6 +155,7 @@ class LogService:
             log_data = {
                 "user_id": user_uuid,
                 "user_email": user_email,
+                "tenant_id": user_tenant_id,
                 "action_type": action_type,
                 "action_name": action_name,
                 "description": description,
@@ -379,6 +384,7 @@ class LogService:
                     "created_at": log.created_at.isoformat(),
                     "user_id": str(log.user_id),
                     "user_email": log.user_email,
+                    "tenant_id": log.tenant_id,
                     "action_type": log.action_type,
                     "action_name": log.action_name,
                     "description": log.description,
@@ -389,6 +395,7 @@ class LogService:
                     "result_message": log.result_message,
                     "ip_address": log.ip_address,
                     "session_id": log.session_id,
+                    "risk_level": log.risk_level,
                 }
                 
                 # 管理员可以查看更多信息
