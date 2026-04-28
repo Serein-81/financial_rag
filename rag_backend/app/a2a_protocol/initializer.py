@@ -114,6 +114,8 @@ class A2AInitializer:
         specialist_config = get_specialist_tools_config(specialty.lower())
         allowed_mcp_tools = set(specialist_config.get("mcp_tools", []))
         allowed_local_tools = set(specialist_config.get("local_tools", []))
+        allow_all_mcp_tools = "*" in allowed_mcp_tools
+        allow_all_local_tools = "*" in allowed_local_tools
 
         logger.debug(f"   [DEBUG] {agent_name} allowed MCP tools: {allowed_mcp_tools}")
         logger.debug(f"   [DEBUG] {agent_name} allowed local tools: {allowed_local_tools}")
@@ -124,13 +126,13 @@ class A2AInitializer:
         tools = []
         for tool in all_tools:
             if tool.location == ToolLocation.CLOUD:
-                if tool.name in allowed_mcp_tools:
+                if allow_all_mcp_tools or tool.name in allowed_mcp_tools:
                     tools.append(tool)
                     logger.debug(f"   [ADD] CLOUD tool: {tool.name}")
                 else:
                     logger.debug(f"   [SKIP] CLOUD tool (not in config): {tool.name}")
             elif tool.location == ToolLocation.LOCAL:
-                if tool.name in allowed_local_tools:
+                if allow_all_local_tools or tool.name in allowed_local_tools or tool.name in allowed_mcp_tools:
                     tools.append(tool)
                     logger.debug(f"   [ADD] local tool: {tool.name}")
                 else:
@@ -150,6 +152,24 @@ class A2AInitializer:
         )
 
         agent_discovery_registry.register_agent(agent_info)
+
+    async def _register_wrapper_safely(self, wrapper: AgentWrapper, agent_id: str) -> None:
+        """Register an A2A wrapper without letting console encoding errors skip discovery."""
+        try:
+            await wrapper.register()
+        except UnicodeEncodeError as e:
+            logger.warning(
+                "[WARN] A2A wrapper registered with logging encoding issue: %s - %s",
+                agent_id,
+                e,
+            )
+        except Exception as e:
+            logger.warning(
+                "[WARN] A2A wrapper registration skipped for discovery continuity: %s - %s: %s",
+                agent_id,
+                type(e).__name__,
+                e,
+            )
     
     async def initialize(self) -> None:
         """初始化所有 Agent"""
@@ -196,7 +216,7 @@ class A2AInitializer:
             agent = TaxSpecialist(llm_adapter=llm, tool_manager=tool_manager)
 
             wrapper = wrap_tax_specialist(agent, self.base_url)
-            await wrapper.register()
+            await self._register_wrapper_safely(wrapper, "tax_specialist")
             self.wrappers["tax_specialist"] = wrapper
 
             self._register_to_discovery(
@@ -243,7 +263,7 @@ class A2AInitializer:
             agent = FinanceSpecialist(llm_adapter=llm, tool_manager=tool_manager)
 
             wrapper = wrap_finance_specialist(agent, self.base_url)
-            await wrapper.register()
+            await self._register_wrapper_safely(wrapper, "finance_specialist")
             self.wrappers["finance_specialist"] = wrapper
 
             self._register_to_discovery(
@@ -290,7 +310,7 @@ class A2AInitializer:
             agent = LegalSpecialist(llm_adapter=llm, tool_manager=tool_manager)
 
             wrapper = wrap_legal_specialist(agent, self.base_url)
-            await wrapper.register()
+            await self._register_wrapper_safely(wrapper, "legal_specialist")
             self.wrappers["legal_specialist"] = wrapper
 
             self._register_to_discovery(
@@ -337,7 +357,7 @@ class A2AInitializer:
             agent = ReActAgent(llm_adapter=llm_adapter, tool_manager=tool_manager)
 
             wrapper = wrap_react_agent(agent, self.base_url)
-            await wrapper.register()
+            await self._register_wrapper_safely(wrapper, "react_agent")
             self.wrappers["react_agent"] = wrapper
 
             self._register_to_discovery(

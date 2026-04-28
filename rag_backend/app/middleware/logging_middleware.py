@@ -1,4 +1,4 @@
-# app/middleware/logging_middleware.py
+﻿# app/middleware/logging_middleware.py
 
 """
 日志中间件
@@ -9,6 +9,7 @@
 import time
 import uuid
 import traceback
+import logging
 from typing import Callable
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
@@ -17,7 +18,11 @@ from starlette.types import ASGIApp
 
 from app.services.log_service import log_service
 from app.models.system_log import LogLevel, LogCategory
+from app.observability.metrics import record_request
+from app.observability.tracing import get_tracer
 import asyncio
+
+logger = logging.getLogger(__name__)
 
 
 class LoggingMiddleware(BaseHTTPMiddleware):
@@ -55,6 +60,17 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         
         # 记录开始时间
         start_time = time.time()
+        tracer = get_tracer()
+        span = tracer.start_span(
+            f"{request.method} {request.url.path}",
+            attributes={
+                "http.method": request.method,
+                "http.route": request.url.path,
+                "http.url": str(request.url),
+                "request_id": request_id,
+            },
+            tags={"component": "http"},
+        )
         
         # 获取用户名用于日志
         user_id = getattr(request.state, "user_id", None)
@@ -73,15 +89,28 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         try:
             response = await call_next(request)
             execution_time = int((time.time() - start_time) * 1000)
+            record_request(
+                execution_time,
+                {
+                    "method": request.method,
+                    "path": request.url.path,
+                    "status": str(response.status_code),
+                },
+            )
+            span.set_attribute("http.status_code", response.status_code)
+            tracer.end_span(span, "ok" if response.status_code < 500 else "error")
             
-            # 🔧 调试：打印所有税务相关请求
-            if '/tax' in request.url.path.lower() or '/upload' in request.url.path.lower():
-                print(f"📥 [{log_prefix}] {request.method} {request.url.path} - {response.status_code} ({execution_time}ms)")
-            
-            # 原有的慢请求或错误日志
-            if execution_time > 1000 or response.status_code >= 400:
-                print(f"🔍 [{log_prefix}] {request.method} {request.url.path} - {response.status_code} ({execution_time}ms)")
-            
+            access_message = (
+                f"[API] [{log_prefix}] {request.method} {request.url.path} "
+                f"- {response.status_code} ({execution_time}ms)"
+            )
+            if response.status_code >= 500:
+                logger.error(access_message)
+            elif response.status_code >= 400:
+                logger.warning(access_message)
+            else:
+                logger.info(access_message)
+
             if not skip_full_logging:
                 asyncio.create_task(
                     self._log_request_success(
@@ -93,6 +122,16 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             
         except Exception as e:
             execution_time = int((time.time() - start_time) * 1000)
+            record_request(
+                execution_time,
+                {
+                    "method": request.method,
+                    "path": request.url.path,
+                    "status": "500",
+                },
+            )
+            tracer.record_exception(e)
+            tracer.end_span(span, "error", str(e))
             print(f"❌ [{log_prefix}] {request.method} {request.url.path} - Error: {str(e)} ({execution_time}ms)")
             
             if not skip_full_logging:

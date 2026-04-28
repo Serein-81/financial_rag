@@ -66,7 +66,7 @@ class Counter:
         self.unit = unit
         self._value = initial_value
         self._values_by_label: Dict[str, float] = defaultdict(float)
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
     
     def add(self, amount: float = 1, labels: Optional[Dict[str, str]] = None):
         """
@@ -155,7 +155,7 @@ class Histogram:
         self._values_by_label: Dict[str, Dict[str, Any]] = defaultdict(lambda: {
             "count": 0, "sum": 0, "min": float('inf'), "max": float('-inf')
         })
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
     
     def record(self, value: float, labels: Optional[Dict[str, str]] = None):
         """

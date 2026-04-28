@@ -103,6 +103,22 @@ def get_receptionist_tools_config() -> dict:
 
 def get_specialist_tools_config(specialty: str = "general") -> dict:
     """专家智能体工具配置"""
+    specialty_aliases = {
+        "财务": "finance",
+        "财经": "finance",
+        "finance": "finance",
+        "financial": "finance",
+        "税务": "tax",
+        "税法": "tax",
+        "tax": "tax",
+        "法律": "legal",
+        "法务": "legal",
+        "legal": "legal",
+        "通用": "general",
+        "general": "general",
+    }
+    specialty_key = specialty_aliases.get((specialty or "general").lower(), specialty or "general")
+
     mapping = {
         "finance": [
             "calculate_asset_liability_ratio",
@@ -129,7 +145,13 @@ def get_specialist_tools_config(specialty: str = "general") -> dict:
         ],
     }
     
-    tools = mapping.get(specialty.lower(), [])
+    if specialty_key.lower() == "general":
+        return {
+            "mcp_tools": ["*"],
+            "local_tools": ["*"]
+        }
+
+    tools = mapping.get(specialty_key.lower(), [])
     
     return {
         "mcp_tools": tools,

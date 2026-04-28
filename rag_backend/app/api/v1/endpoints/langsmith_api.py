@@ -346,14 +346,16 @@ async def test_langsmith_connection(
             outputs={"result": "连接成功"},
             tags=["test", "connection"]
         )
+        run_id = str(test_run.id) if hasattr(test_run, "id") else None
         
         return {
             "success": True,
-            "message": "LangSmith 连接正常",
+            "message": "LangSmith 连接正常" if run_id else "LangSmith 连接正常，但 SDK 未返回 run_id",
             "details": {
-                "run_id": str(test_run.id),
+                "run_id": run_id,
                 "project": config.get("project"),
-                "endpoint": config.get("endpoint")
+                "endpoint": config.get("endpoint"),
+                "warning": None if run_id else "create_run 返回 None；通常表示客户端已接受调用但当前 SDK/追踪器未同步返回 Run 对象"
             }
         }
         
