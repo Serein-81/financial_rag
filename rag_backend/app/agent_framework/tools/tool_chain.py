@@ -7,9 +7,12 @@
 from typing import List, Dict, Any, Optional, Callable
 import re
 import json
+import logging
 from dataclasses import dataclass
 from enum import Enum
 from .tool_manager import ToolManager
+
+logger = logging.getLogger(__name__)
 
 
 class ChainStepType(Enum):
@@ -54,7 +57,7 @@ class ToolChain:
         self.steps: List[ChainStep] = []
         self.variables: Dict[str, Any] = {}
         
-        print(f"🔗 创建工具链: {name}")
+        logger.debug("Created tool chain: %s", name)
     
     def add_tool_step(
         self, 
@@ -83,7 +86,7 @@ class ToolChain:
             error_handling=error_handling
         )
         self.steps.append(step)
-        print(f"  ➕ 添加工具步骤: {step_id} -> {tool_name}")
+        logger.debug("Added tool step: %s -> %s", step_id, tool_name)
     
     def add_condition_step(
         self,
@@ -131,7 +134,7 @@ class ToolChain:
             output_key=output_key or f"{step_id}_result"
         )
         self.steps.append(step)
-        print(f"  ➕ 添加转换步骤: {step_id}")
+        logger.debug("Added transform step: %s", step_id)
     
     async def execute(
         self, 
@@ -324,7 +327,7 @@ class ToolChainManager:
         self.chains: Dict[str, ToolChain] = {}
         self.categories: Dict[str, List[str]] = {}
         
-        print("🔗 工具链管理器初始化完成")
+        logger.debug("Tool chain manager initialized")
     
     def register_chain(self, chain: ToolChain):
         """
@@ -340,7 +343,7 @@ class ToolChainManager:
             self.categories[chain.category] = []
         self.categories[chain.category].append(chain.name)
         
-        print(f"✅ 工具链 '{chain.name}' 已注册到分类 '{chain.category}'")
+        logger.debug("Registered tool chain %s in category %s", chain.name, chain.category)
     
     async def execute_chain(
         self, 

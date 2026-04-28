@@ -58,9 +58,9 @@ class A2AInitializer:
             if category == ToolCategory.LOCAL:
                 location = ToolLocation.LOCAL
             elif category == ToolCategory.MCP:
-                location = ToolLocation.CLOUD
+                location = ToolLocation.MCP
             else:
-                location = ToolLocation.CLOUD
+                location = ToolLocation.MCP
 
             tool_category = self._infer_tool_category(tool_name, description, specialty)
 
@@ -125,12 +125,12 @@ class A2AInitializer:
 
         tools = []
         for tool in all_tools:
-            if tool.location == ToolLocation.CLOUD:
+            if tool.location in (ToolLocation.CLOUD, ToolLocation.MCP):
                 if allow_all_mcp_tools or tool.name in allowed_mcp_tools:
                     tools.append(tool)
-                    logger.debug(f"   [ADD] CLOUD tool: {tool.name}")
+                    logger.debug(f"   [ADD] {tool.location.value.upper()} tool: {tool.name}")
                 else:
-                    logger.debug(f"   [SKIP] CLOUD tool (not in config): {tool.name}")
+                    logger.debug(f"   [SKIP] {tool.location.value.upper()} tool (not in config): {tool.name}")
             elif tool.location == ToolLocation.LOCAL:
                 if allow_all_local_tools or tool.name in allowed_local_tools or tool.name in allowed_mcp_tools:
                     tools.append(tool)
@@ -138,7 +138,7 @@ class A2AInitializer:
                 else:
                     logger.debug(f"   [SKIP] local tool (not in config): {tool.name}")
 
-        logger.info(f"   [INFO] {agent_name} assigned {len(tools)} tools (CLOUD: {len([t for t in tools if t.location == ToolLocation.CLOUD])}, local: {len([t for t in tools if t.location == ToolLocation.LOCAL])})")
+        logger.info(f"   [INFO] {agent_name} assigned {len(tools)} tools (MCP: {len([t for t in tools if t.location == ToolLocation.MCP])}, CLOUD: {len([t for t in tools if t.location == ToolLocation.CLOUD])}, local: {len([t for t in tools if t.location == ToolLocation.LOCAL])})")
 
         agent_info = AgentInfo(
             agent_id=agent_id,

@@ -2,8 +2,11 @@
 重做控制器 - 管理多智能体审查的重做逻辑
 """
 
+import logging
 from typing import List
 from .state import AuditState
+
+logger = logging.getLogger(__name__)
 
 
 class ReworkController:
@@ -21,7 +24,7 @@ class ReworkController:
             max_rework_count: 最大重做次数
         """
         self.max_rework_count = max_rework_count
-        print(f"🔄 [重做控制器] 初始化完成，最大重做次数: {max_rework_count}")
+        logger.debug("Rework controller initialized: max_rework_count=%s", max_rework_count)
     
     def should_rework(self, state: AuditState) -> bool:
         """

@@ -132,7 +132,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/policy-search',
     name: 'policy-search',
-    component: () => import('@/views/PolicySearchView.vue'),
+    redirect: '/policy',
     meta: { requiresAuth: true },
   },
   {
@@ -193,6 +193,12 @@ const routes: RouteRecordRaw[] = [
     path: '/agent-center',
     name: 'agent-center',
     component: () => import('@/views/AgentCenterView.vue'),
+    meta: { requiresAuth: true, requiresAdmin: true },
+  },
+  {
+    path: '/custom-tools',
+    name: 'custom-tools',
+    component: () => import('@/views/CustomToolsView.vue'),
     meta: { requiresAuth: true, requiresAdmin: true },
   },
   {

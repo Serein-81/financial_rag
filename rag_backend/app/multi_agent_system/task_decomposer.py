@@ -3,8 +3,11 @@
 负责分析文档类型并分解审查任务
 """
 
+import logging
 from typing import List, Dict, Any
 from enum import Enum
+
+logger = logging.getLogger(__name__)
 
 
 class DocumentType(str, Enum):
@@ -93,7 +96,7 @@ class TaskDecomposer:
             DocumentType.UNKNOWN: AuditPriority.LOW
         }
         
-        print("🔧 [任务分解器] 初始化完成")
+        logger.debug("Task decomposer initialized")
     
     def decompose(
         self,

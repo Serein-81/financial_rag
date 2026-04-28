@@ -13,15 +13,17 @@ Agent 工具集中管理
 """
 
 import re
+import logging
 from langchain_core.tools import tool
 from app.services.search_service import search_service
+
+logger = logging.getLogger(__name__)
 
 try:
     from app.mcp.financial_tools import create_financial_tools
     FINANCIAL_TOOLS_AVAILABLE = True
 except ImportError:
     FINANCIAL_TOOLS_AVAILABLE = False
-    logger = __import__('logging').getLogger(__name__)
     logger.warning("财务工具模块导入失败，相关工具将不可用")
 
 
@@ -357,7 +359,7 @@ def get_all_tools():
         try:
             financial_tools = create_financial_tools()
             tools.extend(financial_tools)
-            print(f"✅ 已加载 {len(financial_tools)} 个财务工具")
+            logger.debug("Loaded %s financial tools", len(financial_tools))
         except Exception as e:
             import logging
             logger = logging.getLogger(__name__)

@@ -125,11 +125,10 @@ class PolicyNotificationAgent:
         
         if not getattr(PolicyNotificationAgent, '_initialized', False):
             PolicyNotificationAgent._initialized = True
-            print("🤖 [Policy Notification Agent] 初始化完成 ✨")
-            print("   - 能力: 语义理解 + 智能匹配 + 个性化生成")
-            print(f"   - 匹配权重: {self.match_weights}")
-            print("   - 提示词来源: AgentPromptLoader (policy_notification)")
-            print("   - LLM 支持: ✅ 已启用")
+            logger.debug(
+                "Policy notification agent initialized: match_weights=%s",
+                self.match_weights,
+            )
     
     def _load_system_prompt(self) -> str:
         """

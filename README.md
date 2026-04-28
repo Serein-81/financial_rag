@@ -109,13 +109,19 @@
 app/agent_framework/
 ├── core/           # Agent 核心实现
 │   ├── base_agent.py      # 基类定义
+│   ├── agent_wrapper.py   # Agent 包装与统一调用
 │   ├── react_agent.py     # ReAct 推理
 │   ├── plan_agent.py      # 规划模式
-│   └── reflect_agent.py    # 反思模式
+│   ├── reflect_agent.py   # 反思模式
+│   └── output_agent.py    # 输出整理
 ├── llm/            # LLM 适配器
 │   ├── base_adapter.py     # 适配器基类
-│   ├── zhipu_adapter.py    # 智谱 AI
 │   ├── openai_adapter.py   # OpenAI
+│   ├── zhipu_adapter.py    # 智谱 AI
+│   ├── deepseek_adapter.py # DeepSeek
+│   ├── qwen_adapter.py     # 通义千问
+│   ├── claude_adapter.py   # Claude
+│   ├── specialist_llm_router.py # 专家模型路由
 │   └── factory.py          # 工厂模式
 └── tools/          # 工具管理
     ├── tool_manager.py     # 工具注册
@@ -142,7 +148,7 @@ app/agent_framework/
 ├──────────────────────────────────────────┤
 │  ┌────────────┐  ┌────────────┐          │
 │  │  向量检索   │  │  关键词检索  │          │
-│  │ (Milvus)   │  │  (BM25)    │          │
+│  │ (pgvector) │  │  (BM25/FTS)│          │
 │  └─────┬──────┘  └─────┬──────┘          │
 │        │               │                  │
 │        └─────────┬─────┘                  │
@@ -160,6 +166,8 @@ app/agent_framework/
     ▼
 精准检索结果
 ```
+
+当前向量检索主要基于 PostgreSQL + pgvector，结合全文检索、同义词扩展、RRF 融合和可选 MMR/Rerank 进行结果优化。
 
 ### 4. 记忆系统
 

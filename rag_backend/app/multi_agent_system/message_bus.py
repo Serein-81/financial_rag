@@ -5,10 +5,13 @@
 
 import asyncio
 import uuid
+import logging
 from typing import Dict, List, Callable, Any, Optional
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
+
+logger = logging.getLogger(__name__)
 
 
 class MessageType(str, Enum):
@@ -70,7 +73,7 @@ class MessageBus:
         # 异步锁
         self.lock = asyncio.Lock()
         
-        print("📨 [消息总线] 初始化完成")
+        logger.debug("Message bus initialized")
     
     async def publish(
         self,

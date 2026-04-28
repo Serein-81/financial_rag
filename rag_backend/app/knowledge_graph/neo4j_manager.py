@@ -1,5 +1,6 @@
 """Neo4j 图数据库管理器"""
 import json
+import logging
 from typing import List, Dict, Optional, Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -15,6 +16,8 @@ except ImportError:
     Query = None
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class Neo4jManager:
@@ -46,7 +49,7 @@ class Neo4jManager:
     def _connect(self):
         """建立连接"""
         if not NEO4J_AVAILABLE:
-            print("[WARNING] Neo4j 模块未安装，跳过连接")
+            logger.warning("Neo4j package is not installed; skipping connection")
             self.driver = None
             return
         try:
@@ -56,9 +59,9 @@ class Neo4jManager:
             )
             # 测试连接
             self.driver.verify_connectivity()
-            print(f"[OK] Neo4j 连接成功: {self.uri}")
+            logger.debug("Neo4j connected: %s", self.uri)
         except Exception as e:
-            print(f"[ERROR] Neo4j 连接失败: {e}")
+            logger.error("Neo4j connection failed: %s", e)
             self.driver = None
 
     def close(self):

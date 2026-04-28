@@ -13,8 +13,8 @@ from app.core.resource_manager import make_resource_manager, RedisConnectionPool
 # ➕ 2. 必须导入 models 里的文件！
 # 只有导入了 document，SQLAlchemy 才知道 "哦，原来有一个叫 Document 的子类要建表"
 # 如果不导入这行，Base.metadata 里面是空的，就不会建表。
-from app.models import tax_report, user_financial_data, tenant_settings, policy, financial_health, contract_review, agent_task
-from app.api.v1.endpoints import document as document_router, search, chat, auth, session, knowledge, agent_trace, tool_trace, prompt_optimization, memory, knowledge_graph, audit, invite_code, enterprise, logs, chat_logs, tax_report, human_review, multi_agent, group_chat, user_financial_data, tenant_settings, policy, rate_limit, streaming, snapshot, suggestion, tax_intelligence, financial_health, policy_tracking, contract_review, task_manager, agent_llm_config, agent_discovery, financial_tools_test, workflow_events, policy_notifications, policy_agent, workflow, security
+from app.models import tax_report, user_financial_data, tenant_settings, policy, financial_health, contract_review, agent_task, custom_tool
+from app.api.v1.endpoints import document as document_router, search, chat, auth, session, knowledge, agent_trace, tool_trace, prompt_optimization, memory, knowledge_graph, audit, invite_code, enterprise, logs, chat_logs, tax_report, human_review, multi_agent, group_chat, user_financial_data, tenant_settings, policy, rate_limit, streaming, snapshot, suggestion, tax_intelligence, financial_health, policy_tracking, contract_review, task_manager, agent_llm_config, agent_discovery, financial_tools_test, workflow_events, policy_notifications, policy_agent, workflow, security, custom_tools
 from app.api.v1.endpoints import agent_task as agent_task_endpoint
 from app.api.v1.endpoints.circuit_breaker_api import router as circuit_breaker_router
 from app.observability.router import router as observability_router
@@ -74,9 +74,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(cleanup_expired_presence_task())
         logger.info("✅ 在线状态清理任务已启动")
 
-        from app.services.policy_service import policy_service
-        asyncio.create_task(policy_service.start_scheduler())
-        logger.info("✅ 政策同步调度器已启动（定时从官方渠道同步）")
+        logger.info("✅ 政策在线采集服务已就绪（仅手动触发，不随项目启动自动采集）")
         
         from app.services.task_scheduler import task_scheduler
         await task_scheduler.start()
@@ -96,6 +94,16 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"⚠️ A2A 协议初始化失败: {e}")
         
+        try:
+            from app.db.session import AsyncSessionLocal
+            from app.services.custom_tool_service import custom_tool_service
+
+            async with AsyncSessionLocal() as session:
+                loaded_tools = await custom_tool_service.load_published_tools(session)
+            logger.info(f"Loaded published custom tools: {loaded_tools}")
+        except Exception as e:
+            logger.warning(f"Custom tool bootstrap skipped: {e}")
+
         try:
             from app.a2a_protocol import get_transport_manager
             transport_manager = await get_transport_manager()
@@ -259,6 +267,7 @@ app.include_router(knowledge.router, prefix="/api/v1/knowledge", tags=["Knowledg
 app.include_router(agent_trace.router, prefix="/api/v1/agent_trace", tags=["Agent Trace"]) # 🆕 Agent 追踪
 app.include_router(agent_trace.router, prefix="/api/v1/agent-trace", tags=["Agent Trace"]) # 兼容前端 hyphen 路径
 app.include_router(agent_discovery.router, prefix="/api/v1/agent-discovery", tags=["Agent Discovery"]) # 🆕 Agent 发现与追踪
+app.include_router(custom_tools.router, prefix="/api/v1/custom-tools", tags=["Custom Tools"])
 app.include_router(tool_trace.router, prefix="/api/v1/tool_trace", tags=["Tool Trace"]) # 🆕 工具追踪
 app.include_router(tool_trace.router, prefix="/api/v1/tool-trace", tags=["Tool Trace"]) # 兼容前端 hyphen 路径
 app.include_router(prompt_optimization.router, prefix="/api/v1/prompt", tags=["Prompt Optimization"]) # 🆕 Prompt 优化

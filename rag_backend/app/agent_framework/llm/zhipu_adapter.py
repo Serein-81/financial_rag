@@ -7,6 +7,7 @@
 """
 
 from typing import AsyncGenerator, Optional, Dict, Any
+import logging
 try:
     from zhipuai import ZhipuAI
     ZHIPU_AVAILABLE = True
@@ -15,6 +16,8 @@ except ImportError:
     ZhipuAI = None
 
 from .base_adapter import BaseLLMAdapter, LLMResponse
+
+logger = logging.getLogger(__name__)
 
 
 class ZhipuAdapter(BaseLLMAdapter):
@@ -52,9 +55,7 @@ class ZhipuAdapter(BaseLLMAdapter):
         # 只在首次初始化时打印详细信息
         if not getattr(ZhipuAdapter, '_initialized', False):
             ZhipuAdapter._initialized = True
-            print("[OK] Zhipu AI adapter initialized")
-            print(f"   - Model: {self.model_name}")
-            print(f"   - API Key: {api_key[:8]}...{api_key[-4:]}")
+            logger.debug("Zhipu AI adapter initialized: model=%s", self.model_name)
 
     async def generate(
         self,

@@ -231,6 +231,14 @@ export interface PolicyAgentTestResponse {
   processing_time: number
 }
 
+export interface PolicySyncResponse {
+  message: string
+  status: 'success' | 'warning' | string
+  collected: number
+  saved: number
+  errors: string[]
+}
+
 export const policyApi = {
   createEventSource(token: string): EventSource {
     const url = `${import.meta.env.VITE_API_BASE_URL}/api/v1/policy-notifications/stream`
@@ -266,6 +274,12 @@ export const policyApi = {
     return request('/policy/list', {
       method: 'POST',
       data: params
+    })
+  },
+
+  syncPolicies: async (): Promise<PolicySyncResponse> => {
+    return request('/policy/sync', {
+      method: 'POST'
     })
   },
 

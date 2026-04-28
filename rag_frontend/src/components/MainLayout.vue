@@ -225,7 +225,6 @@ const menuGroups = computed<MenuGroup[]>(() => {
       defaultExpanded: true,
       items: [
         { path: '/policy', icon: Sparkles, label: '政策管理', name: 'policy' },
-        { path: '/policy-search', icon: Brain, label: '政策匹配', name: 'policy-search' },
         { path: '/policy-notifications', icon: BellRing, label: '政策通知', name: 'policy-notifications' },
         { path: '/enterprise-match', icon: Target, label: '企业匹配', name: 'enterprise-match' },
       ]
@@ -249,6 +248,7 @@ const menuGroups = computed<MenuGroup[]>(() => {
       defaultExpanded: false,
       items: [
         { path: '/agent-center', icon: Bot, label: '智能体中心', name: 'agent-center', permission: 'admin' },
+        { path: '/custom-tools', icon: Wrench, label: '智能体工具', name: 'custom-tools', permission: 'admin' },
         { path: '/intent-debug', icon: Brain, label: '意图调试', name: 'intent-debug', permission: 'admin' },
         { path: '/security-audit', icon: AlertTriangle, label: '安全审计', name: 'security-audit', permission: 'admin' },
         { path: '/enterprise', icon: Users, label: '企业管理', name: 'enterprise', permission: 'admin' },

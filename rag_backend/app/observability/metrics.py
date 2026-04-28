@@ -152,10 +152,20 @@ class Histogram:
         self._min = float('inf')
         self._max = float('-inf')
         self._buckets: Dict[float, int] = defaultdict(int)
-        self._values_by_label: Dict[str, Dict[str, Any]] = defaultdict(lambda: {
-            "count": 0, "sum": 0, "min": float('inf'), "max": float('-inf')
-        })
+        self._values_by_label: Dict[str, Dict[str, Any]] = defaultdict(self._new_label_data)
         self._lock = threading.RLock()
+
+    def _new_label_data(self) -> Dict[str, Any]:
+        """Create a fully initialized labeled histogram bucket set."""
+        data = {
+            "count": 0,
+            "sum": 0,
+            "min": float('inf'),
+            "max": float('-inf')
+        }
+        for boundary in self.boundaries:
+            data[f"le_{boundary}"] = 0
+        return data
     
     def record(self, value: float, labels: Optional[Dict[str, str]] = None):
         """
@@ -181,7 +191,7 @@ class Histogram:
             for boundary in self.boundaries:
                 if value <= boundary:
                     if labels:
-                        self._values_by_label[label_key][f"le_{boundary}"] += 1
+                        data[f"le_{boundary}"] = data.get(f"le_{boundary}", 0) + 1
                     else:
                         self._buckets[boundary] += 1
             

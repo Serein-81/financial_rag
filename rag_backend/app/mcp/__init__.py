@@ -124,6 +124,12 @@ def get_all_local_tools():
     tools.extend(create_legal_compliance_tools_v2())
     tools.extend(create_orchestrator_tools())
     tools.extend(create_foundation_tools())
+    try:
+        from app.services.custom_tool_service import get_published_custom_tool_callables
+
+        tools.extend(get_published_custom_tool_callables())
+    except Exception as e:
+        logger.warning(f"Failed to load published custom tools: {e}")
     logger.info(f"📦 本地 MCP 工具: {len(tools)} 个")
     return tools
 

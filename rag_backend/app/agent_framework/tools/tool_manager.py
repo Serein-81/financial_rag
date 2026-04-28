@@ -208,6 +208,10 @@ class ToolManager:
                     params[param_name] = param_info
                 
                 # 注册工具
+                custom_input_schema = getattr(func, "_custom_input_schema", None)
+                if custom_input_schema:
+                    params = custom_input_schema
+
                 self.tools[name] = {
                     "func": func,
                     "description": description,

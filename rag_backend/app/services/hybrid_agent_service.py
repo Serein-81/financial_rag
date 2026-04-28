@@ -53,9 +53,7 @@ class HybridEnterpriseAgentService:
         """
         self.use_hybrid = use_hybrid
         
-        print("=" * 60)
-        print("🚀 混合企业级Agent服务初始化")
-        print("=" * 60)
+        logger.debug("Hybrid enterprise agent service initializing")
         
         if use_hybrid:
             self._init_hybrid_framework()
@@ -64,12 +62,11 @@ class HybridEnterpriseAgentService:
             from .agent_service import agent_service
             self.fallback_service = agent_service
         
-        print("✅ 混合Agent服务初始化完成！")
-        print("=" * 60)
+        logger.debug("Hybrid agent service initialized")
     
     def _init_hybrid_framework(self):
         """初始化混合框架"""
-        print("🔀 使用混合Agent框架")
+        logger.debug("Using hybrid agent framework")
         
         # 1. 初始化 LLM 适配器
         self.llm_adapter = ZhipuAdapter(

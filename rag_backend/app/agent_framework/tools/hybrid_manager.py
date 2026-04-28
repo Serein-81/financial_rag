@@ -63,7 +63,7 @@ class HybridToolManager:
             "fallback_executions": 0
         }
         
-        print("🔀 混合工具管理器初始化完成")
+        logger.debug("Hybrid tool manager initialized")
         self._register_default_chains()
     
     def _register_default_chains(self):

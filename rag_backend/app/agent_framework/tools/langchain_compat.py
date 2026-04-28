@@ -29,7 +29,7 @@ class LangChainCompatLayer:
         """
         self.tool_manager = tool_manager
         
-        print("LangChain 兼容层初始化完成")
+        logger.debug("LangChain compatibility layer initialized")
     
     def register_langchain_tools(self, langchain_tools: List[Any]):
         """

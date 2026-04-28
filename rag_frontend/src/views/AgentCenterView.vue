@@ -127,6 +127,45 @@ const stepTypeColors = {
   end: 'bg-gray-100 text-gray-700 border-gray-300'
 }
 
+const toolLocationMeta = {
+  local: {
+    label: '本地工具',
+    detail: '进程内 / 本地资源',
+    emptyLabel: '本地',
+    icon: Server,
+    cardClass: 'bg-emerald-50',
+    iconClass: 'text-emerald-600',
+    textClass: 'text-emerald-700',
+    badgeClass: 'bg-emerald-100 text-emerald-700',
+  },
+  mcp: {
+    label: 'MCP 工具',
+    detail: 'MCP 协议/进程内适配',
+    emptyLabel: 'MCP',
+    icon: Network,
+    cardClass: 'bg-blue-50',
+    iconClass: 'text-blue-600',
+    textClass: 'text-blue-700',
+    badgeClass: 'bg-blue-100 text-blue-700',
+  },
+  cloud: {
+    label: '云端工具',
+    detail: '已连接远端服务',
+    emptyLabel: '云端',
+    icon: Cloud,
+    cardClass: 'bg-orange-50',
+    iconClass: 'text-orange-600',
+    textClass: 'text-orange-700',
+    badgeClass: 'bg-orange-100 text-orange-700',
+  },
+} as const
+
+const toolLocations = ['local', 'mcp', 'cloud'] as const
+
+function getToolLocationMeta(location: string) {
+  return toolLocationMeta[location as keyof typeof toolLocationMeta] || toolLocationMeta.mcp
+}
+
 function mapTraceStepToEvent(step: AgentTraceStep): AgentTraceEvent {
   const eventTypeMap: Record<string, AgentTraceEvent['event_type']> = {
     thought: 'thinking',
@@ -639,14 +678,21 @@ onMounted(() => {
             </div>
             <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200 hover:shadow-md transition-shadow">
               <div class="flex items-center gap-3 mb-3">
+                <div class="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+                  <Network :size="20" class="text-blue-600" />
+                </div>
+                <span class="text-sm font-medium text-slate-600">MCP 工具</span>
+              </div>
+              <p class="text-3xl font-bold text-slate-900">{{ summary.tool_breakdown?.mcp || 0 }}</p>
+            </div>
+            <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200 hover:shadow-md transition-shadow">
+              <div class="flex items-center gap-3 mb-3">
                 <div class="w-10 h-10 bg-orange-100 rounded-lg flex items-center justify-center">
                   <Cloud :size="20" class="text-orange-600" />
                 </div>
                 <span class="text-sm font-medium text-slate-600">云端工具</span>
               </div>
               <p class="text-3xl font-bold text-slate-900">{{ summary.tool_breakdown?.cloud || 0 }}</p>
-            </div>
-            <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200 hover:shadow-md transition-shadow">
             </div>
           </div>
 
@@ -705,11 +751,9 @@ onMounted(() => {
                         <span class="text-sm text-slate-700">{{ tool.name }}</span>
                         <span :class="[
                           'px-1.5 py-0.5 rounded text-xs',
-                          tool.location === 'local' ? 'bg-emerald-100 text-emerald-700' :
-                          tool.location === 'cloud' ? 'bg-orange-100 text-orange-700' :
-                          'bg-blue-100 text-blue-700'
+                          getToolLocationMeta(tool.location).badgeClass
                         ]">
-                          {{ tool.location }}
+                          {{ getToolLocationMeta(tool.location).label }}
                         </span>
                       </div>
                     </div>
@@ -767,24 +811,23 @@ onMounted(() => {
               <div class="p-5 space-y-4 max-h-[500px] overflow-y-auto">
                 <!-- 按位置分类视图-->
                 <template v-if="toolViewMode === 'location'">
-                  <div v-for="location in ['local', 'cloud']" :key="location" class="border border-slate-200 rounded-lg overflow-hidden">
+                  <div v-for="location in toolLocations" :key="location" class="border border-slate-200 rounded-lg overflow-hidden">
                     <div :class="[
                       'px-4 py-3 flex items-center justify-between',
-                      location === 'local' ? 'bg-emerald-50' :
-                      location === 'cloud' ? 'bg-orange-50' : 'bg-blue-50'
+                      getToolLocationMeta(location).cardClass
                     ]">
                       <div class="flex items-center gap-2">
                         <component
-                          :is="location === 'local' ? Server : Cloud"
+                          :is="getToolLocationMeta(location).icon"
                           :size="18"
-                          :class="location === 'local' ? 'text-emerald-600' : 'text-orange-600'"
+                          :class="getToolLocationMeta(location).iconClass"
                         />
                         <span :class="[
                           'font-medium',
-                          location === 'local' ? 'text-emerald-700' :
-                          location === 'cloud' ? 'text-orange-700' : 'text-blue-700'
+                          getToolLocationMeta(location).textClass
                         ]">
-                          {{ location === 'local' ? '本地工具 (LangChain)' : '云端工具' }}
+                          {{ getToolLocationMeta(location).label }}
+                          <span class="ml-1 text-xs font-normal text-slate-500">{{ getToolLocationMeta(location).detail }}</span>
                         </span>
                       </div>
                       <span class="text-sm text-slate-600">
@@ -813,7 +856,7 @@ onMounted(() => {
                         </div>
                       </div>
                       <div v-if="tools.filter(t => t.location === location).length === 0" class="text-sm text-slate-400 text-center py-2">
-                        暂无{{ location === 'local' ? '本地' : '云端' }}工具
+                        暂无{{ getToolLocationMeta(location).emptyLabel }}工具
                       </div>
                     </div>
                   </div>
@@ -843,11 +886,9 @@ onMounted(() => {
                             <p class="text-sm font-medium text-slate-700">{{ tool.name }}</p>
                             <span :class="[
                               'px-1.5 py-0.5 rounded text-xs',
-                              tool.location === 'local' ? 'bg-emerald-100 text-emerald-700' :
-                              tool.location === 'cloud' ? 'bg-orange-100 text-orange-700' :
-                              'bg-blue-100 text-blue-700'
+                              getToolLocationMeta(tool.location).badgeClass
                             ]">
-                              {{ tool.location === 'local' ? '本地' : '云端' }}
+                              {{ getToolLocationMeta(tool.location).label }}
                             </span>
                           </div>
                           <p class="text-xs text-slate-500 mt-0.5">{{ tool.description }}</p>
@@ -879,10 +920,9 @@ onMounted(() => {
                             <p class="text-sm font-medium text-slate-700">{{ tool.name }}</p>
                             <span :class="[
                               'px-1.5 py-0.5 rounded text-xs',
-                              tool.location === 'local' ? 'bg-emerald-100 text-emerald-700' :
-                              'bg-orange-100 text-orange-700'
+                              getToolLocationMeta(tool.location).badgeClass
                             ]">
-                              {{ tool.location === 'local' ? '本地' : '云端' }}
+                              {{ getToolLocationMeta(tool.location).label }}
                             </span>
                           </div>
                           <p class="text-xs text-slate-500 mt-0.5">{{ tool.description }}</p>
@@ -925,10 +965,9 @@ onMounted(() => {
                           <p class="text-xs text-slate-500 mt-0.5">{{ tool.description }}</p>
                           <span :class="[
                             'inline-block mt-1 px-1.5 py-0.5 rounded text-xs',
-                            tool.location === 'local' ? 'bg-emerald-100 text-emerald-700' :
-                            'bg-orange-100 text-orange-700'
+                            getToolLocationMeta(tool.location).badgeClass
                           ]">
-                            {{ tool.location === 'local' ? '本地' : '云端' }}
+                            {{ getToolLocationMeta(tool.location).label }}
                           </span>
                         </div>
                       </div>

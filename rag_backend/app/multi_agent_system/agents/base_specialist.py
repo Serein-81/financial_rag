@@ -6,11 +6,14 @@
 from abc import abstractmethod
 from typing import List, Dict, Any, Optional
 import uuid
+import logging
 
 from app.agent_framework.core.base_agent import BaseAgent
 from app.agent_framework.llm.base_adapter import BaseLLMAdapter
 from app.agent_framework.tools.tool_manager import ToolManager
 from ..state import AuditState, Finding, RiskLevel
+
+logger = logging.getLogger(__name__)
 
 
 class BaseSpecialistAgent(BaseAgent):
@@ -66,10 +69,12 @@ class BaseSpecialistAgent(BaseAgent):
         # 只在首次初始化时打印详细信息
         if not BaseSpecialistAgent._initialized_instances.get(specialty, False):
             BaseSpecialistAgent._initialized_instances[specialty] = True
-            print(f"[OK] [{self.specialty.upper()} Agent] 初始化完成")
-            print(f"   - 专业领域: {specialty}")
-            print(f"   - 知识库规则: {len(self.knowledge_base)} 条")
-            print(f"   - 风险规则: {len(self.risk_rules)} 条")
+            logger.debug(
+                "%s specialist initialized: knowledge_rules=%s, risk_rules=%s",
+                specialty,
+                len(self.knowledge_base),
+                len(self.risk_rules),
+            )
     
     @abstractmethod
     async def audit(

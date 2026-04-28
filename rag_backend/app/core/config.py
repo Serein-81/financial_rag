@@ -214,8 +214,8 @@ class Settings(BaseSettings):
     TAVILY_API_KEY: str = ""
 
     # 政策采集合规配置
-    # 默认不自动访问公网政策站点，避免在未确认官方授权/robots/频率要求前触发自动化采集。
-    POLICY_ONLINE_CRAWL_ENABLED: bool = False
+    # 允许在线政策采集；采集只由手动接口触发，并保留 robots.txt 与访问频率限制。
+    POLICY_ONLINE_CRAWL_ENABLED: bool = True
     POLICY_SAMPLE_FALLBACK_ENABLED: bool = True
     POLICY_REQUIRE_ROBOTS_TXT: bool = True
     POLICY_COLLECTOR_USER_AGENT: str = "PolicyCollector/1.0 (Enterprise Tax System; Contact: support@example.com)"
@@ -315,6 +315,9 @@ class Settings(BaseSettings):
     A2A_HTTP_BASE_URL: str = "http://localhost:8000"
     A2A_HTTP_TIMEOUT: float = 30.0
     A2A_HTTP_RETRY_TIMES: int = 3
+
+    # Startup diagnostics. Keep this off by default to avoid noisy container logs.
+    STARTUP_VERBOSE: bool = False
 
     model_config = {
         # 指定读取根目录下的 .env 文件

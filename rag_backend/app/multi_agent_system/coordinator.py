@@ -5,6 +5,7 @@
 
 import asyncio
 import uuid
+import logging
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 
@@ -17,6 +18,8 @@ from app.prompts.llm_functions import triage_document, review_quality
 from app.memory_system.episodic_memory import EpisodicMemory
 from app.memory_system.semantic_memory import SemanticMemory
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class AgentCoordinator:
@@ -54,7 +57,11 @@ class AgentCoordinator:
         self.specialists = {}
         self._initialize_specialists()
         
-        print(f"🎯 [协调器] 初始化完成 (租户: {tenant_id or 'default'}, 用户: {user_id or 'default'})")
+        logger.debug(
+            "Agent coordinator initialized: tenant_id=%s, user_id=%s",
+            tenant_id or "default",
+            user_id or "default",
+        )
     
     def _initialize_specialists(self):
         """初始化专业智能体"""
@@ -69,7 +76,7 @@ class AgentCoordinator:
             import asyncio
             
             specialist_provider = settings.get_llm_provider_for_agent("finance")
-            print(f"🔧 [协调器] 专家智能体使用 LLM: {specialist_provider}")
+            logger.debug("Specialist agents using LLM provider: %s", specialist_provider)
             llm_adapter = LLMAdapterFactory.create_adapter(specialist_provider)
             
             # 为每个专家创建独立的工具管理器并注册工具
@@ -126,12 +133,7 @@ class AgentCoordinator:
                 tool_manager=legal_tool_manager
             )
             
-            print("🤖 [协调器] 专业智能体初始化完成")
-            print("   ✅ 财务智能体 (Finance) - 含网络搜索功能")
-            print("   ✅ 税务智能体 (Tax) - 含网络搜索功能")
-            print("   ✅ 法务智能体 (Legal) - 含网络搜索功能")
-            print("   ✅ 质量审查 (使用 review_quality 函数)")
-            print("   ☁️ MCP 工具已注册: 天气查询、位置查询、网络搜索")
+            logger.debug("Specialist agents initialized")
             
         except (ValueError, KeyError) as e:
             print(f"⚠️ [协调器] 专业智能体初始化数据错误: {e}")
@@ -171,7 +173,7 @@ class AgentCoordinator:
                 base_retriever=self.rag_retriever
             )
             
-            print("📚 [协调器] RAG检索器初始化完成（租户隔离模式，使用 pgvector）")
+            logger.debug("RAG retriever initialized")
             
         except (ValueError, KeyError) as e:
             print(f"⚠️ [协调器] RAG检索器初始化数据错误: {e}")

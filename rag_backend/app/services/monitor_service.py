@@ -22,6 +22,10 @@ from enum import Enum
 from contextlib import asynccontextmanager
 from functools import wraps
 import traceback
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 
 class EventType(Enum):
@@ -137,7 +141,7 @@ class MonitorService:
         self.events: List[MonitorEvent] = []
         self.active_traces: Dict[str, MonitorEvent] = {}
         
-        print("[CHART] [MonitorService] 初始化完成")
+        logger.debug("MonitorService initialized")
     
     @asynccontextmanager
     async def trace_agent(
@@ -589,7 +593,7 @@ class LLMTraceContext:
 
 
 # 全局单例
-monitor_service = MonitorService(enable_console_log=True)
+monitor_service = MonitorService(enable_console_log=False)
 
 
 # ==========================================

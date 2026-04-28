@@ -52,6 +52,8 @@ const totalPolicies = ref(0)
 const currentPage = ref(1)
 const pageSize = ref(20)
 const isLoading = ref(false)
+const isSyncingPolicies = ref(false)
+const lastSyncResult = ref<{ collected: number; saved: number; errors: string[] } | null>(null)
 const tenantSettings = ref<TenantSettings | null>(null)
 
 // PolicyNotificationAgent 状态
@@ -64,6 +66,7 @@ const isGeneratingSummary = ref(false)
 const batchGeneratingPolicies = ref<Set<string>>(new Set())
 
 const searchQuery = ref('')
+const searchMode = ref<'library' | 'semantic'>('library')
 const showFilters = ref(false)
 
 const {
@@ -162,14 +165,49 @@ async function fetchPolicies() {
       ...filters.value
     }
 
-    const response = await policyApi.listPolicies(params)
-    policies.value = response.policies
-    totalPolicies.value = response.total
+    if (searchMode.value === 'semantic' && searchQuery.value.trim()) {
+      const results = await policyApi.searchPolicies(params)
+      policies.value = results.map(result => result.policy)
+      totalPolicies.value = results.length
+      currentPage.value = 1
+    } else {
+      const response = await policyApi.listPolicies(params)
+      policies.value = response.policies
+      totalPolicies.value = response.total
+    }
   } catch (error: any) {
     ElMessage.error('获取政策列表失败')
     console.error('Failed to fetch policies:', error)
   } finally {
     isLoading.value = false
+  }
+}
+
+async function syncPolicyLibrary() {
+  isSyncingPolicies.value = true
+  lastSyncResult.value = null
+  try {
+    const result = await policyApi.syncPolicies()
+    lastSyncResult.value = {
+      collected: result.collected || 0,
+      saved: result.saved || 0,
+      errors: result.errors || []
+    }
+
+    if (result.saved > 0) {
+      ElMessage.success(`政策库已更新，新增 ${result.saved} 条政策`)
+    } else if (result.collected > 0) {
+      ElMessage.info('已完成采集，未发现新增政策')
+    } else {
+      ElMessage.warning('未采集到新政策，请稍后重试或检查官方来源可用性')
+    }
+
+    await fetchPolicies()
+  } catch (error: any) {
+    ElMessage.error('更新政策库失败')
+    console.error('Failed to sync policy library:', error)
+  } finally {
+    isSyncingPolicies.value = false
   }
 }
 
@@ -267,6 +305,12 @@ function getLLMSummary(policyId: string) {
 }
 
 function handleSearch() {
+  currentPage.value = 1
+  fetchPolicies()
+}
+
+function switchSearchMode(mode: 'library' | 'semantic') {
+  searchMode.value = mode
   currentPage.value = 1
   fetchPolicies()
 }
@@ -404,7 +448,8 @@ function selectExportFormat(format: ExportFormat) {
 </script>
 
 <template>
-  <div class="flex-1 flex flex-col bg-gradient-to-br from-slate-100 via-blue-50/30 to-indigo-50/30 h-full">
+  <div class="flex-1 flex flex-col h-full">
+    <div class="flex-1 flex flex-col bg-gradient-to-br from-slate-100 via-blue-50/30 to-indigo-50/30 h-full">
     <!-- Top Bar -->
     <div class="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-6 shadow-sm">
       <div class="flex items-center gap-3">
@@ -440,11 +485,33 @@ function selectExportFormat(format: ExportFormat) {
           {{ isGeneratingSummary ? '生成中...' : '批量生成摘要' }}
         </button>
 
+        <div class="flex items-center rounded-xl border border-gray-200 bg-gray-50 p-1">
+          <button
+            @click="switchSearchMode('library')"
+            :class="[
+              'px-3 py-1.5 rounded-lg text-xs font-medium transition-all',
+              searchMode === 'library' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-800'
+            ]"
+          >
+            政策库
+          </button>
+          <button
+            @click="switchSearchMode('semantic')"
+            :class="[
+              'px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1',
+              searchMode === 'semantic' ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-500 hover:text-gray-800'
+            ]"
+          >
+            <Brain :size="13" />
+            智能检索
+          </button>
+        </div>
+
         <div class="relative">
           <input
             v-model="searchQuery"
             type="text"
-            placeholder="搜索政策标题或内容..."
+            :placeholder="searchMode === 'semantic' ? '描述政策诉求，进行语义检索...' : '搜索政策标题或内容...'"
             class="w-80 pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm text-gray-900 placeholder-gray-400 focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all outline-none"
             @keydown.enter="handleSearch"
           />
@@ -474,6 +541,16 @@ function selectExportFormat(format: ExportFormat) {
           title="刷新"
         >
           <RefreshCw :size="18" :class="{ 'animate-spin': isLoading }" class="text-gray-600" />
+        </button>
+
+        <button
+          @click="syncPolicyLibrary"
+          :disabled="isSyncingPolicies"
+          class="px-4 py-2 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-all flex items-center gap-2 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+          title="仅采集官方公开政策来源，并遵守 robots.txt 与访问频率限制"
+        >
+          <RefreshCw :size="16" :class="{ 'animate-spin': isSyncingPolicies }" />
+          {{ isSyncingPolicies ? '更新中...' : '更新政策库' }}
         </button>
 
         <div class="relative">
@@ -541,6 +618,19 @@ function selectExportFormat(format: ExportFormat) {
             </div>
           </Transition>
         </div>
+      </div>
+    </div>
+
+    <div
+      v-if="lastSyncResult"
+      class="mx-6 mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800"
+    >
+      已完成政策库更新：采集 {{ lastSyncResult.collected }} 条，新增 {{ lastSyncResult.saved }} 条。
+      <span v-if="lastSyncResult.errors.length > 0" class="text-amber-700">
+        其中 {{ lastSyncResult.errors.length }} 项需要检查。
+      </span>
+      <div class="mt-1 text-xs text-emerald-700">
+        采集仅在点击按钮时触发；系统只访问官方公开来源，并保留 robots.txt 检查、访问限速和来源记录。
       </div>
     </div>
 
@@ -1007,15 +1097,15 @@ function selectExportFormat(format: ExportFormat) {
       </div>
     </div>
 
-
-  <ExportProgressModal
-    :visible="showExportModal"
-    :progress="exportProgress.progress"
-    :status="exportProgress.status"
-    :message="exportProgress.message"
-    :estimated-time="estimatedTimeRemaining"
-    @close="showExportModal = false"
-  />
+    <ExportProgressModal
+      :visible="showExportModal"
+      :progress="exportProgress.progress"
+      :status="exportProgress.status"
+      :message="exportProgress.message"
+      :estimated-time="estimatedTimeRemaining"
+      @close="showExportModal = false"
+    />
+  </div>
 </template>
 
 <style scoped>

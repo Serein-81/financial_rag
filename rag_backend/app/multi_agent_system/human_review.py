@@ -4,11 +4,14 @@
 提供人工审核队列和状态管理功能
 """
 
+import logging
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 import uuid
+
+logger = logging.getLogger(__name__)
 
 
 class ReviewStatus(str, Enum):
@@ -114,7 +117,7 @@ class HumanReviewQueue:
         self._pending_by_tenant: Dict[str, List[str]] = {}
         self._assigned_by_reviewer: Dict[str, List[str]] = {}
         
-        print("📋 [人工审核队列] 初始化完成")
+        logger.debug("Human review queue initialized")
     
     def create_review_request(
         self,

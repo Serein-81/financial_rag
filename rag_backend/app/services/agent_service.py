@@ -13,17 +13,17 @@ from app.utils.json_compat import json
 import asyncio
 import logging
 from typing import List, Dict, Any, AsyncGenerator, Optional
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-ENABLE_INIT_LOGGING = os.getenv("ENABLE_INIT_LOGGING", "false").lower() == "true"
+ENABLE_INIT_LOGGING = settings.STARTUP_VERBOSE or os.getenv("ENABLE_INIT_LOGGING", "false").lower() == "true"
 
 def _log_init(*args, **kwargs):
     """条件初始化日志"""
     if ENABLE_INIT_LOGGING:
         print(*args, **kwargs)
 
-from app.core.config import settings
 from app.core.exceptions import (
     ServiceException,
     LLMServiceException,
@@ -117,10 +117,10 @@ class EnterpriseAgentService:
         """
         初始化自定义框架
         """
-        print("使用自定义 Agent 框架")
+        logger.debug("使用自定义 Agent 框架")
         
         default_provider = settings.get_llm_provider_for_agent("chat")
-        print(f"[SETUP] [Agent服务] 默认智能体使用 LLM: {default_provider}")
+        logger.debug(f"[SETUP] [Agent服务] 默认智能体使用 LLM: {default_provider}")
         
         from app.agent_framework.llm.factory import LLMAdapterFactory
         self.llm_adapter = LLMAdapterFactory.create_adapter(default_provider)
@@ -302,7 +302,7 @@ class EnterpriseAgentService:
 
         # 问候语检测 - 跳过所有检索，直接回答
         if is_greeting_query(user_input):
-            print("[CHAT] [问候语检测] 跳过 RAG 和记忆系统，直接调用 LLM")
+            logger.debug("[CHAT] [问候语检测] 跳过 RAG 和记忆系统，直接调用 LLM")
             
             from app.agent_framework.llm.specialist_llm_router import SpecialistLLMRouter
             greeting_adapter = SpecialistLLMRouter.get_greeting_adapter()
@@ -464,7 +464,7 @@ class EnterpriseAgentService:
             return result
 
         except LLMServiceException as e:
-            print(f"[ERROR] [自定义框架] LLM服务异常: {e}")
+            logger.debug(f"[ERROR] [自定义框架] LLM服务异常: {e}")
             return "抱歉，AI服务暂时不可用，请稍后再试。"
         except ValidationException as e:
             print(f"[ERROR] [自定义框架] 输入验证失败: {e}")
@@ -492,7 +492,7 @@ class EnterpriseAgentService:
         
         # 问候语检测 - 跳过所有检索，直接流式回答
         if is_greeting_query(user_input):
-            print("[CHAT] [问候语检测] 跳过 RAG 和记忆系统，直接调用 LLM")
+            logger.debug("[CHAT] [问候语检测] 跳过 RAG 和记忆系统，直接调用 LLM")
             
             from app.agent_framework.llm.specialist_llm_router import SpecialistLLMRouter
             greeting_adapter = SpecialistLLMRouter.get_greeting_adapter()
@@ -678,7 +678,7 @@ class EnterpriseAgentService:
             print("[OK] [自定义框架] 流式处理完成")
             
         except LLMServiceException as e:
-            print(f"[ERROR] [自定义框架] 流式处理LLM服务异常: {e}")
+            logger.debug(f"[ERROR] [自定义框架] 流式处理LLM服务异常: {e}")
             yield output_formatter.format_error_answer("AI服务暂时不可用，请稍后再试。")
         except ValidationException as e:
             print(f"[ERROR] [自定义框架] 流式处理输入验证失败: {e}")

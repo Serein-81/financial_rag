@@ -10,9 +10,12 @@ Agent 抽象基类
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, AsyncGenerator
 import time
+import logging
 from ..tools.tool_manager import ToolManager
 from ..llm.base_adapter import BaseLLMAdapter
 from app.services.agent_tracer import agent_tracer
+
+logger = logging.getLogger(__name__)
 
 
 class BaseAgent(ABC):
@@ -67,13 +70,17 @@ class BaseAgent(ABC):
         self.current_trace_id = None
         self.enable_tracing = True
         
-        print(f"[OK] {self.__class__.__name__} 初始化完成")
-        print(f"   - Agent名称: {agent_name or '未指定'}")
-        print(f"   - 提示词来源: {'结构化系统' if agent_name else '静态提示词'}")
-        print(f"   - 可用工具: {len(self.tool_manager.tools)} 个")
-        print(f"   - 最大迭代: {self.max_iterations} 次")
-        print(f"   - 超时设置: {self.timeout} 秒")
-        print(f"   - 追踪功能: {'启用' if self.enable_tracing else '禁用'}")
+        logger.debug(
+            "%s initialized: agent_name=%s, prompt_source=%s, tools=%s, "
+            "max_iterations=%s, timeout=%s, tracing=%s",
+            self.__class__.__name__,
+            agent_name or "unspecified",
+            "structured" if agent_name else "static",
+            len(self.tool_manager.tools),
+            self.max_iterations,
+            self.timeout,
+            self.enable_tracing,
+        )
     
     def _render_system_prompt(self, context: Dict[str, Any] = None, **render_kwargs) -> str:
         """

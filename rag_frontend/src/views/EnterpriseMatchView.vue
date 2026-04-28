@@ -30,6 +30,7 @@ const isRefreshing = ref(false)
 const matches = ref<PolicyMatchResult[]>([])
 const selectedMatch = ref<PolicyMatchResult | null>(null)
 const tenantSettings = ref<TenantSettings | null>(null)
+const isSavingProfile = ref(false)
 
 // PolicyNotificationAgent 状态
 const useLLM = ref(true)
@@ -49,12 +50,31 @@ const enterpriseProfile = ref({
   qualifications: ['高新技术企业', '软件企业']
 })
 
+const profileOptions = {
+  industries: ['制造业', '科技', '金融', '房地产', '零售', '医疗', '教育', '能源'],
+  regions: ['全国', '北京', '上海', '广州', '深圳', '浙江', '江苏', '广东', '四川', '湖北'],
+  scales: ['大型企业', '中型企业', '小型企业', '微型企业'],
+  tax_types: ['增值税', '企业所得税', '个人所得税', '消费税', '关税', '印花税', '土地增值税']
+}
+
 const statistics = computed(() => ({
   total: matches.value.length,
   highMatch: matches.value.filter(m => m.match_score >= 0.8).length,
   mediumMatch: matches.value.filter(m => m.match_score >= 0.6 && m.match_score < 0.8).length,
   lowMatch: matches.value.filter(m => m.match_score < 0.6).length
 }))
+
+const profileCompletion = computed(() => {
+  const fields = [
+    enterpriseProfile.value.enterprise_name,
+    enterpriseProfile.value.industry,
+    enterpriseProfile.value.region,
+    enterpriseProfile.value.scale,
+    enterpriseProfile.value.tax_types.length > 0,
+    enterpriseProfile.value.qualifications.length > 0
+  ]
+  return Math.round((fields.filter(Boolean).length / fields.length) * 100)
+})
 
 onMounted(async () => {
   await loadTenantSettings()
@@ -131,6 +151,41 @@ async function refreshMatches() {
   } finally {
     isRefreshing.value = false
   }
+}
+
+async function saveEnterpriseProfile() {
+  isSavingProfile.value = true
+  try {
+    await tenantSettingsApi.updateMySettings({
+      company_name: enterpriseProfile.value.enterprise_name,
+      industry: enterpriseProfile.value.industry,
+      region: enterpriseProfile.value.region,
+      scale: enterpriseProfile.value.scale,
+      tax_types: enterpriseProfile.value.tax_types
+    })
+    tenantSettings.value = {
+      ...(tenantSettings.value as TenantSettings),
+      company_name: enterpriseProfile.value.enterprise_name,
+      industry: enterpriseProfile.value.industry,
+      region: enterpriseProfile.value.region,
+      scale: enterpriseProfile.value.scale,
+      tax_types: enterpriseProfile.value.tax_types
+    }
+    ElMessage.success('企业画像已保存')
+    await refreshMatches()
+  } catch (error: any) {
+    ElMessage.error('保存企业画像失败')
+    console.error('Failed to save enterprise profile:', error)
+  } finally {
+    isSavingProfile.value = false
+  }
+}
+
+function toggleProfileTag(field: 'tax_types' | 'qualifications', value: string) {
+  const current = enterpriseProfile.value[field]
+  enterpriseProfile.value[field] = current.includes(value)
+    ? current.filter(item => item !== value)
+    : [...current, value]
 }
 
 async function loadDetailedMatches() {
@@ -327,6 +382,127 @@ function getDetailedMatch(policyId: string) {
             badge-color="bg-amber-50 text-amber-700"
             icon-gradient="from-amber-500 to-orange-600"
           />
+          </div>
+        </div>
+
+        <!-- Enterprise Profile -->
+        <div class="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
+          <div class="flex items-start justify-between gap-4 mb-5">
+            <div>
+              <div class="flex items-center gap-2 mb-1">
+                <Building2 :size="18" class="text-teal-600" />
+                <h3 class="text-lg font-semibold text-gray-900">企业画像</h3>
+              </div>
+              <p class="text-sm text-gray-500">画像会直接影响政策推荐、匹配分数和智能分析结果</p>
+            </div>
+            <div class="text-right">
+              <div class="text-xs text-gray-500 mb-1">完整度</div>
+              <div class="flex items-center gap-2">
+                <div class="w-28 h-2 bg-gray-100 rounded-full overflow-hidden">
+                  <div class="h-full bg-teal-500 rounded-full transition-all" :style="{ width: `${profileCompletion}%` }"></div>
+                </div>
+                <span class="text-sm font-semibold text-teal-700">{{ profileCompletion }}%</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
+            <label class="block">
+              <span class="text-xs font-medium text-gray-600">企业名称</span>
+              <input
+                v-model="enterpriseProfile.enterprise_name"
+                class="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
+              />
+            </label>
+
+            <label class="block">
+              <span class="text-xs font-medium text-gray-600">所属行业</span>
+              <select
+                v-model="enterpriseProfile.industry"
+                class="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
+              >
+                <option v-for="industry in profileOptions.industries" :key="industry" :value="industry">{{ industry }}</option>
+              </select>
+            </label>
+
+            <label class="block">
+              <span class="text-xs font-medium text-gray-600">所在地区</span>
+              <select
+                v-model="enterpriseProfile.region"
+                class="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
+              >
+                <option v-for="region in profileOptions.regions" :key="region" :value="region">{{ region }}</option>
+              </select>
+            </label>
+
+            <label class="block">
+              <span class="text-xs font-medium text-gray-600">企业规模</span>
+              <select
+                v-model="enterpriseProfile.scale"
+                class="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
+              >
+                <option v-for="scale in profileOptions.scales" :key="scale" :value="scale">{{ scale }}</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            <div>
+              <div class="text-xs font-medium text-gray-600 mb-2">关注税种</div>
+              <div class="flex flex-wrap gap-2">
+                <button
+                  v-for="taxType in profileOptions.tax_types"
+                  :key="taxType"
+                  @click="toggleProfileTag('tax_types', taxType)"
+                  :class="[
+                    'px-3 py-1.5 rounded-lg text-xs font-medium border transition-all',
+                    enterpriseProfile.tax_types.includes(taxType)
+                      ? 'bg-teal-600 text-white border-teal-600'
+                      : 'bg-white text-gray-600 border-gray-200 hover:border-teal-300'
+                  ]"
+                >
+                  {{ taxType }}
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <div class="text-xs font-medium text-gray-600 mb-2">企业资质</div>
+              <div class="flex flex-wrap gap-2">
+                <button
+                  v-for="qualification in ['高新技术企业', '软件企业', '专精特新', '小微企业', '研发机构']"
+                  :key="qualification"
+                  @click="toggleProfileTag('qualifications', qualification)"
+                  :class="[
+                    'px-3 py-1.5 rounded-lg text-xs font-medium border transition-all',
+                    enterpriseProfile.qualifications.includes(qualification)
+                      ? 'bg-emerald-600 text-white border-emerald-600'
+                      : 'bg-white text-gray-600 border-gray-200 hover:border-emerald-300'
+                  ]"
+                >
+                  {{ qualification }}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="flex justify-end gap-3 mt-5">
+            <button
+              @click="refreshMatches"
+              :disabled="isRefreshing"
+              class="px-4 py-2 rounded-xl border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all disabled:opacity-50 inline-flex items-center gap-2"
+            >
+              <RefreshCw :size="16" :class="{ 'animate-spin': isRefreshing }" />
+              用当前画像匹配
+            </button>
+            <button
+              @click="saveEnterpriseProfile"
+              :disabled="isSavingProfile"
+              class="px-4 py-2 rounded-xl bg-teal-600 text-white text-sm font-medium hover:bg-teal-700 transition-all disabled:opacity-50 inline-flex items-center gap-2"
+            >
+              <Loader2 v-if="isSavingProfile" :size="16" class="animate-spin" />
+              保存画像并匹配
+            </button>
           </div>
         </div>
 
