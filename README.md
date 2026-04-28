@@ -31,11 +31,16 @@
 
 本项目采用前后端分离架构，包含以下主要模块：
 
+<details>
+<summary>📋 项目组成（点击展开）</summary>
+
 | 模块 | 技术栈 | 说明 |
 |------|--------|------|
 | **[前端应用](./rag_frontend)** | Vue 3 + TypeScript | 企业级 Web 应用界面，包含完整的用户交互体验 |
 | **[后端服务](./rag_backend)** | FastAPI + Python | RESTful API 服务，提供核心业务逻辑和 AI 能力 |
-| **[MCP 工具服务](./mcp_server)** | Python | 财税法务领域专用工具接口，支持 MCP 标准协议 |
+| **[MCP 工具服务](./mcp_server)** | Python | 财税法务领域专用工具接口，支持 MCP 标准协议（可扩展功能，需云端服务器） |
+
+</details>
 
 ### 🚀 快速访问
 
@@ -53,6 +58,9 @@
 
 前端采用 **Vue 3 + TypeScript** 构建，提供企业级用户体验：
 
+<details>
+<summary>💡 前端功能亮点（点击展开）</summary>
+
 | 功能模块 | 说明 |
 |---------|------|
 | 🤖 **智能对话** | 单/多智能体对话、群组聊天、流式输出 |
@@ -62,6 +70,8 @@
 | 🔧 **系统工具** | Agent 监控、意图分类、人机协作 |
 | 📈 **数据可视化** | 分析仪表板、实时监控、图表展示 |
 | 🎨 **交互体验** | 动画效果、骨架屏、国际化支持 |
+
+</details>
 
 
 ## ✨ 核心特性
@@ -98,6 +108,9 @@
 
 **专业能力**：
 
+<details>
+<summary>🎯 智能体类型与职责（点击展开）</summary>
+
 | 智能体类型 | 职责范围 |
 |-----------|---------|
 | 分诊智能体 | 问题分类、意图识别、路由决策 |
@@ -106,32 +119,14 @@
 | 财务专家 | 财务指标分析、报表解读、比率计算 |
 | 反思智能体 | 答案质量评估、交叉验证、改进建议 |
 
+</details>
+
 ### 2. 自研轻量级 Agent 框架
 
 不同于 LangChain 的臃肿，我们实现了轻量级的 ReAct Agent 框架：
 
-```python
-# 核心架构
-app/agent_framework/
-├── core/           # Agent 核心实现
-│   ├── base_agent.py      # 基类定义
-│   ├── agent_wrapper.py   # Agent 包装与统一调用
-│   ├── react_agent.py     # ReAct 推理
-│   ├── plan_agent.py      # 规划模式
-│   ├── reflect_agent.py   # 反思模式
-│   └── output_agent.py    # 输出整理
-├── llm/            # LLM 适配器
-│   ├── base_adapter.py     # 适配器基类
-│   ├── openai_adapter.py   # OpenAI
-│   ├── zhipu_adapter.py    # 智谱 AI
-│   ├── deepseek_adapter.py # DeepSeek
-│   ├── qwen_adapter.py     # 通义千问
-│   ├── claude_adapter.py   # Claude
-│   ├── specialist_llm_router.py # 专家模型路由
-│   └── factory.py          # 工厂模式
-└── tools/          # 工具管理
-    ├── tool_manager.py     # 工具注册
-    └── tool_router.py      # 智能路由
+```
+> 框架核心模块包括：**ReAct/Plan/Reflect 推理引擎**、**多 LLM 适配器层**（OpenAI、DeepSeek、智谱、Claude、Qwen 等，通过工厂模式零代码切换）、**工具管理器**（工具注册与智能路由）。整个框架不依赖 LangChain，保持轻量独立，便于定制和调试。
 ```
 
 **设计亮点**：
@@ -179,6 +174,9 @@ app/agent_framework/
 
 完整的 Agent 记忆体系，支持上下文理解：
 
+<details>
+<summary>🧠 记忆类型说明（点击展开）</summary>
+
 | 记忆类型 | 说明 | 持久化 |
 |---------|------|--------|
 | 工作记忆 | 当前对话上下文 | 内存 |
@@ -186,16 +184,15 @@ app/agent_framework/
 | 语义记忆 | 长期知识存储 | Vector DB |
 | 关系记忆 | 实体关系图谱 | Neo4j |
 
-### 5. MCP 远程工具服务
+</details>
 
-提供标准化的财税法务工具调用接口：
+### 5. MCP 工具服务（可扩展功能）
 
-- 🧮 **税务计算** - 增值税、所得税、个税计算
-- ⚖️ **法律匹配** - 合同条款检查、法规匹配
-- 📊 **财务分析** - 比率计算、报表分析
-- 🏢 **企业信息** - 企业查询、风险评估
-
-> **说明**：后端项目 `rag_backend/app/mcp/` 已内置上述所有计算/检查类工具的同名实现（通过 `@cloud_tool` 装饰器），agent 默认走进程内直接调用，无需依赖外部 MCP 服务。`mcp_server/` 是独立的 HTTP MCP 工具服务，供外部 MCP 客户端或其他项目通过标准协议调用。如需启用 mcp_server，请确保有可用的云端服务器并在 `.env` 中正确配置 `MCP_MODE` 和 `MCP_SERVER_URL`（见下方云端部署章节）。
+> 🚧 **说明**：MCP 工具服务是一项**可选的可扩展功能**，部署需要一台独立的云端服务器。后端项目 `rag_backend/app/mcp/` 已内置所有计算/检查类工具的同名实现（通过 `@cloud_tool` 装饰器），Agent 默认通过进程内直接调用，**无需依赖外部 MCP 服务**，开箱即用。
+>
+> `mcp_server/` 是独立的 HTTP MCP 工具服务，供外部 MCP 客户端或其他项目通过标准协议调用。如果你有可用的云端服务器且希望启用远程 MCP 能力，请在 `.env` 中配置 `MCP_MODE` 和 `MCP_SERVER_URL`（详见文档末尾可扩展功能章节）。
+>
+> **推荐方式**：对于绝大多数用户，直接使用内置的进程内工具调用即可，无需额外部署。MCP 远程服务仅用于需要跨项目共享工具调用的高级场景。
 
 ---
 
@@ -203,6 +200,9 @@ app/agent_framework/
 ### 🆕 当前代码能力概览
 
 根据当前代码，系统已经扩展为覆盖 RAG、智能体协作、企业管理、财税工作流和运维观测的一体化平台：
+
+<details>
+<summary>🆕 当前代码能力概览（点击展开）</summary>
 
 | 能力域 | 当前实现 |
 |------|------|
@@ -215,11 +215,16 @@ app/agent_framework/
 | **财税法务业务** | 税务申报、税务智能分析、政策检索与通知、合同审查、财务数据录入、财务健康监控、企业政策匹配 |
 | **协作与实时能力** | 群组聊天、WebSocket 在线状态、SSE 流式响应、工作流事件推送、后台任务状态持久化 |
 | **运维与治理** | 请求日志、对话日志、安全监控、限流、熔断器、健康检查、LangSmith 追踪、OpenTelemetry 依赖 |
-| **远程工具服务** | 独立 MCP Server，提供税务、法务、财务工具注册、API Key 鉴权、JSON-RPC 风格工具调用 |
+| **远程工具服务** | 独立 MCP Server（可选可扩展），提供税务、法务、财务工具注册、API Key 鉴权、JSON-RPC 风格工具调用 |
+
+</details>
 
 ### 🧭 当前前端页面入口
 
 前端路由已覆盖下列主要业务页面：
+
+<details>
+<summary>🧭 当前前端页面入口（点击展开）</summary>
 
 | 路径 | 页面能力 |
 |------|------|
@@ -237,9 +242,14 @@ app/agent_framework/
 | `/custom-tools` | 智能体工具构建器：自然语言生成工具、发布配置型工具、测试入参、查看企业已发布工具 |
 | `/task-management`、`/chat-logs`、`/profile`、`/test-data-guide` | 任务管理、对话日志、个人资料与测试数据指南 |
 
+</details>
+
 ### 🔌 当前后端 API 分组
 
 后端入口位于 `rag_backend/app/main.py`，当前已注册的主要 API 分组包括：
+
+<details>
+<summary>🔌 后端 API 分组（点击展开）</summary>
 
 | API 前缀 | 功能 |
 |------|------|
@@ -257,6 +267,8 @@ app/agent_framework/
 | `/api/v1/a2a*`、`/api/v1/circuit-breaker*`、`/api/v1/langsmith` | A2A 协议、熔断器管理与 LangSmith 集成 |
 | `/health`、`/health/quick`、`/health/{component}`、`/api/health` | 健康检查与组件级诊断 |
 
+</details>
+
 ---
 
 ## 🔬 技术实现详解
@@ -267,24 +279,7 @@ app/agent_framework/
 
 ReAct（Reasoning + Acting）模式是本系统智能体的核心推理范式，它将推理与行动交替执行，使智能体能够像人类一样边思考边行动：
 
-```python
-# ReAct 推理循环
-while not reached_final_answer:
-    # 1. 推理阶段 - 分析当前状态，决定下一步行动
-    thought = await llm.think(context, history)
-    
-    # 2. 行动阶段 - 执行推理决定的动作
-    if need_tool:
-        action = await execute_tool(thought)
-    else:
-        action = "final_answer"
-    
-    # 3. 观察阶段 - 获取行动结果
-    observation = await get_observation(action)
-    
-    # 4. 更新上下文
-    context.update(thought, action, observation)
-```
+> ReAct 推理引擎通过 **推理->行动->观察->更新** 的四阶段循环实现智能决策。推理阶段由 LLM 分析当前上下文并决定下一步操作（是否需要调用工具），行动阶段执行工具调用获取外部数据，观察阶段收集执行结果，最后更新上下文继续下一轮推理，直到得出最终答案。
 
 **ReAct 模式的优势**：
 
@@ -327,24 +322,7 @@ Plan 模式用于复杂任务的分解和规划，特别适合需要多步骤处
 
 Reflect 模式负责答案质量的评估和改进，确保输出的专业性和准确性：
 
-```python
-# 反思评估维度
-reflection_criteria = {
-    "accuracy": "答案的税务/法律计算是否准确",
-    "completeness": "是否涵盖了问题的所有关键方面",
-    "consistency": "前后逻辑是否一致",
-    "safety": "是否包含必要的风险提示和免责声明",
-    "clarity": "表达是否清晰易懂"
-}
-
-# 反思触发条件
-should_reflect = any([
-    question.complexity > threshold,
-    involves_calculation,
-    multiple_domains,
-    user_feedback_requested
-])
-```
+> 反思机制从 **准确性、完整性、一致性、安全性、清晰度** 五个维度对智能体的回答进行质量评估。当问题复杂度超出阈值或涉及计算类、多领域交叉等场景时，自动触发反思流程，进行交叉验证和补充完善，确保最终输出的专业性和可靠性。
 
 **反思机制的作用**：
 
@@ -357,24 +335,7 @@ should_reflect = any([
 
 智能体通过统一的工具接口调用各类外部服务：
 
-```python
-# 工具调用协议
-class ToolCall(Protocol):
-    name: str          # 工具名称
-    params: dict       # 输入参数
-    result: Any        # 执行结果
-    confidence: float  # 结果置信度
-    source: str        # 结果来源
-
-# 工具管理器
-tool_manager = ToolManager()
-tool_manager.register("tax_calculator", TaxCalculator())
-tool_manager.register("legal_search", LegalSearchEngine())
-tool_manager.register("financial_ratio", FinancialAnalyzer())
-
-# 智能路由选择最合适的工具
-selected_tool = tool_manager.route(query_analysis)
-```
+> 智能体通过统一的工具调用协议与外部服务交互。协议定义了工具名称、输入参数、执行结果、置信度和结果来源等标准字段。工具管理器负责注册和路由，支持税务计算器、法律检索引擎、财务分析器等各类工具的热插拔注册。智能路由组件根据查询分析结果自动选择最合适的工具执行。
 
 ---
 
@@ -386,23 +347,7 @@ selected_tool = tool_manager.route(query_analysis)
 
 工作记忆是智能体在当前对话中的临时工作空间：
 
-```python
-class WorkingMemory:
-    def __init__(self, capacity: int = 10):
-        self.messages: List[Message] = []      # 对话历史
-        self.entities: Dict[str, Entity] = {}   # 当前识别的实体
-        self.context_window: List[str] = []    # 滑动上下文窗口
-        self.pending_tasks: List[Task] = []    # 待处理任务
-    
-    def add(self, message: Message):
-        self.messages.append(message)
-        if len(self.messages) > self.capacity:
-            self.messages.pop(0)
-    
-    def get_relevant(self, query: str, top_k: int = 5) -> List[Message]:
-        # 基于语义相似度召回相关内容
-        return semantic_search(self.messages, query, top_k)
-```
+> 工作记忆维护当前对话的临时上下文窗口（默认容量 10 条），实时追踪识别的实体和待处理任务。采用滑动窗口机制自动淘汰旧消息，并支持基于语义相似度的上下文检索，确保智能体始终聚焦于当前任务相关的信息。
 
 **特点**：
 
@@ -414,43 +359,7 @@ class WorkingMemory:
 
 情景记忆存储对话历史的压缩摘要，便于快速回顾：
 
-```python
-class EpisodicMemory:
-    def __init__(self, db: Database):
-        self.storage = db
-    
-    def store_summary(
-        self, 
-        session_id: str,
-        summary: str,
-        key_points: List[str],
-        sentiment: str,
-        topics: List[str]
-    ):
-        # 自动摘要并存储
-        episode = Episode(
-            session_id=session_id,
-            summary=summary,
-            key_points=key_points,
-            topics=topics,
-            timestamp=datetime.now()
-        )
-        self.storage.save(episode)
-    
-    def retrieve_similar(
-        self, 
-        current_query: str, 
-        user_profile: UserProfile
-    ) -> List[Episode]:
-        # 基于用户画像和查询相似度召回
-        return self.storage.search(
-            query=current_query,
-            filters={
-                "user_id": user_profile.id,
-                "topics": {"$overlap": current_query.topics}
-            }
-        )
-```
+> 情景记忆将完整对话压缩为结构化摘要存储到 PostgreSQL，包含关键要点、情感倾向、话题标签和时间戳等元数据。支持按用户隔离、话题相似度等多维度检索，定期自动清理归档过期记录。
 
 **存储策略**：
 
@@ -463,37 +372,7 @@ class EpisodicMemory:
 
 语义记忆存储长期知识，采用向量数据库实现高效语义检索：
 
-```python
-class SemanticMemory:
-    def __init__(self, vector_store: VectorStore):
-        self.store = vector_store
-        self.embedder = EmbeddingModel()
-    
-    def store_knowledge(
-        self,
-        content: str,
-        metadata: Dict[str, Any],
-        knowledge_type: KnowledgeType
-    ):
-        # 向量化并存储
-        vector = self.embedder.encode(content)
-        self.store.add(
-            id=generate_id(),
-            vector=vector,
-            content=content,
-            metadata={**metadata, "type": knowledge_type}
-        )
-    
-    def query(self, question: str, filters: Dict) -> List[KnowledgeChunk]:
-        # 语义检索
-        query_vector = self.embedder.encode(question)
-        return self.store.search(
-            vector=query_vector,
-            top_k=10,
-            filters=filters,
-            include_vectors=False
-        )
-```
+> 语义记忆采用向量数据库存储长期知识。将知识内容通过 Embedding 模型编码为稠密向量后写入向量存储，检索时基于余弦相似度进行语义级别的精准匹配，支持元数据过滤和增量更新。
 
 **知识组织**：
 
@@ -506,39 +385,7 @@ class SemanticMemory:
 
 关系记忆使用知识图谱存储实体间的复杂关系：
 
-```python
-class RelationalMemory:
-    def __init__(self, graph_db: Neo4jDatabase):
-        self.graph = graph_db
-    
-    def store_entity(self, entity: Entity):
-        # 存储实体节点
-        self.graph.create_node(
-            label=entity.type,
-            properties=entity.to_dict()
-        )
-    
-    def store_relation(self, relation: Relation):
-        # 存储关系边
-        self.graph.create_relationship(
-            from_node=relation.source,
-            to_node=relation.target,
-            type=relation.type,
-            properties=relation.properties
-        )
-    
-    def expand_query(self, entity: str, depth: int = 2) -> Dict:
-        # 图谱扩展查询
-        return self.graph.traverse(
-            start_node=entity,
-            depth=depth,
-            relations=[
-                "税收优惠",
-                "适用条件",
-                "关联法规"
-            ]
-        )
-```
+> 关系记忆基于 Neo4j 图数据库构建知识图谱，将财税领域实体（法条、税种、企业类型等）作为节点，实体间关系（适用条件、关联法规、税收优惠等）作为边。支持图遍历扩展查询，通过路径发现和关系推理为检索结果补充丰富的上下文信息。
 
 **图谱能力**：
 
@@ -596,156 +443,23 @@ class RelationalMemory:
 
 系统采用分层设计的提示词模板，实现专业领域定制：
 
-```python
-# 提示词层次结构
-prompt_layers = {
-    # 第一层：系统基础层 - 定义智能体身份和基本原则
-    "system_base": """
-    你是一位专业的财税法务顾问助手。
-    核心原则：
-    1. 提供准确、合规的专业建议
-    2. 明确标注风险和限制条件
-    3. 引用相关法规条款作为依据
-    """,
-    
-    # 第二层：领域专家层 - 定义具体领域的专业能力
-    "domain_expert": {
-        "tax": """
-        税务专家能力范围：
-        - 增值税、企业所得税、个人所得税计算
-        - 税务筹划和合规建议
-        - 税收优惠政策解读
-        """,
-        "legal": """
-        法律专家能力范围：
-        - 合同条款审查和风险提示
-        - 法规条文解读和应用
-        - 权利义务分析
-        """,
-        "finance": """
-        财务专家能力范围：
-        - 财务报表分析和指标计算
-        - 财务比率和趋势分析
-        - 财务风险评估
-        """
-    },
-    
-    # 第三层：任务指令层 - 定义具体任务的执行方式
-    "task_instruction": """
-    任务类型：{task_type}
-    输出格式：{output_format}
-    参考资料：{retrieved_context}
-    """
-}
-```
+> 系统采用三层提示词架构：**系统基础层**定义智能体身份和核心原则（准确性、合规性、法规引用）；**领域专家层**为税务、法律、财务分别定制专业能力描述；**任务指令层**注入任务类型、输出格式和检索到的参考资料。三层叠加组装，确保各领域智能体输出专业、规范的答案。
 
 #### 3.2 动态提示词组装
 
 根据对话上下文动态组装最合适的提示词：
 
-```python
-class PromptComposer:
-    def compose(
-        self,
-        agent_type: AgentType,
-        task: Task,
-        context: Context,
-        retrieved_knowledge: List[Knowledge]
-    ) -> Prompt:
-        # 1. 获取基础系统提示
-        system_prompt = self.get_system_prompt(agent_type)
-        
-        # 2. 添加领域特定指令
-        domain_prompt = self.get_domain_prompt(agent_type.domain)
-        
-        # 3. 注入检索到的知识
-        knowledge_context = self.format_knowledge(retrieved_knowledge)
-        
-        # 4. 添加对话历史（摘要形式）
-        history_summary = self.summarize_history(context.messages)
-        
-        # 5. 组装最终提示
-        return f"""
-        {system_prompt}
-        
-        {domain_prompt}
-        
-        参考资料：
-        {knowledge_context}
-        
-        对话历史摘要：
-        {history_summary}
-        
-        当前任务：{task.description}
-        """
-```
+> 提示词组装器根据对话上下文动态构建最优提示。流程分为五步：获取智能体角色的系统提示 → 注入对应领域的专业指令 → 格式化并嵌入检索到的知识片段 → 压缩并插入对话历史摘要 → 组装最终提示交给 LLM 推理。整个过程完全自动化，开发者只需关注业务逻辑。
 
 #### 3.3 Few-Shot 示例模板
 
-为复杂任务提供示例参考：
-
-```python
-# 税务计算任务的 Few-Shot 示例
-tax_calculation_examples = [
-    {
-        "input": "某企业年销售额500万元，进项税额30万元，应缴纳多少增值税？",
-        "reasoning": """
-        1. 确定纳税人类型：一般纳税人（销售额>500万）
-        2. 适用税率：13%（销售货物）
-        3. 计算销项税额：500万 × 13% = 65万
-        4. 应纳税额 = 销项税额 - 进项税额 = 65万 - 30万 = 35万
-        5. 考虑是否有进项税额转出等特殊情况
-        """,
-        "output": "应缴纳增值税35万元。\n\n计算依据：《增值税暂行条例》第四条\n备注：以上计算基于一般纳税人13%税率，需根据实际情况核实进项税额抵扣凭证。"
-    }
-]
-
-# 法律条款匹配任务的 Few-Shot 示例
-legal_matching_examples = [
-    {
-        "input": "合同中约定'定金不得超过合同金额的20%'是否符合规定？",
-        "analysis": """
-        1. 识别相关法律：《民法典》第五百八十六条
-        2. 法条规定：定金不得超过主合同标的额的20%
-        3. 条款分析：合同金额的20%与标的额的20%是否一致
-        4. 结论判断：条款符合法律规定
-        """,
-        "output": "该约定符合法律规定。\n\n法律依据：《民法典》第五百八十六条规定，当事人可以约定一方向对方给付定金作为债权的担保。定金不得超过主合同标的额的20%。"
-    }
-]
-```
+为复杂任务提供示例参考，通过嵌入典型问答范例帮助 LLM 更好理解输出格式和推理路径。例如税务计算任务中给出「销售额 → 确定纳税人类型 → 适用税率 → 计算销项税额 → 应纳税额 = 销项税额 - 进项税额」的完整推理链，法律任务中给出「识别相关法律 → 法条原文 → 对照分析 → 结论判断 → 风险提示」的分析框架。
 
 #### 3.4 Chain-of-Thought 引导
 
 针对复杂问题启用逐步推理模式：
 
-```python
-cot_system_prompt = """
-当你遇到复杂的税务、法律或财务问题时，请采用链式思考：
-
-1. 问题拆解
-   - 这是什么问题类型？
-   - 涉及哪些法律/税务条款？
-   - 有哪些关键条件需要确认？
-
-2. 条件分析
-   - 逐一检查适用条件
-   - 识别特殊情况或限制
-   - 确定适用税率或标准
-
-3. 方案推导
-   - 按逻辑步骤计算或推理
-   - 每一步都要有依据
-   - 中间结论要明确
-
-4. 综合结论
-   - 汇总各部分结论
-   - 指出需要注意的风险点
-   - 提供可行的建议
-
-请用【思考】标记推理过程，用【结论】标记最终答案。
-"""
-```
+> 针对复杂问题启用逐步推理模式，引导 LLM 按照「问题拆解 → 条件分析 → 方案推导 → 综合结论」的链式路径进行思考。每步推理要求明确标注依据和中间结论，最终以【思考】和【结论】标记区分推理过程和最终答案，提升回答的可追溯性。
 
 ---
 
@@ -755,92 +469,13 @@ cot_system_prompt = """
 
 系统采用多路召回 + 融合排序的混合检索策略：
 
-```python
-class HybridRetriever:
-    def __init__(self):
-        self.vector_retriever = VectorRetriever()
-        self.keyword_retriever = KeywordRetriever()
-        self.knowledge_graph = KnowledgeGraphRetriever()
-        self.fusion_engine = FusionEngine()
-    
-    async def retrieve(
-        self, 
-        query: Query,
-        top_k: int = 20
-    ) -> List[RetrievedChunk]:
-        # 1. 查询意图分析
-        intent = await self.analyze_intent(query)
-        
-        # 2. 并行多路召回
-        results = await asyncio.gather(
-            self.vector_retriever.search(
-                query=query.text,
-                filters=self.build_filters(intent),
-                limit=top_k * 2
-            ),
-            self.keyword_retriever.search(
-                query=query.text,
-                filters=self.build_filters(intent),
-                limit=top_k * 2
-            ),
-            self.knowledge_graph.expand(
-                entities=self.extract_entities(query.text),
-                depth=2
-            )
-        )
-        
-        # 3. RRF 融合排序
-        fused_results = self.fusion_engine.reciprocal_rank_fusion(
-            results,
-            k=60  # RRF 融合参数
-        )
-        
-        # 4. 重排序
-        reranked = await self.rerank(fused_results, query)
-        
-        return reranked[:top_k]
-```
+> 混合检索器采用 **意图分析 → 并行多路召回 → RRF 融合 → 重排序** 的四阶段流水线。首先分析用户查询意图，然后并行从向量检索、关键词检索、知识图谱三条路径召回候选结果，使用 RRF（倒数排名融合）算法合并排序，最后通过交叉编码器精排输出 Top-K 结果。
 
 #### 4.2 向量检索算法
 
 使用稠密向量进行语义级别的相似度匹配：
 
-```python
-class VectorRetriever:
-    def __init__(self):
-        self.embedding_model = EmbeddingModel()
-        self.vector_store = MilvusStore()
-    
-    async def search(
-        self,
-        query: str,
-        filters: Dict,
-        limit: int = 20
-    ) -> List[VectorResult]:
-        # 1. 查询向量化
-        query_vector = await self.embedding_model.encode(query)
-        
-        # 2. 添加查询扩展（可选）
-        expanded_queries = await self.expand_query(query)
-        expanded_vectors = [
-            await self.embedding_model.encode(eq) 
-            for eq in expanded_queries
-        ]
-        
-        # 3. 多向量查询融合
-        all_vectors = [query_vector] + expanded_vectors
-        avg_vector = np.mean(all_vectors, axis=0)
-        
-        # 4. ANN 近似最近邻搜索
-        results = await self.vector_store.search(
-            vectors=[avg_vector],
-            top_k=limit,
-            filters=filters,
-            metric_type="COSINE"
-        )
-        
-        return results
-```
+> 向量检索将查询文本通过 Embedding 模型编码为 1536 维稠密向量，支持查询扩展（生成多个语义相似查询取平均向量以提升召回）。使用 HNSW 近似最近邻索引实现毫秒级语义匹配，支持基于元数据的过滤筛选。
 
 **向量检索特点**：
 
@@ -853,40 +488,7 @@ class VectorRetriever:
 
 经典的关键词检索算法，基于词频和文档频率：
 
-```python
-class KeywordRetriever:
-    def __init__(self):
-        self.bm25 = BM25Okapi()
-        self.index = InvertedIndex()
-    
-    def search(
-        self,
-        query: str,
-        filters: Dict,
-        limit: int = 20
-    ) -> List[BM25Result]:
-        # 1. 查询分词
-        tokens = self.tokenize(query)
-        
-        # 2. 计算 BM25 分数
-        scores = self.bm25.get_scores(tokens)
-        
-        # 3. 应用过滤器
-        filtered_scores = self.apply_filters(scores, filters)
-        
-        # 4. 排序返回 Top-K
-        top_indices = np.argsort(filtered_scores)[::-1][:limit]
-        
-        return [
-            BM25Result(
-                doc_id=idx,
-                content=self.index.get_doc(idx),
-                score=filtered_scores[idx],
-                matched_terms=self.get_matched_terms(tokens, idx)
-            )
-            for idx in top_indices
-        ]
-```
+> BM25 关键词检索基于经典的词频-逆文档频率算法，通过分词、倒排索引和 BM25 评分公式计算查询与文档的相关性。结合过滤器筛选后按分数排序返回结果，与向量检索形成互补——BM25 擅长精确词汇匹配，向量检索擅长语义理解。
 
 **BM25 公式**：
 
@@ -957,35 +559,7 @@ def reciprocal_rank_fusion(
 
 自动优化用户查询，提升召回效果：
 
-```python
-class QueryExpander:
-    def __init__(self):
-        self.llm = LLMAdapter()
-        self.synonym_dict = SynonymDictionary()
-    
-    async def expand(self, query: str) -> ExpandedQuery:
-        # 1. 意图识别
-        intent = await self.identify_intent(query)
-        
-        # 2. 同义词扩展
-        synonyms = self.synonym_dict.expand(query)
-        
-        # 3. LLM 生成扩展查询
-        llm_expansions = await self.llm.generate(
-            prompt=f"请为以下查询生成3个语义相近但表述不同的查询：\n{query}"
-        )
-        
-        # 4. 领域术语标准化
-        standardized = self.standardize_terms(query)
-        
-        return ExpandedQuery(
-            original=query,
-            intent=intent,
-            expanded_terms=synonyms + [standardized],
-            alternative_queries=llm_expansions,
-            filters=self.extract_filters(query)
-        )
-```
+> 查询扩展器通过 **意图识别 → 同义词扩展 → LLM 生成替代查询 → 领域术语标准化** 四步优化用户原始查询。同义词字典覆盖财税领域等效词汇（如税务/税收/税金），LLM 生成语义相近的不同表述，最终将多个扩展查询融合以提升召回覆盖面。
 
 **扩展策略**：
 
@@ -998,44 +572,7 @@ class QueryExpander:
 
 使用交叉编码器对初筛结果进行精细排序：
 
-```python
-class Reranker:
-    def __init__(self):
-        self.cross_encoder = CrossEncoder()
-    
-    async def rerank(
-        self,
-        candidates: List[RetrievedChunk],
-        query: Query,
-        top_k: int = 10
-    ) -> List[RerankedChunk]:
-        # 1. 构建 Query-Document 对
-        pairs = [(query.text, doc.content) for doc in candidates]
-        
-        # 2. 批量计算相关性分数
-        scores = await self.cross_encoder.predict(pairs)
-        
-        # 3. 结合原始分数和重排分数
-        final_scores = []
-        for i, doc in enumerate(candidates):
-            combined_score = (
-                0.3 * doc.original_score +  # 原始召回分数
-                0.7 * scores[i]             # 交叉编码器分数
-            )
-            final_scores.append((combined_score, doc))
-        
-        # 4. 排序并返回
-        final_scores.sort(reverse=True)
-        
-        return [
-            RerankedChunk(
-                doc=doc,
-                score=score,
-                rank=i + 1
-            )
-            for i, (score, doc) in enumerate(final_scores[:top_k])
-        ]
-```
+> 重排序器使用交叉编码器对初筛候选集进行精细评估。将每个候选文档与查询组成配对，批量计算深度语义相关性分数，按照「30% 原始召回分数 + 70% 交叉编码器分数」的权重组合作综合排序，最终筛选出 Top-K 高质量结果，兼顾召回广度和排序精度。
 
 **重排序的作用**：
 
@@ -1099,6 +636,9 @@ class Reranker:
 
 ### 技术栈详情
 
+<details>
+<summary>🛠️ 技术栈详情（点击展开）</summary>
+
 | 层级 | 技术选型 | 说明 |
 |------|---------|------|
 | **后端框架** | FastAPI 0.128+ | 异步高性能 API 框架 |
@@ -1114,6 +654,8 @@ class Reranker:
 | **向量模型** | SiliconFlow / 智谱 / OpenAI 等 | 文档向量化，按环境变量选择 |
 
 > 说明：当前项目推荐使用 DeepSeek。代码中也保留了 OpenAI、Claude、智谱、Qwen、MiniMax 等 LLM 适配器，已检查其导入和初始化路径；真实调用仍取决于用户自己的 API Key、Base URL、模型权限和网络环境。
+
+</details>
 
 ---
 
@@ -1227,6 +769,9 @@ My_rag/
 
 ### 环境要求
 
+<details>
+<summary>💻 环境要求（点击展开）</summary>
+
 | 环境 | 组件 | 版本要求 |
 |------|------|---------|
 | **本地** | Docker & Docker Compose | 20.10+ |
@@ -1234,6 +779,8 @@ My_rag/
 | **本地** | Node.js | 18+ |
 | **云端** | Docker | 20.10+ |
 | **云端** | Python | 3.12+ |
+
+</details>
 
 ---
 
@@ -1278,15 +825,6 @@ docker compose logs -f backend
 - MinIO 控制台：http://localhost:9001
 - Neo4j Browser：http://localhost:7474
 
-停止环境：
-
-```bash
-cd My_rag/rag_backend
-docker compose down
-```
-
-清理本地数据卷/数据目录前请先确认不再需要已有数据。当前 compose 使用 `rag_backend` 目录下的 `postgres_data/`、`redis_data/`、`neo4j_data/`、`minio_data/` 等目录保存数据。
-
 #### 使用已发布的后端镜像（可选）
 
 如果不想在本地重新构建后端镜像，可以拉取 GitHub Container Registry 中发布好的镜像。该镜像由 GitHub Actions 的 **Docker Build** 工作流手动发布，成功发布后会生成以下标签：
@@ -1323,6 +861,15 @@ docker compose up -d
 ```
 
 普通复现建议直接使用本仓库默认的 `docker compose up -d`，它会按当前代码在本地构建镜像，更适合调试和二次开发。
+
+停止环境：
+
+```bash
+cd My_rag/rag_backend
+docker compose down
+```
+
+清理本地数据卷/数据目录前请先确认不再需要已有数据。当前 compose 使用 `rag_backend` 目录下的 `postgres_data/`、`redis_data/`、`neo4j_data/`、`minio_data/` 等目录保存数据。
 
 ### 1. 克隆项目
 
@@ -1364,6 +911,9 @@ docker compose logs -f backend
 
 **Docker Compose 包含的服务：**
 
+<details>
+<summary>🐳 Docker Compose 包含的服务（点击展开）</summary>
+
 | 服务 | 容器名 | 端口 | 说明 |
 |------|--------|------|------|
 | PostgreSQL | rag_db | 5432 | 向量数据库 |
@@ -1373,6 +923,8 @@ docker compose logs -f backend
 | MinIO | rag_minio | 9000, 9001 | 对象存储 |
 | Backend | rag_backend | 8000 | 后端 API |
 | Unstructured API | rag_unstructured_api | 8001 | 重型文档解析服务，需 `--profile heavy` 或 `--profile full` |
+
+</details>
 
 ### 4. 验证后端服务
 
@@ -1419,6 +971,9 @@ exit
 
 系统支持多种大模型提供商，**推荐优先使用 DeepSeek**。其它供应商适配器已检查导入和初始化路径；真实调用需要根据对应平台的 API Key、Base URL、模型权限和网络环境确认。
 
+<details>
+<summary>🔑 必需密钥：LLM 大模型 API（点击展开）</summary>
+
 | 提供商 | 环境变量 | 获取地址 | 说明 |
 |--------|----------|----------|------|
 | **DeepSeek** | `DEEPSEEK_API_KEY` | [DeepSeek Platform](https://platform.deepseek.com/) | **推荐使用，当前项目主要验证路径** |
@@ -1426,6 +981,8 @@ exit
 | OpenAI | `OPENAI_API_KEY` | [OpenAI Platform](https://platform.openai.com/) | 已有适配器，需配置平台密钥 |
 | Claude | `CLAUDE_API_KEY` | [Anthropic Console](https://console.anthropic.com/) | 已有适配器，需配置平台密钥 |
 | 硅基流动 | `SILICONFLOW_API_KEY` | [硅基流动](https://siliconflow.cn/) | 主要用于 Embedding/Rerank，也可按需接入模型 |
+
+</details>
 
 **推荐配置示例（使用 DeepSeek）：**
 
@@ -1612,91 +1169,6 @@ SILICONFLOW_EMBEDDING_MODEL=BAAI/bge-m3
 
 ---
 
-## 🔧 云端 MCP 服务部署（Docker）
-
-MCP 服务部署在云端，为后端提供远程工具调用能力。
-
-### 1. 准备云端环境
-
-```bash
-# 在云服务器上安装 Docker
-curl -fsSL https://get.docker.com | sh
-systemctl enable docker
-```
-
-### 2. 上传 MCP 服务代码
-
-```bash
-# 在云服务器上创建目录
-mkdir -p /opt/mcp_server
-cd /opt/mcp_server
-
-# 上传 mcp_server 目录内容
-# 可以使用 scp、rsync 或 git clone
-scp -r mcp_server/* user@your-cloud-server:/opt/mcp_server/
-```
-
-### 3. 配置 MCP 服务
-
-```bash
-cd /opt/mcp_server
-
-# 创建环境变量文件
-cat > .env << EOF
-# MCP 服务配置
-MCP_HOST=0.0.0.0
-MCP_PORT=8000
-
-# API 认证
-MCP_API_KEY=your_mcp_api_key_here
-EOF
-```
-
-### 4. 构建并启动 MCP 服务
-
-```bash
-cd /opt/mcp_server
-
-# 构建 Docker 镜像
-docker build -t mcp-server .
-
-# 运行容器
-docker run -d \
-  --name mcp-server \
-  -p 8080:8080 \
-  --env-file .env \
-  --restart unless-stopped \
-  mcp-server
-
-# 查看日志
-docker logs -f mcp-server
-```
-
-### 5. 验证 MCP 服务
-
-```bash
-# 检查服务健康状态
-curl http://your-cloud-server:8080/health
-
-# 测试工具调用
-curl -X POST http://your-cloud-server:8080/tools/tax_calculate \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: your_mcp_api_key_here" \
-  -d '{"amount": 300000, "tax_type": "vat_small"}'
-```
-
-### 6. 配置后端连接 MCP
-
-在本地 `rag_backend/.env` 中添加：
-
-```env
-# MCP 服务地址（云端）
-MCP_SERVER_URL=http://your-cloud-server:8080
-MCP_API_KEY=your_mcp_api_key_here
-```
-
----
-
 ## 🌐 前端部署（npm）
 
 ### 方式一：本地开发
@@ -1781,6 +1253,65 @@ server {
     }
 }
 ```
+
+---
+
+## 🔧 可扩展功能：云端 MCP 服务部署
+
+> ⚠️ **说明**：MCP 远程工具服务是一项**可选的可扩展功能**，部署需要一台拥有公网 IP 的云端服务器。**对于绝大多数用户，推荐使用本地的进程内工具调用方式**（项目默认开箱即用，无需额外配置）。
+>
+> 以下内容适用于需要跨项目共享工具调用的高级场景。如果你没有云端服务器或不需要远程 MCP 能力，可以跳过此章节。
+
+### 1. 准备云端环境
+
+在云服务器上安装 Docker：
+```bash
+curl -fsSL https://get.docker.com | sh
+systemctl enable docker
+```
+
+### 2. 上传 MCP 服务代码
+
+```bash
+mkdir -p /opt/mcp_server && cd /opt/mcp_server
+# 上传 mcp_server 目录内容（可用 scp、rsync 或 git clone）
+scp -r mcp_server/* user@your-cloud-server:/opt/mcp_server/
+```
+
+### 3. 配置并构建 MCP 服务
+
+创建环境变量文件（填写 API Key）后构建并运行：
+
+```bash
+cd /opt/mcp_server
+cat > .env << 'EOF'
+MCP_HOST=0.0.0.0
+MCP_PORT=8000
+MCP_API_KEY=your_mcp_api_key_here
+EOF
+
+docker build -t mcp-server .
+docker run -d --name mcp-server -p 8080:8080 --env-file .env --restart unless-stopped mcp-server
+```
+
+### 4. 验证服务
+
+```bash
+curl http://your-cloud-server:8080/health
+```
+
+### 5. 配置后端连接
+
+在本地 `rag_backend/.env` 中添加：
+
+```env
+# 如需启用云端 MCP 模式
+# MCP_MODE=cloud
+MCP_SERVER_URL=http://your-cloud-server:8080
+MCP_API_KEY=your_mcp_api_key_here
+```
+
+> 💡 **提示**：再次强调，后端 Agent 默认走进程内直接调用内置工具实现，MCP 远程服务仅在需要跨项目共享工具调用时才有配置价值。
 
 ---
 
@@ -1964,6 +1495,9 @@ docker compose restart backend
 
 ### 核心文档
 
+<details>
+<summary>📖 核心文档（点击展开）</summary>
+
 | 文档 | 说明 |
 |------|------|
 | [前端 README](rag_frontend/README.md) | 前端应用详细说明 |
@@ -1971,13 +1505,20 @@ docker compose restart backend
 | [Agent 框架说明](rag_backend/app/agent_framework/README.md) | Agent 框架设计文档 |
 | [记忆系统说明](rag_backend/app/memory_system/README.md) | 记忆系统设计文档 |
 
+</details>
+
 ### 项目文档
+
+<details>
+<summary>📄 项目文档（点击展开）</summary>
 
 | 文档 | 说明 |
 |------|------|
 | [项目介绍文档](rag_backend/项目介绍文档.md) | 项目整体介绍 |
 | [多智能体实施方案](rag_backend/财税法务多智能体实施方案.md) | 多智能体系统实施方案 |
 | [问题与解决方案](rag_backend/项目开发中遇到的问题和解决方案.md) | 开发中遇到的问题记录 |
+
+</details>
 
 ### 进阶文档
 
@@ -1996,47 +1537,19 @@ docker compose restart backend
 
 自研的轻量级 Agent 框架，支持多种推理模式：
 
-```python
-from app.agent_framework.core.react_agent import ReActAgent
-
-# 创建 Agent
-agent = ReActAgent(
-    name="税务专家",
-    tools=[calculate_tax, search_regulations],
-    llm_adapter=zhipu_adapter
-)
-
-# 执行推理
-result = await agent.run("小规模纳税人季度销售额30万，增值税如何计算？")
-```
+> 通过几行代码即可创建专业领域 Agent，配置工具集和 LLM 适配器后，直接调用 `agent.run()` 执行推理任务。Agent 框架封装了 ReAct 推理循环、工具调用和上下文管理，开发者无需关心底层实现细节。
 
 ### 工具系统
 
 灵活的外部工具集成机制：
 
-```python
-from app.agent_framework.tools.hybrid_manager import HybridToolManager
-
-# 注册自定义工具
-manager = HybridToolManager()
-manager.register_custom_tool(my_tool)
-manager.register_langchain_tool(langchain_tool)
-```
+> HybridToolManager 提供统一的工具注册接口，支持自定义工具和 LangChain 工具的热插拔注册。工具被注册后，智能体可在推理过程中按需调用，实现能力扩展。
 
 ### 检索增强
 
 混合检索 + 知识图谱增强：
 
-```python
-from app.services.hybrid_search import HybridSearchService
-
-searcher = HybridSearchService()
-results = await searcher.search(
-    query="企业所得税优惠政策",
-    top_k=10,
-    enable_knowledge_graph=True
-)
-```
+> HybridSearchService 封装了向量检索 + 关键词检索 + 知识图谱增强的完整混合检索引擎，通过 `search()` 方法一键获得 Top-K 高质量结果，支持动态开关知识图谱增强功能。
 
 ---
 
@@ -2075,39 +1588,12 @@ npx vue-tsc --noEmit
 
 ## 📝 API 示例
 
-### 聊天对话
+所有 API 均采用 RESTful 风格设计，使用 JWT Bearer Token 进行身份认证。主要端点包括：
+- **POST /api/v1/chat** — 发送消息到智能体对话会话，支持指定知识库范围
+- **POST /api/v1/documents/upload** — 上传文档到知识库，系统自动解析和向量化
+- **POST /api/v1/search** — 对知识库进行语义搜索，返回相关文档片段
 
-```bash
-curl -X POST http://localhost:8000/api/v1/chat \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message": "企业所得税税率是多少？",
-    "session_id": "xxx",
-    "knowledge_base_ids": ["kb_001"]
-  }'
-```
-
-### 文档上传
-
-```bash
-curl -X POST http://localhost:8000/api/v1/documents/upload \
-  -H "Authorization: Bearer $TOKEN" \
-  -F "file=@document.pdf" \
-  -F "knowledge_base_id=kb_001"
-```
-
-### 语义搜索
-
-```bash
-curl -X POST http://localhost:8000/api/v1/search \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "研发费用加计扣除条件",
-    "top_k": 5
-  }'
-```
+完整的 API 文档通过 Swagger UI 在 `http://localhost:8000/docs` 提供交互式浏览和测试。
 
 ---
 
@@ -2130,6 +1616,9 @@ HITL（Human-In-The-Loop）是一种 **AI 安全机制**，用于在高风险操
 
 ### 🎯 核心功能
 
+<details>
+<summary>🎯 核心功能（点击展开）</summary>
+
 | 功能 | 说明 |
 |------|------|
 | **风险检测** | 自动识别高风险 AI 操作 |
@@ -2137,7 +1626,12 @@ HITL（Human-In-The-Loop）是一种 **AI 安全机制**，用于在高风险操
 | **实时通知** | 通过 WebSocket 推送通知给管理员 |
 | **审计日志** | 记录所有高风险操作和审批决策 |
 
+</details>
+
 ### 🔍 检测的10种高风险行为
+
+<details>
+<summary>🔍 检测的10种高风险行为（点击展开）</summary>
 
 | 行为类型 | 触发关键词 | 风险级别 |
 |---------|----------|---------|
@@ -2152,7 +1646,12 @@ HITL（Human-In-The-Loop）是一种 **AI 安全机制**，用于在高风险操
 | **批量数据修改** | 批量修改、批量更新、批量编辑 | 🟡 中 |
 | **外部数据共享** | 外部共享、数据外发、导出到外部 | 🔴 高 |
 
+</details>
+
 ### 📊 风险级别判定
+
+<details>
+<summary>📊 风险级别判定（点击展开）</summary>
 
 | 级别 | 阈值 | 处理方式 |
 |------|------|---------|
@@ -2160,6 +1659,8 @@ HITL（Human-In-The-Loop）是一种 **AI 安全机制**，用于在高风险操
 | 🟡 MEDIUM | 0.3-0.6 | 创建审批，通知管理员 |
 | 🔴 HIGH | 0.6-0.8 | 创建审批，通知管理员，标记高优先级 |
 | ⚫ CRITICAL | >0.8 | 创建审批，通知所有管理员，强制阻断 |
+
+</details>
 
 ### 🔄 工作流程
 
@@ -2194,24 +1695,12 @@ HITL（Human-In-The-Loop）是一种 **AI 安全机制**，用于在高风险操
 
 #### 1. 管理员通知服务 (`app/services/admin_notification_service.py`)
 
-```python
-class AdminNotificationService:
-    """管理员通知服务"""
-    
-    async def detect_risk_level(self, user_query: str) -> tuple[RiskLevel, List[HighRiskBehavior]]:
-        """检测用户查询的风险级别"""
-        
-    async def create_hitl_request(self, ...) -> Dict[str, Any]:
-        """创建HITL审批请求"""
-        
-    async def notify_admins(self, tenant_id: str, notification_type: str, title: str, message: str):
-        """通知所有管理员"""
-        
-    async def handle_high_risk_operation(self, user_id: str, tenant_id: str, ...) -> Dict[str, Any]:
-        """处理高风险操作的主要入口"""
-```
+> AdminNotificationService 是 HITL 的核心服务，提供风险级别自动检测、审批请求创建、管理员通知推送和高风险操作拦截等功能。所有高风险操作都会经过该服务的统一入口处理。
 
 #### 2. HITL API 端点 (`app/api/v1/endpoints/multi_agent.py`)
+
+<details>
+<summary>🔌 HITL API 端点（点击展开）</summary>
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
@@ -2222,47 +1711,19 @@ class AdminNotificationService:
 | `/api/v1/multi-agent/rbac/roles` | GET | 获取用户角色列表 |
 | `/api/v1/multi-agent/rbac/policies` | GET | 获取RBAC策略列表 |
 
+</details>
+
 ### 💻 使用示例
 
 #### 1. 前端 HITL 审批界面
 
 访问 `/hitl-approval` 查看待审批请求：
 
-```vue
-<template>
-  <div class="hitl-approval">
-    <el-table :data="pendingApprovals">
-      <el-table-column prop="user_id" label="申请人" />
-      <el-table-column prop="risk_level" label="风险级别" />
-      <el-table-column prop="operation" label="操作类型" />
-      <el-table-column prop="created_at" label="申请时间" />
-      <el-table-column label="操作">
-        <template #default="{ row }">
-          <el-button @click="approve(row)">批准</el-button>
-          <el-button @click="reject(row)">拒绝</el-button>
-        </template>
-      </el-table-column>
-    </el-table>
-  </div>
-</template>
-```
+> 前端 `/hitl-approval` 页面展示待审批请求列表，管理员可直接在界面中批准或拒绝请求。列表显示申请人、风险级别、操作类型和申请时间等信息。
 
 #### 2. API 调用示例
 
-```bash
-# 获取待审批请求
-curl -X GET http://localhost:8000/api/v1/multi-agent/hitl/pending \
-  -H "Authorization: Bearer $TOKEN"
-
-# 批准审批请求
-curl -X POST http://localhost:8000/api/v1/multi-agent/hitl/{approval_id}/review \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "action": "approve",
-    "notes": "审批通过"
-  }'
-```
+> 审批 API 支持获取待审批请求列表（GET）和审核请求（POST，含批准/拒绝操作），通过 JWT Token 认证管理员身份。
 
 ### 🔧 配置说明
 
@@ -2270,24 +1731,11 @@ curl -X POST http://localhost:8000/api/v1/multi-agent/hitl/{approval_id}/review 
 
 在 `app/services/admin_notification_service.py` 中配置：
 
-```python
-RISK_KEYWORDS = {
-    HighRiskBehavior.BULK_DELETE: ["批量删除", "删除全部", "清空"],
-    HighRiskBehavior.SENSITIVE_DATA_EXPORT: ["导出敏感数据", "导出全部数据"],
-    # 添加更多风险关键词...
-}
-```
+> 风险关键词在 `admin_notification_service.py` 中以字典形式定义，每种高风险行为类型对应一组触发关键词，可随时扩展。
 
 #### 风险阈值配置
 
-```python
-RISK_THRESHOLDS = {
-    RiskLevel.LOW: 0.0,
-    RiskLevel.MEDIUM: 0.3,
-    RiskLevel.HIGH: 0.6,
-    RiskLevel.CRITICAL: 0.8,
-}
-```
+> 风险阈值范围为 0-1，分为 LOW (<0.3)、MEDIUM (0.3-0.6)、HIGH (0.6-0.8)、CRITICAL (>0.8) 四级，可根据业务需求调整。
 
 ### 📱 通知机制
 
@@ -2295,28 +1743,13 @@ RISK_THRESHOLDS = {
 
 管理员登录后，通过 WebSocket 接收实时通知：
 
-```javascript
-// 前端 WebSocket 连接
-const ws = new WebSocket('ws://localhost:8000/api/v1/ws/groups/{group_id}?token=YOUR_JWT');
-
-ws.onmessage = (event) => {
-  const notification = JSON.parse(event.data);
-  if (notification.type === 'hitl_approval_required') {
-    showNotification(notification.title, notification.message);
-  }
-};
-```
+> 管理员登录后自动建立 WebSocket 连接，当有新的审批请求时，后端通过该连接实时推送通知，前端弹窗提醒管理员处理。
 
 #### 2. Redis 消息队列
 
 支持离线通知存储，通过 Redis 队列管理：
 
-```python
-# 通知存储到 Redis
-notification_key = f"notification:admin:{tenant_id}"
-redis.client.lpush(notification_key, json.dumps(notification))
-redis.client.expire(notification_key, 604800)  # 7天过期
-```
+> 离线通知通过 Redis 队列持久化存储，管理员上线后可拉取历史通知。通知记录设置 7 天过期自动清理。
 
 ### 🎨 设计亮点
 
