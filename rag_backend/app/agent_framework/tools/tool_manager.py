@@ -12,6 +12,7 @@ from typing import Dict, Any, Callable, List, Optional, Set, Tuple, TYPE_CHECKIN
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from collections import defaultdict
+import weakref
 import asyncio
 import inspect
 from app.utils.json_compat import json
@@ -25,6 +26,9 @@ if TYPE_CHECKING:
     from app.agent_framework.tools.base import ToolBase
 
 logger = logging.getLogger(__name__)
+
+
+ACTIVE_TOOL_MANAGERS: "weakref.WeakSet[ToolManager]" = weakref.WeakSet()
 
 
 @dataclass
@@ -109,6 +113,7 @@ class ToolManager:
         self._call_history: List[List[str]] = []
         self._current_sequence: List[str] = []
         self._max_history_size = 1000
+        ACTIVE_TOOL_MANAGERS.add(self)
         
         logger.info("🛠️ 工具管理器初始化完成 (失败标记已启用, 依赖图谱已加载)")
     
@@ -218,7 +223,8 @@ class ToolManager:
                     "parameters": params,
                     "args_schema": None,
                     "type": "mcp_decorator",
-                    "original_tool": tool
+                    "original_tool": tool,
+                    "metadata": getattr(func, "_custom_metadata", {})
                 }
                 
                 logger.debug(f"✅ 注册 MCP 装饰器工具: {name}")
@@ -264,7 +270,8 @@ class ToolManager:
                 "parameters": params,
                 "args_schema": tool.args_schema if hasattr(tool, 'args_schema') else None,
                 "type": "langchain",
-                "original_tool": tool
+                "original_tool": tool,
+                "metadata": getattr(tool, "_custom_metadata", {})
             }
             
             logger.debug(f"✅ 注册 LangChain 工具: {name}")
@@ -653,6 +660,10 @@ class ToolManager:
                         "description": param_info.get("description", f"{param_name} 参数")
                     }
 
+                    for constraint_key in ("enum", "min", "max", "min_length", "max_length", "pattern", "default"):
+                        if constraint_key in param_info and param_info.get(constraint_key) is not None:
+                            properties[param_name][constraint_key] = param_info.get(constraint_key)
+
                     if param_info.get("required", False):
                         required.append(param_name)
 
@@ -665,6 +676,17 @@ class ToolManager:
                     "required": required
                 }
             }
+            metadata = info.get("metadata") or {}
+            if metadata.get("output_schema"):
+                tool_def["outputSchema"] = {
+                    "type": "object",
+                    "properties": metadata["output_schema"],
+                }
+            if metadata.get("is_custom_tool"):
+                tool_def["customTool"] = {
+                    "publishedBy": metadata.get("published_by_name") or metadata.get("published_by"),
+                    "hasApiKey": metadata.get("has_api_key", False),
+                }
             tools_list.append(tool_def)
 
         return json.dumps({"tools": tools_list}, ensure_ascii=False, indent=2)

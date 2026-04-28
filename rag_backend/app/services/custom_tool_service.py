@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent_framework.tools.tool_manager import ToolManager
+from app.agent_framework.tools.tool_manager import ACTIVE_TOOL_MANAGERS, ToolManager
 from app.mcp.decorators import local_tool
 from app.models.custom_tool import CustomTool, CustomToolKind, CustomToolStatus
+from app.models.user import User
 from app.schemas.custom_tool import CustomToolSpec, GenerateToolRequest
 from app.services.agent_registry import ToolInfo, ToolLocation, agent_discovery_registry
 from app.services.custom_tool_runtime import custom_tool_runtime
@@ -112,8 +114,10 @@ class CustomToolService:
         )
         tools = list(result.scalars().all())
         for tool in tools:
+            publisher_name = await self._get_user_display_name(db, tool.approved_by or tool.created_by)
+            creator_name = await self._get_user_display_name(db, tool.created_by)
             self.register_tool_sugar(tool)
-            self.register_agent_discovery(tool)
+            self.register_agent_discovery(tool, publisher_name=publisher_name, creator_name=creator_name)
         return len(tools)
 
     async def get_tool(self, db: AsyncSession, tenant_id: str, tool_id: str) -> CustomTool:
@@ -148,6 +152,8 @@ class CustomToolService:
         tenant_id: str,
         tool_id: str,
         agent_id: Optional[str] = None,
+        published_by: Optional[str] = None,
+        published_by_name: Optional[str] = None,
     ) -> CustomTool:
         tool = await self.get_tool(db, tenant_id, tool_id)
         if tool.kind == CustomToolKind.PYTHON_CODE.value:
@@ -157,10 +163,14 @@ class CustomToolService:
         tool.enabled = True
         if agent_id:
             tool.agent_id = agent_id
+        if published_by:
+            tool.approved_by = published_by
         await db.commit()
         await db.refresh(tool)
+        creator_name = await self._get_user_display_name(db, tool.created_by)
         self.register_tool_sugar(tool)
-        self.register_agent_discovery(tool)
+        self.register_agent_discovery(tool, publisher_name=published_by_name, creator_name=creator_name)
+        self.register_active_tool_managers(tool)
         return tool
 
     def register_tool_sugar(self, tool: CustomTool) -> Any:
@@ -176,15 +186,35 @@ class CustomToolService:
             return await custom_tool_runtime.execute(tool, kwargs)
 
         dynamic_custom_tool._custom_input_schema = tool.input_schema or {}
+        dynamic_custom_tool._custom_output_schema = tool.output_schema or {}
+        dynamic_custom_tool._custom_metadata = self._tool_metadata(tool)
         self._published_callables[tool.name] = dynamic_custom_tool
         return dynamic_custom_tool
 
     def register_to_tool_manager(self, tool_manager: ToolManager, tool: CustomTool) -> None:
         tool_manager.register_langchain_tool(self.register_tool_sugar(tool))
 
-    def register_agent_discovery(self, tool: CustomTool) -> None:
+    def register_active_tool_managers(self, tool: CustomTool) -> int:
+        registered = 0
+        for tool_manager in list(ACTIVE_TOOL_MANAGERS):
+            try:
+                self.register_to_tool_manager(tool_manager, tool)
+                registered += 1
+            except Exception:
+                continue
+        return registered
+
+    def register_agent_discovery(
+        self,
+        tool: CustomTool,
+        publisher_name: Optional[str] = None,
+        creator_name: Optional[str] = None,
+    ) -> None:
         if not tool.agent_id:
             return
+        existing_agent = agent_discovery_registry.get_agent(tool.agent_id)
+        if existing_agent:
+            existing_agent.tools = [t for t in existing_agent.tools if t.name != tool.name]
         agent_discovery_registry.add_tool_to_agent(
             tool.agent_id,
             ToolInfo(
@@ -196,6 +226,11 @@ class CustomToolService:
                 category="custom",
                 is_async=True,
                 enabled=tool.enabled,
+                metadata={
+                    **self._tool_metadata(tool),
+                    "published_by_name": publisher_name,
+                    "created_by_name": creator_name,
+                },
             ),
         )
 
@@ -205,6 +240,20 @@ class CustomToolService:
         if spec.kind == CustomToolKind.HTTP.value:
             if not (spec.runtime_config or {}).get("url"):
                 raise CustomToolServiceError("HTTP tools require runtime_config.url")
+            api_key = (spec.runtime_config or {}).get("api_key") or {}
+            if api_key.get("enabled"):
+                if api_key.get("placement") not in {"header", "query"}:
+                    raise CustomToolServiceError("HTTP api_key.placement must be header or query")
+                if not api_key.get("name"):
+                    raise CustomToolServiceError("HTTP api_key.name is required when API key is enabled")
+                if not api_key.get("value"):
+                    raise CustomToolServiceError("HTTP api_key.value is required when API key is enabled")
+        for schema_name, schema in (("input_schema", spec.input_schema), ("output_schema", spec.output_schema)):
+            for field_name, field in (schema or {}).items():
+                if not self.SAFE_NAME_RE.match(field_name):
+                    raise CustomToolServiceError(f"{schema_name} field name is invalid: {field_name}")
+                if field.type not in {"string", "number", "integer", "boolean", "array", "object"}:
+                    raise CustomToolServiceError(f"{schema_name}.{field_name} has unsupported type: {field.type}")
 
     def _format_output(self, output_schema: Dict[str, Any], result: Dict[str, Any]) -> Any:
         data = result.get("data", result)
@@ -222,7 +271,31 @@ class CustomToolService:
         policy.setdefault("allow_private_network", False)
         policy.setdefault("allowed_domains", [])
         policy.setdefault("code_execution", False)
+        policy["code_execution"] = False
         return policy
+
+    def _tool_metadata(self, tool: CustomTool) -> Dict[str, Any]:
+        return {
+            "custom_tool_id": str(tool.id),
+            "is_custom_tool": True,
+            "published_by": tool.approved_by,
+            "created_by": tool.created_by,
+            "has_api_key": bool(((tool.runtime_config or {}).get("api_key") or {}).get("enabled")),
+            "input_schema": tool.input_schema or {},
+            "output_schema": tool.output_schema or {},
+        }
+
+    async def _get_user_display_name(self, db: AsyncSession, user_id: Optional[str]) -> Optional[str]:
+        if not user_id:
+            return None
+        try:
+            result = await db.execute(select(User).where(User.id == uuid.UUID(str(user_id))))
+            user = result.scalar_one_or_none()
+            if not user:
+                return user_id
+            return user.full_name or user.nickname or user.username or user.email or user_id
+        except Exception:
+            return user_id
 
     def _build_generation_prompt(self, request: GenerateToolRequest, preferred_kind: str) -> str:
         return f"""
@@ -246,7 +319,11 @@ Schema:
   "version": "1.0.0",
   "input_schema": {{"query": {{"type": "string", "description": "", "required": true}}}},
   "output_schema": {{"data": {{"type": "object", "description": "", "required": true}}}},
-  "runtime_config": {{}},
+  "runtime_config": {{
+    "url": "",
+    "method": "GET",
+    "api_key": {{"enabled": false, "placement": "header", "name": "Authorization", "prefix": "Bearer", "value": ""}}
+  }},
   "safety_policy": {{"allow_private_network": false, "allowed_domains": [], "code_execution": false}},
   "generated_code": null,
   "agent_id": {json.dumps(request.agent_id)}
@@ -328,7 +405,15 @@ Requirements:
             output_schema={
                 "data": {"type": "object", "description": request.outputs or "工具输出", "required": True}
             },
-            runtime_config={},
+            runtime_config={
+                "api_key": {
+                    "enabled": False,
+                    "placement": "header",
+                    "name": "Authorization",
+                    "prefix": "Bearer",
+                    "value": "",
+                }
+            },
             safety_policy={"allow_private_network": False, "allowed_domains": [], "code_execution": False},
             agent_id=request.agent_id,
         )

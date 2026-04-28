@@ -7,10 +7,15 @@ Agent 发现与追踪 API 接口
 3. Agent 追踪：记录和查询 Agent 执行过程
 """
 
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Dict
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.api import deps
+from app.models.custom_tool import CustomTool
 from app.models.user import User
 from app.services.agent_registry import (
     agent_discovery_registry,
@@ -44,6 +49,12 @@ class ToolSummaryResponse(BaseModel):
     tags: List[str]
     agent_id: str
     agent_name: str
+    published_by: Optional[str] = None
+    published_by_name: Optional[str] = None
+    created_by: Optional[str] = None
+    created_by_name: Optional[str] = None
+    is_custom_tool: bool = False
+    has_api_key: bool = False
 
 
 class AgentDetailResponse(BaseModel):
@@ -68,6 +79,66 @@ class RegistrySummaryResponse(BaseModel):
     total_tools: int
     tool_breakdown: dict
     agents: List[AgentSummaryResponse]
+
+
+def _user_display_name(user: User | None, fallback: str | None = None) -> str | None:
+    if not user:
+        return fallback
+    return user.full_name or user.nickname or user.username or user.email or fallback
+
+
+async def _load_custom_tool_metadata(
+    db: AsyncSession,
+    tenant_id: str,
+    tool_names: List[str],
+) -> Dict[str, dict]:
+    if not tool_names:
+        return {}
+
+    result = await db.execute(
+        select(CustomTool).where(
+            CustomTool.tenant_id == tenant_id,
+            CustomTool.name.in_(tool_names),
+        )
+    )
+    custom_tools = list(result.scalars().all())
+    user_ids = set()
+    for tool in custom_tools:
+        for raw_user_id in (tool.created_by, tool.approved_by):
+            if raw_user_id:
+                try:
+                    user_ids.add(uuid.UUID(str(raw_user_id)))
+                except ValueError:
+                    pass
+
+    users_by_id = {}
+    if user_ids:
+        users_result = await db.execute(select(User).where(User.id.in_(list(user_ids))))
+        users_by_id = {
+            str(user.id): _user_display_name(user, str(user.id))
+            for user in users_result.scalars().all()
+        }
+
+    metadata = {}
+    for tool in custom_tools:
+        metadata[tool.name] = {
+            "custom_tool_id": str(tool.id),
+            "is_custom_tool": True,
+            "created_by": tool.created_by,
+            "created_by_name": users_by_id.get(str(tool.created_by), tool.created_by),
+            "published_by": tool.approved_by,
+            "published_by_name": users_by_id.get(str(tool.approved_by), tool.approved_by),
+            "has_api_key": bool(((tool.runtime_config or {}).get("api_key") or {}).get("enabled")),
+        }
+    return metadata
+
+
+def _merge_tool_metadata(tool, custom_metadata: Dict[str, dict]) -> dict:
+    stored = custom_metadata.get(tool.name, {})
+    return {
+        **(tool.metadata or {}),
+        **stored,
+    }
 
 
 @router.get("/summary", response_model=RegistrySummaryResponse)
@@ -150,6 +221,7 @@ async def list_agents(
 @router.get("/agents/{agent_id}", response_model=AgentDetailResponse)
 async def get_agent_detail(
     agent_id: str,
+    db: AsyncSession = Depends(deps.get_db),
     current_user: User = Depends(deps.get_current_user)
 ):
     """
@@ -164,6 +236,12 @@ async def get_agent_detail(
 
         if not agent:
             raise HTTPException(status_code=404, detail=f"Agent 不存在: {agent_id}")
+
+        custom_metadata = await _load_custom_tool_metadata(
+            db,
+            current_user.tenant_id,
+            [tool.name for tool in agent.tools],
+        )
 
         return {
             "agent_id": agent.agent_id,
@@ -182,9 +260,17 @@ async def get_agent_detail(
                     "tags": t.tags,
                     "parameters": t.parameters,
                     "is_async": t.is_async,
-                    "enabled": t.enabled
+                    "enabled": t.enabled,
+                    "metadata": merged_metadata,
+                    "published_by": merged_metadata.get("published_by"),
+                    "published_by_name": merged_metadata.get("published_by_name"),
+                    "created_by": merged_metadata.get("created_by"),
+                    "created_by_name": merged_metadata.get("created_by_name"),
+                    "is_custom_tool": bool(merged_metadata.get("is_custom_tool")),
+                    "has_api_key": bool(merged_metadata.get("has_api_key")),
                 }
                 for t in agent.tools
+                for merged_metadata in [_merge_tool_metadata(t, custom_metadata)]
             ],
             "tool_summary": agent.get_tool_count_summary(),
             "created_at": agent.created_at.isoformat(),
@@ -201,6 +287,7 @@ async def list_tools(
     location: Optional[str] = None,
     agent_id: Optional[str] = None,
     enabled_only: bool = True,
+    db: AsyncSession = Depends(deps.get_db),
     current_user: User = Depends(deps.get_current_user)
 ):
     """
@@ -225,9 +312,16 @@ async def list_tools(
                 raise HTTPException(status_code=404, detail=f"Agent 不存在: {agent_id}")
             tools = [t for t in tools if any(tool.name == t.name for tool in agent.tools)]
 
+        custom_metadata = await _load_custom_tool_metadata(
+            db,
+            current_user.tenant_id,
+            [tool.name for tool in tools],
+        )
+
         result = []
         for tool in tools:
             agent_info = agent_discovery_registry.get_agent_by_tool(tool.name)
+            merged_metadata = _merge_tool_metadata(tool, custom_metadata)
             result.append({
                 "name": tool.name,
                 "description": tool.description,
@@ -235,7 +329,13 @@ async def list_tools(
                 "category": tool.category,
                 "tags": tool.tags,
                 "agent_id": agent_info.agent_id if agent_info else "unknown",
-                "agent_name": agent_info.agent_name if agent_info else "Unknown"
+                "agent_name": agent_info.agent_name if agent_info else "Unknown",
+                "published_by": merged_metadata.get("published_by"),
+                "published_by_name": merged_metadata.get("published_by_name"),
+                "created_by": merged_metadata.get("created_by"),
+                "created_by_name": merged_metadata.get("created_by_name"),
+                "is_custom_tool": bool(merged_metadata.get("is_custom_tool")),
+                "has_api_key": bool(merged_metadata.get("has_api_key")),
             })
 
         return result
@@ -249,6 +349,7 @@ async def list_tools(
 
 @router.get("/tools/by-location")
 async def get_tools_by_location(
+    db: AsyncSession = Depends(deps.get_db),
     current_user: User = Depends(deps.get_current_user)
 ):
     """
@@ -260,6 +361,11 @@ async def get_tools_by_location(
         local_tools = agent_discovery_registry.list_all_tools(location=ToolLocation.LOCAL)
         cloud_tools = agent_discovery_registry.list_all_tools(location=ToolLocation.CLOUD)
         mcp_tools = agent_discovery_registry.list_all_tools(location=ToolLocation.MCP)
+        custom_metadata = await _load_custom_tool_metadata(
+            db,
+            current_user.tenant_id,
+            [tool.name for tool in local_tools + cloud_tools + mcp_tools],
+        )
 
         def format_tools(tools):
             return [
@@ -268,9 +374,16 @@ async def get_tools_by_location(
                     "description": t.description,
                     "category": t.category,
                     "tags": t.tags,
-                    "agent_name": agent_discovery_registry.get_agent_by_tool(t.name).agent_name if agent_discovery_registry.get_agent_by_tool(t.name) else "Unknown"
+                    "agent_name": agent_discovery_registry.get_agent_by_tool(t.name).agent_name if agent_discovery_registry.get_agent_by_tool(t.name) else "Unknown",
+                    "published_by": merged_metadata.get("published_by"),
+                    "published_by_name": merged_metadata.get("published_by_name"),
+                    "created_by": merged_metadata.get("created_by"),
+                    "created_by_name": merged_metadata.get("created_by_name"),
+                    "is_custom_tool": bool(merged_metadata.get("is_custom_tool")),
+                    "has_api_key": bool(merged_metadata.get("has_api_key")),
                 }
                 for t in tools
+                for merged_metadata in [_merge_tool_metadata(t, custom_metadata)]
             ]
 
         return {

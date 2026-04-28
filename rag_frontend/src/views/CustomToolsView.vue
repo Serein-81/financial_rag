@@ -56,6 +56,32 @@ const testRequestPreview = computed(() => {
   return JSON.stringify({ arguments: args }, null, 2)
 })
 const outputSchemaPreview = computed(() => JSON.stringify(selectedToolOutputSchema.value, null, 2))
+const draftApiKey = computed({
+  get: () => {
+    const runtimeConfig = draftSpec.value?.runtime_config || {}
+    return runtimeConfig.api_key || {
+      enabled: false,
+      placement: 'header',
+      name: 'Authorization',
+      prefix: 'Bearer',
+      value: '',
+    }
+  },
+  set: (value: Record<string, any>) => {
+    if (!draftSpec.value) return
+    draftSpec.value.runtime_config = {
+      ...(draftSpec.value.runtime_config || {}),
+      api_key: value,
+    }
+  },
+})
+
+function updateDraftApiKey(patch: Record<string, any>) {
+  draftApiKey.value = {
+    ...draftApiKey.value,
+    ...patch,
+  }
+}
 
 function getSampleValue(field: any, name: string): any {
   if (field?.default !== undefined && field.default !== null) return field.default
@@ -155,6 +181,18 @@ async function generateSpec() {
   isGenerating.value = true
   try {
     draftSpec.value = await customToolsApi.generate(generatorForm.value)
+    if (draftSpec.value.kind === 'http' && !draftSpec.value.runtime_config?.api_key) {
+      draftSpec.value.runtime_config = {
+        ...(draftSpec.value.runtime_config || {}),
+        api_key: {
+          enabled: false,
+          placement: 'header',
+          name: 'Authorization',
+          prefix: 'Bearer',
+          value: '',
+        },
+      }
+    }
     testArgumentsText.value = buildSampleArguments(draftSpec.value)
     ElMessage.success('工具规格已生成')
   } finally {
@@ -295,6 +333,48 @@ watch(selectedTool, (tool) => {
               <CheckCircle2 class="h-4 w-4" />
               创建草稿
             </button>
+          </div>
+          <div v-if="draftSpec?.kind === 'http'" class="mb-4 rounded-md border border-slate-200 bg-slate-50 p-3">
+            <div class="mb-2 flex items-center justify-between">
+              <span class="text-xs font-medium text-slate-700">HTTP API Key</span>
+              <label class="inline-flex items-center gap-2 text-xs text-slate-600">
+                <input
+                  type="checkbox"
+                  :checked="Boolean(draftApiKey.enabled)"
+                  @change="updateDraftApiKey({ enabled: ($event.target as HTMLInputElement).checked })"
+                />
+                启用
+              </label>
+            </div>
+            <div class="grid gap-2 md:grid-cols-4">
+              <select
+                :value="draftApiKey.placement || 'header'"
+                class="rounded-md border border-slate-300 px-2 py-1 text-xs"
+                @change="updateDraftApiKey({ placement: ($event.target as HTMLSelectElement).value })"
+              >
+                <option value="header">Header</option>
+                <option value="query">Query</option>
+              </select>
+              <input
+                :value="draftApiKey.name || 'Authorization'"
+                class="rounded-md border border-slate-300 px-2 py-1 text-xs"
+                placeholder="Header/Query 名称"
+                @input="updateDraftApiKey({ name: ($event.target as HTMLInputElement).value })"
+              />
+              <input
+                :value="draftApiKey.prefix || ''"
+                class="rounded-md border border-slate-300 px-2 py-1 text-xs"
+                placeholder="前缀，如 Bearer"
+                @input="updateDraftApiKey({ prefix: ($event.target as HTMLInputElement).value })"
+              />
+              <input
+                :value="draftApiKey.value || ''"
+                type="password"
+                class="rounded-md border border-slate-300 px-2 py-1 text-xs"
+                placeholder="API Key"
+                @input="updateDraftApiKey({ value: ($event.target as HTMLInputElement).value })"
+              />
+            </div>
           </div>
           <textarea v-model="draftJson" class="h-[360px] w-full rounded-md border border-slate-300 bg-slate-950 p-3 font-mono text-xs text-slate-100" spellcheck="false"></textarea>
         </div>

@@ -13,7 +13,8 @@ from app.schemas.knowledge_graph import (
     EntityQueryRequest, EntityQueryResponse, RelatedEntity, EntityResponse,
     HybridSearchRequest, HybridSearchResponse,
     GraphStatsResponse, GraphVisualizationResponse, GraphNode, GraphEdge,
-    EntityListResponse, EntityTypesResponse
+    EntityListResponse, EntityTypesResponse,
+    EntityCreate, EntityUpdate, RelationCreate, GraphImportRequest, GraphImportResponse
 )
 from app.services.graph_builder import GraphBuilder
 from app.services.hybrid_retriever import HybridRetriever
@@ -262,6 +263,151 @@ async def visualize_graph(
     except Exception as e:
         logger.error(f"获取可视化数据失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"获取可视化数据失败: {str(e)}")
+
+
+@router.post("/entities", response_model=EntityResponse)
+async def create_entity(
+    request: EntityCreate,
+    current_user: User = Depends(get_current_user),
+    neo4j_manager: Neo4jManager = Depends(get_neo4j_manager)
+):
+    """Create or update an entity for the current tenant."""
+    try:
+        entity_id = neo4j_manager.create_entity(
+            name=request.name,
+            entity_type=request.type,
+            tenant_id=str(current_user.tenant_id),
+            properties=request.properties or {}
+        )
+        if not entity_id:
+            raise HTTPException(status_code=503, detail="Neo4j is not available")
+        return EntityResponse(
+            id=str(entity_id),
+            name=request.name,
+            type=request.type,
+            properties=request.properties or {}
+        )
+    except HTTPException:
+        raise
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except Exception as e:
+        logger.error(f"创建实体失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"创建实体失败: {str(e)}")
+
+
+@router.put("/entities/{entity_id}", response_model=EntityResponse)
+async def update_entity(
+    entity_id: str,
+    request: EntityUpdate,
+    current_user: User = Depends(get_current_user),
+    neo4j_manager: Neo4jManager = Depends(get_neo4j_manager)
+):
+    """Update an entity by graph node id."""
+    try:
+        result = neo4j_manager.update_entity_by_id(
+            entity_id=entity_id,
+            name=request.name,
+            entity_type=request.type,
+            tenant_id=str(current_user.tenant_id),
+            properties=request.properties or {}
+        )
+        if not result:
+            raise HTTPException(status_code=404, detail="实体不存在或 Neo4j 不可用")
+        return EntityResponse(**result)
+    except HTTPException:
+        raise
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except Exception as e:
+        logger.error(f"更新实体失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"更新实体失败: {str(e)}")
+
+
+@router.delete("/entities/{entity_id}")
+async def delete_entity(
+    entity_id: str,
+    current_user: User = Depends(get_current_user),
+    neo4j_manager: Neo4jManager = Depends(get_neo4j_manager)
+):
+    """Delete an entity by graph node id."""
+    try:
+        deleted = neo4j_manager.delete_entity_by_id(
+            entity_id=entity_id,
+            tenant_id=str(current_user.tenant_id)
+        )
+        return {"success": deleted}
+    except Exception as e:
+        logger.error(f"删除实体失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"删除实体失败: {str(e)}")
+
+
+@router.post("/relations")
+async def create_relation(
+    request: RelationCreate,
+    current_user: User = Depends(get_current_user),
+    neo4j_manager: Neo4jManager = Depends(get_neo4j_manager)
+):
+    """Create or update a relation for the current tenant."""
+    try:
+        result = neo4j_manager.create_relation(
+            source_name=request.source,
+            target_name=request.target,
+            relation_type=request.type,
+            tenant_id=str(current_user.tenant_id),
+            properties=request.properties or {}
+        )
+        if not result:
+            raise HTTPException(status_code=404, detail="源实体或目标实体不存在")
+        return {"success": True, **result}
+    except HTTPException:
+        raise
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except Exception as e:
+        logger.error(f"创建关系失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"创建关系失败: {str(e)}")
+
+
+@router.delete("/relations/{relation_id}")
+async def delete_relation(
+    relation_id: str,
+    current_user: User = Depends(get_current_user),
+    neo4j_manager: Neo4jManager = Depends(get_neo4j_manager)
+):
+    """Delete a relation by graph relationship id."""
+    try:
+        deleted = neo4j_manager.delete_relation_by_id(
+            relation_id=relation_id,
+            tenant_id=str(current_user.tenant_id)
+        )
+        return {"success": deleted}
+    except Exception as e:
+        logger.error(f"删除关系失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"删除关系失败: {str(e)}")
+
+
+@router.post("/import", response_model=GraphImportResponse)
+async def import_graph(
+    request: GraphImportRequest,
+    current_user: User = Depends(get_current_user),
+    neo4j_manager: Neo4jManager = Depends(get_neo4j_manager)
+):
+    """Persist an edited graph snapshot."""
+    try:
+        result = neo4j_manager.save_graph_snapshot(
+            nodes=[node.model_dump() for node in request.nodes],
+            edges=[edge.model_dump() for edge in request.edges],
+            tenant_id=str(current_user.tenant_id),
+            deleted_node_ids=request.deleted_node_ids,
+            deleted_edge_ids=request.deleted_edge_ids
+        )
+        return GraphImportResponse(**result)
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except Exception as e:
+        logger.error(f"导入图谱失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"导入图谱失败: {str(e)}")
 
 
 @router.get("/entities", response_model=EntityListResponse)

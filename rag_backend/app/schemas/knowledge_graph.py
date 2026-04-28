@@ -55,6 +55,21 @@ class RelationResponse(RelationBase):
 
 
 # ============ 图构建相关 ============
+class EntityUpdate(BaseModel):
+    """Update an existing entity by graph node id."""
+    name: str = Field(..., min_length=1, description="实体名称")
+    type: str = Field(..., min_length=1, description="实体类型")
+    properties: Dict[str, Any] = Field(default_factory=dict, description="实体属性")
+
+
+class RelationUpdate(BaseModel):
+    """Update an existing relation by graph relationship id."""
+    source: Optional[str] = Field(None, description="源实体名称")
+    target: Optional[str] = Field(None, description="目标实体名称")
+    type: str = Field(..., min_length=1, description="关系类型")
+    properties: Dict[str, Any] = Field(default_factory=dict, description="关系属性")
+
+
 class GraphBuildRequest(BaseModel):
     """图构建请求"""
     text: str = Field(..., description="待处理文本")
@@ -155,6 +170,24 @@ class GraphVisualizationResponse(BaseModel):
     nodes: List[GraphNode] = Field(default_factory=list)
     edges: List[GraphEdge] = Field(default_factory=list)
     center_node: Optional[str] = None
+
+
+class GraphImportRequest(BaseModel):
+    """Persist an edited graph snapshot without removing unrelated graph data."""
+    nodes: List[GraphNode] = Field(default_factory=list, description="要保存的节点")
+    edges: List[GraphEdge] = Field(default_factory=list, description="要保存的关系")
+    deleted_node_ids: List[str] = Field(default_factory=list, description="要删除的节点 ID")
+    deleted_edge_ids: List[str] = Field(default_factory=list, description="要删除的关系 ID")
+
+
+class GraphImportResponse(BaseModel):
+    """Graph editor save/import result."""
+    success: bool = True
+    nodes_saved: int = 0
+    edges_saved: int = 0
+    nodes_deleted: int = 0
+    edges_deleted: int = 0
+    errors: List[str] = Field(default_factory=list)
 
 
 class EntityListItem(BaseModel):

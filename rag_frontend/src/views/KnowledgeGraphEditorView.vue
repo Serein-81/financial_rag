@@ -57,6 +57,7 @@ interface GraphEdge {
 }
 
 const isLoading = ref(false)
+const isSaving = ref(false)
 const error = ref('')
 const success = ref('')
 const activeTab = ref<'build' | 'edit' | 'visualize'>('edit')
@@ -80,9 +81,16 @@ const highlightedNodes = ref<Set<string>>(new Set())
 
 const graphContainer = ref<HTMLElement | null>(null)
 const simulation = ref<any>(null)
+const graphSvg = ref<any>(null)
+const graphZoom = ref<any>(null)
+const simulationNodes = ref<GraphNode[]>([])
 
 const editMode = ref(false)
 const showHelp = ref(false)
+const hasUnsavedChanges = ref(false)
+const deletedNodeIds = ref<string[]>([])
+const deletedEdgeIds = ref<string[]>([])
+const importFileInput = ref<HTMLInputElement | null>(null)
 const newNodeName = ref('')
 const newNodeType = ref('Entity')
 const newEdgeSource = ref('')
@@ -125,6 +133,14 @@ function getNodeColor(type: string): string {
   return nodeType?.color || '#64748b'
 }
 
+function getEdgeEndpointId(endpoint: string | GraphNode): string {
+  return typeof endpoint === 'object' ? endpoint.id : endpoint
+}
+
+function markDirty() {
+  hasUnsavedChanges.value = true
+}
+
 async function loadGraph() {
   if (!centerEntity.value.trim()) {
     error.value = '请输入中心实体名称'
@@ -157,6 +173,9 @@ async function loadGraph() {
     }
 
     success.value = `成功加载图谱：${graphData.value.nodes.length} 个节点，${graphData.value.edges.length} 条边`
+    deletedNodeIds.value = []
+    deletedEdgeIds.value = []
+    hasUnsavedChanges.value = false
     await nextTick()
     drawGraph()
   } catch (err: any) {
@@ -168,6 +187,10 @@ async function loadGraph() {
 
 function drawGraph() {
   if (!graphContainer.value || graphData.value.nodes.length === 0) return
+
+  if (simulation.value) {
+    simulation.value.stop()
+  }
 
   const container = graphContainer.value
   container.innerHTML = ''
@@ -182,6 +205,7 @@ function drawGraph() {
     .attr('class', 'knowledge-graph-svg')
 
   const g = svg.append('g')
+  graphSvg.value = svg
 
   const zoom = d3.zoom()
     .scaleExtent([0.1, 4])
@@ -191,12 +215,14 @@ function drawGraph() {
 
   svg.call(zoom as any)
   svg.on('dblclick.zoom', null)
+  graphZoom.value = zoom
 
-  const nodes = graphData.value.nodes.map(n => ({ ...n }))
+  const nodes = graphData.value.nodes
+  simulationNodes.value = nodes
   const edges = graphData.value.edges.map(e => ({
     ...e,
-    source: nodes.find(n => n.id === e.source || n.name === e.source),
-    target: nodes.find(n => n.id === e.target || n.name === e.target)
+    source: nodes.find(n => n.id === getEdgeEndpointId(e.source) || n.name === getEdgeEndpointId(e.source)),
+    target: nodes.find(n => n.id === getEdgeEndpointId(e.target) || n.name === getEdgeEndpointId(e.target))
   })).filter(e => e.source && e.target)
 
   simulation.value = d3.forceSimulation(nodes)
@@ -210,13 +236,20 @@ function drawGraph() {
     .enter()
     .append('g')
     .attr('class', 'link')
+    .attr('cursor', 'pointer')
+    .on('click', (event, d) => {
+      event.stopPropagation()
+      selectEdge(d)
+    })
 
   const linkLine = link.append('line')
+    .attr('class', 'edge-line')
     .attr('stroke', '#94a3b8')
     .attr('stroke-width', 2)
     .attr('stroke-opacity', 0.6)
 
   const linkText = link.append('text')
+    .attr('class', 'edge-label')
     .attr('fill', '#64748b')
     .attr('font-size', '10px')
     .attr('text-anchor', 'middle')
@@ -255,6 +288,7 @@ function drawGraph() {
     .text((d: any) => d.name.slice(0, 2))
 
   const nodeLabel = nodeGroup.append('text')
+    .attr('class', 'node-label')
     .attr('text-anchor', 'middle')
     .attr('dy', 38)
     .attr('fill', '#374151')
@@ -300,6 +334,15 @@ function selectNode(node: GraphNode) {
   highlightConnectedNodes(node.id)
 }
 
+function selectEdge(edge: GraphEdge) {
+  selectedEdge.value = edge
+  selectedNode.value = null
+  highlightedNodes.value = new Set([
+    getEdgeEndpointId(edge.source),
+    getEdgeEndpointId(edge.target)
+  ])
+}
+
 function highlightConnectedNodes(nodeId: string) {
   graphData.value.edges.forEach(edge => {
     const sourceId = typeof edge.source === 'object' ? edge.source.id : edge.source
@@ -319,41 +362,41 @@ function clearSelection() {
 }
 
 function zoomIn() {
-  if (!graphContainer.value) return
-  const svg = d3.select(graphContainer.value).select('svg')
-  svg.transition().call(d3.zoom().scaleBy as any, 1.3)
+  if (!graphSvg.value || !graphZoom.value) return
+  graphSvg.value.transition().call(graphZoom.value.scaleBy as any, 1.3)
 }
 
 function zoomOut() {
-  if (!graphContainer.value) return
-  const svg = d3.select(graphContainer.value).select('svg')
-  svg.transition().call(d3.zoom().scaleBy as any, 0.7)
+  if (!graphSvg.value || !graphZoom.value) return
+  graphSvg.value.transition().call(graphZoom.value.scaleBy as any, 0.7)
 }
 
 function resetZoom() {
-  if (!graphContainer.value) return
-  const svg = d3.select(graphContainer.value).select('svg')
-  svg.transition().call(d3.zoom().transform as any, d3.zoomIdentity)
+  if (!graphSvg.value || !graphZoom.value) return
+  graphSvg.value.transition().call(graphZoom.value.transform as any, d3.zoomIdentity)
 }
 
 function fitToScreen() {
-  if (!graphContainer.value || graphData.value.nodes.length === 0) return
-  const svg = d3.select(graphContainer.value).select('svg')
+  if (!graphContainer.value || !graphSvg.value || !graphZoom.value || simulationNodes.value.length === 0) return
+  const width = graphContainer.value.clientWidth || 800
+  const height = graphContainer.value.clientHeight || 600
+  const positionedNodes = simulationNodes.value.filter(n => Number.isFinite(n.x) && Number.isFinite(n.y))
+  if (positionedNodes.length === 0) return
   const bounds = {
-    minX: Math.min(...graphData.value.nodes.map(n => n.x || 0)) - 50,
-    maxX: Math.max(...graphData.value.nodes.map(n => n.x || 0)) + 50,
-    minY: Math.min(...graphData.value.nodes.map(n => n.y || 0)) - 50,
-    maxY: Math.max(...graphData.value.nodes.map(n => n.y || 0)) + 50
+    minX: Math.min(...positionedNodes.map(n => n.x || 0)) - 50,
+    maxX: Math.max(...positionedNodes.map(n => n.x || 0)) + 50,
+    minY: Math.min(...positionedNodes.map(n => n.y || 0)) - 50,
+    maxY: Math.max(...positionedNodes.map(n => n.y || 0)) + 50
   }
   const fullWidth = bounds.maxX - bounds.minX
   const fullHeight = bounds.maxY - bounds.minY
-  const scale = Math.min(0.9, Math.min(800 / fullWidth, 600 / fullHeight))
+  const scale = Math.min(1.5, Math.max(0.1, Math.min(width / fullWidth, height / fullHeight) * 0.9))
   const translate = [
-    400 - scale * (bounds.minX + fullWidth / 2),
-    300 - scale * (bounds.minY + fullHeight / 2)
+    width / 2 - scale * (bounds.minX + fullWidth / 2),
+    height / 2 - scale * (bounds.minY + fullHeight / 2)
   ]
-  svg.transition().call(
-    d3.zoom().transform as any,
+  graphSvg.value.transition().call(
+    graphZoom.value.transform as any,
     d3.zoomIdentity.translate(translate[0], translate[1]).scale(scale)
   )
 }
@@ -362,9 +405,11 @@ function exportGraph() {
   const data = {
     nodes: graphData.value.nodes,
     edges: graphData.value.edges.map(e => ({
-      source: typeof e.source === 'object' ? e.source.id : e.source,
-      target: typeof e.target === 'object' ? e.target.id : e.target,
-      type: e.type
+      id: e.id,
+      source: getEdgeEndpointId(e.source),
+      target: getEdgeEndpointId(e.target),
+      type: e.type,
+      properties: e.properties || {}
     }))
   }
   const dataStr = JSON.stringify(data, null, 2)
@@ -375,6 +420,94 @@ function exportGraph() {
   link.download = `knowledge-graph-${Date.now()}.json`
   link.click()
   URL.revokeObjectURL(url)
+}
+
+async function saveGraph() {
+  if (graphData.value.nodes.length === 0) {
+    error.value = '当前没有可保存的图谱数据'
+    return
+  }
+
+  try {
+    isSaving.value = true
+    error.value = ''
+    const result = await knowledgeGraphApi.importGraph({
+      nodes: graphData.value.nodes.map(node => ({
+        id: node.id,
+        label: node.name,
+        type: node.type,
+        properties: node.properties || {}
+      })),
+      edges: graphData.value.edges.map(edge => ({
+        id: edge.id,
+        source: getEdgeEndpointId(edge.source),
+        target: getEdgeEndpointId(edge.target),
+        type: edge.type,
+        properties: edge.properties || {}
+      })),
+      deleted_node_ids: deletedNodeIds.value,
+      deleted_edge_ids: deletedEdgeIds.value
+    })
+
+    if (!result.success && result.errors.length > 0) {
+      error.value = result.errors.slice(0, 3).join('；')
+      return
+    }
+
+    deletedNodeIds.value = []
+    deletedEdgeIds.value = []
+    hasUnsavedChanges.value = false
+    success.value = `已保存 ${result.nodes_saved} 个节点、${result.edges_saved} 条关系`
+  } catch (err: any) {
+    error.value = err.message || '保存图谱失败'
+  } finally {
+    isSaving.value = false
+  }
+}
+
+function triggerImport() {
+  importFileInput.value?.click()
+}
+
+function importGraphFile(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+
+  const reader = new FileReader()
+  reader.onload = () => {
+    try {
+      const parsed = JSON.parse(String(reader.result || '{}'))
+      const nodes = Array.isArray(parsed.nodes) ? parsed.nodes : []
+      const edges = Array.isArray(parsed.edges) ? parsed.edges : []
+      graphData.value = {
+        nodes: nodes.map((node: any, index: number) => ({
+          id: String(node.id || `import_node_${Date.now()}_${index}`),
+          name: String(node.name || node.label || '').trim(),
+          type: String(node.type || 'Entity'),
+          properties: node.properties || {}
+        })).filter((node: GraphNode) => node.name),
+        edges: edges.map((edge: any, index: number) => ({
+          id: String(edge.id || `import_edge_${Date.now()}_${index}`),
+          source: String(edge.source || ''),
+          target: String(edge.target || ''),
+          type: String(edge.type || 'related_to'),
+          properties: edge.properties || {}
+        })).filter((edge: GraphEdge) => edge.source && edge.target)
+      }
+      deletedNodeIds.value = []
+      deletedEdgeIds.value = []
+      clearSelection()
+      markDirty()
+      drawGraph()
+      success.value = 'JSON 图谱已导入到编辑器'
+    } catch (err: any) {
+      error.value = err.message || '导入 JSON 失败'
+    } finally {
+      input.value = ''
+    }
+  }
+  reader.readAsText(file)
 }
 
 function addNode() {
@@ -391,18 +524,33 @@ function addNode() {
   graphData.value.nodes.push(newNode)
   newNodeName.value = ''
   editMode.value = false
+  markDirty()
   drawGraph()
 }
 
 function deleteNode(nodeId: string) {
+  if (/^\d+$/.test(nodeId) && !deletedNodeIds.value.includes(nodeId)) {
+    deletedNodeIds.value.push(nodeId)
+  }
+  graphData.value.edges.forEach(edge => {
+    const edgeId = edge.id
+    if (
+      /^\d+$/.test(edgeId) &&
+      (getEdgeEndpointId(edge.source) === nodeId || getEdgeEndpointId(edge.target) === nodeId) &&
+      !deletedEdgeIds.value.includes(edgeId)
+    ) {
+      deletedEdgeIds.value.push(edgeId)
+    }
+  })
   graphData.value.nodes = graphData.value.nodes.filter(n => n.id !== nodeId)
   graphData.value.edges = graphData.value.edges.filter(
-    e => (typeof e.source === 'object' ? e.source.id : e.source) !== nodeId &&
-         (typeof e.target === 'object' ? e.target.id : e.target) !== nodeId
+    e => getEdgeEndpointId(e.source) !== nodeId &&
+         getEdgeEndpointId(e.target) !== nodeId
   )
   if (selectedNode.value?.id === nodeId) {
     clearSelection()
   }
+  markDirty()
   drawGraph()
 }
 
@@ -451,6 +599,7 @@ function addEdge() {
 
   if (!exists) {
     graphData.value.edges.push(newEdge)
+    markDirty()
   }
 
   newEdgeSource.value = ''
@@ -460,16 +609,32 @@ function addEdge() {
 }
 
 function deleteEdge(edgeId: string) {
+  if (/^\d+$/.test(edgeId) && !deletedEdgeIds.value.includes(edgeId)) {
+    deletedEdgeIds.value.push(edgeId)
+  }
   graphData.value.edges = graphData.value.edges.filter(e => e.id !== edgeId)
   if (selectedEdge.value?.id === edgeId) {
     clearSelection()
   }
+  markDirty()
   drawGraph()
 }
 
 function copyNodeId(id: string) {
   navigator.clipboard.writeText(id)
 }
+
+function updateGraphLabelVisibility() {
+  if (!graphContainer.value) return
+  d3.select(graphContainer.value)
+    .selectAll('.node-label')
+    .text((d: any) => showLabels.value ? d.name : '')
+  d3.select(graphContainer.value)
+    .selectAll('.edge-label')
+    .text((d: any) => showLabels.value ? d.type : '')
+}
+
+watch(showLabels, updateGraphLabelVisibility)
 
 onMounted(() => {
   if (centerEntity.value) {
@@ -497,6 +662,29 @@ onMounted(() => {
           >
             <HelpCircle :size="18" />
             使用说明
+          </button>
+          <input
+            ref="importFileInput"
+            type="file"
+            accept="application/json,.json"
+            class="hidden"
+            @change="importGraphFile"
+          />
+          <button
+            @click="triggerImport"
+            class="px-4 py-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center gap-2"
+          >
+            <Upload :size="18" />
+            导入
+          </button>
+          <button
+            @click="saveGraph"
+            :disabled="isSaving || graphData.nodes.length === 0"
+            class="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-2"
+          >
+            <Loader2 v-if="isSaving" :size="18" class="animate-spin" />
+            <Save v-else :size="18" />
+            {{ hasUnsavedChanges ? '保存*' : '保存' }}
           </button>
           <button
             @click="exportGraph"
@@ -811,6 +999,55 @@ onMounted(() => {
                 >
                   <Trash2 :size="16" />
                   删除节点
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Selected Edge Panel -->
+          <div
+            v-if="selectedEdge"
+            class="absolute right-4 top-4 w-80 bg-white rounded-xl border border-gray-200 shadow-lg overflow-hidden"
+          >
+            <div class="bg-gray-50 px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+              <h3 class="font-semibold text-gray-900">关系详情</h3>
+              <button @click="clearSelection" class="p-1 hover:bg-gray-200 rounded">
+                <X :size="16" />
+              </button>
+            </div>
+            <div class="p-4 space-y-3">
+              <div>
+                <div class="text-xs text-gray-500 mb-1">类型</div>
+                <div class="text-sm font-medium text-gray-900">{{ selectedEdge.type }}</div>
+              </div>
+              <div>
+                <div class="text-xs text-gray-500 mb-1">源节点</div>
+                <div class="text-sm font-mono bg-gray-50 px-2 py-1 rounded">{{ getEdgeEndpointId(selectedEdge.source) }}</div>
+              </div>
+              <div>
+                <div class="text-xs text-gray-500 mb-1">目标节点</div>
+                <div class="text-sm font-mono bg-gray-50 px-2 py-1 rounded">{{ getEdgeEndpointId(selectedEdge.target) }}</div>
+              </div>
+              <div v-if="showProperties && selectedEdge.properties">
+                <div class="text-xs text-gray-500 mb-2">属性</div>
+                <div class="space-y-1">
+                  <div
+                    v-for="(value, key) in selectedEdge.properties"
+                    :key="key"
+                    class="flex items-start gap-2 text-sm"
+                  >
+                    <span class="text-gray-500">{{ key }}:</span>
+                    <span class="text-gray-900">{{ value }}</span>
+                  </div>
+                </div>
+              </div>
+              <div v-if="editMode" class="pt-3 border-t border-gray-200">
+                <button
+                  @click="deleteEdge(selectedEdge.id)"
+                  class="w-full px-4 py-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 flex items-center justify-center gap-2"
+                >
+                  <Trash2 :size="16" />
+                  删除关系
                 </button>
               </div>
             </div>

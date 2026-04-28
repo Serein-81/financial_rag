@@ -361,10 +361,15 @@ def get_all_tools():
             tools.extend(financial_tools)
             logger.debug("Loaded %s financial tools", len(financial_tools))
         except Exception as e:
-            import logging
-            logger = logging.getLogger(__name__)
             logger.warning(f"财务工具加载失败: {e}")
     
+    try:
+        from app.services.custom_tool_service import get_published_custom_tool_callables
+
+        tools.extend(get_published_custom_tool_callables())
+    except Exception as e:
+        logger.debug("Published custom tools are not ready: %s", e)
+
     return tools
 
 

@@ -8,6 +8,12 @@ class ToolFieldSpec(BaseModel):
     description: str = ""
     required: bool = True
     default: Any = None
+    enum: Optional[List[Any]] = None
+    min: Optional[float] = None
+    max: Optional[float] = None
+    min_length: Optional[int] = None
+    max_length: Optional[int] = None
+    pattern: Optional[str] = None
 
 
 class CustomToolSpec(BaseModel):
@@ -88,6 +94,8 @@ class CustomToolResponse(BaseModel):
     runtime_config: Dict[str, Any]
     safety_policy: Dict[str, Any]
     agent_id: Optional[str]
+    published_by: Optional[str] = None
+    published_by_name: Optional[str] = None
     enabled: bool
     created_at: str
     updated_at: str

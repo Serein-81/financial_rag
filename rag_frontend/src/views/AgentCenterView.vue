@@ -486,6 +486,14 @@ function truncateText(text: string | null | undefined, maxLen: number): string {
   return text.length > maxLen ? text.substring(0, maxLen) + '...' : text
 }
 
+function getToolPublisher(tool: ToolInfo): string {
+  return tool.published_by_name || tool.metadata?.published_by_name || tool.published_by || tool.metadata?.published_by || ''
+}
+
+function getToolCreator(tool: ToolInfo): string {
+  return tool.created_by_name || tool.metadata?.created_by_name || tool.created_by || tool.metadata?.created_by || ''
+}
+
 function formatDuration(seconds: number): string {
   if (!isFinite(seconds) || seconds < 0) return '-'
   if (seconds < 60) return `${seconds.toFixed(0)}秒`
@@ -852,6 +860,11 @@ onMounted(() => {
                             </span>
                           </div>
                           <p class="text-xs text-slate-500 mt-0.5">{{ tool.description }}</p>
+                          <p v-if="tool.is_custom_tool" class="text-xs text-slate-400 mt-1">
+                            创建管理员: {{ getToolCreator(tool) || '未知' }}
+                            <span class="ml-2">发布管理员: {{ getToolPublisher(tool) || '未知' }}</span>
+                            <span v-if="tool.has_api_key" class="ml-2 text-emerald-600">API Key 已配置</span>
+                          </p>
                           <p class="text-xs text-slate-400 mt-1">归属: {{ tool.agent_name || '未知' }}</p>
                         </div>
                       </div>
@@ -892,6 +905,11 @@ onMounted(() => {
                             </span>
                           </div>
                           <p class="text-xs text-slate-500 mt-0.5">{{ tool.description }}</p>
+                          <p v-if="tool.is_custom_tool" class="text-xs text-slate-400 mt-1">
+                            创建管理员: {{ getToolCreator(tool) || '未知' }}
+                            <span class="ml-2">发布管理员: {{ getToolPublisher(tool) || '未知' }}</span>
+                            <span v-if="tool.has_api_key" class="ml-2 text-emerald-600">API Key 已配置</span>
+                          </p>
                           <p class="text-xs text-slate-400 mt-1">归属: {{ tool.agent_name || '未知' }}</p>
                         </div>
                       </div>
@@ -926,6 +944,11 @@ onMounted(() => {
                             </span>
                           </div>
                           <p class="text-xs text-slate-500 mt-0.5">{{ tool.description }}</p>
+                          <p v-if="tool.is_custom_tool" class="text-xs text-slate-400 mt-1">
+                            创建管理员: {{ getToolCreator(tool) || '未知' }}
+                            <span class="ml-2">发布管理员: {{ getToolPublisher(tool) || '未知' }}</span>
+                            <span v-if="tool.has_api_key" class="ml-2 text-emerald-600">API Key 已配置</span>
+                          </p>
                           <p class="text-xs text-slate-400 mt-1">归属: {{ tool.agent_name || '未知' }}</p>
                         </div>
                       </div>
@@ -963,6 +986,11 @@ onMounted(() => {
                             </span>
                           </div>
                           <p class="text-xs text-slate-500 mt-0.5">{{ tool.description }}</p>
+                          <p v-if="tool.is_custom_tool" class="text-xs text-slate-400 mt-1">
+                            创建管理员: {{ getToolCreator(tool) || '未知' }}
+                            <span class="ml-2">发布管理员: {{ getToolPublisher(tool) || '未知' }}</span>
+                            <span v-if="tool.has_api_key" class="ml-2 text-emerald-600">API Key 已配置</span>
+                          </p>
                           <span :class="[
                             'inline-block mt-1 px-1.5 py-0.5 rounded text-xs',
                             getToolLocationMeta(tool.location).badgeClass

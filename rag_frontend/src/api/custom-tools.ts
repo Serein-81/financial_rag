@@ -7,6 +7,12 @@ export interface ToolFieldSpec {
   description?: string
   required?: boolean
   default?: any
+  enum?: any[]
+  min?: number
+  max?: number
+  min_length?: number
+  max_length?: number
+  pattern?: string
 }
 
 export interface CustomToolSpec {
@@ -22,6 +28,8 @@ export interface CustomToolSpec {
   safety_policy: Record<string, any>
   generated_code?: string | null
   agent_id?: string | null
+  published_by?: string | null
+  published_by_name?: string | null
 }
 
 export interface CustomTool extends CustomToolSpec {

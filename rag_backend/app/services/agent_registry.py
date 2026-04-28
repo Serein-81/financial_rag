@@ -40,6 +40,7 @@ class ToolInfo:
     category: str = "general"
     is_async: bool = True
     enabled: bool = True
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

@@ -1,3 +1,7 @@
+import uuid
+
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +21,7 @@ from app.services.custom_tool_service import CustomToolServiceError, custom_tool
 from app.services.log_service import log_service
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def require_admin(current_user: User) -> None:
@@ -59,7 +64,24 @@ async def log_custom_tool_action(
         pass
 
 
-def serialize_tool(tool) -> CustomToolResponse:
+def mask_runtime_config(runtime_config: dict | None) -> dict:
+    config = dict(runtime_config or {})
+    api_key = config.get("api_key")
+    if isinstance(api_key, dict) and api_key.get("value"):
+        masked = dict(api_key)
+        masked["value"] = "********"
+        masked["configured"] = True
+        config["api_key"] = masked
+    return config
+
+
+def get_user_display_name(user: User | None, fallback: str | None = None) -> str | None:
+    if not user:
+        return fallback
+    return user.full_name or user.nickname or user.username or user.email or fallback
+
+
+def serialize_tool(tool, published_by_name: str | None = None) -> CustomToolResponse:
     return CustomToolResponse(
         id=str(tool.id),
         name=tool.name,
@@ -71,9 +93,11 @@ def serialize_tool(tool) -> CustomToolResponse:
         version=tool.version,
         input_schema=tool.input_schema or {},
         output_schema=tool.output_schema or {},
-        runtime_config=tool.runtime_config or {},
+        runtime_config=mask_runtime_config(tool.runtime_config),
         safety_policy=tool.safety_policy or {},
         agent_id=tool.agent_id,
+        published_by=tool.approved_by,
+        published_by_name=published_by_name,
         enabled=tool.enabled,
         created_at=tool.created_at.isoformat(),
         updated_at=tool.updated_at.isoformat(),
@@ -177,9 +201,26 @@ async def list_custom_tools(
         current_user.tenant_id,
         include_unpublished=current_user.is_admin,
     )
+    publisher_ids = {tool.approved_by for tool in tools if tool.approved_by}
+    publishers = {}
+    if publisher_ids:
+        from sqlalchemy import select
+
+        user_ids = []
+        for publisher_id in publisher_ids:
+            try:
+                user_ids.append(uuid.UUID(str(publisher_id)))
+            except ValueError:
+                pass
+        result = await db.execute(select(User).where(User.id.in_(user_ids)))
+        publishers = {str(user.id): get_user_display_name(user, str(user.id)) for user in result.scalars().all()}
+
     return {
         "total": len(tools),
-        "tools": [serialize_tool(tool) for tool in tools],
+        "tools": [
+            serialize_tool(tool, published_by_name=publishers.get(str(tool.approved_by)) if tool.approved_by else None)
+            for tool in tools
+        ],
     }
 
 
@@ -213,6 +254,8 @@ async def publish_custom_tool(
             tenant_id=current_user.tenant_id,
             tool_id=tool_id,
             agent_id=request.agent_id,
+            published_by=str(current_user.id),
+            published_by_name=get_user_display_name(current_user, str(current_user.id)),
         )
         await log_custom_tool_action(
             request=request_context,
@@ -232,7 +275,7 @@ async def publish_custom_tool(
             },
             risk_level="medium",
         )
-        return serialize_tool(tool)
+        return serialize_tool(tool, published_by_name=get_user_display_name(current_user, str(current_user.id)))
     except CustomToolServiceError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -291,3 +334,26 @@ async def execute_custom_tool(
             risk_level="medium",
         )
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+    except Exception as e:
+        error_detail = str(e) or repr(e) or e.__class__.__name__
+        logger.exception("Execute custom tool failed: tool_id=%s error=%s", tool_id, error_detail)
+        await log_custom_tool_action(
+            request=request_context,
+            current_user=current_user,
+            action_name="execute_custom_tool",
+            description="执行自定义智能体工具测试失败",
+            success=False,
+            result_message=error_detail,
+            resource_id=tool_id,
+            extra_info={
+                "tool_id": tool_id,
+                "arguments_keys": list(request.arguments.keys()),
+                "error": error_detail,
+                "error_type": e.__class__.__name__,
+            },
+            risk_level="medium",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Custom tool execution failed: {error_detail}",
+        )

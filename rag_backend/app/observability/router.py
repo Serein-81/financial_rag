@@ -6,7 +6,7 @@
 
 import logging
 from typing import Any, Dict, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -17,6 +17,15 @@ from app.observability.logger import get_log_store
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/observability", tags=["Observability"])
+
+
+def _parse_datetime(value: str | None) -> Optional[datetime]:
+    if not value:
+        return None
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _span_to_dict(span: SpanContext) -> Dict[str, Any]:
@@ -84,26 +93,22 @@ async def get_traces(
 
         # 按时间过滤
         if start_time:
-            start_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+            start_dt = _parse_datetime(start_time)
             result = [
                 t
                 for t in result
                 if t["spans"]
-                and datetime.fromisoformat(
-                    t["spans"][0]["start_time"].replace("Z", "+00:00")
-                )
+                and _parse_datetime(t["spans"][0]["start_time"])
                 >= start_dt
             ]
 
         if end_time:
-            end_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+            end_dt = _parse_datetime(end_time)
             result = [
                 t
                 for t in result
                 if t["spans"]
-                and datetime.fromisoformat(
-                    t["spans"][0]["start_time"].replace("Z", "+00:00")
-                )
+                and _parse_datetime(t["spans"][0]["start_time"])
                 <= end_dt
             ]
 
@@ -274,22 +279,22 @@ async def get_logs(
             result = [r for r in result if r.get("trace_id") == trace_id]
 
         if start_time:
-            start_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+            start_dt = _parse_datetime(start_time)
             result = [
                 r
                 for r in result
                 if r.get("timestamp")
-                and datetime.fromisoformat(r["timestamp"].replace("Z", "+00:00"))
+                and _parse_datetime(r["timestamp"])
                 >= start_dt
             ]
 
         if end_time:
-            end_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+            end_dt = _parse_datetime(end_time)
             result = [
                 r
                 for r in result
                 if r.get("timestamp")
-                and datetime.fromisoformat(r["timestamp"].replace("Z", "+00:00"))
+                and _parse_datetime(r["timestamp"])
                 <= end_dt
             ]
 

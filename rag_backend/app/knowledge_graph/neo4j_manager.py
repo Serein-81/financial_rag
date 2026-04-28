@@ -137,6 +137,7 @@ class Neo4jManager:
 
         with self.driver.session(database=settings.NEO4J_DATABASE) as session:
             weight = properties.get("weight", 1.0) if properties else 1.0
+            editor_id = properties.get("editor_id") if properties else None
 
             result = session.run("""
                 MATCH (s:Entity)
@@ -146,13 +147,183 @@ class Neo4jManager:
                   AND (t.tenant_id IS NULL OR t.tenant_id = $tenant_id)
                 MERGE (s)-[r:RELATED {type: $rel_type}]->(t)
                 SET r.weight = $weight,
+                    r.editor_id = coalesce(r.editor_id, $editor_id),
                     r.updated_at = datetime()
                 RETURN id(r) as id
             """, source=source_name, target=target_name,
-                rel_type=relation_type, tenant_id=tenant_id, weight=weight)
+                rel_type=relation_type, tenant_id=tenant_id, weight=weight, editor_id=editor_id)
 
             record = result.single()
             return {"id": str(record["id"])} if record else None
+
+    def update_entity_by_id(self, entity_id: str, name: str, entity_type: str,
+                            tenant_id: str, properties: Dict = None) -> Optional[Dict]:
+        """Update an existing entity by Neo4j internal id."""
+        if not self.driver:
+            return None
+
+        try:
+            graph_id = int(entity_id)
+        except (TypeError, ValueError):
+            return None
+
+        tenant_id = str(tenant_id) if tenant_id else None
+        properties_json = json.dumps(properties or {})
+
+        with self.driver.session(database=settings.NEO4J_DATABASE) as session:
+            result = session.run("""
+                MATCH (e:Entity)
+                WHERE id(e) = $entity_id AND (e.tenant_id IS NULL OR e.tenant_id = $tenant_id)
+                SET e.name = $name,
+                    e.type = $type,
+                    e.tenant_id = coalesce(e.tenant_id, $tenant_id),
+                    e.properties = $properties,
+                    e.unique_key = coalesce(e.unique_key, $unique_key),
+                    e.updated_at = datetime()
+                RETURN id(e) as id, e.name as name, e.type as type, e.properties as properties
+            """, entity_id=graph_id, name=name, type=entity_type, tenant_id=tenant_id,
+                unique_key=f"{tenant_id}_{name}_{entity_type}", properties=properties_json)
+
+            record = result.single()
+            if not record:
+                return None
+            properties_value = record["properties"] or {}
+            if isinstance(properties_value, str):
+                properties_value = json.loads(properties_value)
+            return {
+                "id": str(record["id"]),
+                "name": record["name"],
+                "type": record["type"],
+                "properties": self._serialize_value(properties_value)
+            }
+
+    def delete_entity_by_id(self, entity_id: str, tenant_id: str) -> bool:
+        """Delete an entity and its relationships by Neo4j internal id."""
+        if not self.driver:
+            return False
+
+        tenant_id = str(tenant_id) if tenant_id else None
+        try:
+            graph_id = int(entity_id)
+        except (TypeError, ValueError):
+            graph_id = None
+
+        with self.driver.session(database=settings.NEO4J_DATABASE) as session:
+            result = session.run("""
+                MATCH (e:Entity)
+                WHERE (id(e) = $graph_id OR e.unique_key IN $unique_keys)
+                  AND (e.tenant_id IS NULL OR e.tenant_id = $tenant_id)
+                WITH e, count(e) as deleted
+                DETACH DELETE e
+                RETURN deleted
+            """, graph_id=graph_id, unique_keys=[entity_id, f"{tenant_id}_{entity_id}"], tenant_id=tenant_id)
+            record = result.single()
+            return bool(record and record["deleted"] > 0)
+
+    def delete_relation_by_id(self, relation_id: str, tenant_id: str) -> bool:
+        """Delete a relation by Neo4j internal id."""
+        if not self.driver:
+            return False
+
+        tenant_id = str(tenant_id) if tenant_id else None
+        try:
+            graph_id = int(relation_id)
+        except (TypeError, ValueError):
+            graph_id = None
+
+        with self.driver.session(database=settings.NEO4J_DATABASE) as session:
+            result = session.run("""
+                MATCH (s:Entity)-[r:RELATED]->(t:Entity)
+                WHERE (id(r) = $graph_id OR r.editor_id = $relation_id)
+                  AND (s.tenant_id IS NULL OR s.tenant_id = $tenant_id)
+                  AND (t.tenant_id IS NULL OR t.tenant_id = $tenant_id)
+                WITH r, count(r) as deleted
+                DELETE r
+                RETURN deleted
+            """, graph_id=graph_id, relation_id=relation_id, tenant_id=tenant_id)
+            record = result.single()
+            return bool(record and record["deleted"] > 0)
+
+    def save_graph_snapshot(self, nodes: List[Dict], edges: List[Dict], tenant_id: str,
+                            deleted_node_ids: List[str] = None,
+                            deleted_edge_ids: List[str] = None) -> Dict[str, Any]:
+        """Persist editor changes while leaving unrelated graph data untouched."""
+        result = {
+            "success": bool(self.driver),
+            "nodes_saved": 0,
+            "edges_saved": 0,
+            "nodes_deleted": 0,
+            "edges_deleted": 0,
+            "errors": []
+        }
+        if not self.driver:
+            result["errors"].append("Neo4j is not available")
+            return result
+
+        tenant_id = str(tenant_id) if tenant_id else None
+
+        for relation_id in deleted_edge_ids or []:
+            if self.delete_relation_by_id(relation_id, tenant_id):
+                result["edges_deleted"] += 1
+
+        for entity_id in deleted_node_ids or []:
+            if self.delete_entity_by_id(entity_id, tenant_id):
+                result["nodes_deleted"] += 1
+
+        node_name_by_id = {}
+        for node in nodes:
+            node_id = str(node.get("id", ""))
+            name = (node.get("label") or node.get("name") or "").strip()
+            entity_type = (node.get("type") or "Entity").strip()
+            properties = node.get("properties") or {}
+            if not name:
+                result["errors"].append(f"Skipped node with empty name: {node_id}")
+                continue
+
+            saved = None
+            if node_id.isdigit():
+                saved = self.update_entity_by_id(node_id, name, entity_type, tenant_id, properties)
+            if not saved:
+                created_id = self.create_entity(
+                    name=name,
+                    entity_type=entity_type,
+                    tenant_id=tenant_id,
+                    properties=properties,
+                    unique_key=f"{tenant_id}_{node_id}" if node_id else None
+                )
+                saved = {"id": created_id, "name": name, "type": entity_type} if created_id else None
+
+            if saved:
+                result["nodes_saved"] += 1
+                node_name_by_id[node_id] = name
+            else:
+                result["errors"].append(f"Failed to save node: {name}")
+
+        for edge in edges:
+            source_ref = str(edge.get("source", ""))
+            target_ref = str(edge.get("target", ""))
+            source_name = node_name_by_id.get(source_ref, source_ref)
+            target_name = node_name_by_id.get(target_ref, target_ref)
+            relation_type = (edge.get("type") or "related_to").strip()
+
+            if not source_name or not target_name:
+                result["errors"].append(f"Skipped edge with empty endpoint: {edge.get('id')}")
+                continue
+
+            saved = self.create_relation(
+                source_name=source_name,
+                target_name=target_name,
+                relation_type=relation_type,
+                tenant_id=tenant_id,
+                properties={**(edge.get("properties") or {}), "editor_id": edge.get("id")}
+            )
+            if saved:
+                result["edges_saved"] += 1
+            else:
+                result["errors"].append(f"Failed to save edge: {source_name} -> {target_name}")
+
+        result["success"] = len(result["errors"]) == 0
+        return result
 
     def link_memory_to_entities(self, memory_id: str,
                                entity_names: List[str], tenant_id: str) -> int:

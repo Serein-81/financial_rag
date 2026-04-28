@@ -92,6 +92,22 @@ export interface GraphVisualizationResponse {
   center_node: string | null
 }
 
+export interface GraphImportRequest {
+  nodes: GraphVisualizationNode[]
+  edges: GraphVisualizationEdge[]
+  deleted_node_ids?: string[]
+  deleted_edge_ids?: string[]
+}
+
+export interface GraphImportResponse {
+  success: boolean
+  nodes_saved: number
+  edges_saved: number
+  nodes_deleted: number
+  edges_deleted: number
+  errors: string[]
+}
+
 export interface VisualizeRequest {
   entity_name?: string
   max_depth?: number
@@ -157,6 +173,13 @@ export const knowledgeGraphApi = {
   },
 
   // 获取实体列表
+  async importGraph(data: GraphImportRequest): Promise<GraphImportResponse> {
+    return request<GraphImportResponse>('/knowledge_graph/import', {
+      method: 'POST',
+      data: JSON.stringify(data),
+    })
+  },
+
   async listEntities(params?: {
     limit?: number
     offset?: number

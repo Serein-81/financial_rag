@@ -24,6 +24,13 @@ export interface ToolInfo {
   parameters?: Record<string, any>
   is_async?: boolean
   enabled?: boolean
+  metadata?: Record<string, any>
+  published_by?: string | null
+  published_by_name?: string | null
+  created_by?: string | null
+  created_by_name?: string | null
+  is_custom_tool?: boolean
+  has_api_key?: boolean
 }
 
 export interface AgentSummary {
