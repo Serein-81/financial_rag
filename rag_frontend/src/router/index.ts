@@ -275,7 +275,7 @@ router.beforeEach((to, from, next) => {
 
     if (to.meta.requiresAuth && !authStore.isLoggedIn) {
       next('/login')
-    } else if ((to.name === 'login' || to.name === 'register') && authStore.isLoggedIn) {
+    } else if (to.name === 'login' && authStore.isLoggedIn) {
       next('/')
     } else if (to.meta.requiresAdmin && !isAdmin) {
       next('/')

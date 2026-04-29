@@ -6,6 +6,7 @@
 import uuid
 import time
 import logging
+import json
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
@@ -49,6 +50,7 @@ from app.schemas.multi_agent import (
 )
 from app.api import deps
 from app.models.user import User
+from app.services.redis_service import redis_service
 from app.multi_agent_system import AgentOrchestrator, OrchestrationContext
 from app.multi_agent_system.agents import (
     FinanceSpecialist,
@@ -1104,87 +1106,146 @@ async def get_approval_history(
     """
     try:
         from sqlalchemy import select, text
-        from app.models.review_request import ReviewRequest, ReviewRequestAction
+        from app.models.review_request import ReviewRequest
         import json
         
         logger.info(f"[HITL] get_approval_history called, status={status}, limit={limit}, storage_size={len(hitl_approvals_storage)}")
         
         history = []
+        seen_approval_ids = set()
+
+        def parse_json_field(value):
+            if isinstance(value, str):
+                try:
+                    return json.loads(value) if value else {}
+                except json.JSONDecodeError:
+                    logger.warning(f"[HITL] 无法解析 JSON 字段: {value}")
+                    return {}
+            return value or {}
+
+        def map_review_status(review_status: str) -> ApprovalStatus:
+            if review_status == "completed":
+                return ApprovalStatus.APPROVED
+            if review_status == "rejected":
+                return ApprovalStatus.REJECTED
+            if review_status == "timeout":
+                return ApprovalStatus.TIMEOUT
+            return ApprovalStatus.PENDING
+
+        async def get_user_display_name(user_id: str) -> str:
+            if not user_id:
+                return ""
+            if str(current_user.id) == str(user_id):
+                return current_user.full_name or current_user.nickname or current_user.username or current_user.email or str(user_id)
+            try:
+                user_uuid = uuid.UUID(str(user_id))
+            except (ValueError, TypeError):
+                logger.warning(f"[HITL] 无法解析用户ID: {user_id}")
+                return str(user_id)
+
+            user_result = await db.execute(select(User).where(User.id == user_uuid))
+            user = user_result.scalar_one_or_none()
+            if not user:
+                return str(user_id)
+            return user.full_name or user.nickname or user.username or user.email or str(user_id)
 
         for approval in hitl_approvals_storage.values():
             if status and approval.status != status:
                 continue
             history.append(approval)
+            seen_approval_ids.add(approval.approval_id)
 
         logger.info(f"[HITL] filtered history from storage count: {len(history)}")
         
         history.sort(key=lambda x: x.created_at, reverse=True)
-        
-        if len(history) == 0:
-            logger.info(f"[HITL] storage is empty, trying to get reviews from database")
+
+        logger.info(f"[HITL] trying to get reviews from database")
+        db_statuses = ["completed", "rejected"]
+        if status == ApprovalStatus.APPROVED:
+            db_statuses = ["completed"]
+        elif status == ApprovalStatus.REJECTED:
+            db_statuses = ["rejected"]
+        elif status in (ApprovalStatus.PENDING, ApprovalStatus.TIMEOUT):
+            db_statuses = []
+
+        db_reviews = []
+        if db_statuses:
             review_result = await db.execute(
-                select(ReviewRequest).where(ReviewRequest.status.in_(["completed", "rejected"])).order_by(ReviewRequest.updated_at.desc()).limit(limit)
+                select(ReviewRequest)
+                .where(ReviewRequest.status.in_(db_statuses))
+                .order_by(ReviewRequest.updated_at.desc())
+                .limit(limit)
             )
             db_reviews = review_result.scalars().all()
-            logger.info(f"[HITL] found {len(db_reviews)} reviews from database")
-            
-            for review in db_reviews:
-                actions_result = await db.execute(
-                    text("SELECT * FROM review_request_actions WHERE review_request_id = :review_id ORDER BY created_at DESC LIMIT 1"),
-                    {"review_id": str(review.id)}
-                )
-                latest_action = actions_result.fetchone()
-                
-                if latest_action:
-                    latest_action_dict = dict(latest_action._mapping) if hasattr(latest_action, '_mapping') else {c: getattr(latest_action, c) for c in latest_action._fields}
-                    
-                    logger.info(f"[HITL] action record: id={latest_action_dict.get('id')}, action={latest_action_dict.get('action')}, action_details={latest_action_dict.get('action_details')}, new_value={latest_action_dict.get('new_value')}")
-                    
-                    approval_dict = {
-                        "approval_id": str(review.id),
-                        "task_id": str(review.task_id),
-                        "user_id": str(review.user_id),
-                        "operation": latest_action_dict.get("action"),
-                        "details": {},
-                        "risk_level": "SENSITIVE",
-                        "status": "APPROVED" if review.status == "completed" else "REJECTED",
-                        "created_at": review.created_at,
-                        "expires_at": review.created_at,
-                        "reviewed_at": review.reviewed_at,
-                        "reviewer_notes": None
-                    }
-                    
-                    action_details = latest_action_dict.get("action_details")
-                    logger.info(f"[HITL] action_details raw: {action_details}, type: {type(action_details)}")
-                    
-                    if isinstance(action_details, str):
-                        action_details = json.loads(action_details) if action_details else {}
-                    
-                    logger.info(f"[HITL] action_details parsed: {action_details}")
-                    
-                    reviewer_notes = None
-                    if action_details:
-                        reviewer_notes = action_details.get("comment") or action_details.get("description")
-                    
-                    logger.info(f"[HITL] reviewer_notes from action_details: {reviewer_notes}")
-                    
-                    if not reviewer_notes:
-                        new_value = latest_action_dict.get("new_value")
-                        logger.info(f"[HITL] new_value raw: {new_value}, type: {type(new_value)}")
-                        if isinstance(new_value, str):
-                            new_value = json.loads(new_value) if new_value else {}
-                        
-                        if new_value:
-                            reviewer_notes = new_value.get("review_comments")
-                            logger.info(f"[HITL] reviewer_notes from new_value: {reviewer_notes}")
-                    
-                    if not reviewer_notes:
-                        reviewer_notes = latest_action_dict.get("action")
-                    
-                    approval_dict["reviewer_notes"] = reviewer_notes
-                    
-                    history.append(type('Approval', (), approval_dict)())
-                    logger.info(f"[HITL] added review to history: review_id={review.id}, operation={approval_dict['operation']}, reviewer_notes={approval_dict['reviewer_notes']}")
+        logger.info(f"[HITL] found {len(db_reviews)} reviews from database")
+
+        for review in db_reviews:
+            review_id = str(review.id)
+            if review_id in seen_approval_ids:
+                continue
+
+            actions_result = await db.execute(
+                text("SELECT * FROM review_request_actions WHERE review_request_id = :review_id ORDER BY created_at DESC LIMIT 1"),
+                {"review_id": review_id}
+            )
+            latest_action = actions_result.fetchone()
+            latest_action_dict = {}
+            if latest_action:
+                latest_action_dict = dict(latest_action._mapping) if hasattr(latest_action, '_mapping') else {c: getattr(latest_action, c) for c in latest_action._fields}
+                logger.info(f"[HITL] action record: id={latest_action_dict.get('id')}, action={latest_action_dict.get('action')}")
+
+            action_details = parse_json_field(latest_action_dict.get("action_details"))
+            new_value = parse_json_field(latest_action_dict.get("new_value"))
+            applicant_user_id = str(review.user_id)
+            operator_user_id = str(latest_action_dict.get("user_id") or review.reviewed_by or current_user.id)
+            applicant_name = await get_user_display_name(applicant_user_id)
+            operator_name = await get_user_display_name(operator_user_id)
+            reviewer_notes = (
+                action_details.get("comment")
+                or action_details.get("description")
+                or new_value.get("review_comments")
+                or review.review_comments
+                or latest_action_dict.get("action")
+            )
+
+            operation = (
+                latest_action_dict.get("action")
+                or review.trigger_reason
+                or review.review_type
+                or "review"
+            )
+
+            approval_dict = {
+                "approval_id": review_id,
+                "task_id": str(review.task_id),
+                "user_id": applicant_user_id,
+                "user_name": applicant_name,
+                "applicant_user_id": applicant_user_id,
+                "applicant_name": applicant_name,
+                "operator_user_id": operator_user_id,
+                "operator_name": operator_name,
+                "operation": operation,
+                "details": {
+                    "title": review.title,
+                    "description": review.description,
+                    "trigger_reason": review.trigger_reason,
+                    "trigger_details": review.trigger_details or {},
+                    "content": review.content or {},
+                    "action_details": action_details,
+                },
+                "risk_level": PermissionLevel.SENSITIVE,
+                "status": map_review_status(review.status),
+                "created_at": review.created_at,
+                "expires_at": review.sla_deadline or review.updated_at or review.created_at,
+                "reviewed_at": review.reviewed_at or latest_action_dict.get("created_at") or review.updated_at,
+                "reviewer_notes": reviewer_notes
+            }
+
+            history.append(HITLApproval(**approval_dict))
+            seen_approval_ids.add(review_id)
+            logger.info(f"[HITL] added review to history: review_id={review_id}, operation={operation}, reviewer_notes={reviewer_notes}")
+
+        history.sort(key=lambda x: x.reviewed_at or x.created_at, reverse=True)
         
         result_approvals = []
         for approval in history[:limit]:
@@ -1199,10 +1260,23 @@ async def get_approval_history(
                 
                 task_id = approval_dict.get("task_id")
                 approval_id = approval_dict.get("approval_id")
+                user_id = approval_dict.get("user_id")
                 
                 if not task_id or not approval_id:
                     logger.warning(f"[HITL] 跳过无效 approval: approval_id={approval_id}, task_id={task_id}")
                     continue
+
+                if not approval_dict.get("user_name") and user_id:
+                    approval_dict["user_name"] = await get_user_display_name(str(user_id))
+
+                if not approval_dict.get("applicant_user_id"):
+                    approval_dict["applicant_user_id"] = user_id
+                if not approval_dict.get("applicant_name") and approval_dict.get("applicant_user_id"):
+                    approval_dict["applicant_name"] = await get_user_display_name(str(approval_dict["applicant_user_id"]))
+                if not approval_dict.get("operator_user_id"):
+                    approval_dict["operator_user_id"] = user_id
+                if not approval_dict.get("operator_name") and approval_dict.get("operator_user_id"):
+                    approval_dict["operator_name"] = await get_user_display_name(str(approval_dict["operator_user_id"]))
                 
                 logger.info(f"[HITL] 处理 approval: approval_id={approval_id}, task_id={task_id}")
                 
@@ -1241,8 +1315,7 @@ async def get_approval_history(
                             latest_action_dict = dict(latest_action._mapping) if hasattr(latest_action, '_mapping') else {c: getattr(latest_action, c) for c in latest_action._fields}
                             
                             action_details = latest_action_dict.get("action_details")
-                            if isinstance(action_details, str):
-                                action_details = json.loads(action_details) if action_details else {}
+                            action_details = parse_json_field(action_details)
                             
                             reviewer_notes = None
                             if action_details:
@@ -1250,8 +1323,7 @@ async def get_approval_history(
                             
                             if not reviewer_notes:
                                 new_value = latest_action_dict.get("new_value")
-                                if isinstance(new_value, str):
-                                    new_value = json.loads(new_value) if new_value else {}
+                                new_value = parse_json_field(new_value)
                                 if new_value:
                                     reviewer_notes = new_value.get("review_comments")
                             
@@ -1359,8 +1431,45 @@ async def review_approval(
 
         approval.reviewed_at = datetime.now()
         approval.reviewer_notes = request.notes
+        approval.operator_user_id = str(current_user.id)
+        approval.operator_name = current_user.full_name or current_user.nickname or current_user.username or current_user.email
+        approval.applicant_user_id = approval.user_id
+        approval.applicant_name = approval.user_name
 
         logger.info(f"HITL审批完成 - approval_id: {approval_id}, action: {request.action}, reviewer: {current_user.id}")
+
+        try:
+            if redis_service.client:
+                result_text = "已通过" if approval.status == ApprovalStatus.APPROVED else "已驳回"
+                now_iso = datetime.utcnow().isoformat()
+                notification = {
+                    "id": f"notif_{uuid.uuid4().hex}",
+                    "user_id": approval.user_id,
+                    "title": "人工审核处理结果",
+                    "message": f"您的申请「{approval.operation}」{result_text}",
+                    "notification_type": "success" if approval.status == ApprovalStatus.APPROVED else "warning",
+                    "type": "success" if approval.status == ApprovalStatus.APPROVED else "warning",
+                    "priority": "high",
+                    "source": "hitl",
+                    "metadata": {
+                        "approval_id": approval.approval_id,
+                        "task_id": approval.task_id,
+                        "status": approval.status.value,
+                        "operator_id": str(current_user.id),
+                        "operator_name": approval.operator_name,
+                        "reviewer_notes": approval.reviewer_notes,
+                    },
+                    "action_url": "/hitl-approval",
+                    "created_at": now_iso,
+                    "timestamp": now_iso,
+                    "is_read": False,
+                    "read": False,
+                }
+                key = f"notification:user:{approval.user_id}"
+                redis_service.client.lpush(key, json.dumps(notification, ensure_ascii=False))
+                redis_service.client.expire(key, 604800)
+        except Exception as e:
+            logger.warning(f"[HITL] 发送审批结果通知失败: {e}")
 
         return approval
 

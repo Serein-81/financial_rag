@@ -96,6 +96,10 @@
 
 | 关键词组合 | 意图 | 置信度 |
 |-----------|------|--------|
+| 政策 + 影响 | knowledge_query | 0.9 |
+| 政策 + 优惠 | knowledge_query | 0.9 |
+| 政策 + 解读 | knowledge_query | 0.9 |
+| 政策 + 咨询 | knowledge_query | 0.9 |
 | 企业 + 税务 + 风险 | tax_compliance | 0.9 |
 | 税务 + 筹划 | tax_planning | 0.9 |
 | 税务 + 合规 | tax_compliance | 0.9 |
@@ -115,6 +119,11 @@
 | 报表 | financial_analysis | 0.8 |
 | 合同 | contract_review | 0.8 |
 | 法律 | legal_consultation | 0.8 |
+| 政策 | knowledge_query | 0.8 |
+| 法规 | knowledge_query | 0.8 |
+| 通知 | knowledge_query | 0.8 |
+| 补贴 | knowledge_query | 0.8 |
+| 优惠 | knowledge_query | 0.8 |
 | 合规 | compliance_check | 0.8 |
 | 报告 | report_generation | 0.8 |
 | 查询 | knowledge_query | 0.5 |

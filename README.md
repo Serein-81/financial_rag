@@ -637,6 +637,18 @@ def reciprocal_rank_fusion(
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+### 异步设计机制
+
+后端以 FastAPI/asyncio 为核心，数据库访问使用 SQLAlchemy `AsyncSession` 和 `asyncpg`，外部 HTTP/LLM 调用优先使用异步客户端，避免在请求处理中长时间占用事件循环。
+
+系统中的长生命周期任务由 `BackgroundTaskManager` 统一托管，例如在线状态清理和 ARQ Worker。应用启动时注册任务，关闭时先发送停止信号，再统一取消并等待后台任务退出，避免后台任务异常静默丢失或服务退出时残留未完成任务。
+
+流式对话走真正的 async generator 链路：检索完成后调用 LLM 的异步流式接口，再通过 SSE 返回前端。流式 chunk 会被归一化为统一的 `delta` 结构，以兼容 OpenAI、DeepSeek、Qwen 等不同适配器的返回格式。
+
+多智能体和 A2A 协作通过 `asyncio.gather`、`Semaphore` 和任务状态队列控制并发。A2A 任务会记录真实的 asyncio task，取消任务时不仅更新业务状态，也会取消底层执行任务，并通过队列推送最新状态。
+
+对于仍需调用同步库的场景，例如同步工具函数、部分文件/OCR/存储操作，代码会尽量使用 `asyncio.to_thread()` 或 executor 放到线程中执行，减少阻塞主事件循环的风险。
+
 ### 技术栈详情
 
 <details>

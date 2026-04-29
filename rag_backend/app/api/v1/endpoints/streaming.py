@@ -138,10 +138,14 @@ async def streaming_chat_with_stability(
                     logger.error(f"保存流式进度失败: {e}")
             
             # 流式生成
-            sync_gen = llm_service.get_answer_stream(request.query, context_texts, request.history or [])
+            stream_factory, _ = await llm_service.stream_answer_with_usage(
+                request.query,
+                context_texts,
+                request.history or [],
+            )
             
             async def async_generator():
-                for chunk in sync_gen:
+                async for chunk in stream_factory():
                     if isinstance(chunk, dict):
                         if "delta" in chunk:
                             yield chunk["delta"]
@@ -286,10 +290,14 @@ async def resume_stream(
             )
             context_texts = [item.content for item in search_results] if search_results else []
             
-            sync_gen = llm_service.get_answer_stream(request.query, context_texts, request.history or [])
+            stream_factory, _ = await llm_service.stream_answer_with_usage(
+                request.query,
+                context_texts,
+                request.history or [],
+            )
             
             async def async_generator():
-                for chunk in sync_gen:
+                async for chunk in stream_factory():
                     if isinstance(chunk, dict):
                         if "delta" in chunk:
                             yield chunk["delta"]

@@ -39,6 +39,47 @@ class OrchestratorChatRequest(BaseModel):
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+async def ensure_chat_session(session_id: Optional[str], user: User, query: str, tenant_id: Optional[str] = None) -> str:
+    """Ensure orchestrator traces point to an existing chat session."""
+    async with AsyncSessionLocal() as db:
+        if session_id:
+            try:
+                session_uuid = uuid.UUID(str(session_id))
+            except ValueError:
+                raise HTTPException(status_code=400, detail="无效的 session_id")
+
+            result = await db.execute(
+                select(ChatSession).where(ChatSession.id == session_uuid)
+            )
+            existing_session = result.scalar_one_or_none()
+            if existing_session:
+                if existing_session.user_id and existing_session.user_id != user.id:
+                    raise HTTPException(status_code=403, detail="无权访问该会话")
+                if tenant_id and existing_session.tenant_id and existing_session.tenant_id != tenant_id:
+                    raise HTTPException(status_code=403, detail="无权访问该租户会话")
+                return str(session_uuid)
+
+            new_session = ChatSession(
+                id=session_uuid,
+                user_id=user.id,
+                tenant_id=tenant_id or str(getattr(user, "tenant_id", "") or ""),
+                title=query[:20]
+            )
+        else:
+            new_session = ChatSession(
+                user_id=user.id,
+                tenant_id=tenant_id or str(getattr(user, "tenant_id", "") or ""),
+                title=query[:20]
+            )
+
+        db.add(new_session)
+        await db.commit()
+        await db.refresh(new_session)
+        return str(new_session.id)
+
+
 async def execute_orchestrator_background(
     task_id: str,
     session_id: str,
@@ -693,7 +734,7 @@ async def chat_with_orchestrator_async(
     logger.info("[编排器异步] 接收请求: user=%s, query=%s", current_user.email, request.query[:80])
     
     tenant_id = tenant_context['tenant_id']
-    session_id = request.session_id or str(uuid.uuid4())
+    session_id = await ensure_chat_session(request.session_id, current_user, request.query, tenant_id)
     task_id = f"lgwf_{uuid.uuid4().hex[:16]}"
     
     try:
@@ -1169,7 +1210,7 @@ async def chat_with_orchestrator_stream(
     tenant_id = tenant_context['tenant_id']
     print(f"📋 使用租户ID: {tenant_id}")
     
-    session_id = request.session_id or str(uuid.uuid4())
+    session_id = await ensure_chat_session(request.session_id, current_user, request.query, tenant_id)
     
     async def event_generator():
         disconnected = False

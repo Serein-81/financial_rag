@@ -1,43 +1,54 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { Sparkles, Mail, Lock, User, ArrowRight, AlertCircle, Building2, UserCircle2, Key, Shield, CheckCircle, Phone } from 'lucide-vue-next'
+import {
+  AlertCircle,
+  ArrowRight,
+  Building2,
+  CheckCircle,
+  Key,
+  Lock,
+  Mail,
+  Phone,
+  Shield,
+  Sparkles,
+  User,
+  UserCircle2
+} from 'lucide-vue-next'
 
 const router = useRouter()
 const authStore = useAuthStore()
 
 const userType = ref<'normal' | 'admin'>('normal')
+const username = ref('')
 const email = ref('')
-const phone = ref('')
 const password = ref('')
 const confirmPassword = ref('')
 const fullName = ref('')
+const phone = ref('')
 const inviteCode = ref('')
 const companyName = ref('')
 const error = ref('')
 const isLoading = ref(false)
-const isCardVisible = ref(false)
-const particles = ref<Array<{ x: number; y: number; size: number; duration: number; delay: number }>>([])
 
-onMounted(() => {
-  generateParticles()
-  setTimeout(() => {
-    isCardVisible.value = true
-  }, 100)
+const particles = Array.from({ length: 58 }, (_, index) => ({
+  id: index,
+  left: `${(index * 29) % 100}%`,
+  top: `${(index * 47) % 100}%`,
+  size: `${2 + (index % 5)}px`,
+  delay: `${(index % 11) * 0.36}s`,
+  duration: `${9 + (index % 8)}s`,
+  opacity: 0.18 + (index % 6) * 0.07
+}))
+
+const progress = computed(() => {
+  const required = [username.value.trim(), email.value.trim(), password.value, confirmPassword.value]
+  const optional = [fullName.value.trim(), phone.value.trim()]
+  const admin = userType.value === 'admin' ? [companyName.value.trim()] : []
+  const values = [...required, ...optional, ...admin]
+  return Math.round((values.filter(Boolean).length / values.length) * 100)
 })
-
-function generateParticles() {
-  for (let i = 0; i < 60; i++) {
-    particles.value.push({
-      x: Math.random() * 100,
-      y: Math.random() * 100,
-      size: Math.random() * 6 + 2,
-      duration: Math.random() * 20 + 15,
-      delay: Math.random() * 5
-    })
-  }
-}
 
 function selectUserType(type: 'normal' | 'admin') {
   userType.value = type
@@ -46,14 +57,38 @@ function selectUserType(type: 'normal' | 'admin') {
   companyName.value = ''
 }
 
+function getFriendlyRegisterError(err: any): string {
+  const detail = err?.response?.data?.detail
+  const firstDetail = Array.isArray(detail) ? detail[0] : null
+  const field = firstDetail?.loc?.[firstDetail.loc.length - 1]
+
+  if (field === 'username') return '用户名长度至少需要 2 个字符'
+  if (field === 'phone') return '手机号格式不正确，请输入 11 位中国大陆手机号'
+  if (field === 'email') return '邮箱格式不正确，请检查后重新输入'
+  if (field === 'password') return '密码长度至少需要 6 位'
+  if (field === 'full_name') return '姓名长度至少需要 2 个字符'
+  if (field === 'company_name') return '企业名称长度至少需要 2 个字符'
+  if (field === 'invite_code') return '邀请码格式不正确，请检查后重新输入'
+  if (typeof detail === 'string') return detail
+
+  return err?.message || '注册失败，请检查信息后重试'
+}
+
 async function handleRegister() {
-  if (!email.value || !password.value || !fullName.value) {
-    error.value = '请填写所有必填字段'
+  const trimmedUsername = username.value.trim()
+  const trimmedEmail = email.value.trim()
+  const trimmedPhone = phone.value.trim()
+  const trimmedFullName = fullName.value.trim()
+  const trimmedCompanyName = companyName.value.trim()
+  const trimmedInviteCode = inviteCode.value.trim()
+
+  if (!trimmedUsername || !password.value || !trimmedEmail) {
+    error.value = '请填写用户名、密码和邮箱'
     return
   }
 
-  if (userType.value === 'admin' && !companyName.value) {
-    error.value = '请填写企业名称'
+  if (trimmedUsername.length < 2) {
+    error.value = '用户名长度至少需要 2 个字符'
     return
   }
 
@@ -63,23 +98,47 @@ async function handleRegister() {
   }
 
   if (password.value.length < 6) {
-    error.value = '密码长度至少为 6 位'
+    error.value = '密码长度至少需要 6 位'
+    return
+  }
+
+  if (trimmedPhone && !/^1[3-9]\d{9}$/.test(trimmedPhone)) {
+    error.value = '手机号格式不正确，请输入 11 位中国大陆手机号'
+    return
+  }
+
+  if (userType.value === 'admin' && !trimmedCompanyName) {
+    error.value = '请填写企业名称'
     return
   }
 
   try {
     isLoading.value = true
     error.value = ''
-    
+
     if (userType.value === 'admin') {
-      await authStore.registerAdmin(email.value, password.value, fullName.value, companyName.value, phone.value || undefined)
+      await authStore.registerAdmin(
+        trimmedUsername,
+        trimmedEmail,
+        password.value,
+        trimmedFullName || trimmedUsername,
+        trimmedCompanyName,
+        trimmedPhone || undefined
+      )
     } else {
-      await authStore.register(email.value, password.value, fullName.value, inviteCode.value || undefined, phone.value || undefined)
+      await authStore.register(
+        trimmedUsername,
+        trimmedEmail,
+        password.value,
+        trimmedFullName || undefined,
+        trimmedInviteCode || undefined,
+        trimmedPhone || undefined
+      )
     }
-    
-    router.push('/')
+
+    router.push('/login')
   } catch (err: any) {
-    error.value = err.message || '注册失败，请检查信息后重试'
+    error.value = getFriendlyRegisterError(err)
   } finally {
     isLoading.value = false
   }
@@ -87,380 +146,406 @@ async function handleRegister() {
 </script>
 
 <template>
-  <div class="min-h-screen bg-gradient-to-br from-slate-100 via-emerald-50/30 to-teal-50/30 relative overflow-hidden flex items-center justify-center p-4 py-8">
-    <!-- Animated Background -->
-    <div class="absolute inset-0 overflow-hidden">
-      <div class="absolute top-1/4 -left-10 w-72 h-72 bg-emerald-400/20 rounded-full blur-3xl animate-pulse"></div>
-      <div class="absolute bottom-1/4 -right-10 w-72 h-72 bg-teal-400/20 rounded-full blur-3xl animate-pulse" style="animation-delay: 1s;"></div>
-      <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-gradient-to-r from-emerald-300/10 to-teal-300/10 rounded-full blur-3xl"></div>
-    </div>
-
-    <!-- Floating Particles -->
-    <div class="absolute inset-0 overflow-hidden pointer-events-none">
-      <div
-        v-for="(particle, index) in particles"
-        :key="index"
-        class="absolute rounded-full bg-gradient-to-r from-emerald-400/30 to-teal-400/30"
+  <div class="auth-shell relative min-h-screen overflow-x-hidden overflow-y-auto bg-slate-950 px-4 py-6 text-slate-100 lg:py-8">
+    <div class="aurora aurora-one"></div>
+    <div class="aurora aurora-two"></div>
+    <div class="matrix-grid"></div>
+    <div class="particle-field" aria-hidden="true">
+      <span
+        v-for="particle in particles"
+        :key="particle.id"
+        class="particle"
         :style="{
-          left: particle.x + '%',
-          top: particle.y + '%',
-          width: particle.size + 'px',
-          height: particle.size + 'px',
-          animation: `float ${particle.duration}s ease-in-out infinite`,
-          animationDelay: particle.delay + 's'
+          left: particle.left,
+          top: particle.top,
+          width: particle.size,
+          height: particle.size,
+          animationDelay: particle.delay,
+          animationDuration: particle.duration,
+          opacity: particle.opacity
         }"
-      ></div>
+      ></span>
     </div>
 
-    <div class="w-full max-w-md relative z-10">
-      <!-- Logo & Title with Animation -->
-      <div class="text-center mb-8" :class="{ 'animate-fade-in-down': isCardVisible }">
-        <div class="relative inline-block group cursor-pointer">
-          <div class="absolute -inset-4 bg-gradient-to-r from-emerald-400 to-teal-400 rounded-3xl blur-lg opacity-30 group-hover:opacity-50 transition-opacity duration-500"></div>
-          <div class="relative inline-flex items-center justify-center w-20 h-20 bg-gradient-to-br from-emerald-600 to-teal-600 rounded-2xl shadow-2xl transform group-hover:scale-105 group-hover:rotate-3 transition-all duration-300">
-            <Sparkles :size="40" class="text-white animate-pulse" />
-          </div>
-        </div>
-        <h1 class="text-4xl font-bold text-gray-900 mb-3 mt-6 tracking-tight">
-          创建账号
-        </h1>
-        <p class="text-gray-600 text-lg">开启智能 RAG 知识库之旅</p>
-        <div class="flex items-center justify-center gap-2 mt-4 text-emerald-600">
-          <Shield :size="16" />
-          <span class="text-sm font-medium">安全可靠 · 值得信赖</span>
-        </div>
-      </div>
+    <div class="relative z-10 mx-auto flex min-h-[calc(100vh-3rem)] w-full max-w-7xl items-center">
+      <section class="auth-frame grid max-h-none w-full overflow-hidden rounded-2xl border border-white/10 bg-white/[0.055] shadow-2xl shadow-emerald-950/30 backdrop-blur-2xl lg:max-h-[calc(100vh-4rem)] lg:grid-cols-[0.95fr_1.25fr]">
+        <aside class="hero-panel relative hidden min-h-[680px] overflow-hidden border-r border-white/10 p-10 lg:flex lg:flex-col lg:justify-between">
+          <div class="scanline"></div>
+          <div class="relative">
+            <div class="mb-12 flex items-center gap-3">
+              <div class="brand-mark">
+                <Sparkles :size="24" />
+              </div>
+              <div>
+                <p class="text-sm font-semibold tracking-wide text-white">RAG Terminal</p>
+                <p class="text-xs text-emerald-100/60">Enterprise Knowledge Workspace</p>
+              </div>
+            </div>
 
-      <!-- Register Card with 3D Effect -->
-      <div
-        class="bg-white/80 backdrop-blur-xl rounded-3xl shadow-2xl overflow-hidden transform transition-all duration-700"
-        :class="{
-          'translate-y-0 opacity-100': isCardVisible,
-          'translate-y-8 opacity-0': !isCardVisible
-        }"
-      >
-        <div class="overflow-y-auto p-10 space-y-8" style="max-height: calc(100vh - 300px);">
-          <!-- User Type Selection with Enhanced Animation -->
-          <div class="space-y-4">
-            <label class="text-sm font-bold text-gray-700 block">选择账号类型</label>
-            <div class="grid grid-cols-2 gap-4">
+            <p class="eyebrow">Account Provisioning</p>
+            <h1 class="mt-5 max-w-md text-5xl font-semibold leading-tight text-white">
+              创建你的知识协作空间
+            </h1>
+            <p class="mt-6 max-w-md text-sm leading-7 text-slate-300">
+              先完成登录所需的核心信息。手机号和姓名可以稍后在个人中心补充，注册完成后将回到登录页。
+            </p>
+          </div>
+
+          <div class="relative space-y-4">
+            <div class="status-card">
+              <div class="flex items-center justify-between text-xs text-slate-400">
+                <span>Profile readiness</span>
+                <span class="text-emerald-300">{{ progress }}%</span>
+              </div>
+              <div class="mt-3 h-2 overflow-hidden rounded-full bg-slate-800">
+                <div class="h-full rounded-full bg-gradient-to-r from-emerald-400 to-cyan-300 transition-all duration-500" :style="{ width: `${progress}%` }"></div>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3 text-xs">
+              <div class="metric-card">
+                <Shield :size="17" class="mb-2 text-emerald-300" />
+                <p>租户隔离</p>
+                <strong>Scoped</strong>
+              </div>
+              <div class="metric-card">
+                <CheckCircle :size="17" class="mb-2 text-emerald-300" />
+                <p>注册流程</p>
+                <strong>Login First</strong>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        <main class="register-scroll relative overflow-y-auto p-5 sm:p-8 lg:max-h-[calc(100vh-4rem)] lg:p-10">
+          <div class="mx-auto max-w-3xl pb-2">
+            <div class="mb-7 flex flex-col gap-4 border-b border-white/10 pb-6 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <p class="eyebrow">Create account</p>
+                <h2 class="mt-3 text-3xl font-semibold text-white">注册账号</h2>
+                <p class="mt-3 text-sm text-slate-400">用户名、密码和邮箱用于登录；个人资料稍后可修改。</p>
+              </div>
+              <router-link to="/login" class="text-sm font-semibold text-emerald-300 transition hover:text-emerald-200">
+                去登录
+              </router-link>
+            </div>
+
+            <div class="mb-6 grid grid-cols-2 gap-3 rounded-xl border border-white/10 bg-slate-900/60 p-2 backdrop-blur-xl">
               <button
+                type="button"
                 @click="selectUserType('normal')"
-                type="button"
-                class="relative p-5 rounded-2xl border-2 transition-all duration-300 group hover:scale-[1.02]"
-                :class="userType === 'normal' 
-                  ? 'border-emerald-500 bg-gradient-to-br from-emerald-50 to-teal-50 shadow-lg' 
-                  : 'border-gray-200 hover:border-emerald-300 hover:bg-slate-50'"
+                class="mode-button"
+                :class="userType === 'normal' ? 'mode-button-active' : 'text-slate-400 hover:bg-white/5 hover:text-white'"
               >
-                <div v-if="userType === 'normal'" class="absolute -top-2 -right-2 w-6 h-6 bg-emerald-500 rounded-full flex items-center justify-center shadow-lg">
-                  <CheckCircle :size="14" class="text-white" />
+                <div class="flex items-center gap-2">
+                  <UserCircle2 :size="18" />
+                  <span class="font-semibold">普通用户</span>
                 </div>
-                <div class="flex flex-col items-center gap-3">
-                  <div class="w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300"
-                    :class="userType === 'normal' ? 'bg-gradient-to-br from-emerald-500 to-teal-500 scale-110' : 'bg-gray-100 group-hover:bg-emerald-100'"
-                  >
-                    <UserCircle2 :size="28" :class="userType === 'normal' ? 'text-white' : 'text-gray-500 group-hover:text-emerald-600'" />
-                  </div>
-                  <div class="text-center">
-                    <span class="font-bold text-sm block mb-1" :class="userType === 'normal' ? 'text-emerald-700' : 'text-gray-700'">
-                      普通用户
-                    </span>
-                    <span class="text-xs text-gray-500">个人或企业员工</span>
-                  </div>
-                </div>
+                <p class="mt-1 text-xs opacity-75">个人或企业成员</p>
               </button>
 
               <button
-                @click="selectUserType('admin')"
                 type="button"
-                class="relative p-5 rounded-2xl border-2 transition-all duration-300 group hover:scale-[1.02]"
-                :class="userType === 'admin' 
-                  ? 'border-emerald-500 bg-gradient-to-br from-emerald-50 to-teal-50 shadow-lg' 
-                  : 'border-gray-200 hover:border-emerald-300 hover:bg-slate-50'"
+                @click="selectUserType('admin')"
+                class="mode-button"
+                :class="userType === 'admin' ? 'mode-button-active' : 'text-slate-400 hover:bg-white/5 hover:text-white'"
               >
-                <div v-if="userType === 'admin'" class="absolute -top-2 -right-2 w-6 h-6 bg-emerald-500 rounded-full flex items-center justify-center shadow-lg">
-                  <CheckCircle :size="14" class="text-white" />
+                <div class="flex items-center gap-2">
+                  <Building2 :size="18" />
+                  <span class="font-semibold">企业管理员</span>
                 </div>
-                <div class="flex flex-col items-center gap-3">
-                  <div class="w-14 h-14 rounded-2xl flex items-center justify-center transition-all duration-300"
-                    :class="userType === 'admin' ? 'bg-gradient-to-br from-emerald-500 to-teal-500 scale-110' : 'bg-gray-100 group-hover:bg-emerald-100'"
-                  >
-                    <Building2 :size="28" :class="userType === 'admin' ? 'text-white' : 'text-gray-500 group-hover:text-emerald-600'" />
-                  </div>
-                  <div class="text-center">
-                    <span class="font-bold text-sm block mb-1" :class="userType === 'admin' ? 'text-emerald-700' : 'text-gray-700'">
-                      企业管理员
-                    </span>
-                    <span class="text-xs text-gray-500">创建企业账号</span>
-                  </div>
-                </div>
+                <p class="mt-1 text-xs opacity-75">创建企业账号</p>
               </button>
             </div>
-          </div>
 
-          <!-- Error Message with Animation -->
-          <div
-            v-if="error"
-            class="bg-red-50/80 backdrop-blur border border-red-200 rounded-2xl p-5 flex items-start gap-4 transform transition-all duration-300 hover:scale-[1.02]"
-          >
-            <div class="flex-shrink-0 w-10 h-10 bg-red-100 rounded-xl flex items-center justify-center">
-              <AlertCircle :size="20" class="text-red-500 animate-bounce" />
+            <div v-if="error" class="mb-5 flex items-start gap-3 rounded-lg border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm text-red-100">
+              <AlertCircle :size="18" class="mt-0.5 shrink-0" />
+              <p>{{ error }}</p>
             </div>
-            <p class="text-sm text-red-700 font-medium pt-2">{{ error }}</p>
-          </div>
 
-          <!-- Full Name Input with Enhanced Animation -->
-          <div class="space-y-3 group">
-            <label class="text-sm font-semibold text-gray-700 flex items-center gap-3 group-hover:text-emerald-600 transition-colors">
-              <div class="w-10 h-10 bg-gradient-to-br from-emerald-50 to-teal-50 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
-                <User :size="18" />
+            <div class="form-card rounded-xl border border-white/10 bg-slate-900/70 p-5 shadow-2xl shadow-slate-950/30 backdrop-blur-xl sm:p-6">
+              <div class="grid gap-5 sm:grid-cols-2">
+                <label class="space-y-2 sm:col-span-2">
+                  <span class="auth-label"><User :size="16" /> 用户名 <b>*</b></span>
+                  <input v-model="username" type="text" placeholder="请输入用户名" class="auth-input" />
+                </label>
+
+                <label class="space-y-2">
+                  <span class="auth-label"><Lock :size="16" /> 密码 <b>*</b></span>
+                  <input v-model="password" type="password" placeholder="至少 6 位" class="auth-input" />
+                </label>
+
+                <label class="space-y-2">
+                  <span class="auth-label"><Lock :size="16" /> 确认密码 <b>*</b></span>
+                  <input v-model="confirmPassword" type="password" placeholder="再次输入密码" class="auth-input" @keydown.enter="handleRegister" />
+                </label>
+
+                <label class="space-y-2 sm:col-span-2">
+                  <span class="auth-label"><Mail :size="16" /> 邮箱地址 <b>*</b></span>
+                  <input v-model="email" type="email" placeholder="your@email.com" class="auth-input" />
+                </label>
+
+                <label class="space-y-2">
+                  <span class="auth-label"><User :size="16" /> 姓名 <em>选填</em></span>
+                  <input v-model="fullName" type="text" placeholder="可在个人中心修改" class="auth-input" />
+                </label>
+
+                <label class="space-y-2">
+                  <span class="auth-label"><Phone :size="16" /> 手机号码 <em>选填</em></span>
+                  <input v-model="phone" type="tel" placeholder="可在个人中心补充" class="auth-input" />
+                </label>
+
+                <label v-if="userType === 'normal'" class="space-y-2 sm:col-span-2">
+                  <span class="auth-label"><Key :size="16" /> 企业邀请码 <em>选填</em></span>
+                  <input v-model="inviteCode" type="text" placeholder="如有企业邀请码请输入" class="auth-input" @keydown.enter="handleRegister" />
+                </label>
+
+                <label v-if="userType === 'admin'" class="space-y-2 sm:col-span-2">
+                  <span class="auth-label"><Building2 :size="16" /> 企业名称 <b>*</b></span>
+                  <input v-model="companyName" type="text" placeholder="请输入企业名称" class="auth-input" @keydown.enter="handleRegister" />
+                </label>
               </div>
-              姓名 <span class="text-red-500">*</span>
-            </label>
-            <div class="relative">
-              <input
-                v-model="fullName"
-                type="text"
-                placeholder="张三"
-                class="w-full px-5 py-4 bg-slate-50/80 border-2 border-slate-200 rounded-2xl text-slate-900 placeholder-slate-400 focus:bg-white focus:border-emerald-500 focus:ring-4 focus:ring-emerald-200/50 transition-all outline-none text-base group-hover:border-emerald-300"
-              />
-              <div class="absolute inset-0 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 opacity-0 group-focus-within:opacity-10 transition-opacity pointer-events-none"></div>
-            </div>
-          </div>
 
-          <!-- Email Input with Enhanced Animation -->
-          <div class="space-y-3 group">
-            <label class="text-sm font-semibold text-gray-700 flex items-center gap-3 group-hover:text-emerald-600 transition-colors">
-              <div class="w-10 h-10 bg-gradient-to-br from-emerald-50 to-teal-50 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
-                <Mail :size="18" />
-              </div>
-              邮箱地址 <span class="text-red-500">*</span>
-            </label>
-            <div class="relative">
-              <input
-                v-model="email"
-                type="email"
-                placeholder="your@email.com"
-                class="w-full px-5 py-4 bg-slate-50/80 border-2 border-slate-200 rounded-2xl text-slate-900 placeholder-slate-400 focus:bg-white focus:border-emerald-500 focus:ring-4 focus:ring-emerald-200/50 transition-all outline-none text-base group-hover:border-emerald-300"
-              />
-              <div class="absolute inset-0 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 opacity-0 group-focus-within:opacity-10 transition-opacity pointer-events-none"></div>
-            </div>
-          </div>
-
-          <!-- Phone Input with Enhanced Animation -->
-          <div class="space-y-3 group">
-            <label class="text-sm font-semibold text-gray-700 flex items-center gap-3 group-hover:text-emerald-600 transition-colors">
-              <div class="w-10 h-10 bg-gradient-to-br from-emerald-50 to-teal-50 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
-                <Phone :size="18" />
-              </div>
-              手机号码
-              <span class="text-xs text-gray-500 font-normal">（可选）</span>
-            </label>
-            <div class="relative">
-              <input
-                v-model="phone"
-                type="tel"
-                placeholder="请输入手机号码"
-                class="w-full px-5 py-4 bg-slate-50/80 border-2 border-slate-200 rounded-2xl text-slate-900 placeholder-slate-400 focus:bg-white focus:border-emerald-500 focus:ring-4 focus:ring-emerald-200/50 transition-all outline-none text-base group-hover:border-emerald-300"
-              />
-              <div class="absolute inset-0 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 opacity-0 group-focus-within:opacity-10 transition-opacity pointer-events-none"></div>
-            </div>
-            <p class="text-xs text-gray-500 flex items-center gap-1 mt-2">
-              <AlertCircle :size="12" class="text-emerald-500" />
-              用于接收重要通知和找回密码
-            </p>
-          </div>
-
-          <!-- Password Input with Enhanced Animation -->
-          <div class="space-y-3 group">
-            <label class="text-sm font-semibold text-gray-700 flex items-center gap-3 group-hover:text-emerald-600 transition-colors">
-              <div class="w-10 h-10 bg-gradient-to-br from-emerald-50 to-teal-50 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
-                <Lock :size="18" />
-              </div>
-              密码 <span class="text-red-500">*</span>
-            </label>
-            <div class="relative">
-              <input
-                v-model="password"
-                type="password"
-                placeholder="至少 6 位"
-                class="w-full px-5 py-4 bg-slate-50/80 border-2 border-slate-200 rounded-2xl text-slate-900 placeholder-slate-400 focus:bg-white focus:border-emerald-500 focus:ring-4 focus:ring-emerald-200/50 transition-all outline-none text-base group-hover:border-emerald-300"
-              />
-              <div class="absolute inset-0 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 opacity-0 group-focus-within:opacity-10 transition-opacity pointer-events-none"></div>
-            </div>
-          </div>
-
-          <!-- Confirm Password Input with Enhanced Animation -->
-          <div class="space-y-3 group">
-            <label class="text-sm font-semibold text-gray-700 flex items-center gap-3 group-hover:text-emerald-600 transition-colors">
-              <div class="w-10 h-10 bg-gradient-to-br from-emerald-50 to-teal-50 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
-                <Lock :size="18" />
-              </div>
-              确认密码 <span class="text-red-500">*</span>
-            </label>
-            <div class="relative">
-              <input
-                v-model="confirmPassword"
-                type="password"
-                placeholder="再次输入密码"
-                class="w-full px-5 py-4 bg-slate-50/80 border-2 border-slate-200 rounded-2xl text-slate-900 placeholder-slate-400 focus:bg-white focus:border-emerald-500 focus:ring-4 focus:ring-emerald-200/50 transition-all outline-none text-base group-hover:border-emerald-300"
-                @keydown.enter="handleRegister"
-              />
-              <div class="absolute inset-0 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 opacity-0 group-focus-within:opacity-10 transition-opacity pointer-events-none"></div>
-            </div>
-          </div>
-
-          <!-- Invite Code (Normal User) with Enhanced Animation -->
-          <div v-if="userType === 'normal'" class="space-y-3 group">
-            <label class="text-sm font-semibold text-gray-700 flex items-center gap-3 group-hover:text-emerald-600 transition-colors">
-              <div class="w-10 h-10 bg-gradient-to-br from-emerald-50 to-teal-50 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
-                <Key :size="18" />
-              </div>
-              企业邀请码
-              <span class="text-xs text-gray-500 font-normal">（可选）</span>
-            </label>
-            <div class="relative">
-              <input
-                v-model="inviteCode"
-                type="text"
-                placeholder="如有企业邀请码请输入"
-                class="w-full px-5 py-4 bg-slate-50/80 border-2 border-slate-200 rounded-2xl text-slate-900 placeholder-slate-400 focus:bg-white focus:border-emerald-500 focus:ring-4 focus:ring-emerald-200/50 transition-all outline-none text-base group-hover:border-emerald-300"
-                @keydown.enter="handleRegister"
-              />
-              <div class="absolute inset-0 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 opacity-0 group-focus-within:opacity-10 transition-opacity pointer-events-none"></div>
-            </div>
-            <p class="text-xs text-gray-500 flex items-center gap-1 mt-2">
-              <AlertCircle :size="12" class="text-emerald-500" />
-              有邀请码将加入企业团队，无邀请码将创建个人账号
-            </p>
-          </div>
-
-          <!-- Company Name (Admin) with Enhanced Animation -->
-          <div v-if="userType === 'admin'" class="space-y-3 group">
-            <label class="text-sm font-semibold text-gray-700 flex items-center gap-3 group-hover:text-emerald-600 transition-colors">
-              <div class="w-10 h-10 bg-gradient-to-br from-emerald-50 to-teal-50 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
-                <Building2 :size="18" />
-              </div>
-              企业名称 <span class="text-red-500">*</span>
-            </label>
-            <div class="relative">
-              <input
-                v-model="companyName"
-                type="text"
-                placeholder="某某科技有限公司"
-                class="w-full px-5 py-4 bg-slate-50/80 border-2 border-slate-200 rounded-2xl text-slate-900 placeholder-slate-400 focus:bg-white focus:border-emerald-500 focus:ring-4 focus:ring-emerald-200/50 transition-all outline-none text-base group-hover:border-emerald-300"
-                @keydown.enter="handleRegister"
-              />
-              <div class="absolute inset-0 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 opacity-0 group-focus-within:opacity-10 transition-opacity pointer-events-none"></div>
-            </div>
-          </div>
-
-          <!-- Register Button with Loading Animation -->
-          <button
-            @click="handleRegister"
-            :disabled="isLoading"
-            class="w-full py-4 bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-semibold rounded-2xl hover:from-emerald-700 hover:to-teal-700 focus:ring-4 focus:ring-emerald-200 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-2xl transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-3 text-lg relative overflow-hidden group"
-          >
-            <div class="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000"></div>
-            <span v-if="isLoading" class="flex items-center gap-3">
-              <svg class="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-              </svg>
-              注册中...
-            </span>
-            <span v-else class="flex items-center gap-3">
-              注册
-              <ArrowRight :size="20" class="group-hover:translate-x-1 transition-transform" />
-            </span>
-          </button>
-
-          <!-- Login Link with Enhanced Styling -->
-          <div class="text-center pt-6 border-t border-gray-100/80">
-            <p class="text-gray-600 group">
-              已有账号？
-              <router-link
-                to="/login"
-                class="text-emerald-600 hover:text-emerald-700 font-semibold transition-all hover:underline underline-offset-4 ml-2 inline-flex items-center gap-1"
+              <button
+                type="button"
+                @click="handleRegister"
+                :disabled="isLoading"
+                class="primary-button mt-7 flex w-full items-center justify-center gap-2 rounded-lg px-5 py-3.5 text-sm font-semibold text-slate-950 transition disabled:cursor-not-allowed disabled:opacity-60"
               >
+                <span>{{ isLoading ? '注册中...' : '创建账号' }}</span>
+                <ArrowRight v-if="!isLoading" :size="18" />
+              </button>
+            </div>
+
+            <p class="mt-6 text-center text-sm text-slate-400">
+              已有账号？
+              <router-link to="/login" class="font-semibold text-emerald-300 transition hover:text-emerald-200">
                 立即登录
-                <ArrowRight :size="14" class="group-hover:translate-x-1 transition-transform" />
               </router-link>
             </p>
           </div>
-
-          <!-- Decorative Elements -->
-          <div class="absolute -bottom-6 -right-6 w-24 h-24 bg-gradient-to-br from-emerald-200/30 to-teal-200/30 rounded-full blur-2xl"></div>
-          <div class="absolute -top-6 -left-6 w-20 h-20 bg-gradient-to-br from-teal-200/30 to-emerald-200/30 rounded-full blur-2xl"></div>
-        </div>
-      </div>
-
-      <!-- Footer with Animation -->
-      <div
-        class="text-center mt-10 space-y-2"
-        :class="{
-          'animate-fade-in-up': isCardVisible,
-          'opacity-0': !isCardVisible
-        }"
-        style="transition-delay: 0.3s;"
-      >
-        <p class="text-sm text-gray-500 font-medium">
-          © 2026 RAG Terminal. 安全可靠的知识库系统
-        </p>
-        <div class="flex items-center justify-center gap-4 text-xs text-gray-400">
-          <span class="flex items-center gap-1">
-            <Shield :size="12" class="text-emerald-500" />
-            SSL 加密
-          </span>
-          <span class="w-1 h-1 bg-gray-300 rounded-full"></span>
-          <span>数据安全</span>
-          <span class="w-1 h-1 bg-gray-300 rounded-full"></span>
-          <span>隐私保护</span>
-        </div>
-      </div>
+        </main>
+      </section>
     </div>
   </div>
 </template>
 
 <style scoped>
-@keyframes float {
-  0%, 100% {
-    transform: translateY(0) translateX(0);
-    opacity: 0.3;
+.auth-shell {
+  background:
+    radial-gradient(circle at 12% 16%, rgba(16, 185, 129, 0.2), transparent 30%),
+    radial-gradient(circle at 86% 20%, rgba(59, 130, 246, 0.16), transparent 28%),
+    linear-gradient(135deg, #020617 0%, #07111f 48%, #020617 100%);
+}
+
+.aurora {
+  position: absolute;
+  filter: blur(54px);
+  pointer-events: none;
+}
+
+.aurora-one {
+  left: 8%;
+  top: 8%;
+  width: 360px;
+  height: 360px;
+  background: rgba(16, 185, 129, 0.16);
+  animation: drift 12s ease-in-out infinite alternate;
+}
+
+.aurora-two {
+  right: 5%;
+  bottom: 8%;
+  width: 440px;
+  height: 440px;
+  background: rgba(14, 165, 233, 0.14);
+  animation: drift 16s ease-in-out infinite alternate-reverse;
+}
+
+.matrix-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(148, 163, 184, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.055) 1px, transparent 1px);
+  background-size: 42px 42px;
+  mask-image: radial-gradient(circle at center, black 0%, transparent 78%);
+}
+
+.particle {
+  position: absolute;
+  border-radius: 999px;
+  background: rgb(167 243 208);
+  box-shadow: 0 0 18px rgba(110, 231, 183, 0.9);
+  animation: floatParticle linear infinite;
+}
+
+.auth-frame {
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.register-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(52, 211, 153, 0.45) rgba(15, 23, 42, 0.5);
+}
+
+.register-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.register-scroll::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.register-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(52, 211, 153, 0.78), rgba(103, 232, 249, 0.58));
+}
+
+.hero-panel {
+  background:
+    linear-gradient(160deg, rgba(15, 23, 42, 0.94), rgba(4, 47, 46, 0.72)),
+    radial-gradient(circle at 74% 18%, rgba(16, 185, 129, 0.28), transparent 34%);
+}
+
+.scanline {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(120deg, transparent 0%, rgba(255, 255, 255, 0.13) 48%, transparent 58%);
+  transform: translateX(-120%);
+  animation: scan 7s ease-in-out infinite;
+}
+
+.brand-mark {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  place-items: center;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #34d399, #67e8f9);
+  color: #020617;
+  box-shadow: 0 16px 36px rgba(16, 185, 129, 0.3);
+}
+
+.eyebrow {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgb(110 231 183);
+}
+
+.status-card,
+.metric-card {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.055);
+  padding: 0.9rem;
+  backdrop-filter: blur(16px);
+}
+
+.metric-card p {
+  color: rgb(148 163 184);
+}
+
+.metric-card strong {
+  margin-top: 0.25rem;
+  display: block;
+  color: white;
+}
+
+.mode-button {
+  border-radius: 0.6rem;
+  padding: 0.85rem 1rem;
+  text-align: left;
+  transition: background-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.mode-button-active {
+  background: linear-gradient(135deg, rgba(52, 211, 153, 0.95), rgba(103, 232, 249, 0.92));
+  color: #020617;
+  box-shadow: 0 14px 34px rgba(16, 185, 129, 0.22);
+}
+
+.auth-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: rgb(203 213 225);
+}
+
+.auth-label b {
+  color: rgb(248 113 113);
+}
+
+.auth-label em {
+  font-style: normal;
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: rgb(100 116 139);
+}
+
+.auth-input {
+  width: 100%;
+  border-radius: 0.75rem;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(15, 23, 42, 0.76);
+  padding: 0.9rem 1rem;
+  color: white;
+  outline: none;
+  transition: border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.auth-input::placeholder {
+  color: rgb(100 116 139);
+}
+
+.auth-input:focus {
+  border-color: rgb(52 211 153);
+  background: rgba(2, 6, 23, 0.86);
+  box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.14), 0 0 32px rgba(16, 185, 129, 0.12);
+  transform: translateY(-1px);
+}
+
+.primary-button {
+  background: linear-gradient(135deg, #34d399, #67e8f9);
+  box-shadow: 0 16px 38px rgba(16, 185, 129, 0.28);
+}
+
+.primary-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 20px 46px rgba(16, 185, 129, 0.36);
+}
+
+@keyframes floatParticle {
+  0% {
+    transform: translate3d(0, 0, 0) scale(0.8);
   }
   50% {
-    transform: translateY(-20px) translateX(10px);
-    opacity: 0.6;
+    transform: translate3d(18px, -38px, 0) scale(1.25);
+  }
+  100% {
+    transform: translate3d(-8px, -76px, 0) scale(0.85);
   }
 }
 
-@keyframes fade-in-down {
+@keyframes drift {
   from {
-    opacity: 0;
-    transform: translateY(-20px);
+    transform: translate3d(0, 0, 0) scale(1);
   }
   to {
-    opacity: 1;
-    transform: translateY(0);
+    transform: translate3d(34px, -24px, 0) scale(1.08);
   }
 }
 
-@keyframes fade-in-up {
-  from {
-    opacity: 0;
-    transform: translateY(20px);
+@keyframes scan {
+  0%, 42% {
+    transform: translateX(-120%);
   }
-  to {
-    opacity: 1;
-    transform: translateY(0);
+  68%, 100% {
+    transform: translateX(120%);
   }
-}
-
-.animate-fade-in-down {
-  animation: fade-in-down 0.8s ease-out forwards;
-}
-
-.animate-fade-in-up {
-  animation: fade-in-up 0.8s ease-out forwards;
 }
 </style>

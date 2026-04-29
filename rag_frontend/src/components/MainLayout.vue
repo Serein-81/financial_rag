@@ -331,15 +331,20 @@ function goToProfile() {
     <aside
       :class="[
         'premium-sidebar bg-slate-50 flex flex-col transition-all duration-300',
-        isSidebarCollapsed ? 'w-16' : 'w-60'
+        isSidebarCollapsed ? 'w-[72px]' : 'w-60'
       ]"
     >
       <!-- Theme Color Bar -->
       <div class="premium-theme-bar h-1 flex flex-shrink-0" :style="{ background: `linear-gradient(90deg, ${primaryColor} 0%, ${secondaryColor} 100%)` }"></div>
       
       <!-- Logo -->
-      <div class="h-14 flex items-center justify-between px-4">
-        <div class="flex items-center gap-3">
+      <div
+        :class="[
+          'h-14 flex items-center px-4',
+          isSidebarCollapsed ? 'justify-center px-3' : 'justify-between'
+        ]"
+      >
+        <div v-if="!isSidebarCollapsed" class="flex items-center gap-3">
           <div class="premium-logo w-8 h-8 bg-slate-900 rounded-lg flex items-center justify-center flex-shrink-0 shadow-sm">
             <Database :size="16" class="text-white" />
           </div>
@@ -348,8 +353,8 @@ function goToProfile() {
         <button
           @click="toggleSidebar"
           :class="[
-            'rounded-md transition-colors',
-            isSidebarCollapsed ? 'p-2 w-full flex justify-center hover:bg-slate-200' : 'p-1.5 hover:bg-slate-200'
+            'rounded-md transition-colors flex items-center justify-center',
+            isSidebarCollapsed ? 'premium-collapsed-toggle h-9 w-9 hover:bg-slate-200' : 'p-1.5 hover:bg-slate-200'
           ]"
           :title="isSidebarCollapsed ? '展开菜单' : '收起菜单'"
         >
@@ -359,26 +364,41 @@ function goToProfile() {
       </div>
 
       <!-- Navigation -->
-      <nav class="flex-1 py-2 px-3 overflow-y-auto custom-scrollbar">
+      <nav
+        :class="[
+          'flex-1 py-2 overflow-y-auto custom-scrollbar',
+          isSidebarCollapsed ? 'px-2 overflow-x-visible' : 'px-3'
+        ]"
+      >
         <!-- Collapsed State: Show only icons with tooltips -->
         <template v-if="isSidebarCollapsed">
-          <div class="space-y-0.5">
-            <router-link
+          <div class="flex flex-col items-center gap-1.5">
+            <el-tooltip
               v-for="item in flattenedMenuItems"
               :key="item.path"
-              :to="item.path"
-              :class="[
-                'relative w-full flex items-center justify-center h-10 rounded-lg transition-all duration-150 group text-slate-400 hover:text-slate-900'
-              ]"
-              :style="isActive(item.path) ? { color: primaryColor } : {}"
+              :content="item.label"
+              placement="right"
+              :show-after="180"
+              :hide-after="0"
             >
-              <component :is="item.icon" :size="18" />
-              <div
-                class="absolute left-full ml-2 px-2 py-1 bg-slate-900 text-white text-xs rounded-md opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50"
+              <router-link
+                :to="item.path"
+                :title="item.label"
+                :aria-label="item.label"
+                :class="[
+                  'premium-collapsed-item relative flex h-10 w-10 items-center justify-center rounded-xl transition-all duration-150 text-slate-400 hover:text-slate-900 hover:bg-white/80',
+                  isActive(item.path) ? 'is-active font-semibold shadow-sm' : ''
+                ]"
+                :style="isActive(item.path) ? { color: primaryColor, backgroundColor: hexToRgba(primaryColor, 0.11) } : {}"
               >
-                {{ item.label }}
-              </div>
-            </router-link>
+                <span
+                  v-if="isActive(item.path)"
+                  class="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full"
+                  :style="{ backgroundColor: primaryColor }"
+                ></span>
+                <component :is="item.icon" :size="19" />
+              </router-link>
+            </el-tooltip>
           </div>
         </template>
 
@@ -456,8 +476,8 @@ function goToProfile() {
         <button
           @click="toggleNotificationsInSidebar"
           :class="[
-            'w-full flex items-center gap-3 px-4 h-11 transition-colors relative',
-            isSidebarCollapsed ? 'justify-center' : ''
+            'w-full flex items-center gap-3 h-11 transition-colors relative hover:bg-white/70',
+            isSidebarCollapsed ? 'justify-center px-0' : 'px-4'
           ]"
         >
           <Bell :size="17" class="text-slate-400" />
@@ -465,7 +485,7 @@ function goToProfile() {
           <span
             v-if="notificationUnreadCount > 0"
             class="absolute right-3 top-1/2 -translate-y-1/2 min-w-[16px] h-[16px] bg-red-500 text-white text-xs font-bold rounded-full flex items-center justify-center px-1"
-            :style="isSidebarCollapsed ? 'position: absolute; top: 2px; right: 2px;' : ''"
+            :style="isSidebarCollapsed ? 'position: absolute; top: 5px; right: 14px;' : ''"
           >
             {{ notificationUnreadCount > 99 ? '99+' : notificationUnreadCount }}
           </span>
@@ -526,9 +546,15 @@ function goToProfile() {
               </div>
             </div>
           </div>
-          <div v-else class="flex flex-col items-center gap-1.5">
+          <div v-else class="flex flex-col items-center gap-2">
             <div class="relative group">
-              <div class="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-slate-700 font-medium text-sm cursor-pointer overflow-hidden">
+              <button
+                @click="goToProfile"
+                class="premium-collapsed-avatar w-10 h-10 rounded-xl flex items-center justify-center transition-colors hover:bg-white/80"
+                :title="authStore.userName || '个人中心'"
+                :aria-label="authStore.userName || '个人中心'"
+              >
+                <span class="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-slate-700 font-medium text-sm cursor-pointer overflow-hidden">
                 <img
                   v-if="authStore.avatarUrl"
                   :src="authStore.avatarUrl"
@@ -536,18 +562,20 @@ function goToProfile() {
                   class="w-full h-full object-cover"
                   @error="$event.target.style.display = 'none'"
                 />
-                <span v-else>{{ authStore.userName?.charAt(0)?.toUpperCase() || 'U' }}</span>
-              </div>
+                  <span v-else>{{ authStore.userName?.charAt(0)?.toUpperCase() || 'U' }}</span>
+                </span>
+              </button>
               <div class="absolute left-full ml-2 px-2 py-1 bg-slate-900 text-white text-xs rounded-md opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
                 {{ authStore.userName }}
               </div>
             </div>
             <button
               @click="logout"
-              class="p-1.5 rounded-md transition-colors relative group text-slate-300 hover:text-slate-600 hover:bg-slate-100"
+              class="premium-collapsed-action h-9 w-9 rounded-xl transition-colors flex items-center justify-center relative group text-slate-400 hover:text-red-600 hover:bg-red-50"
               title="退出登录"
+              aria-label="退出登录"
             >
-              <LogOut :size="15" />
+              <LogOut :size="16" />
               <div class="absolute left-full ml-2 px-2 py-1 bg-slate-900 text-white text-xs rounded-md opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50">
                 退出登录
               </div>

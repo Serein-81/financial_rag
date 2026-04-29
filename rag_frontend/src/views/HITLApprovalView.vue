@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { multiAgentApi, type HITLApproval, type UserRole, type RBACPolicy, ApprovalStatus, PermissionLevel } from '@/api/multi-agent'
 import { reviewApiClient, type ReviewRequest, type ReviewStatusEnum as ReviewStatus } from '@/api/review'
+import { ReviewTypeEnum } from '@/types/review'
 import {
   Shield,
   CheckCircle2,
@@ -164,6 +165,19 @@ function getStatusLabel(status: ApprovalStatus): string {
     [ApprovalStatus.REJECTED]: '已拒绝',
     [ApprovalStatus.TIMEOUT]: '已超时',
   }[status]
+}
+
+function getApprovalUserLabel(approval: HITLApproval): string {
+  return approval.user_name || `${approval.user_id.slice(0, 8)}...`
+}
+
+function getApplicantLabel(approval: HITLApproval): string {
+  return approval.applicant_name || approval.user_name || `${(approval.applicant_user_id || approval.user_id).slice(0, 8)}...`
+}
+
+function getOperatorLabel(approval: HITLApproval): string {
+  const operatorId = approval.operator_user_id || approval.user_id
+  return approval.operator_name || `${operatorId.slice(0, 8)}...`
 }
 
 function getPermissionLabel(level: PermissionLevel): string {
@@ -447,6 +461,7 @@ onMounted(() => {
                   <th class="px-6 py-4 text-left text-sm font-bold text-gray-700">风险等级</th>
                   <th class="px-6 py-4 text-left text-sm font-bold text-gray-700">状态</th>
                   <th class="px-6 py-4 text-left text-sm font-bold text-gray-700">申请人</th>
+                  <th class="px-6 py-4 text-left text-sm font-bold text-gray-700">操作员</th>
                   <th class="px-6 py-4 text-left text-sm font-bold text-gray-700">审核意见</th>
                   <th class="px-6 py-4 text-left text-sm font-bold text-gray-700">处理时间</th>
                 </tr>
@@ -473,7 +488,20 @@ onMounted(() => {
                     </span>
                   </td>
                   <td class="px-6 py-4">
-                    <span class="text-sm text-gray-600 font-mono bg-gray-50 px-2 py-1 rounded">{{ approval.user_id.slice(0, 8) }}...</span>
+                    <span
+                      class="text-sm text-gray-600 bg-gray-50 px-2 py-1 rounded"
+                      :title="approval.applicant_name ? (approval.applicant_user_id || approval.user_id) : undefined"
+                    >
+                      {{ getApplicantLabel(approval) }}
+                    </span>
+                  </td>
+                  <td class="px-6 py-4">
+                    <span
+                      class="text-sm text-gray-600 bg-gray-50 px-2 py-1 rounded"
+                      :title="approval.operator_name ? approval.operator_user_id : undefined"
+                    >
+                      {{ getOperatorLabel(approval) }}
+                    </span>
                   </td>
                   <td class="px-6 py-4">
                     <p v-if="approval.reviewer_notes" class="text-sm text-gray-700 max-w-xs truncate" :title="approval.reviewer_notes">

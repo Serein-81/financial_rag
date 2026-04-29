@@ -69,7 +69,7 @@ class RoutingStrategy(str, Enum):
     DIRECT_ANSWER = "direct_answer"
     RAG_RETRIEVAL = "rag_retrieval"
     SINGLE_SPECIALIST = "single_specialist"
-    MULTI_SPECIALIST_PARALLEL = "multi_specialial_parallel"
+    MULTI_SPECIALIST_PARALLEL = "multi_specialist_parallel"
     MULTI_SPECIALIST_SEQUENTIAL = "multi_specialist_sequential"
     REPORT_QUEUE = "report_queue"
 
@@ -466,7 +466,7 @@ class IntentRouterAgent(BaseAgent):
         if intent == IntentCategory.REPORT_GENERATION:
             return RoutingStrategy.REPORT_QUEUE
         
-        if intent == IntentCategory.COMPLEX_TASK:
+        if intent in [IntentCategory.COMPLEX_TASK, IntentCategory.MULTI_SPECIALIST]:
             return RoutingStrategy.MULTI_SPECIALIST_PARALLEL
         
         if complexity in [ComplexityLevel.LOW, ComplexityLevel.MEDIUM]:
@@ -501,7 +501,7 @@ class IntentRouterAgent(BaseAgent):
         
         specialists = intent_specialist_map.get(intent, [])
         
-        if intent == IntentCategory.COMPLEX_TASK:
+        if intent in [IntentCategory.COMPLEX_TASK, IntentCategory.MULTI_SPECIALIST]:
             specialists = ["finance", "tax", "legal"]
         
         if routing_strategy in [
@@ -546,6 +546,10 @@ class IntentRouterAgent(BaseAgent):
         needs_report = any(kw in text_lower for kw in report_keywords)
         
         multi_patterns = [
+            (["政策", "影响"], IntentCategory.KNOWLEDGE_QUERY, "政策影响分析"),
+            (["政策", "优惠"], IntentCategory.KNOWLEDGE_QUERY, "政策优惠分析"),
+            (["政策", "解读"], IntentCategory.KNOWLEDGE_QUERY, "政策解读"),
+            (["政策", "咨询"], IntentCategory.KNOWLEDGE_QUERY, "政策咨询"),
             (["企业", "税务", "风险"], IntentCategory.TAX_COMPLIANCE, "企业税务风险"),
             (["税务", "筹划"], IntentCategory.TAX_PLANNING, "税务筹划"),
             (["税务", "合规"], IntentCategory.TAX_COMPLIANCE, "税务合规"),
@@ -572,6 +576,11 @@ class IntentRouterAgent(BaseAgent):
             "报表": IntentCategory.FINANCIAL_ANALYSIS,
             "合同": IntentCategory.CONTRACT_REVIEW,
             "法律": IntentCategory.LEGAL_CONSULTATION,
+            "政策": IntentCategory.KNOWLEDGE_QUERY,
+            "法规": IntentCategory.KNOWLEDGE_QUERY,
+            "通知": IntentCategory.KNOWLEDGE_QUERY,
+            "补贴": IntentCategory.KNOWLEDGE_QUERY,
+            "优惠": IntentCategory.KNOWLEDGE_QUERY,
             "合规": IntentCategory.COMPLIANCE_CHECK,
             "报告": IntentCategory.REPORT_GENERATION,
             "查询": IntentCategory.KNOWLEDGE_QUERY,

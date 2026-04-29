@@ -70,6 +70,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         "/api/v1/chat/agent_chat": RateLimitTier(100, 1000, 20),
         "/api/v1/chat/completions_stream": RateLimitTier(100, 1000, 20),
         "/api/v1/chat/agent_chat_stream": RateLimitTier(100, 1000, 20),
+        "/api/v1/chat/orchestrator_chat_async": RateLimitTier(30, 300, 10),
+        "/api/v1/chat/orchestrator_chat_stream": RateLimitTier(30, 300, 10),
         "/api/v1/multi-agent/execute": RateLimitTier(30, 500, 10),
         "/api/v1/search/hybrid": RateLimitTier(100, 1000, 20),
     }
@@ -96,6 +98,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         "/api/v1/observability/metrics",
         "/api/v1/observability/logs",
         "/api/v1/observability/health",
+        "/api/v1/agent-task/status",
+        "/api/v1/agent-task/hydrate",
+        "/api/v1/agent-task/events",
+        "/api/v1/notifications",
+        "/api/v1/notifications/list",
+        "/api/v1/policy/notifications",
+        "/api/v1/policy-notifications/stream",
         "/api/v1/security/tenants",
         "/api/v1/security/permissions",
         "/api/v1/security/cypher-validate",
@@ -141,7 +150,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         
         # 检查是否排除路径
-        if self._is_excluded_path(request.url.path):
+        if self._is_excluded_path(request.url.path, request.method):
             self._stats["excluded_requests"] += 1
             return await call_next(request)
         
@@ -167,7 +176,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 f"⏳ 限流触发: key={rate_limit_key}, "
                 f"path={request.url.path}, retry_after={retry_after}s"
             )
-            return self._rate_limit_response(retry_after, rate_limit_key)
+            return self._rate_limit_response(retry_after, rate_limit_key, tier)
         
         # 执行请求
         response = await call_next(request)
@@ -177,8 +186,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         
         return response
     
-    def _is_excluded_path(self, path: str) -> bool:
+    def _is_excluded_path(self, path: str, method: str = "GET") -> bool:
         """检查是否排除路径"""
+        if method.upper() in {"OPTIONS", "HEAD"}:
+            return True
+
         return any(
             path.startswith(excluded) or path == excluded 
             for excluded in self.EXCLUDED_PATHS
@@ -382,7 +394,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         
         return True, 0
     
-    def _rate_limit_response(self, retry_after: int, key: str) -> JSONResponse:
+    def _rate_limit_response(self, retry_after: int, key: str, tier: RateLimitTier) -> JSONResponse:
         """生成限流响应"""
         return JSONResponse(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -394,7 +406,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             },
             headers={
                 "Retry-After": str(retry_after),
-                "X-RateLimit-Limit": str(self.DEFAULT_TIER.requests_per_minute),
+                "X-RateLimit-Limit": str(tier.requests_per_minute),
                 "X-RateLimit-Remaining": "0",
                 "X-RateLimit-Reset": str(int(time.time()) + retry_after),
                 "X-RateLimit-Key": key,

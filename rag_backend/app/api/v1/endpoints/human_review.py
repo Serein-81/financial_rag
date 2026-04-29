@@ -569,6 +569,17 @@ async def update_review_request(
             except Exception as e:
                 import traceback
                 logger.error(f"[HumanReview] 记录操作日志失败: {str(e)}, trace: {traceback.format_exc()}")
+
+        if action_type in {"complete", "reject"}:
+            await _send_review_result_notification(
+                applicant_user_id=str(req.user_id),
+                review_id=review_id,
+                task_id=str(req.task_id) if req.task_id else None,
+                title=req.title or req.description or "人工审核申请",
+                result_status=update_dict.get("status", req.status),
+                operator=current_user,
+                comments=update_data.review_comments or req.review_comments,
+            )
         
         # 发布更新事件
         background_tasks.add_task(
@@ -775,6 +786,61 @@ def _get_action_description(action_type: str, update_data) -> str:
         description += f"：{comment_preview}"
     
     return description
+
+
+def _get_user_display_name(user: User) -> str:
+    return user.full_name or user.nickname or user.username or user.email or str(user.id)
+
+
+async def _send_review_result_notification(
+    applicant_user_id: str,
+    review_id: str,
+    task_id: str,
+    title: str,
+    result_status: str,
+    operator: User,
+    comments: Optional[str] = None,
+):
+    """发送人工审核处理结果到申请人的通知中心。"""
+    try:
+        if not redis_service.client:
+            logger.warning("[HumanReview] Redis 不可用，跳过审核结果通知")
+            return
+
+        is_approved = result_status == "completed"
+        result_text = "已通过" if is_approved else "已驳回"
+        operator_name = _get_user_display_name(operator)
+        now_iso = datetime.utcnow().isoformat()
+        notification = {
+            "id": f"notif_{uuid.uuid4().hex}",
+            "user_id": applicant_user_id,
+            "title": "人工审核处理结果",
+            "message": f"您的申请「{title}」{result_text}",
+            "notification_type": "success" if is_approved else "warning",
+            "type": "success" if is_approved else "warning",
+            "priority": "high",
+            "source": "human_review",
+            "metadata": {
+                "review_id": review_id,
+                "task_id": task_id,
+                "status": result_status,
+                "operator_id": str(operator.id),
+                "operator_name": operator_name,
+                "comments": comments,
+            },
+            "action_url": "/hitl-approval",
+            "created_at": now_iso,
+            "timestamp": now_iso,
+            "is_read": False,
+            "read": False,
+        }
+
+        key = f"notification:user:{applicant_user_id}"
+        redis_service.client.lpush(key, json.dumps(notification, ensure_ascii=False))
+        redis_service.client.expire(key, 604800)
+        logger.info(f"[HumanReview] 已发送审核结果通知: review_id={review_id}, applicant={applicant_user_id}")
+    except Exception as e:
+        logger.warning(f"[HumanReview] 发送审核结果通知失败: {e}")
 
 
 async def _log_action(

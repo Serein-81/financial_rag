@@ -576,6 +576,7 @@ class Nodes:
             routing_strategy = state.get("routing_strategy", "")
             intent = state.get("intent", "")
             user_query = state.get("user_query", "")
+            rag_context = state.get("rag_context", [])
 
             # 1) 正则预检测的简单响应（问候、感谢、帮助等）
             if simple_response and simple_response != "__CONFIG_QUERY__":
@@ -606,6 +607,19 @@ class Nodes:
                         "final_answer": simple_response,
                         "output": simple_response
                     }
+
+            if rag_context:
+                logger.info("[最终答案] 使用 RAG 检索结果生成回答，文档数: %s", len(rag_context))
+                try:
+                    rag_answer = await self._generate_rag_answer(user_query, rag_context)
+                    if rag_answer:
+                        return {
+                            **state,
+                            "final_answer": rag_answer,
+                            "output": rag_answer
+                        }
+                except Exception as e:
+                    logger.warning("[最终答案] RAG 回答生成失败: %s", e)
 
             logger.warning("[最终答案] 无专家结果，返回降级响应")
             return {
@@ -706,6 +720,44 @@ class Nodes:
             }
         
         return updated_state
+
+    async def _generate_rag_answer(self, user_query: str, rag_context: list) -> str:
+        """基于 LangGraph RAG 节点检索结果生成最终回答。"""
+        docs = []
+        for idx, doc in enumerate(rag_context[:5], 1):
+            if not isinstance(doc, dict):
+                continue
+            content = (doc.get("content") or "").strip()
+            if not content:
+                continue
+            source = doc.get("source") or f"文档{idx}"
+            score = doc.get("score")
+            score_text = f"，相关度 {score:.2f}" if isinstance(score, (int, float)) else ""
+            docs.append(f"[{idx}] 来源：{source}{score_text}\n{content[:1200]}")
+
+        if not docs:
+            return "抱歉，我在知识库中没有找到可用于回答该问题的有效内容。"
+
+        context_text = "\n\n".join(docs)
+        prompt = f"""你是企业政策、财税和合规知识助手。请只依据给定的知识库内容回答用户问题。
+
+回答要求：
+1. 先直接回答用户关心的问题，不要说“无法确定”开场。
+2. 如果材料只支持部分结论，要明确说明“根据当前检索到的材料”。
+3. 对政策解读类问题，优先覆盖：政策主题、适用对象、关键条件、可能影响、建议动作。
+4. 不要编造知识库中没有的政策名称、日期、金额或适用条件。
+5. 末尾列出“参考来源”，使用下方来源编号。
+
+用户问题：{user_query}
+
+知识库内容：
+{context_text}
+
+请用中文输出结构清晰的 Markdown 回答。"""
+
+        response = await self.orchestrator.llm_adapter.agenerate([prompt], temperature=0.1, max_tokens=1800)
+        answer = response.content.strip() if response and response.content else ""
+        return self._clean_markdown_output(answer) if answer else "抱歉，未能基于检索内容生成回答。"
     
     def _clean_markdown_output(self, text: str) -> str:
         """

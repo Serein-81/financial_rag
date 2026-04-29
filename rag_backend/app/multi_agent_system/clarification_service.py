@@ -68,6 +68,7 @@ class ClarificationService:
         "accounting_query": ["会计分录查询", "账务处理咨询", "凭证查找"],
         "contract_review": ["合同条款审查", "法律风险评估", "合同合规性"],
         "legal_consultation": ["法律问题咨询", "法规解读", "合规建议"],
+        "policy_interpretation": ["政策适用对象解读", "政策申报条件说明", "政策优惠影响分析", "政策执行时间确认"],
         "risk_analysis": ["税务风险分析", "财务风险评估", "经营风险识别"],
         "investment_advisory": ["投资可行性分析", "项目回报测算", "风险收益评估"],
         "complex_task": ["多领域综合分析", "跨部门协调方案", "复杂问题诊断"],
@@ -80,6 +81,10 @@ class ClarificationService:
         "财务": ["financial_analysis", "accounting_query", "risk_analysis"],
         "合同": ["contract_review", "legal_consultation"],
         "法律": ["legal_consultation", "contract_review", "compliance_check"],
+        "政策": ["policy_interpretation", "legal_consultation", "compliance_check"],
+        "政策解读": ["policy_interpretation", "legal_consultation"],
+        "法规": ["policy_interpretation", "legal_consultation", "compliance_check"],
+        "通知": ["policy_interpretation", "compliance_check"],
         "风险": ["risk_analysis", "compliance_check"],
         "投资": ["investment_advisory", "financial_analysis"],
         "合规": ["compliance_check", "tax_compliance", "legal_consultation"],
@@ -155,6 +160,8 @@ class ClarificationService:
         - 实体缺失不触发追问（专家节点可以处理）
         - 意图模糊时追问
         """
+        if self._is_actionable_policy_query(query):
+            return None
         
         if len(query) < self.min_query_length:
             return self._handle_short_input(query)
@@ -177,7 +184,7 @@ class ClarificationService:
         
         if matched_keywords:
             base_keyword = matched_keywords[0]
-            suggestions = self.INTENT_SUGGESTIONS.get(base_keyword, [])
+            suggestions = self._get_suggestions_for_keyword(base_keyword)
             
             if not suggestions:
                 suggestions = self._generate_suggestions_by_keyword(base_keyword)
@@ -215,7 +222,7 @@ class ClarificationService:
         
         suggestions = []
         for keyword in matched_keywords:
-            suggestions.extend(self.INTENT_SUGGESTIONS.get(keyword, []))
+            suggestions.extend(self._get_suggestions_for_keyword(keyword))
         
         suggestions = list(dict.fromkeys(suggestions))[:4]
         
@@ -241,9 +248,23 @@ class ClarificationService:
         
         suggestions = []
         for keyword in matched_keywords:
-            suggestions.extend(self.INTENT_SUGGESTIONS.get(keyword, []))
+            suggestions.extend(self._get_suggestions_for_keyword(keyword))
         
         suggestions = list(dict.fromkeys(suggestions))[:4]
+
+        policy_keywords = ["政策", "政策解读", "法规", "通知", "办法", "意见", "申报", "补贴", "优惠"]
+        if any(keyword in query for keyword in policy_keywords):
+            if not suggestions:
+                suggestions = self.INTENT_SUGGESTIONS["policy_interpretation"]
+
+            return ClarificationRequest(
+                type=ClarificationType.SCOPE_DEFINITION,
+                question="您想咨询哪类政策，或希望从哪个角度解读这项政策？",
+                suggestions=suggestions[:4],
+                reason="您的问题涉及政策解读，但还缺少政策范围或解读角度",
+                required=True,
+                placeholder="例如：解读某项政策的适用对象、申报条件、优惠影响或执行时间..."
+            )
         
         if not suggestions:
             suggestions = [
@@ -369,6 +390,21 @@ class ClarificationService:
             "报告生成",
             "专业建议"
         ])
+
+    def _get_suggestions_for_keyword(self, keyword: str) -> List[str]:
+        """根据关键词映射到的意图收集追问建议。"""
+        suggestions = []
+        for intent in self.KEYWORD_INTENT_MAP.get(keyword, []):
+            suggestions.extend(self.INTENT_SUGGESTIONS.get(intent, []))
+        return list(dict.fromkeys(suggestions))
+
+    def _is_actionable_policy_query(self, query: str) -> bool:
+        """政策类输入已经给出明确动作时不再追问。"""
+        policy_keywords = ["政策", "法规", "通知", "办法", "意见", "补贴", "优惠"]
+        action_keywords = ["解读", "咨询", "分析", "影响", "适用", "申报", "条件", "材料", "匹配", "查询"]
+        return any(keyword in query for keyword in policy_keywords) and any(
+            keyword in query for keyword in action_keywords
+        )
     
     def should_clarify(
         self,
@@ -395,7 +431,7 @@ class ClarificationService:
         if confidence < self.confidence_threshold:
             return True
         
-        if intent in ["unknown", "complex_task", "multi_specialist"]:
+        if intent in ["unknown", "complex_task"]:
             return True
         
         missing = self._check_critical_entities(intent, entities)

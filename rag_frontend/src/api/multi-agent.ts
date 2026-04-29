@@ -45,6 +45,11 @@ export interface HITLApproval {
   approval_id: string
   task_id: string
   user_id: string
+  user_name?: string
+  applicant_user_id?: string
+  applicant_name?: string
+  operator_user_id?: string
+  operator_name?: string
   operation: string
   details: Record<string, any>
   risk_level: PermissionLevel

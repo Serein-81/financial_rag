@@ -140,7 +140,7 @@ class CircuitBreaker:
             if asyncio.iscoroutinefunction(func):
                 result = await func(*args, **kwargs)
             else:
-                result = func(*args, **kwargs)
+                result = await asyncio.to_thread(func, *args, **kwargs)
             
             await self._on_success()
             
@@ -338,7 +338,10 @@ class AsyncTaskScheduler:
                         timeout=spec.timeout
                     )
                 else:
-                    return spec.func(*spec.args, **spec.kwargs)
+                    return await asyncio.wait_for(
+                        asyncio.to_thread(spec.func, *spec.args, **spec.kwargs),
+                        timeout=spec.timeout
+                    )
         
         try:
             if spec.use_circuit_breaker and spec.circuit_breaker_name:
@@ -627,11 +630,24 @@ class AsyncTaskScheduler:
             self._cancel_events[spec.task_id] = asyncio.Event()
         
         task = asyncio.create_task(self._execute_single_task(spec))
+        task.add_done_callback(self._on_submitted_task_done)
         self._tasks[spec.task_id] = task
         
         logger.debug(f"📤 [AsyncTaskScheduler] 提交任务: {spec.task_id}")
         
         return task
+
+    def _on_submitted_task_done(self, task: asyncio.Task) -> None:
+        try:
+            result = task.result()
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            logger.exception("鉂?[AsyncTaskScheduler] 鍚庡彴浠诲姟寮傚父缁撴潫: %s", e)
+            return
+
+        if isinstance(result, TaskResult):
+            self._results[result.task_id] = result
     
     async def cancel_task(self, task_id: str) -> bool:
         """取消指定任务"""
@@ -784,7 +800,7 @@ class RetryPolicy:
                 if asyncio.iscoroutinefunction(func):
                     return await func(*args, **kwargs)
                 else:
-                    return func(*args, **kwargs)
+                    return await asyncio.to_thread(func, *args, **kwargs)
                     
             except Exception as e:
                 last_exception = e

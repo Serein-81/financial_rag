@@ -8,6 +8,7 @@ from app.db.session import engine
 from fastapi.middleware.cors import CORSMiddleware
 from app.utils.logging_config import setup_logging, get_logger, LogFormat
 
+from app.core.background_tasks import BackgroundTaskManager
 from app.core.resource_manager import make_resource_manager, RedisConnectionPool
 
 # ➕ 2. 必须导入 models 里的文件！
@@ -34,6 +35,9 @@ from app.services.redis_service import get_redis_service
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger = get_logger(__name__)
+    background_tasks = BackgroundTaskManager()
+    app.state.background_tasks = background_tasks
+    task_scheduler = None
     
     setup_logging(
         log_level="INFO",
@@ -71,7 +75,7 @@ async def lifespan(app: FastAPI):
         app.state.resource_manager = resource_manager
         logger.info("✅ ResourceManager 初始化完成")
         
-        asyncio.create_task(cleanup_expired_presence_task())
+        await background_tasks.start("cleanup_expired_presence", cleanup_expired_presence_task())
         logger.info("✅ 在线状态清理任务已启动")
 
         logger.info("✅ 政策在线采集服务已就绪（仅手动触发，不随项目启动自动采集）")
@@ -146,7 +150,7 @@ async def lifespan(app: FastAPI):
             from app.tasks.arq_worker import ARQWorker
             worker = ARQWorker()
             await worker.initialize()
-            asyncio.create_task(worker.run())
+            await background_tasks.start("arq_worker", worker.run())
             app.state.arq_worker = worker
             logger.info("✅ ARQ Worker 已启动（后台任务队列）")
         except ImportError as e:
@@ -158,9 +162,15 @@ async def lifespan(app: FastAPI):
         
         yield
 
-    logger.info(f"🛑 {settings.PROJECT_NAME} 正在关闭...")
-    await task_scheduler.stop()
-    logger.info("✅ 定时任务调度器已停止")
+        logger.info(f"🛑 {settings.PROJECT_NAME} 正在关闭...")
+        arq_worker = getattr(app.state, "arq_worker", None)
+        if arq_worker is not None:
+            arq_worker.stop()
+        await background_tasks.shutdown()
+
+    if task_scheduler is not None:
+        await task_scheduler.stop()
+        logger.info("✅ 定时任务调度器已停止")
     await RedisConnectionPool.close()
     await engine.dispose()
     

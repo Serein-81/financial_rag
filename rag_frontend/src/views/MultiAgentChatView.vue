@@ -1625,7 +1625,7 @@ function renderMarkdown(content: string): string {
           </div>
           <div class="flex flex-wrap justify-center gap-2 mt-3">
             <button
-              v-for="example in ['分析企业税务风险', '财务健康诊断', '合同合规审查', '政策解读咨询']"
+              v-for="example in ['分析企业税务风险', '财务健康诊断', '合同合规审查', '税收优惠政策影响分析']"
               :key="example"
               @click="userInput = example"
               class="px-4 py-2 bg-white border-2 border-blue-200 rounded-full text-sm text-gray-700 hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 transition-all shadow-sm hover:shadow-md"

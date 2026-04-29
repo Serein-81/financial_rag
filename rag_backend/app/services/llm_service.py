@@ -129,6 +129,26 @@ class LLMService:
         notification = get_length_notification([content])
         return content + notification
 
+    @staticmethod
+    def _normalize_stream_chunk(chunk: Any) -> Dict[str, Any]:
+        """Normalize provider-specific stream chunks to the internal delta shape."""
+        if isinstance(chunk, dict):
+            if "delta" in chunk:
+                return chunk
+            if chunk.get("type") == "delta" and "content" in chunk:
+                return {"delta": chunk.get("content", "")}
+            if chunk.get("type") == "error" and "content" in chunk:
+                return {"delta": chunk.get("content", ""), "error": True}
+            if chunk.get("type") == "usage" and "data" in chunk:
+                return {"usage": chunk.get("data", {})}
+            if chunk.get("type") == "done":
+                return {"done": True}
+            if "content" in chunk:
+                return {"delta": chunk.get("content", "")}
+            return chunk
+
+        return {"delta": str(chunk)}
+
     def _handle_error(self, error: Exception, provider: str) -> str:
         """处理 LLM 调用错误"""
         llm_error = ErrorClassifier.create_llm_error(error)
@@ -327,6 +347,7 @@ class LLMService:
                         temperature=0.1,
                         max_tokens=None
                     ):
+                        chunk = self._normalize_stream_chunk(chunk)
                         delta = chunk.get("delta", "")
                         if delta:
                             accumulated_content.append(delta)
@@ -399,6 +420,7 @@ class LLMService:
                 while True:
                     try:
                         chunk = loop.run_until_complete(async_gen.__anext__())
+                        chunk = self._normalize_stream_chunk(chunk)
                         
                         delta = chunk.get("delta", "")
                         if delta:

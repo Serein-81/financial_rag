@@ -350,6 +350,11 @@ class HITLApproval(BaseModel):
     approval_id: str
     task_id: str
     user_id: str
+    user_name: Optional[str] = None
+    applicant_user_id: Optional[str] = None
+    applicant_name: Optional[str] = None
+    operator_user_id: Optional[str] = None
+    operator_name: Optional[str] = None
     operation: str
     details: Dict[str, Any] = Field(default_factory=dict)
     risk_level: PermissionLevel = PermissionLevel.SENSITIVE

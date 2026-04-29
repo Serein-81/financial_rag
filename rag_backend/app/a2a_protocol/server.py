@@ -35,6 +35,7 @@ class A2AServer:
         self.agent_card = agent_card
         self._tasks: Dict[str, Task] = {}
         self._task_queues: Dict[str, asyncio.Queue] = {}
+        self._processing_tasks: Dict[str, asyncio.Task] = {}
         self._task_handlers: Dict[str, Callable] = {}
         self._lock = asyncio.Lock()
         logger.info(f"🖥️ A2A Server 初始化: {agent_card.name}")
@@ -78,7 +79,14 @@ class A2AServer:
             
             logger.info(f"📝 任务提交: {task.id}")
             
-            asyncio.create_task(self._process_task(task))
+            processing_task = asyncio.create_task(
+                self._process_task(task),
+                name=f"a2a:{self.agent_card.name}:{task.id}",
+            )
+            processing_task.add_done_callback(
+                lambda done_task, task_id=task.id: self._on_processing_task_done(task_id, done_task)
+            )
+            self._processing_tasks[task.id] = processing_task
             
             return task
     
@@ -100,17 +108,37 @@ class A2AServer:
             
             logger.info(f"✅ 任务完成: {task.id}")
             
+        except asyncio.CancelledError:
+            task.status = TaskStatus.CANCELED
+            task.updatedAt = datetime.now()
+            await self._notify_status_update(task)
+            logger.info("Task canceled: %s", task.id)
+            raise
         except (ValueError, KeyError) as e:
             logger.error(f"❌ 任务数据失败: {task.id} - {e}")
             task.status = TaskStatus.FAILED
+            task.updatedAt = datetime.now()
+            await self._notify_status_update(task)
         except (OSError, IOError) as e:
             logger.error(f"❌ 任务IO失败: {task.id} - {e}")
             task.status = TaskStatus.FAILED
+            task.updatedAt = datetime.now()
+            await self._notify_status_update(task)
         except Exception as e:
             logger.error(f"❌ 任务失败: {task.id} - {e}")
             task.status = TaskStatus.FAILED
             task.metadata["error"] = str(e)
+            task.updatedAt = datetime.now()
             await self._notify_status_update(task)
+
+    def _on_processing_task_done(self, task_id: str, done_task: asyncio.Task) -> None:
+        self._processing_tasks.pop(task_id, None)
+        try:
+            done_task.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("A2A processing task failed unexpectedly: %s", task_id)
     
     async def get_task(self, task_id: str) -> Optional[Task]:
         """获取任务"""
@@ -152,7 +180,12 @@ class A2AServer:
         if not task or task.status in [TaskStatus.COMPLETED, TaskStatus.FAILED]:
             return False
         
+        processing_task = self._processing_tasks.get(task_id)
+        if processing_task and not processing_task.done():
+            processing_task.cancel()
+
         task.status = TaskStatus.CANCELED
+        task.updatedAt = datetime.now()
         await self._notify_status_update(task)
         return True
     

@@ -25,6 +25,9 @@ import {
   XCircle,
   Loader2
 } from 'lucide-vue-next'
+import PageHeader from '@/components/PageHeader.vue'
+import StatCard from '@/components/StatCard.vue'
+import SkeletonCard from '@/components/SkeletonCard.vue'
 
 const authStore = useAuthStore()
 const groupChatStore = useGroupChatStore()
@@ -238,13 +241,10 @@ function getAvatarColor(name: string): string {
 </script>
 
 <template>
-  <div class="analytics-dashboard p-6 bg-gray-50 min-h-screen">
+  <div class="flex-1 flex flex-col h-full bg-gradient-to-br from-slate-100 via-emerald-50/30 to-teal-50/30 overflow-y-auto">
     <!-- Loading State -->
-    <div v-if="isLoading" class="flex items-center justify-center h-64">
-      <div class="flex items-center gap-3 text-gray-500">
-        <Loader2 :size="24" class="animate-spin" />
-        <span>加载数据中...</span>
-      </div>
+    <div v-if="isLoading" class="p-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <SkeletonCard v-for="i in 4" :key="i" :lines="2" :hasHeader="true" />
     </div>
 
     <!-- Error State -->
@@ -262,54 +262,42 @@ function getAvatarColor(name: string): string {
 
     <!-- Main Content -->
     <template v-else>
-      <!-- 头部 -->
-      <div class="mb-6">
-        <div class="flex items-center justify-between mb-2">
-          <div class="flex items-center gap-3">
-            <div class="w-12 h-12 bg-gradient-to-br from-emerald-600 to-teal-600 rounded-2xl flex items-center justify-center">
-              <BarChart3 :size="24" class="text-white" />
-            </div>
-            <div>
-              <h1 class="text-2xl font-bold text-gray-900">运营分析</h1>
-              <p class="text-sm text-gray-500">
-                <span v-if="isAdmin">企业整体运营数据概览</span>
-                <span v-else>个人使用统计</span>
-              </p>
-            </div>
+      <PageHeader
+        :icon="BarChart3"
+        title="运营分析"
+        :subtitle="isAdmin ? '企业整体运营数据概览' : '个人使用统计'"
+      >
+        <div class="flex items-center gap-3">
+          <div
+            :class="[
+              'px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-2',
+              isAdmin ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+            ]"
+          >
+            <component :is="isAdmin ? Crown : UserCheck" :size="16" />
+            <span>{{ isAdmin ? '管理员' : '个人' }}</span>
           </div>
-          
-          <!-- 角色标签 -->
-          <div class="flex items-center gap-3">
-            <div
-              :class="[
-                'px-4 py-2 rounded-xl font-medium flex items-center gap-2',
-                isAdmin ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'
-              ]"
-            >
-              <component :is="isAdmin ? Crown : UserCheck" :size="18" />
-              <span>{{ isAdmin ? '管理员视图' : '个人视图' }}</span>
-            </div>
-            <button
-              @click="loadStats"
-              :disabled="isLoading"
-              class="p-2.5 hover:bg-gray-100 rounded-xl transition-colors disabled:opacity-50"
-            >
-              <RefreshCw :size="20" :class="{ 'animate-spin': isLoading }" class="text-gray-600" />
-            </button>
-          </div>
+          <button
+            @click="loadStats"
+            :disabled="isLoading"
+            class="p-2 hover:bg-slate-100 rounded-lg transition-colors disabled:opacity-50"
+          >
+            <RefreshCw :size="18" :class="{ 'animate-spin': isLoading }" class="text-slate-500" />
+          </button>
         </div>
-        
-        <!-- 时间范围选择 -->
-        <div class="flex items-center gap-2 mt-4">
+      </PageHeader>
+
+      <div class="px-6 pb-4">
+        <div class="flex items-center gap-2">
           <button
             v-for="range in ['today', 'week', 'month', 'all'] as const"
             :key="range"
             @click="selectedTimeRange(range)"
             :class="[
-              'px-4 py-2 rounded-lg font-medium transition-all',
+              'px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200',
               timeRange === range
-                ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/30'
-                : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
+                ? 'bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow-md'
+                : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-200'
             ]"
           >
             {{
@@ -318,96 +306,40 @@ function getAvatarColor(name: string): string {
               range === 'month' ? '本月' : '全部'
             }}
           </button>
-          <span class="ml-auto text-sm text-gray-400">
+          <span class="ml-auto text-xs text-slate-400">
             最后更新: {{ lastUpdated.toLocaleTimeString() }}
           </span>
         </div>
       </div>
 
-      <!-- 管理员视图 -->
-      <template v-if="isAdmin && adminStats">
-        <!-- 统计卡片 -->
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-          <div class="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:shadow-md transition-all transform hover:-translate-y-1">
-            <div class="flex items-center justify-between mb-3">
-              <div class="w-11 h-11 bg-emerald-100 rounded-xl flex items-center justify-center">
-                <Users :size="22" class="text-emerald-600" />
-              </div>
-            </div>
-            <div class="text-3xl font-bold text-gray-900 mb-1">
-              <span class="bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text">
-                {{ formatNumber(animatedValues.totalUsers || 0) }}
-              </span>
-            </div>
-            <div class="text-sm text-gray-500">总用户数</div>
-            <div class="mt-3 pt-3 border-t border-gray-100">
-              <div class="flex items-center justify-between text-xs">
-                <span class="text-gray-400">活跃用户</span>
-                <span class="font-medium text-gray-700">{{ formatNumber(animatedValues.activeUsers || 0) }}</span>
-              </div>
-            </div>
+      <div class="px-6 pb-6">
+        <template v-if="isAdmin && adminStats">
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <StatCard
+              :icon="Users"
+              label="总用户数"
+              :value="formatNumber(animatedValues.totalUsers || 0)"
+              icon-gradient="from-emerald-500 to-teal-600"
+            />
+            <StatCard
+              :icon="MessageSquare"
+              label="总消息数"
+              :value="formatNumber(animatedValues.totalMessages || 0)"
+              icon-gradient="from-green-500 to-emerald-600"
+            />
+            <StatCard
+              :icon="Activity"
+              label="总会话数"
+              :value="formatNumber(animatedValues.totalSessions || 0)"
+              icon-gradient="from-teal-500 to-cyan-600"
+            />
+            <StatCard
+              :icon="Zap"
+              label="平均会话长度"
+              :value="formatNumber(animatedValues.avgSessionLength || 0)"
+              icon-gradient="from-amber-500 to-orange-600"
+            />
           </div>
-
-          <div class="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:shadow-md transition-all transform hover:-translate-y-1">
-            <div class="flex items-center justify-between mb-3">
-              <div class="w-11 h-11 bg-green-100 rounded-xl flex items-center justify-center">
-                <MessageSquare :size="22" class="text-green-600" />
-              </div>
-            </div>
-            <div class="text-3xl font-bold text-gray-900 mb-1">
-              <span class="bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text">
-                {{ formatNumber(animatedValues.totalMessages || 0) }}
-              </span>
-            </div>
-            <div class="text-sm text-gray-500">总消息数</div>
-            <div class="mt-3 pt-3 border-t border-gray-100">
-              <div class="flex items-center justify-between text-xs">
-                <span class="text-gray-400">活跃会话</span>
-                <span class="font-medium text-gray-700">{{ formatNumber(animatedValues.activeSessions || 0) }}</span>
-              </div>
-            </div>
-          </div>
-
-          <div class="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:shadow-md transition-all transform hover:-translate-y-1">
-            <div class="flex items-center justify-between mb-3">
-              <div class="w-11 h-11 bg-teal-100 rounded-xl flex items-center justify-center">
-                <Activity :size="22" class="text-teal-600" />
-              </div>
-            </div>
-            <div class="text-3xl font-bold text-gray-900 mb-1">
-              <span class="bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text">
-                {{ formatNumber(animatedValues.totalSessions || 0) }}
-              </span>
-            </div>
-            <div class="text-sm text-gray-500">总会话数</div>
-            <div class="mt-3 pt-3 border-t border-gray-100">
-              <div class="flex items-center justify-between text-xs">
-                <span class="text-gray-400">Token使用</span>
-                <span class="font-medium text-gray-700">{{ formatTokens(adminStats.total_tokens) }}</span>
-              </div>
-            </div>
-          </div>
-
-          <div class="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:shadow-md transition-all transform hover:-translate-y-1">
-            <div class="flex items-center justify-between mb-3">
-              <div class="w-11 h-11 bg-amber-100 rounded-xl flex items-center justify-center">
-                <Zap :size="22" class="text-amber-600" />
-              </div>
-            </div>
-            <div class="text-3xl font-bold text-gray-900 mb-1">
-              <span class="bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text">
-                {{ formatNumber(animatedValues.avgSessionLength || 0) }}
-              </span>
-            </div>
-            <div class="text-sm text-gray-500">平均会话长度</div>
-            <div class="mt-3 pt-3 border-t border-gray-100">
-              <div class="flex items-center justify-between text-xs">
-                <span class="text-gray-400">本周期</span>
-                <span class="font-medium text-gray-700">{{ timeRange === 'today' ? '今日' : timeRange === 'week' ? '本周' : timeRange === 'month' ? '本月' : '全部' }}</span>
-              </div>
-            </div>
-          </div>
-        </div>
 
         <!-- 详细数据区域 -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
@@ -701,6 +633,7 @@ function getAvatarColor(name: string): string {
             </p>
           </div>
         </div>
+      </div>
       </div>
     </template>
   </div>

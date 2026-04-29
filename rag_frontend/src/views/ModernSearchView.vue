@@ -538,194 +538,110 @@ function getResultColor(type: 'local' | 'web') {
           </div>
         </div>
 
+        <!-- Loading State -->
+        <div v-if="isSearching" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <SkeletonCard v-for="i in 4" :key="i" :lines="2" :hasHeader="true" />
+        </div>
+
         <!-- Single Column Results (Local Only) -->
-        <div v-if="(!enableWebSearch || (enableWebSearch && !filteredWebResults.length && filteredLocalResults.length > 0)) && filteredLocalResults.length > 0" class="space-y-4">
-          <div class="flex items-center justify-between mb-4 p-4 bg-gradient-to-r from-emerald-50 to-teal-50 rounded-xl border border-emerald-200">
-            <div class="flex items-center gap-2">
-              <Monitor :size="20" class="text-emerald-600" />
-              <h3 class="text-lg font-semibold text-gray-900">本地知识库结果</h3>
-              <span class="px-2 py-1 bg-emerald-100 text-emerald-700 rounded-full text-xs font-medium">
-                {{ filteredLocalResults.length }} 个结果
-              </span>
-            </div>
-            <div v-if="enableSynonymSearch" class="flex items-center gap-2">
-              <Sparkles :size="14" class="text-emerald-600" />
-              <span class="text-xs text-emerald-600 font-medium">同义词搜索模式</span>
-            </div>
+        <div v-else-if="(!enableWebSearch || (enableWebSearch && !filteredWebResults.length && filteredLocalResults.length > 0)) && filteredLocalResults.length > 0" class="space-y-3">
+          <div class="flex items-center gap-3 px-4 py-2.5 bg-gradient-to-r from-emerald-50 to-teal-50 rounded-xl border border-emerald-200/60">
+            <Monitor :size="16" class="text-emerald-600" />
+            <h3 class="text-sm font-semibold text-slate-800">本地知识库结果</h3>
+            <span class="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full text-xs font-medium">
+              {{ filteredLocalResults.length }} 个结果
+            </span>
+            <span v-if="enableSynonymSearch" class="ml-auto flex items-center gap-1 text-xs text-emerald-600 font-medium">
+              <Sparkles :size="12" />
+              同义词
+            </span>
           </div>
 
-          <div
+          <ResultCard
             v-for="(result, index) in filteredLocalResults"
-            :key="index"
+            :key="'local-' + index"
+            :title="result.source_file"
+            :content="result.content"
+            :score="result.score"
+            :badge="enableSynonymSearch ? '同义词' : undefined"
+            type="local"
             @click="openDetail(result, 'local')"
-            class="bg-white rounded-2xl shadow-md hover:shadow-lg transition-all p-6 border border-gray-200 cursor-pointer hover:border-emerald-300 hover:bg-emerald-50/30"
-          >
-            <div class="flex items-start gap-4">
-              <div class="w-12 h-12 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-xl flex items-center justify-center flex-shrink-0 shadow-md">
-                <FileText :size="24" class="text-white" />
-              </div>
-
-              <div class="flex-1">
-                <div class="flex items-center justify-between mb-3">
-                  <div class="flex items-center gap-2">
-                    <h3 class="font-semibold text-gray-900">{{ result.source_file }}</h3>
-                    <span v-if="enableSynonymSearch" class="px-2 py-0.5 bg-emerald-50 text-emerald-600 rounded text-xs">
-                      ✨ 同义词
-                    </span>
-                  </div>
-                  <div class="flex items-center gap-2">
-                    <div class="flex items-center gap-2 px-3 py-1 bg-emerald-50 rounded-lg">
-                      <Sparkles :size="14" class="text-emerald-600" />
-                      <span class="text-sm font-medium text-emerald-700">
-                        {{ (result.score * 100).toFixed(1) }}%
-                      </span>
-                    </div>
-                    <ExternalLink :size="16" class="text-gray-400" />
-                  </div>
-                </div>
-
-                <p class="text-gray-700 leading-relaxed line-clamp-3 break-words">{{ result.content }}</p>
-              </div>
-            </div>
-          </div>
+          />
         </div>
 
         <!-- Dual Column Results (Local + Web) -->
-        <div v-if="enableWebSearch && filteredHasResults" class="grid grid-cols-2 gap-6">
-          <!-- Local Results Column -->
-          <div class="space-y-4">
-            <div class="flex items-center justify-between mb-4 p-4 bg-gradient-to-r from-emerald-50 to-teal-50 rounded-xl border border-emerald-200">
-              <div class="flex items-center gap-2">
-                <Monitor :size="20" class="text-emerald-600" />
-                <h3 class="text-lg font-semibold text-gray-900">本地知识库</h3>
-                <span class="px-2 py-1 bg-emerald-100 text-emerald-700 rounded-full text-xs font-medium">
-                  {{ filteredLocalResults.length }}
-                </span>
-              </div>
-              <div v-if="enableSynonymSearch" class="flex items-center gap-2 px-3 py-1.5 bg-emerald-100 rounded-lg">
-                <Sparkles :size="14" class="text-emerald-600" />
-                <span class="text-xs text-emerald-700 font-medium">同义词</span>
-              </div>
+        <div v-else-if="enableWebSearch && filteredHasResults" class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div class="space-y-3">
+            <div class="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-emerald-50 to-teal-50 rounded-xl border border-emerald-200/60">
+              <Monitor :size="16" class="text-emerald-600" />
+              <h3 class="text-sm font-semibold text-slate-800">本地知识库</h3>
+              <span class="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full text-xs font-medium">
+                {{ filteredLocalResults.length }}
+              </span>
+              <span v-if="enableSynonymSearch" class="ml-auto flex items-center gap-1 text-xs text-emerald-600 font-medium">
+                <Sparkles :size="12" />同义词
+              </span>
             </div>
 
-            <div v-if="filteredLocalResults.length > 0" class="space-y-4">
-              <div
-                v-for="(result, index) in filteredLocalResults"
-                :key="'local-' + index"
-                @click="openDetail(result, 'local')"
-                class="bg-white rounded-2xl shadow-md hover:shadow-lg transition-all p-6 border border-gray-200 cursor-pointer hover:border-emerald-300 hover:bg-emerald-50/30"
-              >
-                <div class="flex items-start gap-3">
-                  <div class="w-10 h-10 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-lg flex items-center justify-center flex-shrink-0">
-                    <FileText :size="20" class="text-white" />
-                  </div>
+            <ResultCard
+              v-for="(result, index) in filteredLocalResults"
+              :key="'dual-local-' + index"
+              :title="result.source_file"
+              :content="result.content"
+              :score="result.score"
+              :badge="enableSynonymSearch ? '同义词' : undefined"
+              type="local"
+              @click="openDetail(result, 'local')"
+            />
 
-                  <div class="flex-1">
-                    <div class="flex items-center justify-between mb-2">
-                      <div class="flex items-center gap-2">
-                        <h4 class="font-medium text-gray-900 text-sm truncate">{{ result.source_file }}</h4>
-                        <span v-if="enableSynonymSearch" class="px-1.5 py-0.5 bg-emerald-50 text-emerald-600 rounded text-xs">
-                          ✨
-                        </span>
-                      </div>
-                      <div class="flex items-center gap-1.5">
-                        <div class="flex items-center gap-1 px-2 py-0.5 bg-emerald-50 rounded-md">
-                          <Sparkles :size="12" class="text-emerald-600" />
-                          <span class="text-xs font-medium text-emerald-700">
-                            {{ (result.score * 100).toFixed(1) }}%
-                          </span>
-                        </div>
-                        <ExternalLink :size="14" class="text-gray-400" />
-                      </div>
-                    </div>
-
-                    <p class="text-gray-600 text-sm leading-relaxed line-clamp-3 break-words">{{ result.content }}</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div v-else class="text-center py-12 bg-gray-50 rounded-xl border border-gray-200">
-              <FileText :size="40" class="text-gray-300 mx-auto mb-3" />
-              <p class="text-gray-500 text-sm">本地知识库中未找到相关结果</p>
-              <p class="text-gray-400 text-xs mt-1">(相似度 ≥50%)</p>
+            <div v-if="filteredLocalResults.length === 0" class="py-10 bg-slate-50 rounded-xl border border-slate-100 text-center">
+              <FileText :size="32" class="text-slate-300 mx-auto mb-2" />
+              <p class="text-slate-500 text-sm">本地知识库中未找到相关结果</p>
             </div>
           </div>
 
-          <!-- Web Results Column -->
-          <div class="space-y-4">
-            <div class="flex items-center gap-2 mb-4 p-4 bg-gradient-to-r from-emerald-50 to-teal-50 rounded-xl border border-emerald-200">
-              <Globe :size="20" class="text-emerald-600" />
-              <h3 class="text-lg font-semibold text-gray-900">联网搜索</h3>
-              <span class="ml-auto px-3 py-1 bg-emerald-100 text-emerald-700 rounded-full text-sm font-medium">
+          <div class="space-y-3">
+            <div class="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-sky-50 to-blue-50 rounded-xl border border-sky-200/60">
+              <Globe :size="16" class="text-sky-600" />
+              <h3 class="text-sm font-semibold text-slate-800">联网搜索</h3>
+              <span class="ml-auto px-2 py-0.5 bg-sky-100 text-sky-700 rounded-full text-xs font-medium">
                 {{ filteredWebResults.length }} 个结果
               </span>
             </div>
 
-            <div v-if="filteredWebResults.length > 0" class="space-y-4">
-              <div
-                v-for="(result, index) in filteredWebResults"
-                :key="'web-' + index"
-                @click="openDetail(result, 'web')"
-                class="bg-white rounded-2xl shadow-md hover:shadow-lg transition-all p-6 border border-gray-200 cursor-pointer hover:border-emerald-300 hover:bg-emerald-50/30"
-              >
-                <div class="flex items-start gap-3">
-                  <div class="w-10 h-10 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-lg flex items-center justify-center flex-shrink-0">
-                    <Globe :size="20" class="text-white" />
-                  </div>
+            <ResultCard
+              v-for="(result, index) in filteredWebResults"
+              :key="'web-' + index"
+              :title="result.title || result.source_file"
+              :content="result.content"
+              :score="result.score"
+              :meta-line="result.source_file && result.source_file.startsWith('http') ? result.source_file : undefined"
+              type="web"
+              @click="openDetail(result, 'web')"
+            />
 
-                  <div class="flex-1">
-                    <div class="flex items-center justify-between mb-2">
-                      <h4 class="font-medium text-gray-900 text-sm truncate flex-1 mr-2">
-                        {{ result.title || result.source_file }}
-                      </h4>
-                      <div class="flex items-center gap-1.5">
-                        <div class="flex items-center gap-1 px-2 py-0.5 bg-emerald-50 rounded-md">
-                          <Sparkles :size="12" class="text-emerald-600" />
-                          <span class="text-xs font-medium text-emerald-700">
-                            {{ (result.score * 100).toFixed(1) }}%
-                          </span>
-                        </div>
-                        <ExternalLink :size="14" class="text-gray-400" />
-                      </div>
-                    </div>
-
-                    <p class="text-gray-600 text-sm leading-relaxed line-clamp-3 break-words">{{ result.content }}</p>
-
-                    <div v-if="result.source_file && result.source_file.startsWith('http')" class="mt-2 flex items-center gap-1 text-xs text-emerald-600">
-                      <ExternalLink :size="12" />
-                      <span class="truncate max-w-xs">{{ result.source_file }}</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div v-else class="text-center py-12 bg-gray-50 rounded-xl border border-gray-200">
-              <Globe :size="40" class="text-gray-300 mx-auto mb-3" />
-              <p class="text-gray-500 text-sm">联网搜索未找到相关结果</p>
-              <p class="text-gray-400 text-xs mt-1">(相似度 ≥50%)</p>
+            <div v-if="filteredWebResults.length === 0" class="py-10 bg-slate-50 rounded-xl border border-slate-100 text-center">
+              <Globe :size="32" class="text-slate-300 mx-auto mb-2" />
+              <p class="text-slate-500 text-sm">联网搜索未找到相关结果</p>
             </div>
           </div>
         </div>
 
         <!-- Empty State -->
-        <div v-else-if="!isSearching && searchQuery && !filteredHasResults" class="text-center py-16">
-          <div class="w-20 h-20 bg-gradient-to-br from-gray-200 to-gray-300 rounded-3xl flex items-center justify-center mx-auto mb-4">
-            <Search :size="40" class="text-gray-500" />
-          </div>
-          <h3 class="text-xl font-bold text-gray-900 mb-2">未找到相关结果</h3>
-          <p class="text-gray-600">尝试使用不同的关键词搜索</p>
-        </div>
+        <EmptyState
+          v-else-if="!isSearching && searchQuery && !filteredHasResults"
+          :icon="Search"
+          title="未找到相关结果"
+          description="尝试使用不同的关键词搜索"
+        />
 
         <!-- Initial State -->
-        <div v-else-if="!isSearching" class="text-center py-16">
-          <div class="w-20 h-20 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-3xl flex items-center justify-center mx-auto mb-4 shadow-xl">
-            <Search :size="40" class="text-white" />
-          </div>
-          <h3 class="text-2xl font-bold text-gray-900 mb-2">开始搜索</h3>
-          <p class="text-gray-600">输入关键词，在知识库中查找相关内容</p>
-        </div>
+        <EmptyState
+          v-else-if="!isSearching"
+          :icon="Search"
+          title="开始搜索"
+          description="输入关键词，在知识库中查找相关内容"
+        />
       </div>
     </div>
 

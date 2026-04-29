@@ -17,6 +17,9 @@ import {
   Pause,
   Play
 } from 'lucide-vue-next'
+import PageHeader from '@/components/PageHeader.vue'
+import EmptyState from '@/components/EmptyState.vue'
+import SkeletonCard from '@/components/SkeletonCard.vue'
 
 const knowledgeStore = useKnowledgeStore()
 
@@ -163,26 +166,18 @@ function formatDate(dateString: string): string {
 </script>
 
 <template>
-  <div class="flex-1 flex flex-col bg-gradient-to-br from-slate-100 via-emerald-50/30 to-teal-50/30 h-full">
-    <!-- Top Bar -->
-    <div class="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-6 shadow-sm">
+  <div class="flex-1 flex flex-col h-full bg-gradient-to-br from-slate-100 via-emerald-50/30 to-teal-50/30">
+    <PageHeader
+      :icon="FileText"
+      title="文档管理"
+      subtitle="查看和管理知识库文档"
+    >
       <div class="flex items-center gap-3">
-        <div class="w-10 h-10 bg-gradient-to-br from-emerald-600 to-teal-600 rounded-xl flex items-center justify-center">
-          <FileText :size="20" class="text-white" />
-        </div>
-        <div>
-          <h2 class="text-lg font-semibold text-gray-900">文档管理</h2>
-          <p class="text-xs text-gray-500">查看和管理知识库文档</p>
-        </div>
-      </div>
-      
-      <div class="flex items-center gap-3">
-        <!-- KB Selector -->
-        <div class="flex items-center gap-2 px-4 py-2 bg-gray-50 rounded-xl border border-gray-200">
-          <Database :size="16" class="text-gray-500" />
+        <div class="flex items-center gap-2 px-4 py-2 bg-white rounded-xl border border-slate-200 shadow-sm">
+          <Database :size="16" class="text-slate-400" />
           <select
             v-model="knowledgeStore.selectedKnowledgeBaseId"
-            class="bg-transparent text-sm text-gray-700 outline-none cursor-pointer"
+            class="bg-transparent text-sm text-slate-700 outline-none cursor-pointer min-w-[120px]"
           >
             <option :value="null">选择知识库</option>
             <option v-for="kb in knowledgeStore.knowledgeBases" :key="kb.id" :value="kb.id">
@@ -190,58 +185,39 @@ function formatDate(dateString: string): string {
             </option>
           </select>
         </div>
-        
         <button
           @click="refreshDocuments"
           :disabled="isRefreshing || !selectedKB"
-          class="px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-xl hover:bg-gray-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+          class="px-4 py-2 bg-white border border-slate-200 text-slate-700 rounded-xl hover:bg-slate-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-sm"
         >
-          <RefreshCw :size="16" :class="{ 'animate-spin': isRefreshing }" />
+          <RefreshCw :size="15" :class="{ 'animate-spin': isRefreshing }" />
           <span class="text-sm font-medium">刷新</span>
         </button>
       </div>
-    </div>
+    </PageHeader>
 
-    <!-- Main Content -->
-    <div class="flex-1 overflow-y-auto p-8">
-      <!-- No KB Selected -->
-      <div v-if="!selectedKB" class="h-full flex items-center justify-center">
-        <div class="text-center space-y-4 max-w-md">
-          <div class="w-20 h-20 bg-gradient-to-br from-gray-200 to-gray-300 rounded-3xl flex items-center justify-center mx-auto">
-            <Database :size="40" class="text-gray-500" />
-          </div>
-          <h3 class="text-xl font-bold text-gray-900">请选择知识库</h3>
-          <p class="text-gray-600">在右上角选择一个知识库以查看文档</p>
-        </div>
+    <div class="flex-1 overflow-y-auto p-6">
+      <EmptyState
+        v-if="!selectedKB"
+        :icon="Database"
+        title="请选择知识库"
+        description="在右上角选择一个知识库以查看文档"
+      />
+
+      <div v-else-if="knowledgeStore.isLoading" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-w-7xl mx-auto">
+        <SkeletonCard v-for="i in 6" :key="i" :lines="3" :hasHeader="true" :hasImage="false" />
       </div>
 
-      <!-- Loading -->
-      <div v-else-if="knowledgeStore.isLoading" class="h-full flex items-center justify-center">
-        <div class="text-center space-y-4">
-          <Loader2 :size="48" class="mx-auto text-emerald-500 animate-spin" />
-          <p class="text-gray-600">加载中...</p>
-        </div>
-      </div>
+      <EmptyState
+        v-else-if="documents.length === 0"
+        :icon="FileText"
+        title="暂无文档"
+        description="这个知识库还没有上传任何文档"
+        action-label="立即上传"
+        action-to="/upload"
+      />
 
-      <!-- Empty State -->
-      <div v-else-if="documents.length === 0" class="h-full flex items-center justify-center">
-        <div class="text-center space-y-4 max-w-md">
-          <div class="w-20 h-20 bg-gradient-to-br from-gray-200 to-gray-300 rounded-3xl flex items-center justify-center mx-auto">
-            <FileText :size="40" class="text-gray-500" />
-          </div>
-          <h3 class="text-xl font-bold text-gray-900">暂无文档</h3>
-          <p class="text-gray-600">这个知识库还没有上传任何文档</p>
-          <router-link
-            to="/upload"
-            class="inline-block px-6 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-xl hover:from-emerald-700 hover:to-teal-700 transition-all shadow-lg font-medium"
-          >
-            立即上传
-          </router-link>
-        </div>
-      </div>
-
-      <!-- Documents Grid -->
-      <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-7xl mx-auto">
+      <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-w-7xl mx-auto">
         <div
           v-for="doc in documents"
           :key="doc.id"

@@ -1,86 +1,95 @@
 # app/schemas/auth_request.py
-"""认证请求相关的Schema模型"""
-from pydantic import BaseModel, EmailStr, Field, field_validator
+"""Authentication request schemas."""
 from typing import Optional
 import re
 
+from pydantic import BaseModel, EmailStr, Field, field_validator
+
+
 class UserLogin(BaseModel):
-    """用户登录请求模型"""
-    email: EmailStr
+    """User login request."""
+    email: Optional[EmailStr] = None
+    username: Optional[str] = Field(None, min_length=2, max_length=50)
     password: str
 
+
 class UserRegister(BaseModel):
-    """普通用户注册请求模型"""
+    """Normal user registration request."""
     email: EmailStr
-    phone: Optional[str] = Field(None, description="手机号，选填")
-    password: str = Field(..., min_length=6, description="密码，至少6位")
-    nickname: Optional[str] = Field(None, max_length=50, description="昵称")
-    
-    @field_validator('phone')
-    def validate_phone(cls, v):
-        """验证手机号格式"""
-        if v and not re.match(r'^1[3-9]\d{9}$', v):
-            raise ValueError('手机号格式不正确')
-        return v
-    
-    @field_validator('password')
-    def validate_password(cls, v):
-        """验证密码强度"""
-        if len(v) < 6:
-            raise ValueError('密码至少需要6位')
+    username: str = Field(..., min_length=2, max_length=50, description="Username")
+    phone: Optional[str] = Field(None, description="Optional phone number")
+    password: str = Field(..., min_length=6, description="Password, at least 6 characters")
+    full_name: Optional[str] = Field(None, min_length=2, max_length=100, description="Full name")
+    nickname: Optional[str] = Field(None, max_length=50, description="Nickname")
+    invite_code: Optional[str] = Field(None, min_length=8, max_length=32, description="Enterprise invite code")
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, v: Optional[str]) -> Optional[str]:
+        if v and not re.match(r"^1[3-9]\d{9}$", v):
+            raise ValueError("Invalid phone number format")
         return v
 
-class AdminRegister(BaseModel):
-    """企业管理员注册请求模型"""
-    email: EmailStr
-    phone: Optional[str] = Field(None, description="手机号，选填")
-    password: str = Field(..., min_length=6, description="密码，至少6位")
-    full_name: str = Field(..., min_length=2, max_length=100, description="真实姓名，必填")
-    company_name: str = Field(..., min_length=2, max_length=200, description="企业名称，必填")
-    company_position: Optional[str] = Field(None, max_length=100, description="职位")
-    nickname: Optional[str] = Field(None, max_length=50, description="昵称")
-    
-    @field_validator('phone')
-    def validate_phone(cls, v):
-        """验证手机号格式"""
-        if v and not re.match(r'^1[3-9]\d{9}$', v):
-            raise ValueError('手机号格式不正确')
-        return v
-    
-    @field_validator('password')
-    def validate_password(cls, v):
-        """验证密码强度"""
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v: str) -> str:
         if len(v) < 6:
-            raise ValueError('密码至少需要6位')
+            raise ValueError("Password must be at least 6 characters")
+        return v
+
+
+class AdminRegister(BaseModel):
+    """Enterprise admin registration request."""
+    email: EmailStr
+    username: str = Field(..., min_length=2, max_length=50, description="Username")
+    phone: Optional[str] = Field(None, description="Optional phone number")
+    password: str = Field(..., min_length=6, description="Password, at least 6 characters")
+    full_name: str = Field(..., min_length=2, max_length=100, description="Full name")
+    company_name: str = Field(..., min_length=2, max_length=200, description="Company name")
+    company_position: Optional[str] = Field(None, max_length=100, description="Company position")
+    nickname: Optional[str] = Field(None, max_length=50, description="Nickname")
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, v: Optional[str]) -> Optional[str]:
+        if v and not re.match(r"^1[3-9]\d{9}$", v):
+            raise ValueError("Invalid phone number format")
+        return v
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        if len(v) < 6:
+            raise ValueError("Password must be at least 6 characters")
         return v
 
 
 class ChangePasswordRequest(BaseModel):
-    """修改密码请求模型"""
-    old_password: str = Field(..., description="旧密码")
-    new_password: str = Field(..., min_length=6, description="新密码，至少6位")
-    
-    @field_validator('new_password')
-    def validate_new_password(cls, v):
-        """验证新密码强度"""
+    """Change password request."""
+    old_password: str = Field(..., description="Old password")
+    new_password: str = Field(..., min_length=6, description="New password, at least 6 characters")
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_new_password(cls, v: str) -> str:
         if len(v) < 6:
-            raise ValueError('新密码至少需要6位')
+            raise ValueError("New password must be at least 6 characters")
         return v
 
 
 class UpdatePhoneRequest(BaseModel):
-    """更新手机号请求模型"""
-    phone: str = Field(..., description="新手机号")
-    
-    @field_validator('phone')
-    def validate_phone(cls, v):
-        """验证手机号格式"""
-        if not re.match(r'^1[3-9]\d{9}$', v):
-            raise ValueError('手机号格式不正确')
+    """Update phone number request."""
+    phone: str = Field(..., description="New phone number")
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, v: str) -> str:
+        if not re.match(r"^1[3-9]\d{9}$", v):
+            raise ValueError("Invalid phone number format")
         return v
 
 
 class ChangeInviteCodeRequest(BaseModel):
-    """更换企业邀请码请求模型"""
-    new_invite_code: str = Field(..., min_length=8, max_length=32, description="新的企业邀请码")
-    confirm_leave: bool = Field(False, description="确认离开当前企业")
+    """Change enterprise invite code request."""
+    new_invite_code: str = Field(..., min_length=8, max_length=32, description="New enterprise invite code")
+    confirm_leave: bool = Field(False, description="Confirm leaving the current enterprise")

@@ -55,6 +55,22 @@ def generate_tenant_id(user_type: str, company_name: str = None) -> str:
         return f"user_{uuid.uuid4().hex[:12]}"
 
 
+def create_token_response(user: User) -> dict:
+    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = security.create_access_token(
+        subject=user.id,
+        expires_delta=access_token_expires,
+        tenant_id=user.tenant_id
+    )
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user_name": user.nickname or user.full_name or user.email,
+        "is_admin": user.is_admin,
+        "user_id": str(user.id)
+    }
+
+
 # =======================
 # 📱 短信验证码相关模型
 # =======================
@@ -138,7 +154,7 @@ async def verify_sms_code(request: VerifySMSRequest):
 # =======================
 # 📝 3. 普通用户注册接口（无需验证码）
 # =======================
-@router.post("/register", response_model=UserProfile)
+@router.post("/register", response_model=Token)
 @log_user_action(
     action_type="AUTH",
     action_name="user_register",
@@ -177,11 +193,12 @@ async def register_user(
                 )
 
         # 3. 处理租户分配
+        invite_code_value = invite_code or user_in.invite_code
         tenant_id = None
-        if invite_code:
+        if invite_code_value:
             # 验证邀请码并获取企业租户ID
             from app.services.invite_code_service import InviteCodeService
-            validation_result = await InviteCodeService.validate_invite_code(db, invite_code)
+            validation_result = await InviteCodeService.validate_invite_code(db, invite_code_value)
             if not validation_result.valid:
                 raise HTTPException(status_code=400, detail=validation_result.message)
             tenant_id = validation_result.tenant_id
@@ -194,7 +211,9 @@ async def register_user(
             email=user_in.email,
             phone=user_in.phone,  # 可能为None
             hashed_password=security.get_password_hash(user_in.password),
-            nickname=user_in.nickname,
+            full_name=user_in.full_name,
+            nickname=user_in.nickname or user_in.username,
+            username=user_in.username,
             tenant_id=tenant_id,  # 🔥 关键修复：分配租户ID（个人或企业）
             is_active=True,
             is_admin=False,  # 普通用户
@@ -206,21 +225,21 @@ async def register_user(
         await db.refresh(new_user)
 
         # 5. 如果使用了邀请码，记录使用情况
-        if invite_code:
+        if invite_code_value:
             from app.services.invite_code_service import InviteCodeService
             await InviteCodeService.use_invite_code(
                 db=db,
-                code=invite_code,
+                code=invite_code_value,
                 user_id=str(new_user.id)
             )
 
-        return new_user
+        return create_token_response(new_user)
 
 
 # =======================
 # 📝 4. 企业管理员注册接口（无需验证码）
 # =======================
-@router.post("/register/admin", response_model=UserProfile)
+@router.post("/register/admin", response_model=Token)
 @log_user_action(
     action_type="AUTH",
     action_name="admin_register",
@@ -262,7 +281,8 @@ async def register_admin(
             phone=admin_in.phone,  # 可能为None
             hashed_password=security.get_password_hash(admin_in.password),
             full_name=admin_in.full_name,
-            nickname=admin_in.nickname,
+            nickname=admin_in.nickname or admin_in.username,
+            username=admin_in.username,
             company_name=admin_in.company_name,
             company_position=admin_in.company_position,
             tenant_id=generate_tenant_id("admin", admin_in.company_name),  # 🔥 关键修复：分配企业租户ID
@@ -283,7 +303,7 @@ async def register_admin(
         await db.commit()
         await db.refresh(new_admin)
 
-        return new_admin
+        return create_token_response(new_admin)
 
 
 # =======================
@@ -303,7 +323,13 @@ async def login(request: Request, user_in: UserLogin):
     """
     async with AsyncSessionLocal() as db:
         # 1. 查找用户
-        result = await db.execute(select(User).where(User.email == user_in.email))
+        if not user_in.email and not user_in.username:
+            raise HTTPException(status_code=422, detail="请填写邮箱或用户名")
+
+        if user_in.email:
+            result = await db.execute(select(User).where(User.email == user_in.email))
+        else:
+            result = await db.execute(select(User).where(User.username == user_in.username))
         user = result.scalars().first()
 
         # 2. 验证账号是否存在 + 密码是否正确

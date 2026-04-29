@@ -7,10 +7,12 @@
 """
 
 import time
+import uuid
 from typing import Dict, Any, List
 from sqlalchemy import select, func, case
 from app.db.session import AsyncSessionLocal
 from app.models.agent_trace import AgentTrace
+from app.models.chat import ChatSession
 from app.models.tool_trace import ToolCallTrace
 
 
@@ -52,6 +54,14 @@ class ToolCallTracer:
                     user_id = user_id or parent_trace.user_id
                     tenant_id = tenant_id or parent_trace.tenant_id
                     session_id = session_id or parent_trace.session_id
+
+            if session_id:
+                try:
+                    session_uuid = uuid.UUID(str(session_id))
+                    existing_session = await db.get(ChatSession, session_uuid)
+                    session_id = session_uuid if existing_session else None
+                except (TypeError, ValueError):
+                    session_id = None
 
             call_trace = ToolCallTrace(
                 tool_name=tool_name,

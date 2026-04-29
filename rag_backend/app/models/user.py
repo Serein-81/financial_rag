@@ -11,7 +11,7 @@ class User(Base):
     # 基础字段
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email = Column(String(255), unique=True, index=True, nullable=False)
-    phone = Column(String(20), unique=True, index=True, nullable=False)  # 手机号（必填）
+    phone = Column(String(20), unique=True, index=True, nullable=True)  # 手机号（选填）
     hashed_password = Column(String, nullable=False)
     
     # 多租户字段
