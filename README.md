@@ -47,7 +47,14 @@
 - 📱 **前端界面**：[查看前端 README](./rag_frontend/README.md)
 - ⚙️ **后端 API**：[查看后端项目](./rag_backend)
 - 🔧 **MCP 服务**：[查看 MCP 服务](./mcp_server)
-- 🐳 **Docker 部署**：[docker-compose.yml](./rag_backend/docker-compose.yml)
+
+### 🐳 直接拉取 Docker 镜像
+
+```bash
+docker pull ghcr.io/serein-81/rag-backend:latest
+```
+
+详细部署方式见下方 Docker Compose 章节。
 
 ### 🔎 重点功能入口
 
