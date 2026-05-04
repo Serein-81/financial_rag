@@ -35,6 +35,7 @@ import {
 const router = useRouter()
 
 const isLoading = ref(false)
+const isCrawling = ref(false)  // 🆕 爬取政策状态
 const notifications = ref<PolicyNotification[]>([])
 const filterStatus = ref<string>('all')
 const selectedNotifications = ref<Set<string>>(new Set())
@@ -181,6 +182,34 @@ async function viewRealTimePolicyDetail() {
   if (realTimeNotification.value) {
     dismissRealTimeNotification()
     router.push(`/policy/${realTimeNotification.value.policy_id}`)
+  }
+}
+
+// 🆕 爬取政策
+async function crawlPolicies() {
+  const confirmed = confirm('将从国家税务总局、中国政府网、财政部等来源爬取最新政策，确认执行？')
+  if (!confirmed) return
+
+  isCrawling.value = true
+  try {
+    const token = localStorage.getItem('rag_token')
+    const keywords = ['增值税', '企业所得税', '个人所得税', '税收优惠', '小微企业']
+    const url = '/api/v1/policy/collect?keywords=' + keywords.join('&keywords=')
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        ...(token && { 'Authorization': `Bearer ${token}` }),
+      },
+    })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const result = await response.json()
+    const count = result?.result?.total_collected ?? result?.result?.new_saved ?? 0
+    ElMessage.success(`爬取完成: ${count} 条新政策`)
+    await loadNotifications()
+  } catch (e: any) {
+    ElMessage.error('爬取失败: ' + (e.message || '未知错误'))
+  } finally {
+    isCrawling.value = false
   }
 }
 
@@ -607,6 +636,16 @@ async function savePushConfiguration() {
           <Tag :size="14" />
           订阅管理
         </button>
+        <button
+          @click="crawlPolicies"
+          :disabled="isCrawling"
+          class="px-3 py-1.5 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-1.5 transition-colors"
+        >
+          <Loader2 v-if="isCrawling" :size="14" class="animate-spin" />
+          <Zap v-else :size="14" />
+          {{ isCrawling ? '爬取中...' : '爬取政策' }}
+        </button>
+
         <button
           @click="showPushConfig = true"
           class="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-1.5 transition-colors"

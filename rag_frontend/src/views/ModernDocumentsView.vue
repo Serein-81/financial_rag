@@ -132,10 +132,22 @@ function getStatusLabel(status: string): string {
   const labels: Record<string, string> = {
     completed: '已完成',
     failed: '失败',
+    ready: '已完成',
     processing: '处理中',
     pending: '等待中'
   }
   return labels[status] || status
+}
+
+function getStatusDescription(status: string): string {
+  const desc: Record<string, string> = {
+    ready: '文档已处理完成，向量已入库，可在对话中检索',
+    completed: '文档已处理完成，可在对话中检索',
+    failed: '文档处理出错，请检查文件格式后重新上传',
+    processing: '文档正在后台解析和向量化，请稍候',
+    pending: '文档已上传，等待后台处理'
+  }
+  return desc[status] || status
 }
 
 function isProcessingOrPending(status: string, processingState?: string): boolean {
@@ -204,6 +216,26 @@ function formatDate(dateString: string): string {
         description="在右上角选择一个知识库以查看文档"
       />
 
+      <!-- 状态含义说明 -->
+      <div v-if="!knowledgeStore.isLoading && documents.length > 0" class="mb-4 max-w-7xl mx-auto">
+        <div class="flex flex-wrap gap-3 text-xs text-gray-500 bg-gray-50 rounded-xl px-4 py-2.5 border border-gray-100">
+          <span class="font-medium text-gray-700">状态说明：</span>
+          <span class="flex items-center gap-1">
+            <span class="w-2 h-2 rounded-full bg-yellow-500 inline-block"></span> 等待中 - 已上传等待处理
+          </span>
+          <span class="flex items-center gap-1">
+            <span class="w-2 h-2 rounded-full bg-emerald-500 inline-block animate-pulse"></span> 处理中 - 正在解析和向量化
+          </span>
+          <span class="flex items-center gap-1">
+            <span class="w-2 h-2 rounded-full bg-green-500 inline-block"></span> 已完成 - 可到对话页检索
+          </span>
+          <span class="flex items-center gap-1">
+            <span class="w-2 h-2 rounded-full bg-red-500 inline-block"></span> 失败 - 请检查文件后重传
+          </span>
+          <span class="text-blue-500 ml-2">鼠标悬停状态标签可查看详细说明</span>
+        </div>
+      </div>
+
       <div v-else-if="knowledgeStore.isLoading" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-w-7xl mx-auto">
         <SkeletonCard v-for="i in 6" :key="i" :lines="3" :hasHeader="true" :hasImage="false" />
       </div>
@@ -242,7 +274,10 @@ function formatDate(dateString: string): string {
                     :size="14"
                     :class="[getStatusColor(doc.status), doc.status === 'processing' ? 'animate-spin' : '']"
                   />
-                  <span :class="getStatusColor(doc.status)">
+                  <span
+                    :class="getStatusColor(doc.status)"
+                    :title="getStatusDescription(doc.status)"
+                  >
                     {{ getStatusLabel(doc.status) }}
                   </span>
                 </div>

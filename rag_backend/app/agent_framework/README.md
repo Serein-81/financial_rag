@@ -4,7 +4,7 @@
 
 ## 当前定位
 
-- `core/` 提供基础 Agent 运行模式，包括 `BaseAgent`、`ReActAgent`、`PlanAgent`、`ReflectAgent` 和兼容保留的 `OutputAgent`。
+- `core/` 提供基础 Agent 运行模式，包括 `BaseAgent`、`ReActAgent`、`PlanAgent`、`ReflectAgent`。
 - `llm/` 提供统一 LLM adapter 接口和多供应商实现，包括智谱、OpenAI/GPT、Claude、Qwen、DeepSeek、MiniMax、百川、Xinference、HuggingFace、ModelScope 等。
 - `tools/` 提供工具注册、调用、工具链、工具路由、LangChain 兼容层，以及财务、税务、法务、文档检索等业务工具。
 - `components/` 提供 `ResultSynthesizer`，用于多来源结果合成。
@@ -20,7 +20,6 @@ agent_framework/
     react_agent.py
     plan_agent.py
     reflect_agent.py
-    output_agent.py
     agent_wrapper.py
   llm/
     base_adapter.py
@@ -66,7 +65,7 @@ agent_framework/
 - `ToolManager`
 - `ZhipuAdapter`
 
-`OutputAgent` 仍在 `core/output_agent.py` 中保留，但不再作为推荐入口；新的结果质量整合优先使用 `ResultSynthesizer` 和多智能体系统中的报告/审查组件。
+结果质量整合统一使用 `ResultSynthesizer` 和多智能体系统中的报告/审查组件；旧的 `OutputAgent` 兼容包装已移除。
 
 ## 基本用法
 

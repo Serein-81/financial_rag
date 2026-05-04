@@ -1,0 +1,84 @@
+{
+  "_description": "风险评估规则。按专业领域分组，pattern 用于匹配问题描述文本，risk_score 为 0-1 的风险分数。",
+  "finance": [
+    {
+      "pattern": "资产负债不平衡",
+      "risk_score": 0.9,
+      "risk_level": "critical"
+    },
+    {
+      "pattern": "现金流异常",
+      "risk_score": 0.7,
+      "risk_level": "high"
+    },
+    {
+      "pattern": "收入确认",
+      "risk_score": 0.8,
+      "risk_level": "high"
+    },
+    {
+      "pattern": "坏账",
+      "risk_score": 0.7,
+      "risk_level": "high"
+    },
+    {
+      "pattern": "存货跌价",
+      "risk_score": 0.6,
+      "risk_level": "medium"
+    }
+  ],
+  "tax": [
+    {
+      "pattern": "税率计算错误",
+      "risk_score": 0.8,
+      "risk_level": "high"
+    },
+    {
+      "pattern": "税款滞纳",
+      "risk_score": 0.7,
+      "risk_level": "high"
+    },
+    {
+      "pattern": "虚开发票",
+      "risk_score": 1.0,
+      "risk_level": "critical"
+    },
+    {
+      "pattern": "偷税",
+      "risk_score": 1.0,
+      "risk_level": "critical"
+    },
+    {
+      "pattern": "抵扣异常",
+      "risk_score": 0.7,
+      "risk_level": "high"
+    }
+  ],
+  "legal": [
+    {
+      "pattern": "合同条款模糊",
+      "risk_score": 0.6,
+      "risk_level": "medium"
+    },
+    {
+      "pattern": "无效条款",
+      "risk_score": 0.8,
+      "risk_level": "high"
+    },
+    {
+      "pattern": "知识产权侵权",
+      "risk_score": 0.9,
+      "risk_level": "critical"
+    },
+    {
+      "pattern": "数据违规",
+      "risk_score": 0.8,
+      "risk_level": "high"
+    },
+    {
+      "pattern": "违反法律",
+      "risk_score": 1.0,
+      "risk_level": "critical"
+    }
+  ]
+}

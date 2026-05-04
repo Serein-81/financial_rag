@@ -4,6 +4,7 @@ import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 
 import { useAuthStore } from '@/stores/auth'
 import { useMultiAgentTaskStore } from '@/stores/multiAgentTask'
+import { useAutoResizeTextarea } from '@/composables/useAutoResizeTextarea'
 
 import {
   Send,
@@ -120,6 +121,11 @@ const authStore = useAuthStore()
 const taskStore = useMultiAgentTaskStore()
 
 const userInput = ref('')
+const {
+  textareaRef: chatInputRef,
+  resizeTextarea: resizeChatInput,
+  resetTextarea: resetChatInput
+} = useAutoResizeTextarea(userInput, { minHeight: 44, maxHeight: 148 })
 const isLoading = ref(false)
 const chatContainerRef = ref<HTMLDivElement>()
 const copiedMessageIndex = ref<number | null>(null)
@@ -400,10 +406,6 @@ function loadState() {
 
       return true
 
-      
-
-      return true
-
     }
 
     return false
@@ -589,19 +591,38 @@ onMounted(async () => {
   if (taskResumeResult) {
     console.log('发现异步任务需要恢复:', taskResumeResult.type)
     
-    if (taskResumeResult.type === 'completed') {
+    if (taskResumeResult.type === 'clarification') {
+      isLoading.value = false
+      const status = taskResumeResult.data
+      showClarificationDialog({
+        question: status.clarification_request.question || '请详细描述您的问题',
+        suggestions: status.clarification_request.suggestions || [],
+        reason: status.clarification_request.reason || '您的输入需要更多信息来帮助您',
+        required: status.clarification_request.required !== false,
+        placeholder: status.clarification_request.placeholder || ''
+      })
+    } else if (taskResumeResult.type === 'completed') {
       // 任务已完成，直接显示结果
       isLoading.value = false
       const status = taskResumeResult.data
       if (status.final_response) {
-        // 创建完成的消息
-        const completedMsg: Message = {
-          id: createMessageId(),
-          role: 'assistant',
-          content: status.final_response,
-          timestamp: new Date(),
+        // 🔧 修复：检查 final_response 是否已作为最后一条 assistant 消息存在
+        // 防止同时从 sessionStorage 和服务器恢复导致消息重复
+        const lastMsg = messages.value[messages.value.length - 1]
+        const alreadyHasResponse = lastMsg?.role === 'assistant' &&
+          lastMsg.content === status.final_response
+
+        if (!alreadyHasResponse) {
+          const completedMsg: Message = {
+            id: createMessageId(),
+            role: 'assistant',
+            content: status.final_response,
+            timestamp: new Date(),
+          }
+          messages.value.push(completedMsg)
+        } else {
+          console.log('[Hydration] 跳过重复的 final_response，消息已存在')
         }
-        messages.value.push(completedMsg)
         currentResponse.value = status.final_response
       }
     } else if (taskResumeResult.type === 'failed') {
@@ -642,8 +663,11 @@ onMounted(async () => {
       taskStore.clearTaskState()
     }
 
-    // 中断检测：服务器确认无恢复任务，且 sessionStorage 中有未完成的请求痕迹
-    if (!hasAsyncTask && currentStage.value && streamInterrupted.value) {
+    // 🔧 修复：中断检测增加条件 — 排除正常完成的情况
+    // currentStage === 'response' 表示流式请求已经正常完成
+    // （只是 saveState 时机导致 isLoading 仍为 true，实际并未中断）
+    const isCompletedNormally = currentStage.value === 'response'
+    if (!hasAsyncTask && currentStage.value && streamInterrupted.value && !isCompletedNormally) {
       console.log('检测到之前的请求已中断（服务器确认无进行中任务）')
       messages.value.push({
         id: createMessageId(),
@@ -660,6 +684,29 @@ onMounted(async () => {
       })
     }
   }
+
+  // 🆕 从 localStorage 恢复上一次完成的结果（页面切换后重新进入）
+  if (!hasRestoredState && !hasAsyncTask && !savedTask && messages.value.length === 0) {
+    const lastResult = localStorage.getItem('multi_agent_last_result')
+    if (lastResult) {
+      try {
+        const parsed = JSON.parse(lastResult)
+        const age = Date.now() - (parsed.timestamp || 0)
+        // 24 小时内有效
+        if (age < 24 * 60 * 60 * 1000 && parsed.response) {
+          messages.value.push({
+            id: createMessageId(),
+            role: 'assistant',
+            content: parsed.response,
+            timestamp: new Date(parsed.timestamp),
+          })
+          console.log('从 localStorage 恢复了上次的多智能体结果')
+        }
+      } catch (e) {
+        console.warn('恢复上次结果失败', e)
+      }
+    }
+  }
 })
 
 
@@ -669,6 +716,7 @@ let stateSaveInterval: number | null = null
 
 
 onBeforeUnmount(() => {
+  stopStreaming()
   stopPolling()
   if (stateSaveInterval) {
     clearInterval(stateSaveInterval)
@@ -700,11 +748,19 @@ watch([enableReflection, enableRAG], () => {
 let pollInterval: number | null = null
 let currentTaskId: string | null = null
 let currentThreadId: string | null = null
+let currentStreamController: AbortController | null = null
 
 function stopPolling() {
   if (pollInterval) {
     window.clearTimeout(pollInterval)
     pollInterval = null
+  }
+}
+
+function stopStreaming() {
+  if (currentStreamController) {
+    currentStreamController.abort()
+    currentStreamController = null
   }
 }
 
@@ -716,6 +772,7 @@ async function sendMessage() {
   let handedOffToPolling = false
   const query = userInput.value.trim()
   userInput.value = ''
+  resetChatInput()
 
   const userMsg: Message = {
     id: createMessageId(),
@@ -767,6 +824,10 @@ async function sendMessage() {
   } finally {
     if (!handedOffToPolling) {
       isLoading.value = false
+      // 🔧 修复：在 isLoading 变为 false 后立即保存状态
+      // 避免 saveState 在 watch 触发时保存了 isLoading=true 的不一致状态
+      // 导致刷新后 streamInterrupted 误判为 true
+      saveState()
     }
     scrollToBottom()
   }
@@ -776,10 +837,35 @@ async function sendMessage() {
 // 使用异步端点提交查询（支持页面切换不断开）
 async function submitAsyncQuery(query: string, assistantMsg: Message): Promise<boolean> {
   const token = localStorage.getItem('rag_token')
-  
+
+  // 先保存 session 到 localStorage，用于页面切换后恢复
+  if (sessionId.value) {
+    localStorage.setItem('multi_agent_thread_id', sessionId.value)
+  }
+
+  try {
+    const streamResult = await streamQuery(query, assistantMsg, token)
+    return false
+  } catch (streamError: any) {
+    // AbortError = 用户切换页面主动中止，不是错误，不回退
+    if (streamError?.name === 'AbortError') {
+      console.warn('SSE 流被中止（用户可能切换了页面），不触发异步回退')
+      taskStore.completeTask(assistantMsg.content || currentResponse.value || '')
+      return false
+    }
+
+    // PartialStreamError = 已收到部分事件但连接中断，不回退避免重复
+    if (streamError?.name === 'PartialStreamError') {
+      console.warn('⚠️ 流式请求已收到部分事件但连接中断。不回退到异步任务以避免重复处理。')
+      return false
+    }
+
+    console.warn('流式请求不可用，回退到异步任务轮询:', streamError)
+  }
+
   try {
     // 1. 提交任务到异步端点
-    const response = await fetch('/api/v1/chat/orchestrator_chat_async', {
+    const response = await fetch('/api/v1/multi-agent/query-async', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -789,39 +875,179 @@ async function submitAsyncQuery(query: string, assistantMsg: Message): Promise<b
         query,
         session_id: sessionId.value,
         enable_reflection: enableReflection.value,
-        enable_rag: enableRAG.value,
+        context: {
+          enable_rag: enableRAG.value,
+        },
       }),
     })
-    
+
     if (!response.ok) {
       throw new Error(`服务器返回错误 HTTP ${response.status}`)
     }
-    
+
     const result = await response.json()
-    
+
     currentTaskId = result.task_id
     currentThreadId = result.thread_id
     sessionId.value = result.thread_id || result.session_id
-    
+
     console.log('✅ 异步任务已提交:', result)
-    
+
     // 2. 保存任务ID到 localStorage，用于页面刷新后恢复
     localStorage.setItem('multi_agent_task_id', currentTaskId)
     localStorage.setItem('multi_agent_thread_id', currentThreadId)
-    
+
     // 3. 更新进度显示
     currentStage.value = 'receptionist'
     assistantMsg.content = '⏳ 任务已提交后台，正在处理中...\n\n请勿关闭此页面'
-    
+
     // 4. 开始轮询状态
     startPolling(assistantMsg)
     return true
-    
+
   } catch (error) {
-    console.error('❌ 异步提交失败，回退到SSE模式:', error)
-    // 如果异步端点失败，回退到SSE模式
-    await submitWithSSE(query, assistantMsg)
-    return false
+    console.error('❌ 多智能体异步提交失败:', error)
+    throw error
+  }
+}
+
+async function streamQuery(query: string, assistantMsg: Message, token: string | null) {
+  stopStreaming()
+
+  const controller = new AbortController()
+  currentStreamController = controller
+  let receivedAnyEvent = false
+  let receivedText = false
+
+  const response = await fetch('/api/v1/multi-agent/query-stream', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token && { 'Authorization': `Bearer ${token}` }),
+    },
+    body: JSON.stringify({
+      query,
+      session_id: sessionId.value,
+      enable_reflection: enableReflection.value,
+      context: {
+        enable_rag: enableRAG.value,
+      },
+    }),
+    signal: controller.signal,
+  })
+
+  if (!response.ok || !response.body) {
+    throw new Error(`流式请求失败 HTTP ${response.status}`)
+  }
+
+  assistantMsg.content = ''
+  currentStage.value = 'receptionist'
+  currentResponse.value = ''
+
+  // 保存 session 信息到 localStorage，支持页面切换后恢复
+  if (sessionId.value) {
+    localStorage.setItem('multi_agent_thread_id', sessionId.value)
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const rawEvents = buffer.split('\n\n')
+      buffer = rawEvents.pop() || ''
+
+      for (const rawEvent of rawEvents) {
+        const dataLine = rawEvent
+          .split('\n')
+          .find(line => line.startsWith('data: '))
+
+        if (!dataLine) continue
+
+        const event = JSON.parse(dataLine.slice(6))
+        receivedAnyEvent = true
+
+        if (event.type === 'session') {
+          sessionId.value = event.session_id || sessionId.value
+          localStorage.setItem('multi_agent_thread_id', sessionId.value)
+        } else if (event.type === 'stage') {
+          currentStage.value = mapBackendNodeToFrontend(event.stage) || event.stage
+          if (event.intent) {
+            intentAnalysis.value = {
+              category: event.intent.category || '分析中',
+              confidence: event.intent.confidence || 0.5,
+              strategy: event.intent.routing_strategy || 'multi_agent',
+            }
+          }
+          if (event.specialists) {
+            activeSpecialists.value = event.specialists
+          }
+          if (event.result) {
+            reflectionResult.value = Array.isArray(event.result)
+              ? event.result.join('\n')
+              : String(event.result)
+          }
+        } else if (event.type === 'thinking') {
+          progressEvents.value.push(event)
+          taskStore.updateTaskProgress(currentStage.value || event.stage || 'processing', {
+            percent: event.progress,
+          })
+        } else if (event.type === 'ttft') {
+          ttftMs.value = Date.now() - new Date(event.timestamp).getTime()
+        } else if (event.type === 'cache_hit') {
+          cacheHitDetected.value = true
+          const cachedContent = typeof event.result === 'string'
+            ? event.result
+            : event.result?.final_response || event.result?.content || ''
+          if (cachedContent) {
+            assistantMsg.content += cachedContent
+            currentResponse.value = assistantMsg.content
+            receivedText = true
+          }
+        } else if (event.type === 'text') {
+          assistantMsg.content += event.content || ''
+          currentResponse.value = assistantMsg.content
+          receivedText = true
+          scrollToBottom()
+        } else if (event.type === 'error') {
+          const errorMsg = sanitizeErrorMessage(event.error)
+          if (!receivedText) {
+            assistantMsg.content = `?**请求失败**\n\n${errorMsg}\n\n💡 请稍后重试`
+          }
+          taskStore.failTask(errorMsg, currentResponse.value)
+        } else if (event.type === 'done') {
+          processingTime.value = event.processing_time ?? processingTime.value
+          latencySummary.value = event.latency_summary || latencySummary.value
+          currentStage.value = 'response'
+          taskStore.completeTask(assistantMsg.content || currentResponse.value)
+          return
+        }
+      }
+    }
+  } catch (error: any) {
+    if (!receivedAnyEvent) {
+      throw error
+    }
+    // 如果已收到事件但流中断（切换页面等），保存已收到的内容，不显示错误
+    console.warn('⚠️ 流在收到事件后中断（可能切换了页面）')
+    if (assistantMsg.content) {
+      // 已收到部分内容，直接保存到会话记录中
+      currentStage.value = 'response'
+      taskStore.completeTask(assistantMsg.content || currentResponse.value)
+      return  // 静默退出，不抛异常
+    }
+    // 没收到任何实质内容，显示友好提示
+    taskStore.clearTaskState()
+    throw new Error('连接已断开，请重新发送您的问题')
+  } finally {
+    if (currentStreamController === controller) {
+      currentStreamController = null
+    }
   }
 }
 
@@ -922,6 +1148,14 @@ function startPolling(assistantMsg: Message) {
         currentTaskId = null
         currentThreadId = null
 
+        // 🔧 修复：保存最终结果到 localStorage，确保页面切换后能恢复
+        localStorage.setItem('multi_agent_last_result', JSON.stringify({
+          query: assistantMsg.query || '',
+          response: status.final_response || '',
+          timestamp: Date.now(),
+        }))
+        saveState()
+
       } else if (status.status === 'failed') {
         stopPolling()
         isLoading.value = false
@@ -1018,7 +1252,11 @@ async function resumeTaskFromStorage() {
     
     const status = await response.json()
     
-    if (status.status === 'completed') {
+    if (status.needs_clarification && status.clarification_request) {
+      localStorage.removeItem('multi_agent_task_id')
+      localStorage.removeItem('multi_agent_thread_id')
+      return { type: 'clarification', data: status }
+    } else if (status.status === 'completed') {
       // 任务已完成，返回结果
       localStorage.removeItem('multi_agent_task_id')
       localStorage.removeItem('multi_agent_thread_id')
@@ -1040,249 +1278,6 @@ async function resumeTaskFromStorage() {
     return null
   }
 }
-
-
-// SSE 模式（备用）
-async function submitWithSSE(query: string, assistantMsg: Message) {
-  const token = localStorage.getItem('rag_token')
-  
-  const controller = taskStore.getAbortController()
-  const timeoutId = setTimeout(() => controller.abort(), 180000)
-
-  const response = await fetch('/api/v1/chat/orchestrator_chat_stream', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token && { 'Authorization': `Bearer ${token}` }),
-    },
-    body: JSON.stringify({
-      query,
-      session_id: sessionId.value,
-      enable_reflection: enableReflection.value,
-      enable_rag: enableRAG.value,
-    }),
-    signal: controller.signal
-  })
-
-  clearTimeout(timeoutId)
-
-  if (!response.ok) {
-    throw new Error(`服务器返回错误 HTTP ${response.status}`)
-  }
-
-  const reader = response.body?.getReader()
-  if (!reader) throw new Error('无法读取响应')
-
-  const decoder = new TextDecoder('utf-8')
-  let buffer = ''
-  let receivedDone = false
-
-  while (true) {
-    try {
-      const { done, value } = await reader.read()
-      
-      if (done) {
-        break
-      }
-      
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n\n')
-      buffer = lines.pop() || ''
-
-      for (const line of lines) {
-        if (line.trim() && line.startsWith('data: ')) {
-          try {
-            const data = JSON.parse(line.slice(6))
-            await handleStreamEvent(data)
-            
-            if (data.type === 'done') {
-              receivedDone = true
-            }
-          } catch (e) {
-            console.error('解析SSE事件失败:', e)
-          }
-        }
-      }
-
-    } catch (readError: any) {
-      if (readError.name === 'AbortError') {
-        throw new Error('请求超时（10分钟），服务器可能正在重启或处理时间过长')
-      }
-      throw readError
-    }
-  }
-
-  try {
-  if (!receivedDone && currentResponse.value) {
-    assistantMsg.content = currentResponse.value + '\n\n⚠️ **连接意外中断**\n\n系统可能在处理过程中重启。请检查上方内容是否完整，如有需要可以重新发起请求'
-  } else if (!receivedDone && !currentResponse.value) {
-    throw new Error('连接意外中断，未收到任何响应')
-  } else {
-    if (sessionId.value) {
-      assistantMsg.intent = intentAnalysis.value ? {
-        category: intentAnalysis.value.category,
-        confidence: intentAnalysis.value.confidence,
-        routing_strategy: intentAnalysis.value.strategy,
-      } : undefined
-      assistantMsg.specialists = [...activeSpecialists.value]
-      assistantMsg.needs_human_review = reflectionResult.value?.includes('需要人工审核') || false
-      assistantMsg.processing_time = processingTime.value || undefined
-    }
-  }
-  } catch (error: any) {
-    console.error('流式请求错误:', error)
-    
-    let errorMessage = error.message || '未知错误'
-    
-    if (errorMessage.includes('Failed to fetch') || errorMessage.includes('NetworkError')) {
-      errorMessage = '网络连接失败，可能是服务器正在重启或不可访问'
-    } else if (errorMessage.includes('timeout') || errorMessage.includes('Timeout')) {
-      errorMessage = '请求超时，服务器处理时间过长，请稍后重试'
-    } else if (errorMessage.includes('abort')) {
-      errorMessage = '请求被取消或连接超时'
-    }
-    
-    assistantMsg.content = `?**请求失败**\n\n${errorMessage}\n\n💡 **建议**：\n1. 检查服务器是否正在运行\n2. 稍后重试您的问题\n3. 如果问题持续存在，请联系管理员`
-    taskStore.failTask(errorMessage, currentResponse.value)
-  } finally {
-    isLoading.value = false
-    scrollToBottom()
-  }
-}
-
-
-
-async function handleStreamEvent(data: any) {
-  const lastMsg = messages.value[messages.value.length - 1]
-
-  switch (data.type) {
-    case 'init':
-      sessionId.value = data.session_id
-      break
-
-    case 'stage':
-      currentStage.value = data.stage
-      taskStore.updateTaskProgress(data.stage, data)
-      if (data.stage === 'intent' && data.intent) {
-        intentAnalysis.value = {
-          category: data.intent.category,
-          confidence: data.intent.confidence,
-          strategy: data.intent.routing_strategy,
-        }
-        taskStore.setIntentAnalysis(data.intent.category, data.intent.confidence, data.intent.routing_strategy)
-      }
-      if (data.stage === 'specialists' && data.specialists) {
-        activeSpecialists.value = data.specialists
-      }
-      if (data.stage === 'reflection' && data.result) {
-        reflectionResult.value = data.result
-        taskStore.setReflectionResult(data.result)
-      }
-      break
-
-    case 'text':
-      currentResponse.value += data.content
-      lastMsg.content = currentResponse.value
-      taskStore.appendResponseContent(data.content)
-      scrollToBottom()
-      break
-
-    case 'chunk':
-      currentResponse.value += data.content
-      lastMsg.content = currentResponse.value
-      taskStore.appendResponseContent(data.content)
-      scrollToBottom()
-      break
-
-
-
-    case 'sources':
-      break
-
-    case 'ttft':
-      if (data.ttft_ms !== undefined) {
-        ttftMs.value = data.ttft_ms
-        console.log(`🎯 TTFT 事件: ${data.ttft_ms}ms, 阶段: ${data.stage}`)
-      }
-      // TTFT 消息不追加到响应内容，只记录日志
-      break
-
-    case 'cache_hit':
-      cacheHitDetected.value = true
-      console.log('💾 缓存命中！结果:', data.result)
-      if (data.result) {
-        currentResponse.value = typeof data.result === 'string' 
-          ? data.result 
-          : JSON.stringify(data.result)
-        lastMsg.content = currentResponse.value
-        taskStore.appendResponseContent(currentResponse.value)
-      }
-      if (data.latency_ms !== undefined) {
-        console.log(`⏱️ 缓存响应延迟: ${data.latency_ms}ms`)
-      }
-      scrollToBottom()
-      break
-
-    case 'progress':
-      progressEvents.value.push({
-        timestamp: data.timestamp || new Date().toISOString(),
-        completed_chunks: data.completed_chunks,
-        stream_id: data.stream_id
-      })
-      console.log(`📊 进度更新: 已完成 ${data.completed_chunks} 个块`)
-      break
-
-    case 'thinking':
-      // 智能体思考中，显示进度但不追加到最终响应
-      console.log('🤔 智能体思考中:', data.message, '进度:', data.progress)
-      // 思考消息只显示在控制台，不追加到响应内容
-      break
-
-    case 'done':
-      currentStage.value = 'response'
-      processingTime.value = data.processing_time
-      taskStore.updateTaskProgress('response', data)
-      if (data.latency_summary) {
-        latencySummary.value = data.latency_summary
-        console.log('📊 延迟摘要:', data.latency_summary)
-      }
-      if (data.from_cache) {
-        cacheHitDetected.value = true
-        console.log('💾 响应来自缓存')
-      }
-      lastMsg.content = currentResponse.value
-      isLoading.value = false
-      
-      taskStore.completeTask(currentResponse.value, {
-        intent: intentAnalysis.value ? {
-          category: intentAnalysis.value.category,
-          confidence: intentAnalysis.value.confidence,
-          routing_strategy: intentAnalysis.value.strategy,
-        } : undefined,
-        specialists: [...activeSpecialists.value],
-        needs_human_review: reflectionResult.value?.includes('需要人工审核') || false,
-        processing_time: data.processing_time,
-      })
-      
-      console.log('✅ 流式响应完成，处理时间:', data.processing_time, 'ms')
-      break
-
-    case 'error':
-      console.error('❌ 流式响应错误:', data.error)
-      lastMsg.content = `⚠️ **错误**: ${data.error}`
-      isLoading.value = false
-      break
-
-    case 'clarification':
-      console.log('💬 收到追问请求:', data.data)
-      showClarificationDialog(data.data)
-      break
-
-    default:
-      console.warn('⚠️ 未知的 SSE 事件类型:', data.type, data)
-  }
-}
-
 
 
 function showClarificationDialog(data: any) {
@@ -1351,7 +1346,7 @@ function showClarificationDialog(data: any) {
   scrollToBottom()
 }
 
-function handleUserClarification(text: string) {
+async function handleUserClarification(text: string) {
   delete window.handleClarificationSelect
   delete window.handleClarificationSubmit
   delete window.handleClarificationDismiss
@@ -1376,7 +1371,16 @@ function handleUserClarification(text: string) {
   currentStage.value = null
   currentResponse.value = ''
   
-  submitWithSSE(text, assistantMsg)
+  try {
+    await submitAsyncQuery(text, assistantMsg)
+  } catch (error: any) {
+    console.error('追问提交失败:', error)
+    const errorMessage = error.message || '未知错误'
+    assistantMsg.content = `?**请求失败**\n\n${errorMessage}\n\n💡 请稍后重试`
+    taskStore.failTask(errorMessage, currentResponse.value)
+    isLoading.value = false
+    scrollToBottom()
+  }
 }
 
 function resetAgentStages() {
@@ -1763,10 +1767,12 @@ function renderMarkdown(content: string): string {
         <div class="w-full px-6 lg:px-12">
           <div class="flex items-center gap-3 bg-white rounded-2xl border border-gray-200 p-3 shadow-sm hover:shadow-md transition-shadow">
             <textarea
+              ref="chatInputRef"
               v-model="userInput"
+              @input="resizeChatInput"
               @keydown.enter.exact.prevent="sendMessage"
               placeholder="输入您的问题，多智能体系统会自动选择合适的专家处理..."
-              class="flex-1 p-2 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-700 placeholder-gray-400 text-sm"
+              class="min-h-[44px] max-h-[148px] flex-1 p-2 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-700 placeholder-gray-400 text-sm leading-6"
               rows="1"
             ></textarea>
             <button

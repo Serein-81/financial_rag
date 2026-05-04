@@ -29,16 +29,23 @@ class ImageParser(FileParserStrategy):
         
         try:
             from app.services.ocr_service import ocr_service
-            
+
             # 异步调用 OCR 服务
             content = await ocr_service.extract_text_from_image_bytes(file_bytes)
-            
+
             if not content or content.strip() in ["[图片文件 - OCR功能未启用]", "[图片文件 - OCR识别失败]"]:
                 raise ValueError("OCR 识别失败或未启用")
-            
+
             return content.strip()
-            
+
         except ImportError:
-            raise Exception("OCR 依赖未安装，无法处理图片文件")
+            raise Exception(
+                "图片文件暂不支持（Python 依赖未安装），请上传 PDF、Word、TXT、Markdown 等文字型文件"
+            )
         except Exception as e:
-            raise Exception(f"图片 OCR 识别失败: {str(e)}")
+            err_msg = str(e)
+            if "tesseract" in err_msg.lower() or "not installed" in err_msg.lower():
+                raise Exception(
+                    "图片文件暂不支持（Tesseract OCR 引擎未安装），请上传 PDF、Word、TXT、Markdown 等文字型文件"
+                )
+            raise Exception(f"图片处理失败: {err_msg[:100]}")

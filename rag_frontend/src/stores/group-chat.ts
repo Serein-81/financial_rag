@@ -36,6 +36,7 @@ export const useGroupChatStore = defineStore('groupChat', () => {
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   let notificationPollTimer: ReturnType<typeof setInterval> | null = null
+  let notificationPollTimeout: ReturnType<typeof setTimeout> | null = null
   let reconnectAttempts = 0
   const notificationErrorCount = ref(0)
   let currentGroupId: string | null = null
@@ -77,17 +78,42 @@ export const useGroupChatStore = defineStore('groupChat', () => {
     }
   }
 
+  function _scheduleNextPoll(delay: number = 10000) {
+    stopNotificationPoll()
+    notificationPollTimeout = setTimeout(() => {
+      // 页面不可见时跳过轮询，等 visibilitychange 恢复
+      if (document.visibilityState === 'hidden') {
+        _scheduleNextPoll(10000) // 等 10 秒再检查一次
+        return
+      }
+      fetchNotifications().finally(() => {
+        _scheduleNextPoll(10000)
+      })
+    }, delay)
+  }
+
   function startNotificationPoll() {
     stopNotificationPoll()
-    notificationPollTimer = setInterval(() => {
-      fetchNotifications()
-    }, 10000)
+    _scheduleNextPoll(10000)
+    // 监听页面可见性变化，切回时立即刷新
+    document.addEventListener('visibilitychange', _onVisibilityChange)
   }
 
   function stopNotificationPoll() {
+    if (notificationPollTimeout) {
+      clearTimeout(notificationPollTimeout)
+      notificationPollTimeout = null
+    }
     if (notificationPollTimer) {
       clearInterval(notificationPollTimer)
       notificationPollTimer = null
+    }
+    document.removeEventListener('visibilitychange', _onVisibilityChange)
+  }
+
+  function _onVisibilityChange() {
+    if (document.visibilityState === 'visible') {
+      fetchNotifications() // 切回前台时立即刷新一次
     }
   }
 

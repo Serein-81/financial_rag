@@ -82,20 +82,21 @@ class PolicyService:
 
     async def crawl_policies(self, max_per_source: int = 20) -> List[CrawledPolicy]:
         """
-        采集政策
-        
+        采集政策 — 使用增强版爬虫（RSS + Sitemap + ETag 缓存 + 多级降级）
+
         Args:
             max_per_source: 每个来源最大采集数量
-            
+
         Returns:
             List[CrawledPolicy]: 采集的政策列表
         """
         logger.info(f"🔍 开始采集政策（每来源最大: {max_per_source}）...")
-        
+
         try:
-            policies = await policy_crawler_service.crawl_all_sources(
+            from app.services.policy_crawler_enhanced import crawl_all_sources_enhanced
+            policies = await crawl_all_sources_enhanced(
                 max_per_source=max_per_source,
-                include_sample=settings.POLICY_SAMPLE_FALLBACK_ENABLED
+                include_sample=settings.POLICY_SAMPLE_FALLBACK_ENABLED,
             )
             
             logger.info(f"✅ 采集完成: {len(policies)} 条政策")

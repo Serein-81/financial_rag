@@ -1,15 +1,21 @@
 """
 LangGraph 状态定义
 
-定义多智能体工作流的状态结构和类型
+使用 Pydantic BaseModel 替代 TypedDict，提供运行时类型校验。
+每个 state 写入操作（specialist_results、rag_context 等）在 LangGraph
+的 reducer 合并时获得自动校验，非法数据在写入瞬间被拦截。
 """
 
-from typing import TypedDict, Annotated, Sequence, List, Dict, Any, Optional, Literal
+from typing import Annotated, List, Dict, Any, Optional
 import operator
 from enum import Enum
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
+
+# =========================================================================
+# 枚举
+# =========================================================================
 
 class IntentCategory(str, Enum):
     """意图分类"""
@@ -39,9 +45,13 @@ class QualityLevel(str, Enum):
     UNACCEPTABLE = "unacceptable"
 
 
+# =========================================================================
+# 结构化数据模型（带运行时校验）
+# =========================================================================
+
 class AgentMessage(BaseModel):
     """Agent 消息"""
-    role: Literal["user", "assistant", "system", "tool"]
+    role: str  # "user" | "assistant" | "system" | "tool"
     content: str
     timestamp: datetime = Field(default_factory=datetime.now)
     metadata: Dict[str, Any] = Field(default_factory=dict)
@@ -52,7 +62,7 @@ class SpecialistResult(BaseModel):
     specialist_type: SpecialistType
     query: str
     response: str
-    confidence: float = Field(ge=0.0, le=1.0)
+    confidence: float = Field(default=0.85, ge=0.0, le=1.0)
     tools_used: List[str] = Field(default_factory=list)
     execution_time_ms: float = 0.0
     error: Optional[str] = None
@@ -66,74 +76,156 @@ class ReflectionResult(BaseModel):
     suggestions: List[str] = Field(default_factory=list)
     needs_human_review: bool = False
     revised_response: Optional[str] = None
+    skipped: bool = False  # 🆕 标记反思是否被跳过（异常/降级）
 
 
-class AgentState(TypedDict):
+# =========================================================================
+# 智能体状态（Pydantic BaseModel 替代 TypedDict）
+# =========================================================================
+
+class AgentState(BaseModel):
     """
-    LangGraph 智能体状态
-    
-    这是整个多智能体工作流的核心状态定义。
-    
-    ⚠️ 关键设计：使用 Annotated[..., operator.add] 支持并行节点结果合并。
-    当多个专家并行执行时，operator.add 会将结果合并而不是覆盖。
-    """
-    # 会话信息
-    session_id: str
-    tenant_id: str
-    user_id: str
-    
-    # 用户输入
-    user_query: str
-    
-    # 意图识别
-    intent: Optional[str]
-    intent_confidence: float
-    
-    # 路由信息
-    routing_strategy: Optional[str]
-    specialists_needed: Annotated[List[str], operator.add]
-    
-    # RAG 检索结果（使用 operator.add 并行合并）
-    rag_context: Annotated[List[Dict[str, Any]], operator.add]
-    
-    # 专家结果列表（使用 operator.add 并行合并）
-    # 多个专家并行执行时，每个专家的输出会被追加到列表中
-    specialist_results: Annotated[List[Dict[str, Any]], operator.add]
-    
-    # 反思结果
-    reflection_result: Optional[Dict[str, Any]]
-    enable_reflection: bool
-    
-    # 聚合响应
-    aggregated_response: Optional[str]
-    
-    # 迭代控制
-    iteration: int
-    max_iterations: int
-    
-    # 重试计数
-    retry_count: int
-    max_retries: int
-    
-    # 错误跟踪
-    error: Optional[str]
-    error_history: List[str]
-    
-    # 消息历史（使用 operator.add 并行合并）
-    messages: Annotated[List[Any], operator.add]
-    
-    # 元数据
-    metadata: Dict[str, Any]
-    
-    # 最终结果
-    final_answer: Optional[str]
-    output: str  # 用于存放最终报告输出
-    needs_human_review: bool
-    
-    # 追问状态（用于模糊输入处理）
-    needs_clarification: bool
-    clarification_request: Optional[Dict[str, Any]]
+    LangGraph 智能体状态 — Pydantic BaseModel 版
 
+    关键变更：
+    - TypedDict → BaseModel：所有字段在写入时获得类型校验
+    - Annotated [+ operator.add]：LangGraph reducer 保持正常工作
+    - field_validator：在边界拦截非法数据
+
+    ⚠️ 与 TypedDict 的使用差异：
+    - 读：state["field"] → state.field
+    - 写：state["field"] = x → state.field = x
+      （但通过 LangGraph 的 return {**state, ...} 方式仍然兼容）
+    """
+
+    # ── 会话信息 ──
+    session_id: str = ""
+    tenant_id: str = ""
+    user_id: str = ""
+
+    # ── 用户输入 ──
+    user_query: str = Field(default="", max_length=10000)
+
+    # ── 意图识别 ──
+    intent: Optional[str] = None
+    intent_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+
+    # ── 路由信息 ──
+    routing_strategy: Optional[str] = None
+    specialists_needed: Annotated[List[str], operator.add] = Field(default_factory=list)
+
+    # ── RAG 检索结果 ──
+    rag_context: Annotated[List[Dict[str, Any]], operator.add] = Field(default_factory=list)
+
+    # ── 图谱路径检索结果 ──
+    graph_path_context: Optional[Dict[str, Any]] = None
+
+    # ── 专家结果列表 ──
+    specialist_results: Annotated[List[Dict[str, Any]], operator.add] = Field(default_factory=list)
+
+    # ── 反思结果 ──
+    reflection_result: Optional[Dict[str, Any]] = None
+    enable_reflection: bool = True
+
+    # ── 聚合响应 ──
+    aggregated_response: Optional[str] = None
+
+    # ── 迭代控制 ──
+    iteration: int = 0
+    max_iterations: int = Field(default=10, ge=1, le=100)
+
+    # ── 重试计数 ──
+    retry_count: int = Field(default=0, ge=0)
+    max_retries: int = Field(default=3, ge=0, le=20)
+
+    # ── 追踪 ──
+    trace_id: Optional[str] = None  # Agent Tracer 追踪 ID
+
+    # ── 错误跟踪 ──
+    error: Optional[str] = None
+    error_history: List[str] = Field(default_factory=list)
+
+    # ── 消息历史 ──
+    messages: Annotated[List[Any], operator.add] = Field(default_factory=list)
+
+    # ── 元数据 ──
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+    # ── 技能系统 ──
+    activated_skills: Annotated[List[Dict[str, Any]], operator.add] = Field(default_factory=list)
+
+    # ── 最终结果 ──
+    final_answer: Optional[str] = None
+    output: str = ""
+    needs_human_review: bool = False
+
+    # ── 追问状态 ──
+    needs_clarification: bool = False
+    clarification_request: Optional[Dict[str, Any]] = None
+
+    # ── 兼容 TypedDict 的 dict-style API ──
+
+    def __getitem__(self, key):
+        """支持 state['field'] 读取"""
+        try:
+            return getattr(self, key)
+        except AttributeError:
+            raise KeyError(key)
+
+    def __setitem__(self, key, value):
+        """支持 state['field'] = value 写入"""
+        setattr(self, key, value)
+
+    def __iter__(self):
+        """支持 dict(state) 和 {**state} 解包（yield keys）"""
+        return iter(self.model_dump().keys())
+
+    def get(self, key, default=None):
+        """支持 state.get('field', default)"""
+        return getattr(self, key, default)
+
+    def copy(self):
+        """兼容 TypedDict 的 .copy() 方法"""
+        return self.model_copy(deep=True)
+
+    def setdefault(self, key, default=None):
+        """兼容 TypedDict 的 .setdefault() 方法"""
+        if hasattr(self, key):
+            val = getattr(self, key)
+            if val is not None:
+                return val
+        # 属性不存在或为 None — 设置为默认值
+        setattr(self, key, default)
+        return default
+
+    def keys(self):
+        return self.model_dump().keys()
+
+    def values(self):
+        return self.model_dump().values()
+
+    def items(self):
+        return self.model_dump().items()
+
+    # ── 校验 ──
+    @field_validator("user_query")
+    @classmethod
+    def query_not_empty(cls, v):
+        if v and not v.strip():
+            raise ValueError("user_query cannot be only whitespace")
+        return v
+
+    model_config = {
+        "extra": "forbid",  # 禁止写入未定义的字段
+        "validate_assignment": True,  # 赋值时校验
+        "use_enum_values": False,
+        "arbitrary_types_allowed": False,
+    }
+
+
+# =========================================================================
+# 辅助函数
+# =========================================================================
 
 def create_initial_state(
     session_id: str,
@@ -142,11 +234,12 @@ def create_initial_state(
     user_query: str,
     max_iterations: int = 10,
     max_retries: int = 3,
+    messages: Optional[List[Any]] = None,
     **metadata
 ) -> AgentState:
     """
     创建初始状态
-    
+
     Args:
         session_id: 会话ID
         tenant_id: 租户ID
@@ -154,8 +247,9 @@ def create_initial_state(
         user_query: 用户查询
         max_iterations: 最大迭代次数
         max_retries: 最大重试次数
-        **metadata: 其他元数据
-        
+        messages: 历史消息列表
+        **metadata: 其他元数据（enable_reflection, entities, trace_id 等）
+
     Returns:
         AgentState: 初始状态
     """
@@ -173,13 +267,15 @@ def create_initial_state(
         reflection_result=None,
         enable_reflection=metadata.get("enable_reflection", True),
         aggregated_response=None,
+        activated_skills=[],
         iteration=0,
         max_iterations=max_iterations,
         retry_count=0,
         max_retries=max_retries,
+        trace_id=metadata.get("trace_id"),
         error=None,
         error_history=[],
-        messages=[],
+        messages=messages or [],
         metadata=metadata,
         final_answer=None,
         output="",
@@ -190,26 +286,17 @@ def create_initial_state(
 
 
 def update_state(state: AgentState, **updates) -> AgentState:
-    """
-    更新状态
-    
-    Args:
-        state: 当前状态
-        **updates: 要更新的字段
-        
-    Returns:
-        AgentState: 更新后的状态
-    """
-    new_state = state.copy()
+    """创建新的 state 实例并应用更新"""
+    new_state = state.model_copy(deep=True)
     for key, value in updates.items():
-        if key in new_state:
-            new_state[key] = value
+        if hasattr(new_state, key):
+            setattr(new_state, key, value)
     return new_state
 
 
 def increment_iteration(state: AgentState) -> AgentState:
     """增加迭代计数"""
-    return update_state(state, iteration=state["iteration"] + 1)
+    return update_state(state, iteration=state.iteration + 1)
 
 
 def add_error(state: AgentState, error: str) -> AgentState:
@@ -217,7 +304,7 @@ def add_error(state: AgentState, error: str) -> AgentState:
     return update_state(
         state,
         error=error,
-        error_history=state["error_history"] + [error]
+        error_history=state.error_history + [error]
     )
 
 
@@ -225,5 +312,5 @@ def add_specialist_result(state: AgentState, result: SpecialistResult) -> AgentS
     """添加专家结果"""
     return update_state(
         state,
-        specialist_results=state["specialist_results"] + [result]
+        specialist_results=state.specialist_results + [result.model_dump()]
     )

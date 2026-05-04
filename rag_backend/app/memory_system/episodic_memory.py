@@ -19,7 +19,8 @@ from datetime import datetime, timedelta
 from sqlalchemy import select, update, func
 from .base_memory import BaseMemory, MemoryItem
 from app.db import AsyncSessionLocal
-from app.models.chat import ChatMessage, ChatSession
+from app.models.chat import ChatSession
+from app.models.episodic_memory import EpisodicMemoryRecord
 from app.services.embedding_service import embedding_service
 
 logger = logging.getLogger(__name__)
@@ -63,37 +64,37 @@ class EpisodicMemory(BaseMemory):
         logger.info(f"[情景记忆] 初始化 | Session: {session_id[:8]}... | User: {user_id}")
     
     async def load_from_db(self) -> None:
-        """从数据库加载会话历史"""
+        """从情景记忆表加载记忆"""
         if self.loaded:
             return
-        
+
         async with AsyncSessionLocal() as db:
             result = await db.execute(
-                select(ChatMessage)
-                .where(ChatMessage.session_id == self.session_id)
-                .order_by(ChatMessage.created_at.asc())
+                select(EpisodicMemoryRecord)
+                .where(EpisodicMemoryRecord.session_id == self.session_id)
+                .order_by(EpisodicMemoryRecord.created_at.asc())
             )
-            messages = result.scalars().all()
-            
-            for msg in messages:
+            records = result.scalars().all()
+
+            for rec in records:
                 item = MemoryItem(
-                    id=str(msg.id),
-                    content=msg.content,
-                    role=msg.role,
-                    timestamp=msg.created_at,
-                    importance=msg.importance or 0.5,  # 🆕 使用数据库中的重要性
-                    access_count=msg.access_count or 0,  # 🆕 访问次数
-                    last_access=msg.last_accessed or msg.created_at,  # 🆕 最后访问时间
-                    embedding=msg.embedding,  # 🆕 向量嵌入
+                    id=str(rec.id),
+                    content=rec.content,
+                    role=rec.role,
+                    timestamp=rec.created_at,
+                    importance=rec.importance or 0.5,
+                    access_count=rec.access_count or 0,
+                    last_access=rec.last_accessed or rec.created_at,
+                    embedding=rec.embedding,
                     metadata={
                         "session_id": self.session_id,
-                        "sources": msg.sources or []
+                        "sources": rec.sources or []
                     }
                 )
                 self.memories.append(item)
-            
+
             self.loaded = True
-            logger.info(f"[情景记忆] 从数据库加载 {len(messages)} 条记忆")
+            logger.info(f"[情景记忆] 从数据库加载 {len(records)} 条记忆")
 
     async def _ensure_session_exists(self) -> bool:
         """
@@ -190,28 +191,30 @@ class EpisodicMemory(BaseMemory):
         if session_exists:
             try:
                 session_uuid = uuid.UUID(str(self.session_id))
+                user_uuid = uuid.UUID(str(self.user_id)) if _is_valid_uuid(self.user_id) else None
 
                 async with AsyncSessionLocal() as db:
                     # 添加会话ID到元数据
                     if "session_id" not in item.metadata:
                         item.metadata["session_id"] = self.session_id
 
-                    db_message = ChatMessage(
+                    db_record = EpisodicMemoryRecord(
                         session_id=session_uuid,
+                        user_id=user_uuid,
                         role=item.role,
                         content=item.content.strip(),
                         sources=item.metadata.get("sources", []),
-                        embedding=item.embedding,  # 🆕 保存向量
-                        importance=item.importance,  # 🆕 保存重要性
-                        access_count=item.access_count,  # 🆕 保存访问次数
-                        last_accessed=item.last_access  # 🆕 保存最后访问时间
+                        embedding=item.embedding,
+                        importance=item.importance,
+                        access_count=item.access_count,
+                        last_accessed=item.last_access,
                     )
-                    db.add(db_message)
+                    db.add(db_record)
                     await db.commit()
-                    await db.refresh(db_message)
+                    await db.refresh(db_record)
 
                     # 更新 item 的 id
-                    item.id = str(db_message.id)
+                    item.id = str(db_record.id)
 
                 logger.debug(f"[情景记忆] 保存记忆 | ID: {item.id[:8]}...")
 
@@ -384,10 +387,10 @@ class EpisodicMemory(BaseMemory):
             async with AsyncSessionLocal() as db:
                 # 批量更新数据库
                 await db.execute(
-                    update(ChatMessage)
-                    .where(ChatMessage.id.in_(memory_ids))
+                    update(EpisodicMemoryRecord)
+                    .where(EpisodicMemoryRecord.id.in_(memory_ids))
                     .values(
-                        access_count=ChatMessage.access_count + 1,
+                        access_count=EpisodicMemoryRecord.access_count + 1,
                         last_accessed=func.now()
                     )
                 )
@@ -420,7 +423,7 @@ class EpisodicMemory(BaseMemory):
                 # 同步到数据库
                 async with AsyncSessionLocal() as db:
                     result = await db.execute(
-                        select(ChatMessage).where(ChatMessage.id == item_id)
+                        select(EpisodicMemoryRecord).where(EpisodicMemoryRecord.id == item_id)
                     )
                     db_message = result.scalar_one_or_none()
                     if db_message:
@@ -442,7 +445,7 @@ class EpisodicMemory(BaseMemory):
                 # 从数据库删除
                 async with AsyncSessionLocal() as db:
                     result = await db.execute(
-                        select(ChatMessage).where(ChatMessage.id == item_id)
+                        select(EpisodicMemoryRecord).where(EpisodicMemoryRecord.id == item_id)
                     )
                     db_message = result.scalar_one_or_none()
                     if db_message:

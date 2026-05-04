@@ -1,6 +1,8 @@
+import json
 import time
 import asyncio
 import logging
+import re
 from typing import List, Optional, Dict, Any, Callable
 from datetime import datetime
 from sqlalchemy import text, select
@@ -17,6 +19,106 @@ logger = logging.getLogger(__name__)
 
 
 class SearchService:
+    PROCESS_QUERY_TERMS = [
+        "怎么", "如何", "流程", "步骤", "申报", "办理", "操作", "提交", "填写",
+        "材料", "资料", "缴款", "登录", "审核", "确认"
+    ]
+    PROCESS_EVIDENCE_TERMS = [
+        "步骤", "流程", "第一", "第二", "第三", "首先", "然后", "最后", "登录",
+        "填写", "选择", "上传", "提交", "确认", "审核", "缴款", "申报表",
+        "附列资料", "办税", "电子税务局"
+    ]
+    CODE_FRAGMENT_TERMS = [
+        "class ", "def ", "async def", "function ", "import ", "return ", "await ",
+        "```", "{", "}", "api", "endpoint", "integration", "submit_", "service"
+    ]
+
+    def _extract_query_terms(self, query: str) -> List[str]:
+        terms = [term for term in self.PROCESS_QUERY_TERMS if term in query]
+        terms.extend(re.findall(r"[\u4e00-\u9fff]{2,6}", query))
+        seen = set()
+        return [term for term in terms if not (term in seen or seen.add(term))]
+
+    def _evaluate_answerability(
+        self,
+        query: str,
+        content: str,
+        rank: int,
+        score: float,
+        top_gap: Optional[float]
+    ) -> Dict[str, Any]:
+        query_terms = self._extract_query_terms(query)
+        matched_terms = [term for term in query_terms if term and term in content]
+        intent_coverage = len(matched_terms) / max(len(query_terms), 1)
+
+        asks_process = any(term in query for term in ["怎么", "如何", "流程", "步骤", "申报", "办理", "操作"])
+        process_hits = [term for term in self.PROCESS_EVIDENCE_TERMS if term in content]
+        has_process_steps = len(process_hits) >= (2 if asks_process else 1)
+
+        lower_content = content.lower()
+        code_hits = [term for term in self.CODE_FRAGMENT_TERMS if term in lower_content]
+        is_code_or_plan_fragment = len(code_hits) >= 3 or bool(re.search(r"\b(class|def|async def)\s+\w+", lower_content))
+
+        enough_context = len(content.strip()) >= 180 and (
+            "。" in content or "\n" in content or len(process_hits) >= 2
+        )
+        top_gap_clear = bool(top_gap is not None and top_gap >= 0.08)
+
+        answerability = (
+            0.35 * intent_coverage +
+            0.25 * (1.0 if has_process_steps else 0.0) +
+            0.20 * (1.0 if enough_context else 0.0) +
+            0.10 * (0.0 if is_code_or_plan_fragment else 1.0) +
+            0.10 * min(max(score, 0.0), 1.0)
+        )
+        if rank == 1 and top_gap_clear:
+            answerability += 0.03
+
+        return {
+            "answerability_score": round(min(answerability, 1.0), 4),
+            "flags": {
+                "intent_coverage": round(intent_coverage, 4),
+                "matched_intent_terms": matched_terms[:10],
+                "asks_process": asks_process,
+                "has_process_steps": has_process_steps,
+                "process_terms": process_hits[:10],
+                "is_code_or_plan_fragment": is_code_or_plan_fragment,
+                "code_fragment_terms": code_hits[:8],
+                "enough_context": enough_context,
+                "top_gap": round(top_gap, 4) if top_gap is not None else None,
+                "top_gap_clear": top_gap_clear,
+            }
+        }
+
+    def _annotate_answerability(self, query: str, results: List[SearchResultItem]) -> List[SearchResultItem]:
+        if not results:
+            return results
+
+        sorted_by_vector = sorted(results, key=lambda item: item.score, reverse=True)
+        top_gap = None
+        if len(sorted_by_vector) >= 2:
+            top_gap = sorted_by_vector[0].score - sorted_by_vector[1].score
+
+        for idx, item in enumerate(sorted_by_vector, 1):
+            evaluation = self._evaluate_answerability(
+                query=query,
+                content=item.content,
+                rank=idx,
+                score=item.score,
+                top_gap=top_gap if idx == 1 else None
+            )
+            item.answerability_score = evaluation["answerability_score"]
+            item.evidence_flags = evaluation["flags"]
+
+        return sorted(
+            sorted_by_vector,
+            key=lambda item: (
+                item.answerability_score or 0.0,
+                item.score
+            ),
+            reverse=True
+        )
+
     async def _get_tenant_id_from_kb(self, kb_id: str) -> Optional[str]:
         """从知识库ID获取租户ID"""
         if not kb_id:
@@ -35,12 +137,16 @@ class SearchService:
             kb_id: str = None,
             score_threshold: float = 0.6,
             tenant_id: str = None,
-            user_id: str = None
+            user_id: str = None,
+            domain: str = None,
+            metadata_filter: Optional[Dict[str, str]] = None,
+            jsonb_array_filter: Optional[Dict[str, str]] = None
     ) -> List[SearchResultItem]:
         """
         核心搜索方法：修复了 pgvector 类型强转问题及 UUID 类型兼容问题
         🔐 租户隔离：必须传入 tenant_id 进行过滤
         🔐 可见性过滤：私人知识库只有创建者可见，企业知识库整个租户可见
+        📋 元数据过滤：按 meta_info->>'key' = 'value' 做前置过滤（精准召回）
         """
         start_time = time.time()
         results = []
@@ -71,6 +177,36 @@ class SearchService:
                 # 🔐 租户隔离：必须添加 tenant_id 过滤（tenant_id 是字符串类型，不需要 CAST）
                 where_clauses.append("d.tenant_id = :tenant_id")
 
+                params = {
+                    "vector": "[" + ",".join(map(str, query_vector)) + "]",
+                    "threshold": float(score_threshold),
+                    "limit": int(actual_top_k),
+                    "tenant_id": str(tenant_id),
+                }
+
+                # [v2 增强] 领域过滤
+                if domain:
+                    where_clauses.append("c.domain = :domain")
+                    params["domain"] = domain
+
+                # [v2 增强] JSONB 元数据前置过滤（精准召回）
+                if metadata_filter:
+                    for fkey, fval in metadata_filter.items():
+                        param_key = f"mf_{fkey}"
+                        where_clauses.append(
+                            f"c.meta_info->>'{fkey}' = :{param_key}"
+                        )
+                        params[param_key] = fval
+
+                # [v2 增强] JSONB 数组包含过滤（财务指标实体检索）
+                # 内联 JSON 值，避免 asyncpg 混合参数风格问题
+                if jsonb_array_filter:
+                    for fkey, fval in jsonb_array_filter.items():
+                        json_val = json.dumps([fval])
+                        where_clauses.append(
+                            f"c.meta_info->'{fkey}' @> '{json_val}'::jsonb"
+                        )
+
                 # 🔐 两层可见性过滤
                 if user_id:
                     # ① 知识库可见性：私人知识库只有创建者可见，企业知识库整个租户可见
@@ -89,13 +225,6 @@ class SearchService:
                     visibility_filter = True
                 else:
                     visibility_filter = False
-
-                params = {
-                    "vector": "[" + ",".join(map(str, query_vector)) + "]",
-                    "threshold": float(score_threshold),
-                    "limit": int(actual_top_k),
-                    "tenant_id": str(tenant_id)
-                }
 
                 if visibility_filter and user_id:
                     params["user_id"] = str(user_id)
@@ -464,6 +593,84 @@ class SearchService:
         finally:
             latency = time.time() - start_time
             print(f"📊 搜索统计完成 | 耗时: {latency:.4f}s")
+
+    async def bm25_search(
+        self,
+        query: str,
+        top_k: int = 100,
+        tenant_id: str = None,
+        domain: str = None,
+        metadata_filter: Optional[Dict[str, str]] = None,
+        jsonb_array_filter: Optional[Dict[str, str]] = None,
+    ) -> List[Dict]:
+        """
+        BM25 稀疏检索 (tsvector + ts_rank)
+
+        Args:
+            query: 用户查询原文
+            top_k: 返回结果数
+            tenant_id: 租户 ID
+            domain: 领域过滤
+            metadata_filter: JSONB 前置过滤条件
+            jsonb_array_filter: JSONB 数组包含过滤 (如 metrics)
+
+        Returns:
+            [{"id", "content", "domain", "meta_info", "bm25_score"}, ...]
+        """
+        if not query or not query.strip():
+            return []
+
+        async with AsyncSessionLocal() as db:
+            select_clause = [
+                "c.id", "c.content", "c.domain", "c.node_type",
+                "c.meta_info", "c.relationships", "c.summary",
+                "ts_rank(c.content_tsvector, plainto_tsquery('simple', :q)) AS bm25_score"
+            ]
+            where_clauses = [
+                "c.content_tsvector @@ plainto_tsquery('simple', :q)",
+                "d.tenant_id = :tenant_id",
+            ]
+            params = {"q": query, "tenant_id": str(tenant_id), "limit": int(top_k)}
+
+            if domain:
+                where_clauses.append("c.domain = :domain")
+                params["domain"] = domain
+
+            if metadata_filter:
+                for fkey, fval in metadata_filter.items():
+                    pkey = f"mf_{fkey}"
+                    where_clauses.append(f"c.meta_info->>'{fkey}' = :{pkey}")
+                    params[pkey] = fval
+
+            if jsonb_array_filter:
+                for fkey, fval in jsonb_array_filter.items():
+                    json_val = json.dumps([fval])
+                    where_clauses.append(
+                        f"c.meta_info->'{fkey}' @> '{json_val}'::jsonb"
+                    )
+
+            sql = text(f"""
+                SELECT {', '.join(select_clause)}
+                FROM document_chunks c
+                JOIN documents d ON c.document_id = d.id
+                WHERE {' AND '.join(where_clauses)}
+                ORDER BY bm25_score DESC
+                LIMIT :limit
+            """)
+
+            result = await db.execute(sql, params)
+            rows = result.mappings().all()
+
+            return [
+                {
+                    "id": str(row["id"]),
+                    "content": row["content"],
+                    "domain": row["domain"],
+                    "meta_info": row["meta_info"],
+                    "bm25_score": float(row["bm25_score"]),
+                }
+                for row in rows
+            ]
 
     async def _save_search_log(self, query: str, count: int, latency: float):
         async with AsyncSessionLocal() as db:

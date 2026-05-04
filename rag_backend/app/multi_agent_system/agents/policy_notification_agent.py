@@ -12,11 +12,14 @@
 
 from app.utils.json_compat import json
 import logging
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, TYPE_CHECKING
 from pydantic import BaseModel, Field
 
 from app.agent_framework.llm.base_adapter import BaseLLMAdapter
 from app.agent_framework.tools.tool_manager import ToolManager
+
+if TYPE_CHECKING:
+    from app.skills.skill_registry import SkillRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -100,18 +103,21 @@ class PolicyNotificationAgent:
     def __init__(
         self,
         llm_adapter: BaseLLMAdapter,
-        tool_manager: ToolManager
+        tool_manager: ToolManager,
+        skill_registry: Any = None,  # 🆕 技能系统
     ):
         """
         初始化政策通知智能体
-        
+
         Args:
             llm_adapter: 大模型适配器（必须）
             tool_manager: 工具管理器
+            skill_registry: 技能注册表（可选），传入后可在 system prompt 中渲染 {skill_descriptions}
         """
         self.llm_adapter = llm_adapter
         self.tool_manager = tool_manager
-        
+        self.skill_registry = skill_registry  # 🆕 技能系统
+
         self.match_weights = {
             "semantic": 0.3,
             "industry": 0.2,
@@ -120,7 +126,7 @@ class PolicyNotificationAgent:
             "tax_type": 0.15,
             "urgency": 0.1
         }
-        
+
         self.system_prompt = self._load_system_prompt()
         
         if not getattr(PolicyNotificationAgent, '_initialized', False):
@@ -133,30 +139,48 @@ class PolicyNotificationAgent:
     def _load_system_prompt(self) -> str:
         """
         从结构化提示词系统加载系统提示词
-        
+
         加载顺序：
         1. 从 app/prompts/agents/policy_notification/system.md 加载
-        2. 如果加载失败，使用回退提示词
-        
+        2. 渲染 {skill_descriptions}（如果 skill_registry 已初始化）
+        3. 如果加载失败，使用回退提示词
+
         Returns:
             系统提示词
         """
         try:
             from app.prompts.loader import AgentPromptLoader
-            
+
             loader = AgentPromptLoader()
             prompt = loader.load_system_prompt("policy_notification")
-            
+
             if prompt:
+                # 🆕 渲染 {skill_descriptions}
+                skill_desc = self._get_skill_descriptions()
+                if skill_desc:
+                    prompt = prompt.replace("{skill_descriptions}", skill_desc)
+                else:
+                    prompt = prompt.replace("{skill_descriptions}", "当前暂无可用技能。")
                 logger.info("✅ [PolicyNotificationAgent] 成功加载结构化提示词")
                 return prompt
             else:
                 logger.warning("⚠️ [PolicyNotificationAgent] 加载提示词失败，使用回退提示词")
                 return self._get_fallback_prompt()
-                
+
         except Exception as e:
             logger.error(f"❌ [PolicyNotificationAgent] 加载提示词异常: {e}")
             return self._get_fallback_prompt()
+
+    def _get_skill_descriptions(self) -> str:
+        """获取技能描述文本（从 SkillRegistry）"""
+        if not self.skill_registry:
+            return ""
+        try:
+            if self.skill_registry.is_initialized():
+                return self.skill_registry.format_domain_skill_descriptions("public")
+        except Exception:
+            pass
+        return ""
     
     def _get_fallback_prompt(self) -> str:
         """获取回退提示词（当模板加载失败时使用）"""

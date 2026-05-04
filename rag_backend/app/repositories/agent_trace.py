@@ -16,8 +16,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.repositories.base import BaseRepository
 from app.models.agent_trace import AgentTrace, AgentStep
 import logging
+import uuid
 
 logger = logging.getLogger(__name__)
+
+
+def _coerce_uuid(value: Any, field_name: str) -> Optional[uuid.UUID]:
+    if value is None or value == "":
+        return None
+    if isinstance(value, uuid.UUID):
+        return value
+    try:
+        return uuid.UUID(str(value))
+    except (ValueError, TypeError, AttributeError):
+        logger.debug("[AgentTraceRepository] Ignoring non-UUID %s: %s", field_name, value)
+        return None
 
 
 class AgentTraceRepository(BaseRepository[AgentTrace]):
@@ -57,8 +70,8 @@ class AgentTraceRepository(BaseRepository[AgentTrace]):
         data = {
             'agent_type': agent_type,
             'user_query': user_query,
-            'session_id': session_id,
-            'message_id': message_id,
+            'session_id': _coerce_uuid(session_id, "session_id"),
+            'message_id': _coerce_uuid(message_id, "message_id"),
             'langsmith_run_id': langsmith_run_id,
             'status': 'running',
             **kwargs
@@ -83,9 +96,13 @@ class AgentTraceRepository(BaseRepository[AgentTrace]):
         Returns:
             AgentTrace 列表
         """
+        db_session_id = _coerce_uuid(session_id, "session_id")
+        if session_id and not db_session_id:
+            return []
+
         return await self.list(
             tenant_id=tenant_id,
-            session_id=session_id,
+            session_id=db_session_id,
             limit=limit,
             order_by='created_at',
             order_desc=True

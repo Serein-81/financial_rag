@@ -269,6 +269,24 @@ class OutputFormatter:
         cleaned = re.sub(r'\s{2,}', ' ', cleaned)
         
         return cleaned
+
+    @classmethod
+    def clean_stream_content(cls, text: str) -> str:
+        """
+        Clean a completed streaming response before persistence.
+
+        Streaming chunks are cleaned incrementally while they are emitted, but
+        the accumulated buffer can still contain partial ReAct markers or XML
+        context wrappers. Keep this method as the full-response counterpart used
+        by the chat streaming service.
+        """
+        if not text:
+            return text
+
+        cleaned = cls.strip_react_markers_from_buffer(text)
+        cleaned = cls.extract_final_answer(cleaned)
+        cleaned = cls.clean_output(cleaned)
+        return cleaned
     
     @classmethod
     def strip_react_markers_from_buffer(cls, buffer: str) -> str:

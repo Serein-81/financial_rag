@@ -163,6 +163,7 @@ class GraphEdge(BaseModel):
     target: str
     type: str
     properties: Dict[str, Any] = Field(default_factory=dict)
+    description: Optional[str] = Field(None, description="关系语义描述")
 
 
 class GraphVisualizationResponse(BaseModel):
@@ -211,3 +212,32 @@ class EntityListResponse(BaseModel):
 class EntityTypesResponse(BaseModel):
     """实体类型列表响应"""
     types: List[str] = Field(default_factory=list)
+
+
+# ============ 路径查询相关 ============
+class PathRequest(BaseModel):
+    """路径查询请求"""
+    source: str = Field(..., min_length=1, description="源实体名称")
+    target: str = Field(..., min_length=1, description="目标实体名称")
+    max_depth: int = Field(4, ge=1, le=6, description="最大路径深度")
+
+
+class PathEntity(BaseModel):
+    """路径中的实体"""
+    name: str
+    type: str
+
+
+class PathResult(BaseModel):
+    """路径查询结果（一条路径）"""
+    entities: List[PathEntity] = Field(..., description="路径上的实体列表（有序）")
+    relations: List[str] = Field(..., description="路径上的关系类型列表（有序）")
+    hops: int = Field(..., description="跳数")
+
+
+class PathResponse(BaseModel):
+    """路径查询响应"""
+    source: str
+    target: str
+    paths: List[PathResult] = Field(default_factory=list)
+    total_paths: int = 0

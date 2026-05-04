@@ -53,7 +53,13 @@ TOOL_ROUTING_CONFIG: Dict[str, Dict] = {
         "fallback": None,
         "retry": True,
     },
-    
+    "get_enterprise_kb_overview": {
+        "category": ToolCategory.LOCAL,
+        "description": "企业知识库概览 - 查询企业拥有多少个知识库，以及每个知识库中有多少文档",
+        "fallback": None,
+        "retry": True,
+    },
+
     # ==========================================
     # 本地财务数据库查询工具（LOCAL）- 直接访问本地财务数据库
     # ==========================================

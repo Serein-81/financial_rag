@@ -181,6 +181,7 @@ pillow
 pytesseract
 
 PyMuPDF==1.24.13
+pymupdf4llm==0.0.16
 
 psycopg2-binary==2.9.9
 # Excel解析支持
@@ -206,6 +207,9 @@ pytest-cov==4.1.0
 
 ruff==0.1.0
 mypy==1.7.0
+# 中文分词支持（用于知识图谱实体提取）
+jieba>=0.42.0
+
 # MCP 远程连接支持
 # 注意: mcp>=1.0.0 需要 pyjwt>=2.10.1，可能与 zhipuai (需要<2.9.0) 冲突
 # 如有冲突，可考虑使用虚拟环境隔离或升级 zhipuai

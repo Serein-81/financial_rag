@@ -24,6 +24,24 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
+def _serialize_clarification_request(clarification_request):
+    """Convert clarification payloads to JSON-safe dicts for task polling APIs."""
+    if clarification_request is None:
+        return None
+    if hasattr(clarification_request, "model_dump"):
+        return clarification_request.model_dump(mode="json")
+    if isinstance(clarification_request, dict):
+        return clarification_request
+    return {
+        "question": getattr(clarification_request, "question", "请详细描述您的问题"),
+        "suggestions": getattr(clarification_request, "suggestions", []),
+        "reason": getattr(clarification_request, "reason", "您的输入需要更多信息来帮助您"),
+        "required": getattr(clarification_request, "required", True),
+        "placeholder": getattr(clarification_request, "placeholder", ""),
+        "type": getattr(clarification_request, "type", "intent_clarification"),
+    }
+
+
 class ARQWorker:
     """
     ARQ Worker - 从 Redis 队列中消费任务并执行
@@ -133,13 +151,17 @@ class ARQWorker:
                 
                 result = await orch.process(context)
                 
-                final_response = result.final_response or "处理完成"
+                clarification_request = _serialize_clarification_request(result.clarification_request)
+                needs_clarification = bool(result.needs_clarification and clarification_request)
+                final_response = None if needs_clarification else (result.final_response or "处理完成")
                 
                 await self._update_task_status(
                     db, task_id, "completed",
                     final_response=final_response,
+                    needs_clarification=needs_clarification,
+                    clarification_request=clarification_request,
                     progress_percent=100,
-                    progress_message="任务完成",
+                    progress_message="需要补充信息" if needs_clarification else "任务完成",
                     completed_at=datetime.now()
                 )
                 
@@ -160,7 +182,10 @@ class ARQWorker:
         progress_message: str = None,
         final_response: str = None,
         error_message: str = None,
-        completed_at: datetime = None
+        completed_at: datetime = None,
+        needs_clarification: bool = None,
+        clarification_request: dict = None,
+        intent_analysis: dict = None
     ):
         """更新任务状态"""
         try:
@@ -181,6 +206,12 @@ class ARQWorker:
                 values["error_message"] = error_message
             if completed_at is not None:
                 values["completed_at"] = completed_at
+            if needs_clarification is not None:
+                values["needs_clarification"] = needs_clarification
+            if clarification_request is not None:
+                values["clarification_request"] = clarification_request
+            if intent_analysis is not None:
+                values["intent_analysis"] = intent_analysis
                 
             await db.execute(
                 update(AgentTaskStatus)

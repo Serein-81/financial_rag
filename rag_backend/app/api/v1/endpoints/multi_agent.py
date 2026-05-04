@@ -9,7 +9,8 @@ import logging
 import json
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import update
 
@@ -114,6 +115,156 @@ def get_legal_specialist():
     if legal_specialist is None:
         legal_specialist = LegalSpecialist()
     return legal_specialist
+
+
+@router.post("/query-stream")
+async def process_multi_agent_query_stream(
+    request: MultiAgentRequest,
+    current_user: User = Depends(deps.get_current_user),
+    tenant_context: dict = Depends(deps.get_tenant_context)
+):
+    """
+    SSE 流式处理多智能体查询
+
+    以 Server-Sent Events 方式实时推送处理进度和最终结果。
+    前端通过 EventSource 或 fetch + ReadableStream 消费。
+
+    事件格式：
+    - data: {"type":"session","session_id":"..."}
+    - data: {"type":"stage","stage":"receptionist","intent":{...}}
+    - data: {"type":"thinking","message":"..."}
+    - data: {"type":"chunk","content":"..."}
+    - data: {"type":"done","content":"..."}
+    """
+    import uuid as uuid_module
+    import asyncio
+    from datetime import datetime
+
+    session_id = request.session_id or f"thread_{uuid_module.uuid4().hex[:16]}"
+    enable_reflection = request.enable_reflection
+    enable_rag = request.context.get("enable_rag", True) if request.context else True
+
+    async def event_stream():
+        """SSE 事件流生成器"""
+        orch = AgentOrchestrator(
+            tenant_id=tenant_context['tenant_id'],
+            user_id=str(current_user.id)
+        )
+        await orch.initialize()
+        orch.enable_reflection = enable_reflection
+        orch.enable_rag = enable_rag
+
+        # 使用队列在工作流回调与 SSE 事件流之间通信
+        event_queue: asyncio.Queue = asyncio.Queue()
+        start_ts = time.time()
+
+        # 发送 session 事件
+        yield f"data: {json.dumps({'type': 'session', 'session_id': session_id})}\n\n"
+
+        stage_map = {
+            "receptionist": "receptionist",
+            "intent_router": "intent_router",
+            "rag_retrieval": "rag_retrieval",
+            "finance_specialist": "finance_specialist",
+            "tax_specialist": "tax_specialist",
+            "legal_specialist": "legal_specialist",
+            "reflection": "reflection",
+            "final": "final",
+        }
+
+        # 进度回调：每个 LangGraph 节点执行时触发
+        async def progress_callback(node_name: str, node_state: dict):
+            if node_name == "__end__":
+                return
+            stage = stage_map.get(node_name, node_name)
+            event_data = {"type": "stage", "stage": stage}
+
+            intent = node_state.get("intent")
+            if intent:
+                event_data["intent"] = {
+                    "category": intent,
+                    "confidence": node_state.get("intent_confidence", 0.0),
+                    "routing_strategy": node_state.get("routing_strategy", ""),
+                    "specialists": node_state.get("specialists_needed", []),
+                }
+
+            specialists = node_state.get("specialists_needed", [])
+            if specialists:
+                event_data["specialists"] = specialists
+
+            reflection_result = node_state.get("reflection_result")
+            if reflection_result:
+                event_data["result"] = reflection_result
+
+            await event_queue.put(event_data)
+
+        # 启动后台工作流任务
+        workflow_task = asyncio.create_task(
+            orch.process_user_request(
+                user_input=request.query,
+                session_id=session_id,
+                history=None,
+                metadata={
+                    "enable_reflection": enable_reflection,
+                    "enable_rag": enable_rag,
+                    **(request.metadata or {}),
+                },
+                progress_callback=progress_callback,
+            )
+        )
+
+        # 从队列读取事件并流式发送，直到工作流完成
+        final_response = "处理完成"
+        while not workflow_task.done() or not event_queue.empty():
+            # 短暂阻塞等待队列或工作流
+            try:
+                evt = await asyncio.wait_for(event_queue.get(), timeout=0.3)
+                yield f"data: {json.dumps(evt, ensure_ascii=False)}\n\n"
+            except asyncio.TimeoutError:
+                # 超时说明队列中暂无事件，继续检查工作流状态
+                if workflow_task.done() and event_queue.empty():
+                    break
+
+        # 获取工作流结果
+        try:
+            result = workflow_task.result()
+            final_response = result.final_response or "处理完成"
+        except Exception as e:
+            logger.error(f"[SSE] 工作流结果获取失败: {e}")
+            final_response = f"处理异常: {str(e)[:200]}"
+
+        # 发送 text 事件（前端依赖此填充 assistantMsg.content）
+        text_event = {"type": "text", "content": final_response}
+        yield f"data: {json.dumps(text_event, ensure_ascii=False)}\n\n"
+
+        # 发送完成事件
+        done_event = {
+            "type": "done",
+            "content": final_response,
+            "session_id": session_id,
+            "processing_time": time.time() - start_ts,
+        }
+        yield f"data: {json.dumps(done_event, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post("/query", response_model=MultiAgentResponse)
@@ -391,26 +542,39 @@ async def execute_workflow_background(
             await db.commit()
         
         logger.info(f"[Background] 开始执行工作流: task_id={task_id}")
-        
+
         from app.multi_agent_system import AgentOrchestrator
-        from app.multi_agent_system.orchestrator import OrchestrationContext
-        
+
         orch = AgentOrchestrator(tenant_id=tenant_id, user_id=user_id)
         await orch.initialize()
-        
-        orchestration_context = OrchestrationContext(
+
+        # 🆕 使用 LangGraph 工作流（process_user_request），带进度回调
+        progress_map = {
+            "receptionist": 5, "intent_router": 10, "rag_retrieval": 20,
+            "finance_specialist": 40, "tax_specialist": 40, "legal_specialist": 40,
+            "reflection": 80, "final": 90,
+        }
+
+        async def progress_callback(node_name: str, node_state: dict):
+            pct = progress_map.get(node_name, 50)
+            try:
+                async with AsyncSessionLocal() as progress_db:
+                    await progress_db.execute(
+                        update(AgentTaskStatus)
+                        .where(AgentTaskStatus.task_id == task_id)
+                        .values(progress_percent=pct, current_node=node_name)
+                    )
+                    await progress_db.commit()
+            except Exception:
+                pass  # 进度更新失败不影响主流程
+
+        result = await orch.process_user_request(
+            user_input=user_query,
             session_id=thread_id,
-            tenant_id=tenant_id,
-            user_id=user_id,
-            user_query=user_query,
-            context=context or {},
-            enable_reflection=enable_reflection,
-            confidence_threshold=confidence_threshold,
-            max_specialists=max_specialists
+            metadata={"enable_reflection": enable_reflection, **(context or {})},
+            progress_callback=progress_callback,
         )
-        
-        result = await orch.process(orchestration_context)
-        
+
         final_response = result.final_response or "处理完成"
         
         await db.execute(

@@ -76,69 +76,181 @@
 </details>
 
 
+## 🧠 RAG 架构特点
+
+### 多领域感知分块
+
+| 领域 | 切块策略 | 特点 |
+|------|----------|------|
+| **财务** | `FinancialChunker` | 表格原子化（不切碎），指标实体提取（研发费用/营收等），正文↔表格 PARENT/CHILD 关系 |
+| **税务** | `TaxChunker` | 条款级正则切片（按「第X条」分割），生命周期打标（生效/废止日期），PREVIOUS/NEXT 法条链表 |
+| **法务** | `LegalChunker` | AST 双层节点（章节 PARENT + 条款 LEAF），Phase 2 异步实体替换（甲方→公司名） |
+| **通用** | `GeneralChunker` | Auto-Merging 双粒度（256 token 精准检索 + 1024 token 上下文展开） |
+
+### 混合检索链路
+
+```
+查询 → QueryAnalyzer(域路由+意图检测) → Dense(pgvector) + Sparse(tsvector BM25)
+→ RRF 融合 → Cross-Encoder Reranker → MMR 多样性重排 → Cliff Prune(断崖截断)
+→ 时序去重(最新查询) → 关系展开(PARENT/PREVIOUS/NEXT) → 多域 Prompt 组装
+```
+
+### PDF 解析引擎
+
+三级自适应：**pymupdf4llm**（本地文字型，<200MB）→ **unstructured-api OCR**（扫描件）→ **PyMuPDF**（兜底）。提取字符 < 8% 自动判定为扫描件。
+
+### RAGAS 评估结果
+
+18 道跨财务/税务/法务测试集，DeepSeek 裁判：
+
+| context_recall | context_precision | faithfulness |
+|:---:|:---:|:---:|
+| **0.89** | **0.79** | **0.75** |
+
 ## ✨ 核心特性
 
-### 1. 多智能体协作系统
+### 1. 多智能体协作系统（LangGraph 状态机）
 
-系统采用分层智能体架构，不同领域的问题由对应的专业智能体处理：
+系统基于 **LangGraph StateGraph** 构建，采用"意图路由 + 并行专家 + 结果合成"的流水线架构：
 
 ```
-┌─────────────────────────────────────────────┐
-│              用户问题输入                      │
-└─────────────────┬───────────────────────────┘
-                  ▼
-┌─────────────────────────────────────────────┐
-│         分诊智能体 (Triage Agent)            │
-│    - 分析问题类型和领域                       │
-│    - 智能路由到对应专家智能体                   │
-└─────────────────┬───────────────────────────┘
-                  ▼
-    ┌─────────────┼─────────────┐
-    ▼             ▼             ▼
-┌────────┐   ┌────────┐   ┌────────┐
-│税务专家 │   │法律专家 │   │财务专家 │
-│智能体  │   │智能体   │   │智能体   │
-└───┬────┘   └───┬────┘   └───┬────┘
-    └─────────────┼─────────────┘
-                  ▼
-┌─────────────────────────────────────────────┐
-│         报告生成智能体 (Report Agent)         │
-│    - 整合多智能体答案                         │
-│    - 生成结构化报告                           │
-└─────────────────────────────────────────────┘
+用户输入
+    │
+    ▼
+┌─────────────────┐
+│   Receptionist   │  ← 日志/追踪初始化
+└────────┬────────┘
+         ▼
+┌─────────────────┐
+│   Intent Router  │  ← 三级分类：正则 → 规则 → LLM
+│                  │     输出：意图 + 复杂度 + 所需专家
+└────────┬────────┘
+         │
+         ▼
+    ┌────┴────┐
+    │         │
+    ▼         ▼
+┌────────┐ ┌──────────────────────────┐
+│ 单专家  │ │ 多专家并行 (compliance,  │
+│ (简单)  │ │ complex, high-complexity)│
+└───┬────┘ └────┬────┬────┬──────────┘
+    │           │    │    │
+    ▼           ▼    ▼    ▼
+┌────────┐ ┌────┐ ┌────┐ ┌────┐
+│finance │ │fina│ │tax │ │legal│
+│ /tax/  │ │nce │ │    │ │     │
+│ legal  │ └────┘ └────┘ └────┘
+└───┬────┘   │    │    │
+    │        └────┴────┘
+    ▼           │
+┌────────┐      ▼
+│Reflect │  ┌────────┐
+│(质量审  │  │Synthes. │  ← ResultSynthesizer 合并
+│ 查)    │  │izer    │
+└───┬────┘  └───┬────┘
+    ▼           ▼
+┌─────────────────┐
+│   Final Answer   │  ← SSE 流式 / 异步轮询
+└─────────────────┘
 ```
 
-**专业能力**：
+**关键流程**：
 
-<details>
-<summary>🎯 智能体类型与职责（点击展开）</summary>
+| 步骤 | 组件 | 说明 |
+|------|------|------|
+| ① 意图路由 | `IntentRouterAgent` | 三级降级：正则(问候) → 规则(关键词匹配，置信度≥0.9跳过LLM) → LLM分类 |
+| ② 专家路由 | `route_after_intent()` | `single_specialist` → 单专家；`compliance_check` 或 `len(specialists)>1` → 多专家并行 |
+| ③ 工具调用 | native function calling | 通过 OpenAI 兼容 `tools` 参数传入，LLM 返回结构化 `tool_calls`，**无需文本正则解析** |
+| ④ 多轮循环 | `for _ in range(5)` | 每轮携带 `tools` 参数，LLM 可反复调用工具直到直接回答 |
+| ⑤ 结果合并 | `ResultSynthesizer` | 多专家场景自动调用合成器，单专家直接返回 `text_answer` |
+| ⑥ 质量审查 | `QualityReviewFunction` | LLM 评估准确性/完整性/逻辑性，不达标触发重试（最多3次） |
 
-| 智能体类型 | 职责范围 |
-|-----------|---------|
-| 分诊智能体 | 问题分类、意图识别、路由决策 |
-| 税务专家 | 增值税、企业所得税、个人所得税计算与咨询 |
-| 法律专家 | 合同审查、法律条款匹配、风险提示 |
-| 财务专家 | 财务指标分析、报表解读、比率计算 |
-| 反思智能体 | 答案质量评估、交叉验证、改进建议 |
+**可用工具**（通过 MCP 注册，共 40 个）：
 
-</details>
+- **财务**: `get_financial_overview`（获取财务概览摘要）、`query_financial_data`（查询明细）
+- **税务/法务/通用**: 30 个本地工具 + 10 个云端工具
+- **时间锚点**: `get_current_time_and_context`（时间相关查询必须调用）
 
-### 2. 自研轻量级 Agent 框架
+### 2. 自研轻量级 Agent 框架 + 原生函数调用
 
-不同于 LangChain 的臃肿，我们实现了轻量级的 ReAct Agent 框架：
+不同于 LangChain 的臃肿，我们实现了轻量级的 Agent 框架，核心采用 **OpenAI 兼容的原生 Function Calling**：
 
 ```
 > 框架核心模块包括：**ReAct/Plan/Reflect 推理引擎**、**多 LLM 适配器层**（OpenAI、DeepSeek、智谱、Claude、Qwen 等，通过工厂模式零代码切换）、**工具管理器**（工具注册与智能路由）。整个框架不依赖 LangChain，保持轻量独立，便于定制和调试。
 ```
 
+**工具调用演进**：
+
+| 阶段 | 方式 | 可靠性 |
+|------|------|--------|
+| ~~旧方案~~ | ~~LLM 文本输出 JSON → 正则解析~~ | ❌ 不可靠，LLM 输出格式不稳定 |
+| **新方案** | **API `tools` 参数 → 结构化 `tool_calls` 返回** | ✅ API 级保证，无需文本解析 |
+| **多轮循环** | `for` 循环，每轮都传 `tools`，LLM 可逐步调用 | ✅ 支持先查时间基准、再查财务数据 |
+
 **设计亮点**：
 
 - 🧠 **ReAct 推理** - 推理与行动交替执行
-- 🔧 **工具调用** - 灵活的外部工具集成
-- 🔄 **多模式支持** - ReAct / Plan / Reflect 模式切换
+- 🔧 **原生函数调用** - 通过 API `tools` 参数，非文本正则解析
+- 🔄 **多轮工具循环** - 最多 5 轮，LLM 自主决策何时直接回答
 - 🎯 **适配器模式** - 零代码切换不同 LLM 提供商
 
-### 3. 混合检索系统
+### 3. Agent Skill 系统（技术亮点）
+
+> 受 Anthropic Claude Code Skills 规范启发，自研了一套轻量级的 Agent Skill 框架，实现 **LLM 能力的可插拔扩展**。
+
+#### 核心设计
+
+| 维度 | 实现 |
+|------|------|
+| **渐进式加载** | 三级加载：Level 1 元数据（~100 tokens）→ Level 2 SKILL.md 正文（按需加载）→ Level 3 scripts/references（隔离执行） |
+| **域范围目录** | `skills/{domain}/{skill_name}/` 结构，domain 自动推断（finance/tax/legal/public），公有技能跨域可见 |
+| **模板变量注入** | `{skill_descriptions}` 通过 `format_domain_skill_descriptions()` 动态渲染到 Agent system prompt 中 |
+| **意图-技能匹配** | intent_router 识别 domain → skill_dispatch LangGraph 节点匹配技能 → inject_skill_context() 注入正文 |
+| **运行时守卫** | `_is_meta_question()` 跳过 RAG/反思/数据查询；`_sanitize_llm_text()` 后处理 JSON 输出 |
+| **LLM 驱动执行** | 不硬编码工具调用，通过 API `tools` 参数传递工具定义，LLM 返回结构化 `tool_calls`；多轮循环直到直接回答 |
+
+#### 4 个内置技能
+
+| 技能 | 归属 | 功能 | 脚本 | 参考文档 |
+|------|------|------|------|---------|
+| `financial-data-entry` | Finance | 财务数据录入校验与提交 | validate_entry.py + submit_entry.py | categories.md |
+| `legal-compliance-search` | Legal | 法规合规检索与匹配 | search_compliance.py (Tavily) | registration_requirements.md |
+| `tax-law-research` | Legal | 联网搜索最新税务法律知识 | search_tax_law.py (Tavily fallback) | tax_terms.md |
+| `policy-crawl` | Public | 爬取政府政策到本地 + 企业匹配 + SSE 通知 | crawl_policies.py | — |
+
+**设计原则**：Skills ≠ Tools。Tools 是基础 API 调用，Skills 是复杂业务工作流（如数据录入引导、合规搜索匹配）。Skill 通过 `SKILL.md` 定义流程步骤，scripts/ 执行 LLM 不擅长的精确计算，references/ 提供按需加载的领域知识。
+
+### 4. 上下文优化器（Context Optimizer）
+
+多轮工具调用时，消息列表快速增长（每轮 +1 assistant + M 条 tool result）。为防 context window 溢出，实现了三级压缩：
+
+```
+每次 chat() 前检查消息总 token 数
+    │
+    ├── < 阈值（如 80% context window）→ 正常发送
+    │
+    └── > 阈值 → 触发三级压缩:
+         │
+         ├─ Level 1: 删除冗余（始终执行）
+         │    - 移除空 content 的 assistant 消息
+         │    - 合并重复 system 消息
+         │
+         ├─ Level 2: JSON → 单行摘要（始终执行）
+         │    原始: {"status":"success","data":{...},"summary":{...},"fiscal_year":2024}
+         │    压缩: status=success | fy=2024 | 营收=42,918,130.00 | 利润率=37.42%
+         │    压缩比: 5:1 ~ 10:1
+         │
+         └─ Level 3: 多轮滚动摘要（token 超阈值时执行）
+              - 将最早的 N 轮 (assistant + tool) 打包为 system(summary)
+              - 保留首次 system prompt + 最新用户问题
+```
+
+**设计要点**：
+- 仅 `FinanceSpecialist` 有多轮工具调用，优化器只在此生效
+- 默认阈值 100K tokens（deepseek-v4-flash 原生 128K，留 28K 给生成）
+- Level 1/2 零成本，Level 3 为安全网，日常查询不触发
+
+### 5. 混合检索系统
 
 结合多种检索技术，实现精准的知识召回：
 
@@ -172,7 +284,7 @@
 
 当前向量检索主要基于 PostgreSQL + pgvector，结合全文检索、同义词扩展、RRF 融合和可选 MMR/Rerank 进行结果优化。
 
-### 4. 记忆系统
+### 6. 记忆系统
 
 完整的 Agent 记忆体系，支持上下文理解：
 
@@ -188,7 +300,7 @@
 
 </details>
 
-### 5. MCP 工具服务（可扩展功能）
+### 7. MCP 工具服务（可扩展功能）
 
 > 🚧 **说明**：MCP 工具服务是一项**可选的可扩展功能**，部署需要一台独立的云端服务器。后端项目 `rag_backend/app/mcp/` 已内置所有计算/检查类工具的同名实现（通过 `@cloud_tool` 装饰器），Agent 默认通过进程内直接调用，**无需依赖外部 MCP 服务**，开箱即用。
 >
@@ -214,7 +326,7 @@
 | **智能体框架** | ReAct / Plan / Reflect Agent、智能体 LLM 独立配置、工具路由、工具调用追踪、Agent Trace |
 | **智能体工具构建器** | 管理员可通过自然语言生成工具规格与代码草稿，支持 `echo`、`http`、`rag_query`、`python_code` 等工具类型，提供 Schema 预览、测试入参生成、发布注册、企业内可见、操作日志追踪；生成代码默认仅保存待审核，不直接执行 |
 | **知识图谱编辑器** | 支持中心实体子图加载、实体类型筛选、节点/关系新增删除、连接高亮、缩放适屏、JSON 导入导出，以及批量保存编辑快照到 Neo4j |
-| **多智能体系统** | 意图路由、任务拆解、税务/法务/财务专家、结果合并、报告生成、人机审核、A2A 协议与多传输适配 |
+| **多智能体系统** | LangGraph 状态机编排、意图路由(三级降级)、多专家并行、原生函数调用(多轮循环)、ResultSynthesizer 合并、质量审查(Reflection)、SSE 流式响应、异步轮询(进度持久化) |
 | **财税法务业务** | 税务申报、税务智能分析、政策检索与通知、合同审查、财务数据录入、财务健康监控、企业政策匹配 |
 | **协作与实时能力** | 群组聊天、WebSocket 在线状态、SSE 流式响应、工作流事件推送、后台任务状态持久化 |
 | **运维与治理** | 请求日志、对话日志、安全监控、限流、熔断器、健康检查、LangSmith 追踪、OpenTelemetry 依赖 |
@@ -396,6 +508,66 @@ Reflect 模式负责答案质量的评估和改进，确保输出的专业性和
 - 🚀 **路径发现** - 找出实体间的关联路径
 - 📊 **图推理** - 基于图结构的逻辑推理
 - 🎯 **上下文增强** - 为检索结果提供关系上下文
+
+#### 2.4.1 领域知识图谱提取机制
+
+系统采用 **领域类型约束 + 规则/LLM 混合提取 + 多层校验** 的专用实体/关系提取管线，区别于通用的 NER 或纯 LLM 方案：
+
+**实体类型定义** — 面向财税法务领域预设 21 种实体类型，分组如下：
+
+| 领域 | 实体类型 |
+|------|---------|
+| **主体** | COMPANY（公司）、PERSON（人物）、DEPARTMENT（部门） |
+| **财务** | FINANCIAL_METRIC（财务指标）、FINANCIAL_REPORT（报表）、ACCOUNT（账户）、BUDGET（预算） |
+| **税务** | TAX_TYPE（税种）、TAX_RATE（税率）、TAX_POLICY（税收政策）、TAX_EXEMPTION（税收优惠） |
+| **法务** | CONTRACT（合同）、CLAUSE（条款）、REGULATION（法规）、LEGAL_CASE（案件） |
+| **通用** | PRODUCT（产品）、SERVICE（服务）、LOCATION（地点）、DATE_PERIOD（日期）、EVENT（事件）、TECHNOLOGY（技术） |
+
+**关系类型定义** — 预设 26 种有向关系类型，涵盖公司治理、财务、税务、法务四大领域：`WORKS_AT`、`SIGNED`、`SUBJECT_TO`、`HAS_METRIC`、`OWNS`、`COMPETES_WITH`、`CONTAINS_CLAUSE` 等。
+
+**两阶段提取流程**：
+
+```
+文本 → 阶段一：规则预提取 → 阶段二：LLM 补全（可选）→ 关系提取 → Neo4j 入库
+        │                         │
+        ├ DATE_PERIOD（正则匹配）    ├ 仅当规则未提取到时触发
+        ├ TAX_RATE（正则匹配）       ├ 受 21 种类型约束，不可编造
+        ├ COMPANY（公司字典）        └ 含置信度评分 + 消歧
+        ├ CONTRACT/CLAUSE（正则）
+        └ FINANCIAL_METRIC（正则）
+```
+
+**多层校验机制**：
+
+1. **类型约束** — LLM 提示词中明确限定只能使用预定义的 21 种类型，不允许编造
+2. **白名单过滤** — LLM 返回结果经过 `VALID_ENTITY_TYPES` / `VALID_RELATION_TYPES` 集合校验，未定义类型自动过滤并记录日志
+3. **置信度过滤** — 低于 0.7 置信度的实体/关系自动剔除
+4. **关系源验证** — 关系提取要求 source 和 target 必须在已提取的实体列表中，防止幻觉
+
+**性能优化**：
+
+- 规则预提取处理 60% 以上简单实体（日期、税率、金额、常见公司名），LLM 仅用于补充复杂实体
+- 关系提取时只传入 Top 10 核心实体（按置信度排序），避免提示词过长
+- 所有 LLM 调用设置 120 秒超时保护
+- Neo4j 写入使用 UNWIND 批量操作，一次网络往返替代 N 次
+
+**Neo4j 数据模型** — 多标签设计，兼容旧查询与新式精细检索：
+
+```cypher
+(:Entity:Company {name: "阿里巴巴", type: "COMPANY", unique_key: "..."})
+(:Entity:TaxType {name: "企业所得税", type: "TAX_TYPE", unique_key: "..."})
+(:Entity:Contract {name: "5G技术合作协议", type: "CONTRACT", unique_key: "..."})
+(:Entity)-[:RELATED {type: "SUBJECT_TO"}]->(:Entity)
+```
+
+查询时既可用 `MATCH (e:Entity)` 保持向后兼容，也可用 `MATCH (c:Company)` 进行类型限定的高效遍历。
+
+**查询阶段实体提取** — 对用户查询使用 jieba 中文分词提取实体名，无需 LLM，毫秒级响应：
+
+```
+"财务专家有什么工具或" → jieba 分词 → ["财务", "专家", "工具"]
+"阿里巴巴2024年营收多少" → jieba 分词 → ["阿里巴巴", "2024", "营收"]
+```
 
 #### 2.5 记忆协同机制
 
@@ -1799,6 +1971,58 @@ HITL（Human-In-The-Loop）是一种 **AI 安全机制**，用于在高风险操
 ## 📄 许可证
 
 本项目采用 [MIT 许可证](LICENSE)
+
+---
+
+## 🚀 未来改进方向
+
+### 1. Agent Harness 基础设施完善（对标行业标准）
+
+参考 **Harness / Hermes Agent** 架构，当前项目的 Harness 能力对标与待建设项：
+
+| Harness 核心模块 | 当前状态 | 待建设 |
+|----------------|---------|--------|
+| 编排循环引擎 | ✅ LangGraph StateGraph | — |
+| 工具调用框架 | ✅ 原生 Function Calling + MCP 注册 | — |
+| 记忆管理系统 | ✅ 工作/情景/语义三级记忆 | 跨会话记忆召回优化 |
+| **上下文优化器** | ❌ 无 | 动态窗口管理，防止多轮调用后上下文溢出 |
+| **安全护栏模块** | ⚠️ 租户隔离 + JWT | Agent 级输入/输出过滤、注入检测、合规校验 |
+| 可观测系统 | ✅ LangSmith + Agent Trace | — |
+| 错误处理与容错 | ✅ 熔断器 + 超时回退 | — |
+| **技能学习闭环** | ❌ 无 | **从执行经验自动生成 Skills**（Hermes 核心能力） |
+
+**重点建设方向**：
+
+- **上下文优化器** — 多轮工具调用时，消息列表快速增长。需要实现智能摘要裁剪、历史消息分层压缩、关键信息保留策略
+- **Agent 安全护栏** — 对 Agent 输入输出做内容安全检测，防止提示词注入、敏感数据泄露
+- **技能学习闭环** — Hermes Agent 能自动从执行经验中生成可复用的 Skills 文档。计划引入类似的机制：Agent 完成任务后自动提取成功模式，生成 Skill 描述，注册到 SkillRegistry
+
+### 2. A2A 协议集成（分布式 Agent 通信）
+
+系统已预留 **Google Agent-to-Agent (A2A) 协议**接口，包含 `HybridDispatcher`、`AgentRegistry`、`A2AServer/A2AClient` 和 `LangGraphTransport` 等基础设施，支持将智能体扩展为分布式部署。
+
+**目标场景**：
+- 将税务、法务、财务专家拆分为独立服务，部署在不同机器上
+- 通过 A2A 协议的 HTTP/JSON-RPC 实现跨服务智能体通信
+- 支持异构技术栈的智能体（不同语言、不同框架）统一接入
+- 利用 `HybridDispatcher` 实现本地调用与远程调用的自动降级
+
+### 3. 知识图谱增强检索
+
+- 将 Neo4j 知识图谱深度集成到 RAG 检索链路中
+- 支持基于实体关系的多跳推理查询
+- 图谱问答（GraphQA）增强复杂关系类问题的回答准确率
+
+### 4. 多模态 Agent 能力
+
+- 支持图片/表格/PDF 等多模态输入的智能理解
+- Agent 可调用 OCR、图表分析等视觉工具
+
+### 5. 持续学习与反馈闭环
+
+- 用户对回答的评分/纠错反馈自动入库
+- 定期用真实反馈微调提示词和检索策略
+- 构建评估数据集，自动化回归测试
 
 ---
 

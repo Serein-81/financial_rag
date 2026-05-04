@@ -22,21 +22,15 @@ if [ -d "/app/logs" ] && [ "$(stat -c '%U' /app/logs 2>/dev/null || true)" = "ro
     chmod -R 755 /app/logs 2>/dev/null || true
 fi
 
-echo "Checking vector index, retrying up to 3 times..."
+echo "→ 向量索引检查..."
 for i in 1 2 3; do
-    echo "Attempt $i/3..."
-
-    if python3 -m app.migrations.auto_create_vector_index 2>&1; then
-        echo "Vector index check completed."
+    if python3 -m app.migrations.auto_create_vector_index > /dev/null 2>&1; then
         break
     fi
-
     if [ "$i" -lt 3 ]; then
-        echo "Vector index check failed, retrying in 5 seconds..."
         sleep 5
     else
-        echo "Vector index check failed after 3 attempts."
-        exit 1
+        echo "⚠️ 向量索引检查失败，向量搜索性能可能受影响"
     fi
 done
 

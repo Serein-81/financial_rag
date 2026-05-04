@@ -1,0 +1,74 @@
+{
+  "summary": {
+    "total": 7,
+    "has_ground_truth_key": 0,
+    "has_numbers": 6,
+    "fallbacks": 3,
+    "avg_context_count": 12.7
+  },
+  "details": [
+    {
+      "question": "比亚迪2026年第一季度的营业收入是多少？与上年同期相比是增长还是下降？",
+      "domain": "finance",
+      "context_count": 4,
+      "has_ground_truth_key": false,
+      "has_numbers": true,
+      "is_fallback": true,
+      "answer_preview": "根据提供的资料，无法直接找到比亚迪2026年第一季度的营业收入具体数值。资料中仅包含部分财务数据（如“上期发生额”等），但未明确标注“营业收入”项目及其本期金额，因此无法判断与上年同期相比是增长还是下"
+    },
+    {
+      "question": "比亚迪2026年第一季度的研发费用是多少？",
+      "domain": "finance",
+      "context_count": 4,
+      "has_ground_truth_key": false,
+      "has_numbers": true,
+      "is_fallback": true,
+      "answer_preview": "根据提供的资料，并未找到比亚迪2026年第一季度的“研发费用”具体金额。资料中仅提及“开发支出”为8,285,431,000.00元（2026年3月31日余额），但该科目属于资产负债表中的资产项，并非"
+    },
+    {
+      "question": "出口退（免）税备案的内容发生变化时，纳税人应在多少天内办理变更？",
+      "domain": "tax",
+      "context_count": 20,
+      "has_ground_truth_key": false,
+      "has_numbers": true,
+      "is_fallback": false,
+      "answer_preview": "根据【资料1】，纳税人出口退（免）税备案内容发生变化的，应当自发生变化之日起 **三十日内** 向主管税务机关申请办理备案变更。"
+    },
+    {
+      "question": "纳税人办理出口退（免）税备案时，应当向主管税务机关报送哪些资料？",
+      "domain": "tax",
+      "context_count": 20,
+      "has_ground_truth_key": false,
+      "has_numbers": true,
+      "is_fallback": false,
+      "answer_preview": "根据提供的参考资料，纳税人办理出口退（免）税备案时，应当向主管税务机关如实报送以下资料：\n\n- **《出口退（免）税备案表》** [资料1][资料2]\n\n此外，根据资料1的表述，纳税人还需报送“附送资"
+    },
+    {
+      "question": "大湖股份与业绩补偿方签订股权转让协议的原因是什么？",
+      "domain": "legal",
+      "context_count": 11,
+      "has_ground_truth_key": false,
+      "has_numbers": true,
+      "is_fallback": false,
+      "answer_preview": "大湖股份与业绩补偿方签订《股权转让协议》的原因如下：\n\n控股子公司东方华康2025年度业绩承诺的累计完成率为98.15%，累计未完成业绩承诺453.38万元。根据公司与东方华康及其全体原股东于2023"
+    },
+    {
+      "question": "大湖股份业绩补偿方转让给公司的股权比例是多少？",
+      "domain": "legal",
+      "context_count": 10,
+      "has_ground_truth_key": false,
+      "has_numbers": true,
+      "is_fallback": false,
+      "answer_preview": "根据提供的资料，大湖股份业绩补偿方（咖辅健康科技（上海）有限公司、上海擢英医疗管理合伙企业（有限合伙）、李爱川）合计转让给公司的股权比例为 **1.1103%** [资料1][资料2][资料4]。"
+    },
+    {
+      "question": "简历制作中，对于技术栈广泛但深度不足的情况，文档给出了什么心态调整建议？",
+      "domain": "general",
+      "context_count": 20,
+      "has_ground_truth_key": false,
+      "has_numbers": false,
+      "is_fallback": true,
+      "answer_preview": "资料中未提及。"
+    }
+  ]
+}

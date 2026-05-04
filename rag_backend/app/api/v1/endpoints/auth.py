@@ -4,7 +4,7 @@ from sqlalchemy.future import select
 from app.core import security
 from app.core.config import settings
 from app.schemas.auth_request import UserRegister, AdminRegister, UserLogin, ChangePasswordRequest, UpdatePhoneRequest, ChangeInviteCodeRequest
-from app.schemas.auth_response import Token, UserProfile
+from app.schemas.auth_response import Token, UserProfile, RefreshTokenRequest
 from app.schemas.user import UserProfileUpdate
 from app.schemas.invite_code import InviteCodeCreate, InviteCodeValidationResult
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, status, Query, Request
@@ -62,8 +62,14 @@ def create_token_response(user: User) -> dict:
         expires_delta=access_token_expires,
         tenant_id=user.tenant_id
     )
+    # 刷新令牌（7天有效，不加入黑名单，仅用于续期）
+    refresh_token = security.create_refresh_token(
+        subject=user.id,
+        tenant_id=user.tenant_id
+    )
     return {
         "access_token": access_token,
+        "refresh_token": refresh_token,
         "token_type": "bearer",
         "user_name": user.nickname or user.full_name or user.email,
         "is_admin": user.is_admin,
@@ -344,21 +350,55 @@ async def login(request: Request, user_in: UserLogin):
         if not user.is_active:
             raise HTTPException(status_code=400, detail="账号已停用")
 
-        # 4. 签发 Token
-        access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-        access_token = security.create_access_token(
-            subject=user.id,
-            expires_delta=access_token_expires,
-            tenant_id=user.tenant_id  # 包含租户ID到Token中
-        )
+        # 4. 签发 Token（含 refresh_token）
+        return create_token_response(user)
 
-        return {
-            "access_token": access_token,
-            "token_type": "bearer",
-            "user_name": user.nickname or user.full_name or user.email,
-            "is_admin": user.is_admin,
-            "user_id": str(user.id)  # 返回用户ID用于日志记录
-        }
+
+# =======================
+# 🔄 5.5 Token 刷新接口
+# =======================
+@router.post("/refresh", response_model=Token)
+async def refresh_token(request: RefreshTokenRequest):
+    """
+    刷新 access_token
+
+    使用 refresh_token（7天有效）换取新的 access_token（30分钟有效）。
+    前端在 401 时自动调用此接口续期，用户无感知。
+    """
+    try:
+        payload = security.decode_access_token(request.refresh_token, check_blacklist=False)
+    except security.TokenExpiredException:
+        raise HTTPException(status_code=401, detail="刷新令牌已过期，请重新登录")
+    except security.TokenInvalidException:
+        raise HTTPException(status_code=401, detail="刷新令牌无效，请重新登录")
+
+    user_id = payload.get("sub")
+    tenant_id = payload.get("tenant_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="刷新令牌无效")
+
+    # 验证用户仍存在且活跃
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalars().first()
+        if not user or not user.is_active:
+            raise HTTPException(status_code=401, detail="用户不存在或已停用")
+
+    # 签发新的 access_token（沿用原有 tenant_id）
+    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    new_access_token = security.create_access_token(
+        subject=user.id,
+        expires_delta=access_token_expires,
+        tenant_id=tenant_id or user.tenant_id,
+    )
+
+    return {
+        "access_token": new_access_token,
+        "token_type": "bearer",
+        "user_name": user.nickname or user.full_name or user.email,
+        "is_admin": user.is_admin,
+        "user_id": str(user.id),
+    }
 
 
 # =======================

@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { useSessionStore } from '@/stores/session'
 import { useKnowledgeStore } from '@/stores/knowledge'
 import { useAuthStore } from '@/stores/auth'
 import { chatApi } from '@/api/chat'
+import { useAutoResizeTextarea } from '@/composables/useAutoResizeTextarea'
 import {
   Send,
   Sparkles,
@@ -54,9 +55,19 @@ const knowledgeStore = useKnowledgeStore()
 const authStore = useAuthStore()
 
 const userInput = ref('')
+const {
+  textareaRef: chatInputRef,
+  resizeTextarea: resizeChatInput,
+  resetTextarea: resetChatInput
+} = useAutoResizeTextarea(userInput, { minHeight: 44, maxHeight: 148 })
 const isLoading = ref(false)
+const sendLock = ref(false) // ⚡ 同步锁：在 JS 事件循环中，同一时刻只有一个同步任务在执行，sendLock 的检查+设置在函数第一行完成，从根本上阻止两次事件同时通过守卫
+const isComponentReady = ref(false) // 👈 阻止初始化期间的 sendMessage 调用（防止竞态重复）
 const chatContainerRef = ref<HTMLDivElement>()
 const showKBModal = ref(false)
+
+// 👇 AbortController 用于组件卸载时中止正在流式请求
+let streamAbortController: AbortController | null = null
 const newKBName = ref('')
 const newKBDesc = ref('')
 
@@ -70,16 +81,127 @@ const likedMessages = ref<Set<number>>(new Set())
 
 const streamingContent = ref<Map<number, string>>(new Map())
 
+// 👇 后台生成轮询：当页面切换导致 SSE 断开时，用于等待 AI 在后台完成的异步结果
+const isPolling = ref(false)
+const pollingMessage = ref('')         // "AI 正在思考...（5秒）"
+const pollingStartTime = ref(0)
+let pollingTimer: ReturnType<typeof setTimeout> | null = null
+const POLLING_INTERVAL = 2000          // 轮询间隔 2 秒
+const MAX_POLLING_DURATION = 120_000   // 最长等待 2 分钟
+let _visibilityHandler: (() => void) | null = null  // 页面可见性监听器引用
+
 const messages = computed(() => sessionStore.currentMessages)
 const sessions = computed(() => sessionStore.sessions)
 const knowledgeBases = computed(() => knowledgeStore.knowledgeBases)
 const selectedKB = computed(() => knowledgeStore.selectedKnowledgeBase)
 
 onMounted(async () => {
+  // 👇 关键修复：组件挂载时清理可能残留的旧消息
+  // Pinia store 可能保留着上次访问的 currentMessages，导致后续 addMessage 追加到旧消息后产生重复
+  // 策略：先清空消息（消除旧消息闪烁），再异步加载，完成后才允许用户交互
+  isComponentReady.value = false
+  sourcesCollapsed.value = new Map()
+
+  // 第一步：无条件清空消息，防止旧消息在加载期间被渲染
+  sessionStore.clearMessages()
+
+  if (sessionStore.currentSessionId) {
+    try {
+      // 第二步：从服务器重新加载消息
+      await sessionStore.loadSession(sessionStore.currentSessionId)
+      // 初始化 sources 折叠状态
+      sessionStore.currentMessages.forEach((msg, idx) => {
+        if (msg.sources && msg.sources.length > 0) {
+          sourcesCollapsed.value.set(idx, true)
+        }
+      })
+      // 如果最后一条消息是用户的，说明 AI 可能在后台继续生成中
+      // （页面切换导致流中断，但后端以后台 asyncio.Task 继续运行）
+      // 启动轮询，每隔 2 秒重新加载消息，直到 AI 回答出现或超时
+      const lastMsg = sessionStore.currentMessages[sessionStore.currentMessages.length - 1]
+      if (lastMsg && lastMsg.role === 'user') {
+        startPolling()
+      }
+    } catch (err) {
+      // loadSession 失败（如 token 过期、会话被删除）
+      // 注意：不调用 createNewSession() — 否则会清空 currentSessionId，
+      // 导致后续 auto-recovery 虽然拿到 sessions 列表，但加载时再次失败又进 catch，
+      // 形成死循环。让 auto-recovery 自然重试即可。
+      console.warn('[ChatView] 加载会话失败，等待重试:', err)
+    }
+  }
+
+  // 第三步：并行加载侧边栏数据
   await Promise.all([
     sessionStore.fetchSessions(),
     knowledgeStore.fetchKnowledgeBases()
   ])
+
+  // 如果 currentSessionId 仍为空但存在历史会话（init 事件可能因快速切页未被处理），
+  // 自动加载最新会话，让用户看到对话记录
+  if (!sessionStore.currentSessionId && sessionStore.sessions.length > 0) {
+    const latestSession = sessionStore.sessions[0]
+    try {
+      await sessionStore.loadSession(latestSession.id)
+      sessionStore.currentMessages.forEach((msg, idx) => {
+        if (msg.sources && msg.sources.length > 0) {
+          sourcesCollapsed.value.set(idx, true)
+        }
+      })
+      const lastMsg = sessionStore.currentMessages[sessionStore.currentMessages.length - 1]
+      if (lastMsg && lastMsg.role === 'user') {
+        startPolling()
+      }
+    } catch (err) {
+      console.warn('[ChatView] 自动加载最新会话失败:', err)
+    }
+  }
+
+  // 第四步：标记组件就绪，允许用户交互
+  isComponentReady.value = true
+
+  // ── 注册页面可见性变化监听 ──
+  // 用户切换到其他标签页再回来时，自动检查任务状态并恢复
+  _visibilityHandler = async () => {
+    if (document.visibilityState !== 'visible') return
+    if (!sessionStore.currentSessionId) return
+    if (isPolling.value || isLoading.value) return
+
+    try {
+      const _token = localStorage.getItem('rag_token')
+      const res = await fetch(`/api/v1/chat/task/status/${sessionStore.currentSessionId}`, {
+        headers: _token ? { Authorization: `Bearer ${_token}` } : undefined,
+      })
+      const data = await res.json()
+      if (data.status === 'completed') {
+        // 后台任务已完成，加载最新消息
+        await sessionStore.loadSession(sessionStore.currentSessionId)
+        scrollToBottom()
+      } else if (data.status === 'generating') {
+        // 后台仍在生成，启动轮询
+        startPolling()
+      }
+    } catch (err) {
+      console.warn('[ChatView] 页面可见性检查失败:', err)
+    }
+  }
+  document.addEventListener('visibilitychange', _visibilityHandler)
+})
+
+onBeforeUnmount(() => {
+  // 移除页面可见性监听
+  if (_visibilityHandler) {
+    document.removeEventListener('visibilitychange', _visibilityHandler)
+    _visibilityHandler = null
+  }
+  // 停止轮询（如果有）
+  stopPolling()
+  // 👇 组件卸载时中止正在进行的流式请求，防止后台继续修改store
+  if (streamAbortController) {
+    console.log('[ChatView] 组件卸载，中止流式请求')
+    streamAbortController.abort()
+    streamAbortController = null
+  }
 })
 
 watch(() => selectedKB.value?.id, async (newId) => {
@@ -89,6 +211,14 @@ watch(() => selectedKB.value?.id, async (newId) => {
 })
 
 async function sendMessage() {
+  // ⚡ 同步锁：在 JS 事件循环中，同步代码按调用栈顺序原子执行，
+  // 不存在被其他事件中断的可能。此检查+设置作为函数**第一行**，
+  // 确保任一事件到达时 sendLock 都已锁定，从根源杜绝二次重入
+  if (sendLock.value) return
+  sendLock.value = true
+  try {
+  // 👇 组件未就绪时阻止所有交互（防止 onMounted 竞态导致消息重复）
+  if (!isComponentReady.value) return
   if (!userInput.value.trim() || isLoading.value) return
   if (!selectedKB.value) {
     alert('请先选择一个知识库')
@@ -97,6 +227,10 @@ async function sendMessage() {
 
   const query = userInput.value.trim()
   userInput.value = ''
+  resetChatInput()
+
+  // 👇 关键修复：在 addMessage 之前设置 isLoading，消除事件重入窗口
+  isLoading.value = true
 
   const now = new Date().toISOString()
   sessionStore.addMessage({
@@ -114,32 +248,46 @@ async function sendMessage() {
     created_at: now
   })
 
-  isLoading.value = true
   scrollToBottom()
+
+  // 👇 创建新的 AbortController
+  streamAbortController = new AbortController()
+  const signal = streamAbortController.signal
 
   try {
     let aiContent = ''
     let currentSources: any[] = []
 
+    const idempotencyKey = crypto.randomUUID?.() // 幂等键：防止重复请求写库
     for await (const event of chatApi.streamAgentChat({
       query,
       kb_id: selectedKB.value.id,
       session_id: sessionStore.currentSessionId || undefined,
-    })) {
+      idempotency_key: idempotencyKey,
+    }, signal)) {
+      if (signal.aborted) {
+        console.log('[ChatView] 流已被中止，停止处理事件')
+        break
+      }
+
       if (event.type === 'init' && event.session_id) {
         sessionStore.setCurrentSession(event.session_id)
         await sessionStore.fetchSessions()
       } else if (event.type === 'chunk' && event.content) {
         // 检查是否是sources数据（支持两种前缀）
-        if (typeof event.content === 'string' && 
+        if (typeof event.content === 'string' &&
             (event.content.startsWith('__SOURCES__:') || event.content.startsWith('__SOURCES_EVENT__:'))) {
           try {
             const sourcesJson = event.content.replace(/^__(SOURCES|SOURCES_EVENT)__:/, '')
             currentSources = JSON.parse(sourcesJson)
-            // 更新消息的sources，并默认折叠
+            // 👇 修复：仅更新sources，不再用空字符串覆盖内容
             if (currentSources.length > 0) {
               const msgIndex = sessionStore.currentMessages.length - 1
-              sessionStore.updateLastMessage('', currentSources)
+              // 保留现有内容，只更新sources
+              const lastMsg = sessionStore.currentMessages[msgIndex]
+              if (lastMsg?.role === 'assistant') {
+                lastMsg.sources = currentSources
+              }
               sourcesCollapsed.value.set(msgIndex, true) // 默认折叠
             }
           } catch (e) {
@@ -151,22 +299,37 @@ async function sendMessage() {
           scrollToBottom()
         }
       } else if (event.type === 'sources' && event.sources) {
-        // 直接处理sources类型的事件
+        // 👇 修复：仅更新sources，不再用空字符串覆盖内容
         currentSources = event.sources
         if (currentSources.length > 0) {
           const msgIndex = sessionStore.currentMessages.length - 1
-          sessionStore.updateLastMessage('', currentSources)
+          const lastMsg = sessionStore.currentMessages[msgIndex]
+          if (lastMsg?.role === 'assistant') {
+            // 保留现有内容，只更新sources
+            lastMsg.sources = currentSources
+          }
           sourcesCollapsed.value.set(msgIndex, true) // 默认折叠
         }
       } else if (event.type === 'done') {
         console.log('✅ Agent 回答完成')
+      } else if (event.type === 'error') {
+        const errorMessage = event.message || '抱歉，AI 服务连接中断或网络不稳定，本次回答没有完整生成。请稍后重试。'
+        sessionStore.updateLastMessage(errorMessage)
+        aiContent = errorMessage
+        console.error('Agent stream error:', errorMessage)
       }
     }
   } catch (error: any) {
+    // 👇 忽略因 abort 触发的错误
+    if (error?.name === 'AbortError') {
+      console.log('[ChatView] 流式请求被中止（组件卸载）')
+      return
+    }
+
     console.error('Error:', error)
-    
+
     let errorMessage = '抱歉，发生了错误，请稍后重试。'
-    
+
     if (error.message) {
       if (error.message.includes('429')) {
         errorMessage = '请求过于频繁，请稍后再试。如果问题持续存在，请联系管理员调整限流配置。'
@@ -178,10 +341,14 @@ async function sendMessage() {
         errorMessage = '服务器错误，请稍后重试。'
       }
     }
-    
+
     sessionStore.updateLastMessage(errorMessage)
   } finally {
     isLoading.value = false
+    streamAbortController = null
+  }
+  } finally {
+    sendLock.value = false
   }
 }
 
@@ -193,9 +360,100 @@ function scrollToBottom() {
   })
 }
 
+// ── 轮询等待 AI 后台生成 ──
+// 页面切换导致 SSE 断开后，AI 以后台 asyncio.Task 继续运行。
+// 此函数定时重新加载会话，直到 AI 回答出现或超时。
+function startPolling() {
+  if (!sessionStore.currentSessionId) return
+
+  // 检查最近一条用户消息是否足够新（<30秒），否则后台任务早已不存在
+  const _allMsgs = sessionStore.currentMessages
+  const _lastUser = [..._allMsgs].reverse().find(m => m.role === 'user')
+  if (_lastUser && _lastUser.created_at) {
+    const _age = Date.now() - new Date(_lastUser.created_at).getTime()
+    if (_age > 30000) {
+      console.log('[ChatView] 用户消息已超过 30 秒，后台任务已结束，不启动轮询')
+      return
+    }
+  }
+
+  isPolling.value = true
+  pollingStartTime.value = Date.now()
+  pollingMessage.value = '正在等待 AI 继续生成...'
+
+  const poll = async () => {
+    if (!isPolling.value || !sessionStore.currentSessionId) return
+
+    // 超时保护
+    const elapsed = Date.now() - pollingStartTime.value
+    if (elapsed >= MAX_POLLING_DURATION) {
+      console.warn('[ChatView] 轮询超时，AI 生成可能失败')
+      pollingMessage.value = 'AI 生成超时，请重新提问'
+      isPolling.value = false
+      return
+    }
+
+    try {
+      await sessionStore.loadSession(sessionStore.currentSessionId)
+      const msgs = sessionStore.currentMessages
+
+      // 检查是否所有问题都有回答：比较 user 和 assistant 的数量
+      // [user]                          → user=1, assistant=0 → 等待
+      // [user, assistant]               → user=1, assistant=1 → 完成
+      // [user, assistant, user]         → user=2, assistant=1 → 等待（新问题未答）
+      // [user, assistant, user, asst]   → user=2, assistant=2 → 完成
+      const userCount = msgs.filter(m => m.role === 'user').length
+      const asstCount = msgs.filter(m => m.role === 'assistant' && m.content).length
+      if (userCount > 0 && userCount <= asstCount) {
+        console.log('[ChatView] 轮询成功，所有问题已回答')
+        pollingMessage.value = ''
+        isPolling.value = false
+        scrollToBottom()
+        return
+      }
+
+      // 更新等待提示，显示已等待时间
+      const seconds = Math.floor(elapsed / 1000)
+      pollingMessage.value = `AI 正在思考中...（${seconds}秒）`
+
+      // 继续下一轮
+      pollingTimer = setTimeout(poll, POLLING_INTERVAL)
+    } catch (err) {
+      console.warn('[ChatView] 轮询加载失败，继续等待:', err)
+      pollingTimer = setTimeout(poll, POLLING_INTERVAL)
+    }
+  }
+
+  // 首轮延迟后开始
+  pollingTimer = setTimeout(poll, POLLING_INTERVAL)
+}
+
+function stopPolling() {
+  isPolling.value = false
+  pollingMessage.value = ''
+  if (pollingTimer !== null) {
+    clearTimeout(pollingTimer)
+    pollingTimer = null
+  }
+}
+
 async function loadSession(sessionId: string) {
+  // 👇 组件初始化期间不处理会话切换
+  if (!isComponentReady.value) {
+    console.warn('[ChatView] 组件尚未就绪，跳过会话切换请求')
+    return
+  }
+  // 👇 如果正在流式请求，先中止它，防止继续污染store
+  if (streamAbortController) {
+    console.log('[ChatView] 切换会话，中止当前流式请求')
+    streamAbortController.abort()
+    streamAbortController = null
+  }
+
   try {
     await sessionStore.loadSession(sessionId)
+    // 👇 清除旧的 sources 折叠状态，避免索引错乱
+    sourcesCollapsed.value = new Map()
     // 初始化所有历史消息的sources为折叠状态
     const msgs = sessionStore.currentMessages
     msgs.forEach((msg, idx) => {
@@ -339,8 +597,15 @@ function formatFileSize(bytes: number | null): string {
 }
 
 function createNewChat() {
+  // 👇 如果正在流式请求，先中止它
+  if (streamAbortController) {
+    streamAbortController.abort()
+    streamAbortController = null
+  }
   sessionStore.createNewSession()
   sessionStore.fetchSessions()
+  // 👇 清除旧的 sources 折叠状态
+  sourcesCollapsed.value = new Map()
 }
 </script>
 
@@ -500,6 +765,20 @@ function createNewChat() {
             </div>
           </div>
         </div>
+
+        <!-- ── 等待 AI 后台生成的友好提示 ──
+             页面切换后 SSE 断开，AI 以 asyncio.Task 在后台继续运行，
+             前端轮询等待结果写入 DB 后自动显示 -->
+        <div
+          v-if="isPolling"
+          class="flex flex-col items-center justify-center py-8 text-center animate-message"
+        >
+          <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center shadow-lg mb-4">
+            <Loader2 :size="24" class="text-white animate-spin" />
+          </div>
+          <p class="text-sm text-gray-500 mb-1">{{ pollingMessage }}</p>
+          <p class="text-xs text-gray-400">正在从后台获取 AI 的回答，请耐心等待</p>
+        </div>
       </div>
 
       <!-- Input Area -->
@@ -551,12 +830,14 @@ function createNewChat() {
             </div>
 
             <textarea
+              ref="chatInputRef"
               v-model="userInput"
               rows="1"
               placeholder="输入你的问题..."
-              class="min-h-[44px] max-h-32 flex-1 px-4 py-2.5 bg-slate-50/80 border border-slate-200/80 rounded-xl focus:ring-2 focus:ring-emerald-200/60 focus:border-emerald-500 outline-none resize-none shadow-sm transition-all"
+              class="min-h-[44px] max-h-[148px] flex-1 px-4 py-2.5 bg-slate-50/80 border border-slate-200/80 rounded-xl focus:ring-2 focus:ring-emerald-200/60 focus:border-emerald-500 outline-none resize-none shadow-sm transition-all leading-6"
+              @input="resizeChatInput"
               @keydown.enter.exact.prevent="sendMessage"
-              :disabled="isLoading"
+              :disabled="isLoading || !isComponentReady"
             />
 
             <button

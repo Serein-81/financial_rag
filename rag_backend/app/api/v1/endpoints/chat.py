@@ -3,7 +3,8 @@ import time
 import asyncio
 import uuid
 import logging
-from typing import Optional
+from datetime import datetime
+from typing import Optional, Dict, Set
 from fastapi import APIRouter, Depends, HTTPException
 from starlette.concurrency import iterate_in_threadpool
 from sqlalchemy import select
@@ -39,6 +40,134 @@ class OrchestratorChatRequest(BaseModel):
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+STREAM_USER_ERROR_MESSAGE = "抱歉，AI 服务连接中断或网络不稳定，本次回答没有完整生成。请稍后重试。"
+
+
+async def persist_chat_message(
+    session_id: str,
+    role: str,
+    content: str,
+    tenant_id: Optional[str] = None,
+    sources: Optional[list] = None,
+    agent_name: Optional[str] = None,
+    turn: Optional[int] = None,
+) -> None:
+    """Persist a chat message for session reload/history APIs."""
+    if not content:
+        return
+
+    session_uuid = uuid.UUID(str(session_id))
+    async with AsyncSessionLocal() as db:
+        message = ChatMessage(
+            session_id=session_uuid,
+            role=role,
+            content=content,
+            tenant_id=tenant_id,
+            sources=sources,
+            agent_name=agent_name,
+            turn=turn or 1,
+        )
+        db.add(message)
+
+        session = await db.get(ChatSession, session_uuid)
+        if session:
+            session.updated_at = datetime.now()
+
+        await db.commit()
+
+
+def has_stream_error_marker(text: str) -> bool:
+    if not text:
+        return False
+    error_markers = ("DeepSeek 请求失败", "DeepSeek API 错误", "stream_error", "Connection error", "ReadTimeout")
+    return any(marker in text for marker in error_markers)
+
+
+def looks_like_incomplete_answer(text: str) -> bool:
+    stripped = (text or "").strip()
+    if not stripped:
+        return False
+    dangling_suffixes = ("如下：", "如下:", "包括：", "包括:", "有：", "有:", "---")
+    return len(stripped) < 80 and stripped.endswith(dangling_suffixes)
+
+
+# ── 后台任务强引用集合 ──
+# event_generator 创建的 asyncio.Task 在生成器退出后局部变量丢失，
+# 模块级引用确保后台任务不被 GC 回收，直到完成。
+_background_tasks: Set[asyncio.Task] = set()
+
+
+def _safe_put(q: asyncio.Queue, item: tuple) -> None:
+    """非阻塞写入队列，满时静默丢弃（后台任务不应被队列阻塞）。"""
+    try:
+        q.put_nowait(item)
+    except asyncio.QueueFull:
+        pass
+
+
+# ── SSE 流缓冲 ──
+# 存储每个会话最近的流式 chunk，用于断点续传。
+# key = session_id, value = [(seq, type, payload), ...]
+# 保留最近 500 条或 5 分钟后清理。
+_stream_buffers: Dict[str, list] = {}
+_STREAM_BUFFER_MAX_ITEMS = 500
+_STREAM_BUFFER_TTL = 300  # 5 分钟
+
+
+def _add_to_buffer(session_id: str, seq: int, event_type: str, payload: any) -> None:
+    """添加 chunk 到会话缓冲"""
+    if session_id not in _stream_buffers:
+        _stream_buffers[session_id] = []
+    buf = _stream_buffers[session_id]
+    buf.append((seq, event_type, payload))
+    # 超过上限时丢弃最旧的
+    if len(buf) > _STREAM_BUFFER_MAX_ITEMS:
+        buf[:50] = []  # 一次丢弃 50 条
+
+
+def _get_buffer_since(session_id: str, last_seq: int) -> list:
+    """获取会话缓冲中序号大于 last_seq 的所有条目"""
+    buf = _stream_buffers.get(session_id, [])
+    return [item for item in buf if item[0] > last_seq]
+
+
+def _cleanup_buffer(session_id: str) -> None:
+    """清理会话缓冲"""
+    _stream_buffers.pop(session_id, None)
+
+
+# ── 短时问答缓存 ──
+# 仅用于拦截 30 秒内的完全相同的重复提问（如误触、连点），
+# 不做时效性判断（是否有时效性应由 AI 决定，但判断本身需要 LLM 调用，与缓存目的矛盾）。
+# 因此全部缓存 + 极短 TTL，长于 TTL 的重复提问走正常 LLM 流程。
+_qa_cache: Dict[str, tuple] = {}
+_QA_CACHE_TTL = 30  # 30 秒，仅防连点/误触
+_QA_CACHE_MAX_ITEMS = 500
+
+
+def _get_cached_answer(tenant_id: str, query: str) -> Optional[str]:
+    """获取缓存的问答结果。"""
+    _key = f"{tenant_id}:{hash(query)}"
+    _item = _qa_cache.get(_key)
+    if _item is None:
+        return None
+    _answer, _ts = _item
+    if time.time() - _ts > _QA_CACHE_TTL:
+        _qa_cache.pop(_key, None)
+        return None
+    return _answer
+
+
+def _set_cached_answer(tenant_id: str, query: str, answer: str) -> None:
+    """缓存问答结果。"""
+    if len(_qa_cache) >= _QA_CACHE_MAX_ITEMS:
+        # 缓存满时清理最旧的 20%
+        _keys_to_remove = sorted(_qa_cache.keys(), key=lambda k: _qa_cache[k][1])[:100]
+        for _k in _keys_to_remove:
+            _qa_cache.pop(_k, None)
+    _key = f"{tenant_id}:{hash(query)}"
+    _qa_cache[_key] = (answer, time.time())
 
 
 async def ensure_chat_session(session_id: Optional[str], user: User, query: str, tenant_id: Optional[str] = None) -> str:
@@ -532,6 +661,42 @@ async def chat_with_agent(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/task/status/{session_id}")
+async def get_chat_task_status(
+    session_id: str,
+    current_user: User = Depends(deps.get_current_user),
+):
+    """
+    检查会话任务状态。
+
+    前端切回页面时调用此接口区分两种情况：
+    - status=completed: AI 已完成，直接 loadSession 拉取全部消息
+    - status=generating: AI 仍在后台生成，继续轮询等待
+    """
+    try:
+        _su = uuid.UUID(str(session_id))
+        async with AsyncSessionLocal() as _db:
+            # 检查会话归属
+            _session = await _db.get(ChatSession, _su)
+            if not _session or str(_session.user_id) != str(current_user.id):
+                raise HTTPException(status_code=404, detail="会话不存在")
+
+            # 检查是否有 assistant 回答
+            _result = await _db.execute(
+                select(ChatMessage).where(
+                    ChatMessage.session_id == _su,
+                    ChatMessage.role == "assistant",
+                ).order_by(ChatMessage.created_at.desc()).limit(1)
+            )
+            _msg = _result.scalar_one_or_none()
+            return {"status": "completed" if _msg else "generating"}
+    except HTTPException:
+        raise
+    except Exception as _e:
+        logger.warning(f"[CHAT] 任务状态查询失败: {_e}")
+        return {"status": "unknown", "error": str(_e)}
+
+
 @router.post("/agent_chat_stream")
 @log_user_action(
     action_type="CHAT",
@@ -585,123 +750,167 @@ async def chat_with_agent_stream(
         # 🧠 不再手动存储用户消息，记忆系统会自动处理
         # 移除了手动存储用户消息的代码
 
-    # 2. 构造流式生成器 (Generator)
-    async def event_generator():
-        # SSE 标准要求数据以 "data: " 开头，以 "\n\n" 结尾
-        
-        # 流式输出缓冲配置 - 平衡实时性和网络效率
-        BUFFER_SIZE = 5  # 累积5个字符后发送
-        MAX_WAIT_TIME = 0.03  # 最大等待时间30ms
+    # 2. 后台 Agent 任务 — 与 SSE 解耦
+    async def _background_agent_stream(
+        bg_queue: "asyncio.Queue",
+        bg_session_id: str,
+        bg_user_query: str,
+        bg_kb_id: str,
+        bg_user_id: str,
+        bg_tenant_id: str,
+        bg_persist_tenant_id: str,
+    ) -> None:
+        """后台运行 Agent 流式对话，与 SSE 连接生命周期无关。"""
+        # 设置当前租户和用户上下文，供 get_enterprise_kb_overview 等工具使用
+        if bg_tenant_id:
+            from app.tools.agent_tools import set_tool_context
+            set_tool_context(bg_tenant_id, bg_user_id)
 
-        # 先把 session_id 发给前端，让前端知道当前会话的 ID
+        # ── 简单问题缓存命中检查 ──
+        # 对于无时效性的重复问题，直接返回缓存结果，跳过 LLM 调用
+        _cached = _get_cached_answer(bg_tenant_id or "", bg_user_query)
+        if _cached is not None:
+            logger.info("[CACHE] 简单问题缓存命中，跳过 LLM | query=%s", bg_user_query[:30])
+            _safe_put(bg_queue, ("chunk", _cached, 1))
+            _safe_put(bg_queue, ("done", None))
+            return
+
+        try:
+            full_response = ""
+            current_sources = []
+            _seq = 0  # SSE 序列号
+
+            async for chunk in agent_service.chat_stream(
+                user_input=bg_user_query,
+                kb_id=bg_kb_id,
+                session_id=bg_session_id,
+                history=[],
+                user_id=bg_user_id,
+                tenant_id=bg_tenant_id,
+            ):
+                if has_stream_error_marker(chunk):
+                    msg = STREAM_USER_ERROR_MESSAGE
+                    await persist_chat_message(
+                        session_id=bg_session_id, role="assistant",
+                        content=msg, tenant_id=bg_persist_tenant_id, agent_name="agent",
+                    )
+                    _safe_put(bg_queue, ("error", msg))
+                    return
+
+                if chunk.startswith("__SOURCES_EVENT__:"):
+                    sources_json = chunk[len("__SOURCES_EVENT__:"):]
+                    try:
+                        sources_data = json.loads(sources_json)
+                        current_sources = sources_data if isinstance(sources_data, list) else []
+                        _safe_put(bg_queue, ("sources", sources_data))
+                    except json.JSONDecodeError:
+                        print(f"⚠️ [sources解析失败]: {sources_json[:100]}")
+                else:
+                    _seq += 1
+                    full_response += chunk
+                    # chunk 队列项: (type, payload, seq)
+                    _safe_put(bg_queue, ("chunk", chunk, _seq))
+                    _add_to_buffer(bg_session_id, _seq, "chunk", chunk)
+
+            # 流式结束 → 保存 AI 回答到 chat_messages
+            if not full_response.strip() or looks_like_incomplete_answer(full_response):
+                msg = STREAM_USER_ERROR_MESSAGE
+                await persist_chat_message(
+                    session_id=bg_session_id, role="assistant",
+                    content=msg, tenant_id=bg_persist_tenant_id, agent_name="agent",
+                )
+                _safe_put(bg_queue, ("error", msg))
+                return
+
+            await persist_chat_message(
+                session_id=bg_session_id, role="assistant",
+                content=full_response, tenant_id=bg_persist_tenant_id,
+                sources=current_sources or None, agent_name="agent",
+            )
+            print(f"[CHAT] [后台] AI 回复已保存 | session={bg_session_id[:8]} | length={len(full_response)}")
+            # 缓存简单问题的回答，下次重复提问时跳过 LLM
+            _set_cached_answer(bg_tenant_id or "", bg_user_query, full_response)
+            _safe_put(bg_queue, ("done", None))
+
+        except Exception as e:
+            print(f"[CHAT] [后台] 处理异常: {e}")
+            _safe_put(bg_queue, ("error", str(e)))
+
+    async def event_generator():
+        # 先把 session_id 发给前端
         init_data = json.dumps({"type": "init", "session_id": session_id})
         yield f"data: {init_data}\n\n"
 
         normalized_query = (request.query or "").strip()
         enterprise_question_keywords = ("哪个企业", "哪個企業", "所属企业", "所屬企業", "当前企业", "當前企業")
         if any(keyword in normalized_query for keyword in enterprise_question_keywords):
-            tenant_id = (
-                tenant_context.get("tenant_id")
-                or getattr(current_user, "tenant_id", None)
-                or ""
-            ).strip()
-            company_name = ""
-            async with AsyncSessionLocal() as db:
-                if tenant_id:
-                    tenant_settings_result = await db.execute(
-                        select(TenantSettings.company_name).where(TenantSettings.tenant_id == tenant_id)
-                    )
-                    company_name = (tenant_settings_result.scalar_one_or_none() or "").strip()
-
-                if not company_name:
-                    company_name = (getattr(current_user, "company_name", None) or "").strip()
-
-            if company_name:
-                direct_answer = f"你当前所在企业是：{company_name}。"
-            elif tenant_id:
-                direct_answer = f"我没有查到企业名称，但你当前所在的企业租户 ID 是：{tenant_id}。"
+            # 企业问题路径：直接回答并保存
+            _e_tid = (tenant_context.get("tenant_id") or getattr(current_user, "tenant_id", "") or "").strip()
+            _e_company = ""
+            async with AsyncSessionLocal() as _edb:
+                if _e_tid:
+                    _e_tsr = await _edb.execute(select(TenantSettings.company_name).where(TenantSettings.tenant_id == _e_tid))
+                    _e_company = (_e_tsr.scalar_one_or_none() or "").strip()
+                if not _e_company:
+                    _e_company = (getattr(current_user, "company_name", None) or "").strip()
+            if _e_company:
+                answer = f"你当前所在企业是：{_e_company}。"
+            elif _e_tid:
+                answer = f"我没有查到企业名称，但你当前所在的企业租户 ID 是：{_e_tid}。"
             else:
-                direct_answer = "我没有查到你当前账号绑定的企业信息。"
-
-            async with AsyncSessionLocal() as db:
-                db.add(ChatMessage(session_id=uuid.UUID(session_id), role="user", content=request.query))
-                db.add(ChatMessage(session_id=uuid.UUID(session_id), role="assistant", content=direct_answer))
-                await db.commit()
-
-            chunk_data = json.dumps({"type": "chunk", "content": direct_answer}, ensure_ascii=False)
-            yield f"data: {chunk_data}\n\n"
-            done_data = json.dumps({"type": "done"})
-            yield f"data: {done_data}\n\n"
+                answer = "我没有查到你当前账号绑定的企业信息。"
+            await persist_chat_message(session_id=session_id, role="user", content=request.query, tenant_id=_e_tid)
+            await persist_chat_message(session_id=session_id, role="assistant", content=answer, tenant_id=_e_tid, agent_name="agent")
+            yield f"data: {json.dumps({'type': 'chunk', 'content': answer})}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
             return
 
-        # 缓冲区
-        text_buffer = ""
-        last_send_time = time.time()
+        # 普通对话：保存用户消息，启动后台任务
+        _persist_tenant_id = str(tenant_context.get("tenant_id") or getattr(current_user, "tenant_id", "") or "")
+        await persist_chat_message(session_id=session_id, role="user", content=request.query, tenant_id=_persist_tenant_id)
 
-        async def flush_buffer():
-            nonlocal text_buffer, last_send_time
-            if text_buffer:
-                chunk_data = json.dumps({"type": "chunk", "content": text_buffer}, ensure_ascii=False)
-                yield f"data: {chunk_data}\n\n"
-                text_buffer = ""
-                last_send_time = time.time()
+        _queue: asyncio.Queue = asyncio.Queue(maxsize=200)
+        _bg_task = asyncio.create_task(
+            _background_agent_stream(
+                bg_queue=_queue,
+                bg_session_id=session_id,
+                bg_user_query=request.query,
+                bg_kb_id=request.kb_id,
+                bg_user_id=str(current_user.id),
+                bg_tenant_id=tenant_context.get("tenant_id") or str(getattr(current_user, "tenant_id", "") or ""),
+                bg_persist_tenant_id=_persist_tenant_id,
+            )
+        )
+        _background_tasks.add(_bg_task)
+        _bg_task.add_done_callback(_background_tasks.discard)
 
         try:
-            # 🧠 调用集成了记忆系统的流式服务，传入user_id和tenant_id
-            async for chunk in agent_service.chat_stream(
-                user_input=request.query, 
-                kb_id=request.kb_id, 
-                session_id=session_id, 
-                history=[],
-                user_id=str(current_user.id),
-                tenant_id=tenant_context.get('tenant_id')  # 🧠 传入tenant_id用于图谱检索
-            ):
-                # 识别 sources 信息并单独发送
-                if chunk.startswith("__SOURCES_EVENT__:"):
-                    # 先刷新缓冲区
-                    async for data in flush_buffer():
-                        yield data
-                    
-                    sources_json = chunk[len("__SOURCES_EVENT__:"):]
-                    try:
-                        sources_data = json.loads(sources_json)
-                        sources_event = json.dumps({"type": "sources", "sources": sources_data}, ensure_ascii=False)
-                        yield f"data: {sources_event}\n\n"
-                    except json.JSONDecodeError:
-                        print(f"⚠️ [sources解析失败]: {sources_json[:100]}")
-                    continue
-                
-                # 累积到缓冲区
-                text_buffer += chunk
-                
-                # 达到缓冲区大小或超时时发送
-                current_time = time.time()
-                if len(text_buffer) >= BUFFER_SIZE or (current_time - last_send_time) >= MAX_WAIT_TIME:
-                    async for data in flush_buffer():
-                        yield data
-                    
-        except (ValueError, KeyError) as e:
-            print(f"⚠️ [流式生成器数据错误]: {e}")
-        except (OSError, IOError) as e:
-            print(f"⚠️ [流式生成器IO错误]: {e}")
-        except (OSError, IOError) as e:
-            raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
-        except Exception as e:
-            print(f"⚠️ [流式生成器异常]: {e}")
-        
-        finally:
-            # 最后刷新缓冲区
-            async for data in flush_buffer():
-                yield data
+            while True:
+                item = await _queue.get()
+                if item is None:
+                    break
+                event_type = item[0]
 
-        # 🧠 不再手动存储AI回答，记忆系统会自动处理
-        # 移除了手动存储AI回答的代码
+                if event_type == "done":
+                    break
+                if event_type == "error":
+                    yield f"data: {json.dumps({'type': 'error', 'message': str(item[1])})}\n\n"
+                    break
 
-        # 告诉前端：我说完了！
-        done_data = json.dumps({"type": "done"})
-        yield f"data: {done_data}\n\n"
+                if event_type == "chunk":
+                    # chunk: (type, payload, seq)
+                    _payload, _seq = item[1], item[2]
+                    yield f"data: {json.dumps({'type': 'chunk', 'content': _payload, 'seq': _seq})}\n\n"
+                elif event_type == "sources":
+                    yield f"data: {json.dumps({'type': 'sources', 'sources': item[1]})}\n\n"
 
-    # 返回 StreamingResponse，指定媒体类型为 text/event-stream
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+        except GeneratorExit:
+            print(f"[CHAT] 客户端断开 SSE，后台任务继续 | session={session_id[:8]}")
+            _cleanup_buffer(session_id)
+            return
+
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 

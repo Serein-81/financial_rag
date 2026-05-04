@@ -5,8 +5,9 @@
 
 import re
 import json
+import asyncio
 import logging
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, TYPE_CHECKING
 from enum import Enum
 from dataclasses import dataclass
 
@@ -17,6 +18,9 @@ from .base_agent_prompt import load_agent_prompt
 from app.agent_framework.llm.base_adapter import BaseLLMAdapter
 from app.agent_framework.tools.tool_manager import ToolManager
 from ..state import AuditState, Finding, RiskLevel
+
+if TYPE_CHECKING:
+    from app.skills.skill_registry import SkillRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -89,25 +93,31 @@ class LegalSpecialist(BaseSpecialistAgent):
         self,
         llm_adapter: BaseLLMAdapter,
         tool_manager: ToolManager,
-        specialty: str = "legal"
+        specialty: str = "legal",
+        skill_registry: Optional['SkillRegistry'] = None,  # 🆕 技能系统
     ):
         """
         初始化法务专家
-        
+
         Args:
             llm_adapter: 大模型适配器
             tool_manager: 工具管理器
             specialty: 专业领域标识
+            skill_registry: 技能注册表 (可选)
         """
+        # 必须在 _load_system_prompt() 之前设置 skill_registry
+        # 因为 _get_prompt_context() 会访问它
+        self.skill_registry = skill_registry
         system_prompt = self._load_system_prompt()
-        
+
         super().__init__(
             specialty=specialty,
             llm_adapter=llm_adapter,
             tool_manager=tool_manager,
             system_prompt=system_prompt,
             max_iterations=10,
-            timeout=60.0
+            timeout=60.0,
+            skill_registry=skill_registry,  # 🆕 技能系统
         )
         
         self.entity_patterns = self._compile_entity_patterns()
@@ -217,9 +227,18 @@ class LegalSpecialist(BaseSpecialistAgent):
     
     def _get_prompt_context(self) -> Dict[str, Any]:
         """获取提示词渲染上下文"""
+        # 获取领域技能描述 (Level 1: 仅名称+说明, 完整内容按需加载)
+        skill_descriptions = ""
+        try:
+            if self.skill_registry and self.skill_registry.is_initialized():
+                skill_descriptions = self.skill_registry.format_domain_skill_descriptions("legal")
+        except Exception:
+            pass
+
         return {
             "legal_domains": [d.value for d in LegalDomain],
             "contract_types": [c.value for c in ContractType],
+            "skill_descriptions": skill_descriptions or "暂无可用技能",
         }
     
     def _build_default_prompt(self) -> str:
@@ -510,14 +529,14 @@ class LegalSpecialist(BaseSpecialistAgent):
         **kwargs
     ) -> Dict[str, Any]:
         """
-        处理法务咨询请求
-        
+        处理法务咨询请求 — LLM 驱动模式
+
         Args:
             user_input: 用户输入
             history: 对话历史
             context: 上下文信息
             **kwargs: 其他参数
-            
+
         Returns:
             处理结果
         """
@@ -525,24 +544,25 @@ class LegalSpecialist(BaseSpecialistAgent):
             entities = self.extract_entities(user_input)
             domain = self.identify_domain(user_input)
             contract_type = self.identify_contract_type(user_input)
-            
+
             prompt = self._build_legal_prompt(user_input, entities, domain)
-            
+
             full_prompt = f"{self.system_prompt}\n\n{prompt}" if self.system_prompt else prompt
             llm_response = await self.llm_adapter.generate(
                 prompt=full_prompt,
                 temperature=0.3
             )
-            
+
             response_text = llm_response.content if hasattr(llm_response, 'content') else str(llm_response)
             analysis = self._parse_llm_response(response_text, domain, contract_type)
-            
+
             risk_assessment = self.assess_legal_risk(analysis, entities)
-            
+
             return {
                 "success": True,
                 "domain": domain,
                 "contract_type": contract_type,
+                "text_answer": response_text,
                 "analysis": analysis.dict(),
                 "risk_assessment": risk_assessment,
                 "entities": {

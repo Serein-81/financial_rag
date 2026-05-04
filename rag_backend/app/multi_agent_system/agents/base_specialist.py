@@ -1,10 +1,10 @@
 """
 专业 Agent 基类 (Base Specialist Agent)
-继承现有的 BaseAgent，添加专业审查功能
+继承现有的 BaseAgent，添加专业审查功能和技能感知能力
 """
 
 from abc import abstractmethod
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, TYPE_CHECKING
 import uuid
 import logging
 
@@ -12,6 +12,10 @@ from app.agent_framework.core.base_agent import BaseAgent
 from app.agent_framework.llm.base_adapter import BaseLLMAdapter
 from app.agent_framework.tools.tool_manager import ToolManager
 from ..state import AuditState, Finding, RiskLevel
+from ..config.knowledge_loader import load_knowledge_base, load_risk_rules
+
+if TYPE_CHECKING:
+    from app.skills.skill_registry import SkillRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -36,11 +40,12 @@ class BaseSpecialistAgent(BaseAgent):
         tool_manager: ToolManager,
         system_prompt: str = "",
         max_iterations: int = 10,
-        timeout: float = 300.0
+        timeout: float = 300.0,
+        skill_registry: Optional['SkillRegistry'] = None,  # 🆕 技能系统
     ):
         """
         初始化专业 Agent
-        
+
         Args:
             specialty: 专业领域 (finance/tax/legal)
             llm_adapter: 大模型适配器
@@ -48,21 +53,23 @@ class BaseSpecialistAgent(BaseAgent):
             system_prompt: 系统提示词
             max_iterations: 最大迭代次数
             timeout: 超时时间
+            skill_registry: 技能注册表 (可选, 注入后 Agent 自动感知领域技能)
         """
         super().__init__(
             llm_adapter=llm_adapter,
             tool_manager=tool_manager,
             system_prompt=system_prompt,
             max_iterations=max_iterations,
-            timeout=timeout
+            timeout=timeout,
+            skill_registry=skill_registry,
         )
-        
+
         self.specialty = specialty
         self.current_state: Optional[AuditState] = None
-        
+
         # 专业知识库
         self.knowledge_base = self._load_knowledge_base()
-        
+
         # 风险评估规则
         self.risk_rules = self._load_risk_rules()
         
@@ -96,91 +103,21 @@ class BaseSpecialistAgent(BaseAgent):
     
     def _load_knowledge_base(self) -> List[Dict[str, Any]]:
         """
-        加载专业知识库
-        
-        Returns:
-            知识库规则列表
+        加载专业知识库。
+
+        优先从 config/knowledge_base.json 读取，运营人员可直接编辑 JSON 更新规则；
+        若文件不存在则回退到内置兜底规则。
         """
-        # TODO: 从数据库或文件加载专业知识
-        # 现在返回模拟数据
-        if self.specialty == "finance":
-            return [
-                {
-                    "rule_id": "FIN_001",
-                    "category": "资产负债",
-                    "description": "资产负债表必须平衡",
-                    "risk_level": "high"
-                },
-                {
-                    "rule_id": "FIN_002", 
-                    "category": "现金流",
-                    "description": "现金流量表与银行对账单应一致",
-                    "risk_level": "medium"
-                }
-            ]
-        elif self.specialty == "tax":
-            return [
-                {
-                    "rule_id": "TAX_001",
-                    "category": "增值税",
-                    "description": "增值税进项税额不得超过销项税额",
-                    "risk_level": "high"
-                },
-                {
-                    "rule_id": "TAX_002",
-                    "category": "企业所得税",
-                    "description": "企业所得税率应符合税法规定",
-                    "risk_level": "medium"
-                }
-            ]
-        elif self.specialty == "legal":
-            return [
-                {
-                    "rule_id": "LEG_001",
-                    "category": "合同条款",
-                    "description": "合同条款不得违反法律法规",
-                    "risk_level": "high"
-                },
-                {
-                    "rule_id": "LEG_002",
-                    "category": "知识产权",
-                    "description": "使用他人知识产权需获得授权",
-                    "risk_level": "medium"
-                }
-            ]
-        else:
-            return []
-    
+        return load_knowledge_base(self.specialty)
+
     def _load_risk_rules(self) -> List[Dict[str, Any]]:
         """
-        加载风险评估规则
-        
-        Returns:
-            风险规则列表
+        加载风险评估规则。
+
+        优先从 config/risk_rules.json 读取，运营人员可直接编辑 JSON 更新规则；
+        若文件不存在则回退到内置兜底规则。
         """
-        # TODO: 从配置文件或数据库加载
-        return [
-            {
-                "pattern": "资产负债不平衡",
-                "risk_score": 0.9,
-                "risk_level": "critical"
-            },
-            {
-                "pattern": "现金流异常",
-                "risk_score": 0.7,
-                "risk_level": "high"
-            },
-            {
-                "pattern": "税率计算错误",
-                "risk_score": 0.8,
-                "risk_level": "high"
-            },
-            {
-                "pattern": "合同条款模糊",
-                "risk_score": 0.6,
-                "risk_level": "medium"
-            }
-        ]
+        return load_risk_rules(self.specialty)
     
     def read_state(self, key: str = None) -> Any:
         """
@@ -441,16 +378,82 @@ class BaseSpecialistAgent(BaseAgent):
         
         return prompt
     
+    # =========================================================================
+    # 🆕 技能感知方法
+    # =========================================================================
+
+    def get_domain_skills(self) -> List[Dict[str, Any]]:
+        """
+        获取当前 specialist 领域相关的技能列表 (Level 1: 仅元数据)
+
+        Returns:
+            领域技能元数据列表
+        """
+        if not self.skill_registry:
+            return []
+
+        domain_map = {
+            "finance": "finance",
+            "tax": "tax",
+            "legal": "legal",
+            "financial": "finance",
+            "taxation": "tax",
+            "legislation": "legal",
+        }
+        mapped_domain = domain_map.get(self.specialty.lower())
+        if not mapped_domain:
+            return []
+
+        try:
+            entries = self.skill_registry.list_skills_by_domain(mapped_domain)
+            return [
+                {
+                    "name": e.metadata.name,
+                    "description": e.metadata.description,
+                    "domain": e.metadata.domain,
+                }
+                for e in entries
+            ]
+        except Exception:
+            return []
+
+    def activate_skill(self, skill_name: str) -> bool:
+        """
+        激活指定技能 (Level 2: 加载正文到上下文)
+
+        Args:
+            skill_name: 技能名称
+
+        Returns:
+            是否成功激活
+        """
+        if not self.skill_registry:
+            return False
+
+        entry = self.skill_registry.get_skill(skill_name)
+        if not entry:
+            return False
+
+        from app.skills.skill_loader import SkillLoader
+        body = SkillLoader.load_full_body(entry)
+        if body:
+            self.inject_skill_context(body)
+            return True
+        return False
+
     def get_agent_statistics(self) -> Dict[str, Any]:
         """
         获取 Agent 统计信息
-        
+
         Returns:
             统计信息
         """
+        domain_skills = self.get_domain_skills()
         return {
             "specialty": self.specialty,
             "knowledge_base_size": len(self.knowledge_base),
             "risk_rules_count": len(self.risk_rules),
+            "domain_skills": len(domain_skills),
+            "active_skill": bool(self._activated_skill_context),
             "execution_summary": self.get_execution_summary()
         }

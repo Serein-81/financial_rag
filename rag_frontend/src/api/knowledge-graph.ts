@@ -23,9 +23,7 @@ export interface BuildKnowledgeGraphRequest {
 
 export interface BuildKnowledgeGraphResponse {
   success: boolean
-  entities_count: number
-  relations_count: number
-  processing_time: number
+  message?: string
   entities: KnowledgeGraphEntity[]
   relations: KnowledgeGraphRelation[]
 }
@@ -84,6 +82,7 @@ export interface GraphVisualizationEdge {
   target: string
   type: string
   properties: Record<string, any>
+  description?: string
 }
 
 export interface GraphVisualizationResponse {

@@ -92,31 +92,62 @@ const deletedNodeIds = ref<string[]>([])
 const deletedEdgeIds = ref<string[]>([])
 const importFileInput = ref<HTMLInputElement | null>(null)
 const newNodeName = ref('')
-const newNodeType = ref('Entity')
+const newNodeType = ref('COMPANY')
 const newEdgeSource = ref('')
 const newEdgeTarget = ref('')
-const newEdgeType = ref('related_to')
+const newEdgeType = ref('RELATED_TO')
 
 const nodeTypes = [
-  { value: 'Person', label: '人物', color: '#10b981' },
-  { value: 'Organization', label: '组织', color: '#3b82f6' },
-  { value: 'Location', label: '地点', color: '#f59e0b' },
-  { value: 'Event', label: '事件', color: '#ef4444' },
-  { value: 'Product', label: '产品', color: '#8b5cf6' },
-  { value: 'Concept', label: '概念', color: '#06b6d4' },
-  { value: 'Entity', label: '实体', color: '#64748b' }
+  { value: 'COMPANY', label: '公司', color: '#3b82f6' },
+  { value: 'PERSON', label: '人物', color: '#10b981' },
+  { value: 'DEPARTMENT', label: '部门', color: '#06b6d4' },
+  { value: 'FINANCIAL_METRIC', label: '财务指标', color: '#f59e0b' },
+  { value: 'FINANCIAL_REPORT', label: '财务报表', color: '#f59e0b' },
+  { value: 'ACCOUNT', label: '账户', color: '#f59e0b' },
+  { value: 'BUDGET', label: '预算', color: '#f59e0b' },
+  { value: 'TAX_TYPE', label: '税种', color: '#8b5cf6' },
+  { value: 'TAX_POLICY', label: '税收政策', color: '#8b5cf6' },
+  { value: 'TAX_RATE', label: '税率', color: '#8b5cf6' },
+  { value: 'TAX_EXEMPTION', label: '税收优惠', color: '#8b5cf6' },
+  { value: 'CONTRACT', label: '合同', color: '#e11d48' },
+  { value: 'LEGAL_CASE', label: '案件', color: '#e11d48' },
+  { value: 'REGULATION', label: '法规', color: '#e11d48' },
+  { value: 'CLAUSE', label: '条款', color: '#e11d48' },
+  { value: 'PRODUCT', label: '产品', color: '#14b8a6' },
+  { value: 'SERVICE', label: '服务', color: '#14b8a6' },
+  { value: 'LOCATION', label: '地点', color: '#22c55e' },
+  { value: 'DATE_PERIOD', label: '日期/期间', color: '#f97316' },
+  { value: 'EVENT', label: '事件', color: '#ef4444' },
+  { value: 'TECHNOLOGY', label: '技术/专利', color: '#6366f1' },
 ]
 
 const edgeTypes = [
-  { value: 'related_to', label: '相关' },
-  { value: 'part_of', label: '属于' },
-  { value: 'located_in', label: '位于' },
-  { value: 'works_for', label: '任职' },
-  { value: 'created_by', label: '创建' },
-  { value: 'invested_by', label: '投资' },
-  { value: 'competitor_of', label: '竞争' },
-  { value: 'parent_of', label: '父级' },
-  { value: 'child_of', label: '子级' }
+  { value: 'WORKS_AT', label: '工作于（人→公司）' },
+  { value: 'MANAGED_BY', label: '由...管理' },
+  { value: 'BELONGS_TO', label: '属于' },
+  { value: 'PARTNER_WITH', label: '合作' },
+  { value: 'COMPETES_WITH', label: '竞争' },
+  { value: 'SUBSIDIARY_OF', label: '子公司' },
+  { value: 'SUPPLIER_OF', label: '供应商' },
+  { value: 'CUSTOMER_OF', label: '客户' },
+  { value: 'INVESTED_IN', label: '投资' },
+  { value: 'OWNS', label: '持有' },
+  { value: 'HAS_METRIC', label: '有财务指标' },
+  { value: 'REPORTED_IN', label: '体现在报表' },
+  { value: 'AUDITED_BY', label: '由...审计' },
+  { value: 'SUBJECT_TO', label: '适用税种' },
+  { value: 'HAS_RATE', label: '税率为' },
+  { value: 'ELIGIBLE_FOR', label: '符合优惠' },
+  { value: 'CLAIMED', label: '已申报' },
+  { value: 'SIGNED', label: '签署合同' },
+  { value: 'GOVERNS', label: '管辖/适用' },
+  { value: 'VIOLATES', label: '违反' },
+  { value: 'CONTAINS_CLAUSE', label: '包含条款' },
+  { value: 'EFFECTIVE_PERIOD', label: '有效期' },
+  { value: 'LOCATED_AT', label: '位于' },
+  { value: 'PRODUCES', label: '生产/提供' },
+  { value: 'USES', label: '使用技术' },
+  { value: 'RELATED_TO', label: '相关（通用）' },
 ]
 
 const filteredNodes = computed(() => {
@@ -129,8 +160,13 @@ const filteredNodes = computed(() => {
 })
 
 function getNodeColor(type: string): string {
+  // 直接匹配（新格式：COMPANY, TAX_TYPE 等）
   const nodeType = nodeTypes.find(t => t.value === type)
-  return nodeType?.color || '#64748b'
+  if (nodeType) return nodeType.color
+  // 兼容旧格式（Person, Organization 等）- 转大写后重试
+  const upperType = type.toUpperCase().replace(/\s+/g, '_')
+  const fallback = nodeTypes.find(t => t.value === upperType)
+  return fallback?.color || '#64748b'
 }
 
 function getEdgeEndpointId(endpoint: string | GraphNode): string {
@@ -443,7 +479,8 @@ async function saveGraph() {
         source: getEdgeEndpointId(edge.source),
         target: getEdgeEndpointId(edge.target),
         type: edge.type,
-        properties: edge.properties || {}
+        properties: edge.properties || {},
+        description: (edge as any).description || undefined
       })),
       deleted_node_ids: deletedNodeIds.value,
       deleted_edge_ids: deletedEdgeIds.value
@@ -1028,20 +1065,30 @@ onMounted(() => {
                 <div class="text-xs text-gray-500 mb-1">目标节点</div>
                 <div class="text-sm font-mono bg-gray-50 px-2 py-1 rounded">{{ getEdgeEndpointId(selectedEdge.target) }}</div>
               </div>
+              <div>
+                <div class="text-xs text-gray-500 mb-1">语义描述</div>
+                <input
+                  v-model="selectedEdge.description"
+                  type="text"
+                  placeholder="描述这个关系的含义..."
+                  class="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-emerald-200 focus:border-emerald-500 outline-none"
+                  @input="markDirty"
+                />
+              </div>
               <div v-if="showProperties && selectedEdge.properties">
                 <div class="text-xs text-gray-500 mb-2">属性</div>
-                <div class="space-y-1">
+                <div class="space-y-1 max-h-24 overflow-y-auto">
                   <div
                     v-for="(value, key) in selectedEdge.properties"
                     :key="key"
                     class="flex items-start gap-2 text-sm"
                   >
                     <span class="text-gray-500">{{ key }}:</span>
-                    <span class="text-gray-900">{{ value }}</span>
+                    <span class="text-gray-900">{{ String(value) }}</span>
                   </div>
                 </div>
               </div>
-              <div v-if="editMode" class="pt-3 border-t border-gray-200">
+              <div v-if="editMode" class="pt-3 border-t border-gray-200 space-y-2">
                 <button
                   @click="deleteEdge(selectedEdge.id)"
                   class="w-full px-4 py-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 flex items-center justify-center gap-2"

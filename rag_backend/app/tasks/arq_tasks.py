@@ -13,6 +13,7 @@ ARQ 任务定义
 注意：ARQ 是可选依赖，如果未安装则跳过相关功能
 """
 
+import uuid
 from app.utils.json_compat import json
 import logging
 from typing import Any, Dict, Optional
@@ -475,6 +476,254 @@ async def enqueue_task(
     await pool.close()
     
     return job.job_id
+
+
+# ============================================================
+# Phase 2 文档充血任务 (Document Enrichment Tasks)
+# 通过 ARQ Worker 执行，与 FastAPI 后台任务解耦
+# ============================================================
+
+
+async def enrich_document_entities(ctx: dict, document_id: str, tenant_id: str = None):
+    """
+    ARQ 任务：法务文档实体提取与替换。
+
+    由 _dispatch_phase2_enrichment() 创建的 DLQ 任务触发。
+    全局并发由 ARQ Worker 的 max_burst_jobs 控制。
+
+    Args:
+        ctx: ARQ 上下文
+        document_id: 文档 UUID
+        tenant_id: 租户 ID
+    """
+    logger.info(f"[EnrichTask] 开始实体解析: document_id={document_id}")
+
+    try:
+        from app.db import AsyncSessionLocal
+        from app.models.document import Document
+        from app.models.chunk import DocumentChunk
+        from app.models.document_enrichment_job import EnrichmentJob
+        from app.chunkers.entity_resolver import entity_resolver, ChunkResult
+        from app.services.structured_document_service import structured_document_service
+        from app.services.minio_service import minio_service
+        from sqlalchemy import select, update
+
+        if not tenant_id:
+            tenant_id = "default"
+
+        async with AsyncSessionLocal() as db:
+            # 加载文档
+            doc_result = await db.execute(
+                select(Document).where(Document.id == document_id)
+            )
+            doc = doc_result.scalar_one_or_none()
+            if not doc:
+                logger.error(f"[EnrichTask] 文档不存在: {document_id}")
+                return
+
+            # 加载文档 chunk
+            chunk_result = await db.execute(
+                select(DocumentChunk).where(
+                    DocumentChunk.document_id == document_id
+                )
+            )
+            db_chunks = chunk_result.scalars().all()
+
+            if not db_chunks:
+                logger.warning(f"[EnrichTask] 无 chunk 需要处理: {document_id}")
+                return
+
+            # 解析文档（获取结构化文档）
+            file_bytes = await minio_service.download_document_async(doc.file_path)
+            structured_doc = await structured_document_service.parse_document(
+                file_bytes, doc.filename, doc.file_type
+            )
+
+            # 将 DB chunks 转为 ChunkResult 列表
+            chunk_results = []
+            for db_chunk in db_chunks:
+                cr = ChunkResult(
+                    content=db_chunk.content,
+                    start=db_chunk.chunk_start or 0,
+                    end=db_chunk.chunk_end or len(db_chunk.content),
+                    tokens=db_chunk.token_count or 0,
+                    heading_path=db_chunk.heading_path,
+                    chunk_index=db_chunk.chunk_index,
+                    domain="legal",
+                    node_type=db_chunk.node_type or "leaf",
+                    relationships=db_chunk.relationships or {},
+                )
+                chunk_results.append(cr)
+
+            # 执行实体替换
+            resolved_chunks = await entity_resolver.resolve(structured_doc, chunk_results)
+
+            # 更新数据库
+            for cr in resolved_chunks:
+                if cr.content != db_chunks[cr.chunk_index].content:
+                    await db.execute(
+                        update(DocumentChunk)
+                        .where(DocumentChunk.id == db_chunks[cr.chunk_index].id)
+                        .values(content=cr.content)
+                    )
+
+            # 标记任务完成
+            await db.execute(
+                update(EnrichmentJob)
+                .where(
+                    EnrichmentJob.document_id == document_id,
+                    EnrichmentJob.job_type == "entity_resolve",
+                )
+                .values(status="completed")
+            )
+            await db.commit()
+
+            logger.info(f"[EnrichTask] 实体解析完成: document_id={document_id}")
+
+    except Exception as e:
+        logger.error(f"[EnrichTask] 实体解析失败: {e}", exc_info=True)
+        # 更新 DLQ 状态（下次重试）
+        try:
+            from app.db import AsyncSessionLocal
+            from app.models.document_enrichment_job import EnrichmentJob
+            from sqlalchemy import update
+
+            async with AsyncSessionLocal() as db:
+                job = await db.execute(
+                    select(EnrichmentJob).where(
+                        EnrichmentJob.document_id == document_id,
+                        EnrichmentJob.job_type == "entity_resolve",
+                    )
+                )
+                job_record = job.scalar_one_or_none()
+                if job_record:
+                    job_record.retry_count += 1
+                    job_record.error_message = str(e)[:500]
+                    if job_record.retry_count >= job_record.max_retries:
+                        job_record.status = "dead"
+                    else:
+                        from datetime import timedelta
+                        job_record.next_retry_at = (
+                            datetime.utcnow()
+                            + timedelta(seconds=60 * (2 ** job_record.retry_count))
+                        )
+                    await db.commit()
+        except Exception as inner_e:
+            logger.error(f"[EnrichTask] DLQ 更新失败: {inner_e}")
+
+
+async def enrich_document_summaries(ctx: dict, document_id: str, parent_chunk_ids: list, tenant_id: str = None):
+    """
+    ARQ 任务：PARENT 节点摘要生成。
+
+    由 _dispatch_phase2_enrichment() 创建的 DLQ 任务触发。
+    使用 SummaryGenerator 的 Batch Prompt 策略生成摘要。
+
+    Args:
+        ctx: ARQ 上下文
+        document_id: 文档 UUID
+        parent_chunk_ids: 需要生成摘要的 PARENT chunk ID 列表
+        tenant_id: 租户 ID
+    """
+    logger.info(
+        f"[EnrichTask] 开始摘要生成: document_id={document_id}, "
+        f"{len(parent_chunk_ids)} 个 PARENT 节点"
+    )
+
+    try:
+        from app.db import AsyncSessionLocal
+        from app.chunkers.summary_generator import summary_generator, ChunkResult
+        from app.models.document_enrichment_job import EnrichmentJob
+        from app.models.chunk import DocumentChunk
+        from sqlalchemy import select, update
+
+        if not tenant_id:
+            tenant_id = "default"
+
+        async with AsyncSessionLocal() as db:
+            # 加载 PARENT chunks
+            result = await db.execute(
+                select(DocumentChunk).where(
+                    DocumentChunk.id.in_([
+                        uuid.UUID(pid) for pid in parent_chunk_ids
+                    ])
+                )
+            )
+            parent_db_chunks = result.scalars().all()
+
+            # 转为 ChunkResult
+            parent_results = []
+            for db_chunk in parent_db_chunks:
+                cr = ChunkResult(
+                    content=db_chunk.content,
+                    start=db_chunk.chunk_start or 0,
+                    end=db_chunk.chunk_end or len(db_chunk.content),
+                    tokens=db_chunk.token_count or 0,
+                    chunk_index=db_chunk.chunk_index,
+                    domain="legal",
+                    node_type="parent",
+                )
+                parent_results.append(cr)
+
+            if not parent_results:
+                logger.warning(f"[EnrichTask] 无 PARENT 节点: {document_id}")
+                return
+
+            # 生成摘要
+            await summary_generator.generate_for_all(parent_results)
+
+            # 更新数据库
+            for cr in parent_results:
+                if cr.summary:
+                    await db.execute(
+                        update(DocumentChunk)
+                        .where(DocumentChunk.id == parent_chunk_ids[cr.chunk_index])
+                        .values(summary=cr.summary)
+                    )
+
+            # 标记任务完成
+            await db.execute(
+                update(EnrichmentJob)
+                .where(
+                    EnrichmentJob.document_id == document_id,
+                    EnrichmentJob.job_type == "summary_generate",
+                )
+                .values(status="completed")
+            )
+            await db.commit()
+
+            logger.info(f"[EnrichTask] 摘要生成完成: document_id={document_id}")
+
+    except Exception as e:
+        logger.error(f"[EnrichTask] 摘要生成失败: {e}", exc_info=True)
+        # 更新 DLQ 状态（下次重试）
+        try:
+            from app.db import AsyncSessionLocal
+            from app.models.document_enrichment_job import EnrichmentJob
+            from sqlalchemy import select, update
+
+            async with AsyncSessionLocal() as db:
+                job = await db.execute(
+                    select(EnrichmentJob).where(
+                        EnrichmentJob.document_id == document_id,
+                        EnrichmentJob.job_type == "summary_generate",
+                    )
+                )
+                job_record = job.scalar_one_or_none()
+                if job_record:
+                    job_record.retry_count += 1
+                    job_record.error_message = str(e)[:500]
+                    if job_record.retry_count >= job_record.max_retries:
+                        job_record.status = "dead"
+                    else:
+                        from datetime import timedelta
+                        job_record.next_retry_at = (
+                            datetime.utcnow()
+                            + timedelta(seconds=60 * (2 ** job_record.retry_count))
+                        )
+                    await db.commit()
+        except Exception as inner_e:
+            logger.error(f"[EnrichTask] DLQ 更新失败: {inner_e}")
 
 
 # 注册任务映射

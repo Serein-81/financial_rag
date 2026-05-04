@@ -1,25 +1,36 @@
-"""关系提取器 - 使用 LLM（融合 GraphRAG：并发处理 + 批量提取 + 智能合并 + LLM摘要 + 关系分类）"""
+"""关系提取器 - 使用 LLM（领域类型约束 + 并发处理 + 批量提取 + 智能合并）"""
 import json
 import asyncio
 import logging
 from typing import List, Dict, Optional, Callable, Any
 from app.core.config import settings
+from app.knowledge_graph.kg_types import (
+    RelationType,
+    RELATION_TYPE_DESCRIPTIONS,
+    get_relation_type_prompt_block,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class RelationExtractor:
-    """使用 LLM 提取实体关系（融合 GraphRAG 优势：并发处理 + 批量提取 + 智能合并 + LLM摘要 + 关系分类）"""
+    """
+    使用 LLM 提取实体关系（领域类型约束版）
+
+    改进：
+    - 使用 kg_types.py 定义的关系类型（WORKS_AT, SIGNED, SUBJECT_TO 等）
+    - 限定 LLM 只能使用预定义类型，不允许编造
+    - 后验证：过滤不在预定义列表中的类型
+    """
+
+    # 所有合法关系类型的集合，用于后验证过滤
+    VALID_RELATION_TYPES: set = set(RELATION_TYPE_DESCRIPTIONS.keys())
 
     def __init__(self):
         self.max_concurrency = getattr(settings, 'EXTRACTION_CONCURRENCY', 5)
         self.max_retries = getattr(settings, 'EXTRACTION_MAX_RETRIES', 1)
         self.model = getattr(settings, 'KG_EXTRACTION_MODEL', 'deepseek/deepseek-chat')
         self.enable_description = True
-        self.relation_types = [
-            "工作于", "位于", "属于", "创建", "开发", "使用",
-            "合作", "竞争", "领导", "属于", "相关于", "影响"
-        ]
 
     async def extract(
         self,
@@ -64,6 +75,12 @@ class RelationExtractor:
                     callback(f"JSON 解析失败 (尝试 {attempt + 1}/{retries})")
                 if attempt < retries - 1:
                     await asyncio.sleep(1)
+            except asyncio.TimeoutError:
+                last_error = TimeoutError("LLM 调用超时（120s），请检查 DeepSeek API 状态或稍后重试")
+                logger.error(f"关系提取超时 (尝试 {attempt + 1}/{retries})")
+                if callback:
+                    callback("关系提取超时（120s），请稍后重试")
+                break
             except Exception as e:
                 last_error = e
                 logger.error(f"关系提取失败: {e}")
@@ -81,38 +98,60 @@ class RelationExtractor:
         text: str,
         entities: List[Dict]
     ) -> List[Dict]:
-        """单次关系提取"""
-        entity_names = [e['name'] for e in entities]
+        """单次关系提取（使用预定义关系类型，限制实体数量避免提示词过长）"""
+        # 按置信度排序，取前10个最核心的实体
+        # 避免 29 个实体全列到提示词里导致 DeepSeek 处理超时
+        sorted_entities = sorted(
+            entities,
+            key=lambda e: e.get('confidence', 1.0),
+            reverse=True
+        )[:10]
+        entity_names = [e['name'] for e in sorted_entities]
+        relation_types_block = get_relation_type_prompt_block()
 
         prompt = f"""从文本中识别实体之间的关系，返回 JSON 数组格式。
 
 文本：{text}
-实体：{', '.join(entity_names)}
+已提取的实体：{', '.join(entity_names)}
+
+{relation_types_block}
 
 要求：
-1. 识别实体之间的关系（如：工作于、位于、属于等）
-2. 为每个关系评估置信度（0-1之间的小数）：
+1. 关系类型必须严格从上面定义的类型中选择，不要编造新类型
+2. source 和 target 必须在已提取的实体列表中
+3. 为每个关系评估置信度（0-1之间的小数）：
    - 明确的关系：0.9-1.0
    - 较明确的关系：0.7-0.9
    - 可能存在的关系：0.5-0.7
    - 不确定的关系：<0.5
-3. 返回格式：[{{"source":"实体1","target":"实体2","type":"关系类型","confidence":0.95}}]
-4. 只返回 JSON 数组，不要其他内容
-5. 如果没有关系，返回空数组 []
+4. 返回格式：[{{"source":"实体1","target":"实体2","type":"WORKS_AT","confidence":0.95}}]
+5. 只返回 JSON 数组，不要其他内容
+6. 如果没有关系，返回空数组 []
 
-示例：
-文本：张三在北京的阿里巴巴公司工作
-实体：张三, 北京, 阿里巴巴
-返回：[{{"source":"张三","target":"阿里巴巴","type":"工作于","confidence":0.95}},{{"source":"阿里巴巴","target":"北京","type":"位于","confidence":0.9}}]
+示例（公司税务场景）：
+文本：阿里巴巴2023年营收8687亿元，适用企业所得税25%税率
+实体：阿里巴巴, 2023年, 8687亿元, 企业所得税, 25%
+返回：[{{"source":"阿里巴巴","target":"营收","type":"HAS_METRIC","confidence":0.95}},{{"source":"阿里巴巴","target":"企业所得税","type":"SUBJECT_TO","confidence":0.95}},{{"source":"企业所得税","target":"25%","type":"HAS_RATE","confidence":0.95}}]
+
+示例（合同场景）：
+文本：张三代表腾讯与华为签署了5G技术合作协议
+实体：张三, 腾讯, 华为, 5G技术合作协议
+返回：[{{"source":"张三","target":"腾讯","type":"WORKS_AT","confidence":0.95}},{{"source":"腾讯","target":"5G技术合作协议","type":"SIGNED","confidence":0.9}},{{"source":"华为","target":"5G技术合作协议","type":"SIGNED","confidence":0.9}}]
 """
 
         from app.services.llm_service import llm_service
-        logger.info(f"调用 LLM 提取关系，使用模型: {self.model}...")
-        response = await llm_service.get_answer(
-            query=prompt,
-            context_chunks=[],
-            history=[],
-            model=self.model
+        logger.info(
+            "调用 LLM 提取关系（使用服务默认模型），"
+            f"实体数: {len(entity_names)}（从 {len(entities)} 中取了前10个）..."
+        )
+        # 给 DeepSeek API 加 120 秒超时，避免无限等待
+        response = await asyncio.wait_for(
+            llm_service.get_answer(
+                query=prompt,
+                context_chunks=[],
+                history=[],
+            ),
+            timeout=120.0,
         )
 
         logger.info(f"LLM 响应收到，长度: {len(response)} 字符")
@@ -136,10 +175,24 @@ class RelationExtractor:
             logger.warning(f"关系提取响应不是数组: {type(relations)}")
             return []
 
-        filtered_relations = [
-            r for r in relations
-            if isinstance(r, dict) and 'source' in r and 'target' in r
-        ]
+        # 过滤：必须包含 source/target，且类型必须在预定义集合中
+        filtered_relations = []
+        invalid_type_count = 0
+        for r in relations:
+            if not isinstance(r, dict) or 'source' not in r or 'target' not in r:
+                continue
+            rtype = r.get('type', '')
+            if rtype not in self.VALID_RELATION_TYPES:
+                invalid_type_count += 1
+                logger.debug(f"跳过未定义的关系类型: {rtype} ({r.get('source')}→{r.get('target')})")
+                continue
+            filtered_relations.append(r)
+
+        if invalid_type_count:
+            logger.warning(
+                f"过滤了 {invalid_type_count} 个未定义类型的关系"
+                f"（仅保留 {len(filtered_relations)} 个有效关系）"
+            )
 
         logger.info(f"成功提取 {len(filtered_relations)} 个关系")
         return filtered_relations

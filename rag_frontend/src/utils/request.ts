@@ -32,12 +32,21 @@ function isAuthPage(): boolean {
 
 function clearAuthStorage(): void {
   localStorage.removeItem('rag_token')
+  localStorage.removeItem('rag_refresh_token')
   localStorage.removeItem('user')
   localStorage.removeItem('rag_user_name')
   localStorage.removeItem('rag_user_email')
   localStorage.removeItem('rag_user_id')
   localStorage.removeItem('rag_avatar_url')
   localStorage.removeItem('rag_user_role')
+}
+
+// 刷新 Token 锁（防止并发刷新）
+let _refreshing = false
+let _pendingRefreshes: Array<(token: string) => void> = []
+
+export function getRefreshToken(): string | null {
+  return localStorage.getItem('rag_refresh_token')
 }
 
 // 鑾峰彇 token
@@ -134,25 +143,42 @@ instance.interceptors.request.use(
 // 鍏ㄥ眬鍝嶅簲鎷︽埅鍣?
 instance.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
     const status = error.response?.status
     const errorMessage = error.response?.data?.detail ||
                          error.response?.data?.message ||
                          error.message
 
     if (status === 401) {
-      clearAuthStorage()
-
-      if (isAuthPage()) {
-        return Promise.reject(error)
-      }
-      ElMessage.error({
-        message: '登录已过期，请重新登录',
-        duration: 3000,
-        onClose: () => {
-          router.push('/login')
+      // ── 尝试用 refresh_token 静默续期 ──
+      const oldRefreshToken = getRefreshToken()
+      if (oldRefreshToken && !isAuthPage() && !_refreshing) {
+        _refreshing = true
+        try {
+          const res = await instance.post('/auth/refresh', {
+            refresh_token: oldRefreshToken,
+          })
+          const newToken: string = res.data.access_token
+          localStorage.setItem('rag_token', newToken)
+          // 重放原请求
+          if (error.config) {
+            error.config.headers.Authorization = `Bearer ${newToken}`
+            return instance(error.config)
+          }
+        } catch {
+          // refresh 也失败 → 强制登出
+          clearAuthStorage()
+          ElMessage.error({ message: '登录已过期，请重新登录', duration: 3000, onClose: () => router.push('/login') })
+          return Promise.reject(error)
+        } finally {
+          _refreshing = false
         }
-      })
+      } else {
+        clearAuthStorage()
+        if (!isAuthPage()) {
+          ElMessage.error({ message: '登录已过期，请重新登录', duration: 3000, onClose: () => router.push('/login') })
+        }
+      }
     } else if (status === 403) {
       if (errorMessage?.includes('tenant')) {
         clearAuthStorage()
@@ -254,17 +280,19 @@ export function del<T = any>(url: string, config: any = {}): Promise<T> {
 
 export async function login(identifier: string, password: string): Promise<{
   access_token: string
+  refresh_token?: string
   token_type: string
   user_name: string
   avatar_url?: string
 }> {
   const isEmail = identifier.includes('@')
-  const loginData = isEmail 
+  const loginData = isEmail
     ? { email: identifier, password: password }
     : { username: identifier, password: password }
-  
+
   const data = await request<{
     access_token: string
+    refresh_token?: string
     token_type: string
     user_name: string
     avatar_url?: string
@@ -275,6 +303,9 @@ export async function login(identifier: string, password: string): Promise<{
 
   localStorage.setItem('rag_token', data.access_token)
   localStorage.setItem('rag_user_name', data.user_name)
+  if (data.refresh_token) {
+    localStorage.setItem('rag_refresh_token', data.refresh_token)
+  }
   if (data.avatar_url) {
     localStorage.setItem('rag_avatar_url', data.avatar_url)
   }

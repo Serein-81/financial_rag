@@ -117,8 +117,11 @@
 | 税 | tax_calculation | 0.8 |
 | 财务 | financial_analysis | 0.8 |
 | 报表 | financial_analysis | 0.8 |
+| 利润 | financial_analysis | 0.8 |
+| 盈利 | financial_analysis | 0.8 |
 | 合同 | contract_review | 0.8 |
 | 法律 | legal_consultation | 0.8 |
+| 法务 | legal_consultation | 0.8 |
 | 政策 | knowledge_query | 0.8 |
 | 法规 | knowledge_query | 0.8 |
 | 通知 | knowledge_query | 0.8 |

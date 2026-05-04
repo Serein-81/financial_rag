@@ -1,0 +1,85 @@
+{
+  "_info": "政策采集源配置。人工维护，定期验证可用性。运行 scripts/check_rss_sources.py 检测。",
+  "_updated": "2026-05-04",
+  "rss_feeds": [
+    {
+      "name": "中国政府网",
+      "url": "https://www.gov.cn/rss/policy.xml",
+      "status": "dead",
+      "last_ok": null,
+      "notes": "2024年起不再提供RSS"
+    },
+    {
+      "name": "中国政府网(备用)",
+      "url": "https://www.gov.cn/rss/latest.xml",
+      "status": "dead",
+      "last_ok": null,
+      "notes": "2024年起不再提供RSS"
+    },
+    {
+      "name": "国家税务总局",
+      "url": "https://www.chinatax.gov.cn/chinatax/rss/feed.xml",
+      "status": "blocked",
+      "last_ok": null,
+      "notes": "返回403，服务器屏蔽非浏览器请求"
+    },
+    {
+      "name": "国家税务总局(taxpolicy)",
+      "url": "https://www.chinatax.gov.cn/chinatax/rss/taxpolicy.xml",
+      "status": "blocked",
+      "last_ok": null,
+      "notes": "返回403"
+    },
+    {
+      "name": "财政部",
+      "url": "https://www.mof.gov.cn/rss/feed.xml",
+      "status": "dead",
+      "last_ok": null,
+      "notes": "404 Not Found"
+    }
+  ],
+  "api_endpoints": [
+    {
+      "name": "国家税务总局API",
+      "url": "https://www.chinatax.gov.cn/api/service/taxPolicy/list",
+      "status": "blocked",
+      "last_ok": null,
+      "notes": "robots.txt返回403"
+    },
+    {
+      "name": "中国政府网政策列表",
+      "url": "https://www.gov.cn/zhengce/xxgk/list.htm",
+      "status": "dead",
+      "last_ok": null,
+      "notes": "页面返回404"
+    },
+    {
+      "name": "财政部政策列表",
+      "url": "https://www.mof.gov.cn/zhengwuxinxi/zhengcelist/index.htm",
+      "status": "blocked",
+      "last_ok": null,
+      "notes": "robots.txt返回404"
+    }
+  ],
+  "alternative_sources": [
+    {
+      "name": "新浪新闻-政策",
+      "url": "https://feed.mix.sina.com.cn/api/roll/get?pageid=153&lid=2509&num=20",
+      "type": "json",
+      "status": "unknown",
+      "notes": "返回综合新闻(非仅政策)，需过滤"
+    },
+    {
+      "name": "新浪财经-税收",
+      "url": "https://feed.mix.sina.com.cn/api/roll/get?pageid=155&lid=2510&num=20",
+      "type": "json",
+      "status": "unknown",
+      "notes": "可能包含政策相关新闻，需测试"
+    }
+  ],
+  "sample_data": {
+    "count": 20,
+    "source": "app.services.policy_crawler_service.PolicyCrawlerService.get_sample_policies()",
+    "notes": "离线可用，20条内置示例政策"
+  }
+}

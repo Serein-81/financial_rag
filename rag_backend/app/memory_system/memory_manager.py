@@ -542,7 +542,9 @@ class MemoryManager:
         except (OSError, IOError) as e:
             print(f"⚠️ [记忆管理器] 上下文构建IO失败，使用备用方案: {e}")
         except Exception as e:
+            import traceback
             print(f"⚠️ [记忆管理器] 上下文构建失败，使用备用方案: {e}")
+            traceback.print_exc()
             
             # 备用方案：使用原有逻辑
             memories = await self.retrieve_context(query)

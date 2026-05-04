@@ -140,9 +140,9 @@ services:
       PGBOUNCER_PORT: 5432
       PGBOUNCER_POOL_MODE: ${PGBOUNCER_POOL_MODE:-transaction}
       # 数据库连接池配置（优化用于 PgBouncer）
-      DB_POOL_SIZE: ${DB_POOL_SIZE:-5}
-      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-5}
-      DB_POOL_TIMEOUT: ${DB_POOL_TIMEOUT:-30}
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-20}
+      DB_POOL_TIMEOUT: ${DB_POOL_TIMEOUT:-60}
       DB_POOL_RECYCLE: ${DB_POOL_RECYCLE:-3600}
       # 直接连接 PostgreSQL 配置
       POSTGRES_SERVER: ${POSTGRES_SERVER:-db}
@@ -272,21 +272,20 @@ services:
     profiles: ["heavy", "full"]
     ports:
       - "8001:8000"
+    mem_limit: 4g
     environment:
       UNSTRUCTURED_SERVER_WORKERS: "1"
       LOG_LEVEL: "INFO"
+      # 代理设置：通过 host.docker.internal 访问 Windows 宿主机 VPN
+      HTTP_PROXY: "http://host.docker.internal:7890"
+      HTTPS_PROXY: "http://host.docker.internal:7890"
+      NO_PROXY: "localhost,127.0.0.1,0.0.0.0"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 120s
-    deploy:
-      resources:
-        limits:
-          memory: 3G
-        reservations:
-          memory: 2G
     logging:
       driver: "json-file"
       options:

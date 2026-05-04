@@ -9,6 +9,7 @@ from .agent_trace import AgentTrace, AgentStep
 from .tool_trace import ToolCallTrace
 from .prompt_optimization import PromptTemplate, PromptExecution, PromptABTest
 from .semantic_memory import SemanticMemory
+from .episodic_memory import EpisodicMemoryRecord
 from .tenant_audit_log import TenantAuditLog
 from .audit_task import AuditTask
 from .audit_result import AuditResult
@@ -52,3 +53,4 @@ from .scheduled_task import (
 )
 from .workflow_trace import WorkflowTrace, WorkflowNodeExecution, WorkflowStatus
 from .custom_tool import CustomTool, CustomToolKind, CustomToolStatus
+from .document_enrichment_job import EnrichmentJob

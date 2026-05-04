@@ -9,6 +9,7 @@ DeepSeek 专属适配器 (OpenRouter API)
 """
 
 import os
+import asyncio
 from app.utils.json_compat import json
 import logging
 from typing import AsyncGenerator, Dict, Any, Optional, List
@@ -210,37 +211,63 @@ class DeepSeekAdapter(BaseLLMAdapter):
             # 优先使用 LangSmith 包装的客户端（如果启用）
             if self.langsmith_client:
                 logger.info("[DeepSeek] 使用 LangSmith 追踪客户端...")
-                response = await self.langsmith_client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    temperature=gen_conf.get("temperature", temperature),
-                    max_tokens=max_tokens,
-                    **request_kwargs
-                )
-                
-                # 转换为标准格式
-                result = {
-                    "model": response.model,
-                    "choices": [{
-                        "message": {
-                            "role": response.choices[0].message.role,
-                            "content": response.choices[0].message.content
-                        },
-                        "finish_reason": response.choices[0].finish_reason
-                    }],
-                    "usage": {
-                        "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
-                        "completion_tokens": response.usage.completion_tokens if response.usage else 0,
-                        "total_tokens": response.usage.total_tokens if response.usage else 0
+                try:
+                    response = await asyncio.wait_for(
+                        self.langsmith_client.chat.completions.create(
+                            model=model,
+                            messages=messages,
+                            temperature=gen_conf.get("temperature", temperature),
+                            max_tokens=max_tokens,
+                            **request_kwargs
+                        ),
+                        timeout=30.0,  # LangSmith 可能挂起，30s 超时回退到 httpx
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning("[DeepSeek] LangSmith 追踪客户端超时(30s)，回退到标准 HTTP 客户端")
+                    self.langsmith_client = None
+                    # 不 return，继续到下面的 httpx 路径
+                else:
+                    # 转换为标准格式（保留 tool_calls）
+                    raw_message = response.choices[0].message
+                    message_dict = {
+                        "role": raw_message.role,
+                        "content": raw_message.content,
                     }
-                }
-                
-                content = response.choices[0].message.content
-                finish_reason = response.choices[0].finish_reason
-                
-                logger.info(f"[DeepSeek] LangSmith 追踪响应，长度: {len(content)} 字符")
-                
-                return LLMResponse(
+                    tool_calls_data = None
+                    if hasattr(raw_message, "tool_calls") and raw_message.tool_calls:
+                        tool_calls_data = [
+                            {
+                                "id": tc.id,
+                                "type": "function",
+                                "function": {
+                                    "name": tc.function.name,
+                                    "arguments": tc.function.arguments,
+                                }
+                            }
+                            for tc in raw_message.tool_calls
+                        ]
+                        message_dict["tool_calls"] = tool_calls_data
+
+                    result = {
+                        "model": response.model,
+                        "choices": [{"message": message_dict, "finish_reason": response.choices[0].finish_reason}],
+                        "usage": {
+                            "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
+                            "completion_tokens": response.usage.completion_tokens if response.usage else 0,
+                            "total_tokens": response.usage.total_tokens if response.usage else 0
+                        }
+                    }
+
+                    content = raw_message.content or ""
+                    finish_reason = response.choices[0].finish_reason
+
+                    has_tool_calls = bool(tool_calls_data)
+                    logger.info(
+                        f"[DeepSeek] LangSmith 追踪响应，长度: {len(content)} 字符"
+                        + (f", 工具调用: {len(tool_calls_data)}" if has_tool_calls else "")
+                    )
+
+                    return LLMResponse(
                     content=content,
                     model=model,
                     raw_response=result,

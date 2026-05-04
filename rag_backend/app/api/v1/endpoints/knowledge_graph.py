@@ -14,7 +14,8 @@ from app.schemas.knowledge_graph import (
     HybridSearchRequest, HybridSearchResponse,
     GraphStatsResponse, GraphVisualizationResponse, GraphNode, GraphEdge,
     EntityListResponse, EntityTypesResponse,
-    EntityCreate, EntityUpdate, RelationCreate, GraphImportRequest, GraphImportResponse
+    EntityCreate, EntityUpdate, RelationCreate, GraphImportRequest, GraphImportResponse,
+    PathRequest, PathResponse, PathResult,
 )
 from app.services.graph_builder import GraphBuilder
 from app.services.hybrid_retriever import HybridRetriever
@@ -461,3 +462,38 @@ async def list_entity_types(
     except Exception as e:
         logger.error(f"获取实体类型失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"获取实体类型失败: {str(e)}")
+
+
+@router.post("/path", response_model=PathResponse)
+async def find_path(
+    request: PathRequest,
+    current_user: User = Depends(get_current_user),
+    neo4j_manager: Neo4jManager = Depends(get_neo4j_manager)
+):
+    """
+    查找两个实体之间的关系路径（最短路径）
+
+    使用 Neo4j 的 shortestPath 算法，支持 1~6 跳。
+    返回所有路径上的实体和关系类型列表。
+    """
+    try:
+        tenant_id = str(current_user.tenant_id)
+        paths = neo4j_manager.find_path_between(
+            source_name=request.source,
+            target_name=request.target,
+            tenant_id=tenant_id,
+            max_depth=request.max_depth
+        )
+        return PathResponse(
+            source=request.source,
+            target=request.target,
+            paths=[PathResult(**p) for p in paths],
+            total_paths=len(paths)
+        )
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
+    except (OSError, IOError) as e:
+        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
+    except Exception as e:
+        logger.error(f"路径查询失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"路径查询失败: {str(e)}")

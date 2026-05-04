@@ -14,10 +14,34 @@ Agent 工具集中管理
 
 import re
 import logging
+from contextvars import ContextVar
 from langchain_core.tools import tool
 from app.services.search_service import search_service
 
 logger = logging.getLogger(__name__)
+
+# 当前租户 ID + 用户 ID 上下文变量 — 在 chat_with_agent_stream 中设置，
+# get_enterprise_kb_overview 等工具通过此变量获取当前用户所属租户和用户ID，
+# 避免跨租户查询到其他企业的知识库，也避免查到同租户其他用户的私人知识库。
+_current_tenant_id: ContextVar[str] = ContextVar("_current_tenant_id", default="")
+_current_user_id: ContextVar[str] = ContextVar("_current_user_id", default="")
+
+
+def set_tool_context(tenant_id: str, user_id: str = "") -> None:
+    """设置当前工具调用的租户和用户上下文"""
+    _current_tenant_id.set(tenant_id)
+    if user_id:
+        _current_user_id.set(user_id)
+
+
+def get_tool_tenant_id() -> str:
+    """获取当前工具调用的租户上下文"""
+    return _current_tenant_id.get()
+
+
+def get_tool_user_id() -> str:
+    """获取当前工具调用的用户 ID"""
+    return _current_user_id.get()
 
 try:
     from app.mcp.financial_tools import create_financial_tools
@@ -278,6 +302,124 @@ async def get_knowledge_statistics(keyword: str, kb_id: str) -> str:
     return context
 
 
+@tool(description="企业知识库概览工具。查询企业拥有多少个知识库，以及每个知识库中有多少文档。不传 kb_id 时返回企业所有知识库概览，传入 kb_id 时返回该知识库的详细文档统计。")
+async def get_enterprise_kb_overview(kb_id: str = "", tenant_id: str = "") -> str:
+    """
+    获取企业知识库概览，包括知识库数量和各知识库的文档统计
+
+    Args:
+        kb_id: 知识库ID（可选），为空时返回所有知识库概览
+        tenant_id: 租户ID（可选），为空时自动从知识库推断当前租户
+
+    Returns:
+        知识库概览信息
+    """
+    from app.db import AsyncSessionLocal
+    from sqlalchemy import text
+
+    print(f"🏢 [Agent 企业概览] kb_id={kb_id or '全部'}")
+
+    try:
+        async with AsyncSessionLocal() as db:
+            if kb_id:
+                # 查单个知识库（用 text column 避免 ORM 枚举转换问题）
+                kb_row = await db.execute(
+                    text("SELECT id, name, description, visibility, created_at, tenant_id FROM knowledge_bases WHERE id = :id"),
+                    {"id": kb_id}
+                )
+                kb = kb_row.mappings().first()
+                if not kb:
+                    return f"[未找到] 知识库 ID {kb_id} 不存在。"
+
+                _dc = await db.execute(
+                    text("SELECT COUNT(*) FROM documents WHERE kb_id = CAST(:kb_id AS UUID)"),
+                    {"kb_id": str(kb_id)}
+                )
+                total_docs = _dc.scalar() or 0
+                _cc = await db.execute(
+                    text("SELECT COUNT(*) FROM documents WHERE kb_id = CAST(:kb_id AS UUID) AND status IN ('completed', 'ready')"),
+                    {"kb_id": str(kb_id)}
+                )
+                completed_docs = _cc.scalar() or 0
+                vis = (kb["visibility"] or "").lower()
+                visibility_cn = "企业级" if vis == "enterprise" else "私有"
+
+                return (
+                    f"📚 知识库详情：\n"
+                    f"  名称：{kb['name']}\n"
+                    f"  描述：{kb['description'] or '无'}\n"
+                    f"  可见性：{visibility_cn}\n"
+                    f"  文档数：{total_docs}（已完成 {completed_docs}）\n"
+                    f"  创建时间：{kb['created_at'].strftime('%Y-%m-%d %H:%M') if kb['created_at'] else '未知'}\n"
+                )
+
+            # ── 推断当前租户 ──
+            # 优先用传入的 tenant_id；否则取 ContextVar 中当前用户的租户
+            if not tenant_id:
+                tenant_id = get_tool_tenant_id()
+            _uid = get_tool_user_id()
+
+            # 查当前租户下当前用户可见的知识库：
+            # - 企业级知识库：同租户所有用户可见
+            # - 私有知识库：仅创建者本人可见
+            if tenant_id and _uid:
+                kb_rows = await db.execute(
+                    text("""
+                        SELECT id, name, description, visibility, created_at
+                        FROM knowledge_bases
+                        WHERE tenant_id = :tid
+                          AND (visibility = 'enterprise' OR (visibility = 'private' AND user_id = CAST(:uid AS UUID)))
+                        ORDER BY created_at DESC
+                    """),
+                    {"tid": tenant_id, "uid": _uid}
+                )
+            elif tenant_id:
+                kb_rows = await db.execute(
+                    text("SELECT id, name, description, visibility, created_at FROM knowledge_bases WHERE tenant_id = :tid AND visibility = 'enterprise' ORDER BY created_at DESC"),
+                    {"tid": tenant_id}
+                )
+            else:
+                kb_rows = await db.execute(
+                    text("SELECT id, name, description, visibility, created_at FROM knowledge_bases ORDER BY created_at DESC")
+                )
+            all_kbs = kb_rows.mappings().all()
+
+            if not all_kbs:
+                return "[企业知识库概览] 当前企业没有创建任何知识库。"
+
+            lines = [f"📚 企业知识库概览（共 {len(all_kbs)} 个知识库）：\n"]
+            for i, kb in enumerate(all_kbs, 1):
+                # 用 raw SQL 统计文档数，避免 UUID 类型转换问题
+                _dc = await db.execute(
+                    text("SELECT COUNT(*) FROM documents WHERE kb_id = CAST(:kb_id AS UUID)"),
+                    {"kb_id": str(kb["id"])}
+                )
+                total_docs = _dc.scalar() or 0
+                _cc = await db.execute(
+                    text("SELECT COUNT(*) FROM documents WHERE kb_id = CAST(:kb_id AS UUID) AND status IN ('completed', 'ready')"),
+                    {"kb_id": str(kb["id"])}
+                )
+                completed_docs = _cc.scalar() or 0
+                vis = (kb["visibility"] or "").lower()
+                visibility_cn = "企业级" if vis == "enterprise" else "私有"
+                lines.append(
+                    f"[{i}] {kb['name']}\n"
+                    f"    文档数：{total_docs}（已完成 {completed_docs}）| 可见性：{visibility_cn}\n"
+                )
+
+            return "\n".join(lines)
+
+    except (ValueError, KeyError) as e:
+        print(f"❌ [Agent] 企业概览查询数据错误: {e}")
+        return f"查询企业知识库概览数据错误: {str(e)}"
+    except (OSError, IOError) as e:
+        print(f"❌ [Agent] 企业概览查询IO错误: {e}")
+        return f"查询企业知识库概览IO错误: {str(e)}"
+    except Exception as e:
+        print(f"❌ [Agent] 企业概览查询失败: {e}")
+        return f"查询企业知识库概览失败: {str(e)}"
+
+
 # ==========================================
 # MCP 工具说明
 # ==========================================
@@ -353,6 +495,7 @@ def get_all_tools():
         search_documents_by_topic,
         list_knowledge_documents,
         get_knowledge_statistics,
+        get_enterprise_kb_overview,
     ]
     
     if FINANCIAL_TOOLS_AVAILABLE:

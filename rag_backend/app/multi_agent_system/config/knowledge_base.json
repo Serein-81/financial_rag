@@ -1,0 +1,99 @@
+{
+  "_description": "专业知识库规则。按专业领域 (specialty) 分组，运营人员可直接编辑此文件更新规则。",
+  "finance": [
+    {
+      "rule_id": "FIN_001",
+      "category": "资产负债",
+      "description": "资产负债表必须平衡，资产总额应等于负债加所有者权益",
+      "risk_level": "high"
+    },
+    {
+      "rule_id": "FIN_002",
+      "category": "现金流",
+      "description": "现金流量表与银行对账单应一致，经营活动现金流不应持续为负",
+      "risk_level": "medium"
+    },
+    {
+      "rule_id": "FIN_003",
+      "category": "收入确认",
+      "description": "收入确认应符合企业会计准则，不得提前或延后确认收入",
+      "risk_level": "high"
+    },
+    {
+      "rule_id": "FIN_004",
+      "category": "费用核算",
+      "description": "费用应按照权责发生制原则进行核算，不得跨期调节",
+      "risk_level": "medium"
+    },
+    {
+      "rule_id": "FIN_005",
+      "category": "往来款项",
+      "description": "应收账款和应付账款应定期对账，坏账准备应充分计提",
+      "risk_level": "medium"
+    }
+  ],
+  "tax": [
+    {
+      "rule_id": "TAX_001",
+      "category": "增值税",
+      "description": "增值税进项税额不得超过销项税额，留抵税额需符合退税条件",
+      "risk_level": "high"
+    },
+    {
+      "rule_id": "TAX_002",
+      "category": "企业所得税",
+      "description": "企业所得税率应符合税法规定，税收优惠需备案或审批",
+      "risk_level": "medium"
+    },
+    {
+      "rule_id": "TAX_003",
+      "category": "个人所得税",
+      "description": "工资薪金个税应按时代扣代缴，专项附加扣除需合规",
+      "risk_level": "high"
+    },
+    {
+      "rule_id": "TAX_004",
+      "category": "印花税",
+      "description": "应税合同、账簿需按规定贴花或申报缴纳印花税",
+      "risk_level": "low"
+    },
+    {
+      "rule_id": "TAX_005",
+      "category": "税收筹划",
+      "description": "税收筹划方案应在合法合规前提下进行，不得以避税为目的",
+      "risk_level": "medium"
+    }
+  ],
+  "legal": [
+    {
+      "rule_id": "LEG_001",
+      "category": "合同条款",
+      "description": "合同条款不得违反法律法规，格式条款需遵循公平原则",
+      "risk_level": "high"
+    },
+    {
+      "rule_id": "LEG_002",
+      "category": "知识产权",
+      "description": "使用他人知识产权需获得授权，自有知识产权应及时登记保护",
+      "risk_level": "medium"
+    },
+    {
+      "rule_id": "LEG_003",
+      "category": "数据合规",
+      "description": "个人信息处理需符合网络安全法和数据安全法要求，跨境传输需安全评估",
+      "risk_level": "high"
+    },
+    {
+      "rule_id": "LEG_004",
+      "category": "劳动用工",
+      "description": "劳动合同签订、社保缴纳、工时制度需符合劳动法规定",
+      "risk_level": "medium"
+    },
+    {
+      "rule_id": "LEG_005",
+      "category": "公司治理",
+      "description": "股东会/董事会决议程序需合规，关联交易需履行披露义务",
+      "risk_level": "high"
+    }
+  ]
+}

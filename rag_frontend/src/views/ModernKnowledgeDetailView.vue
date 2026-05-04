@@ -114,10 +114,44 @@ function getStatusLabel(status: string): string {
   const labels: Record<string, string> = {
     completed: '已完成',
     failed: '失败',
+    ready: '已完成',
     processing: '处理中',
     pending: '等待中'
   }
   return labels[status] || status
+}
+
+function getStatusDescription(status: string): string {
+  const desc: Record<string, string> = {
+    ready: '文档已处理完成，向量已入库，可到对话页检索',
+    completed: '文档已处理完成，向量已入库，可到对话页检索',
+    failed: '文档处理出错，请检查文件格式后重新上传',
+    processing: '文档正在后台解析和向量化，请稍候',
+    pending: '文档已上传，等待后台处理'
+  }
+  return desc[status] || status
+}
+
+function getDomainLabel(meta_info: any): string {
+  if (!meta_info || !meta_info.domain) return ''
+  const labels: Record<string, string> = {
+    finance: '财务类 FinancialChunker',
+    tax: '税务类 TaxChunker',
+    legal: '法务类 LegalChunker',
+    general: '通用类 GeneralChunker'
+  }
+  return labels[meta_info.domain] || meta_info.domain
+}
+
+function getDomainColor(meta_info: any): string {
+  if (!meta_info || !meta_info.domain) return ''
+  const colors: Record<string, string> = {
+    finance: 'bg-amber-50 border-amber-200 text-amber-700',
+    tax: 'bg-blue-50 border-blue-200 text-blue-700',
+    legal: 'bg-purple-50 border-purple-200 text-purple-700',
+    general: 'bg-gray-50 border-gray-200 text-gray-600'
+  }
+  return colors[meta_info.domain] || 'bg-gray-50 border-gray-200 text-gray-600'
 }
 
 function viewDocumentDetail(doc: any) {
@@ -270,11 +304,23 @@ function formatDate(dateString: string): string {
                         :size="16"
                         :class="[getStatusColor(doc.status), doc.status === 'processing' ? 'animate-spin' : '']"
                       />
-                      <span :class="getStatusColor(doc.status)">
+                      <span
+                        :class="getStatusColor(doc.status)"
+                        :title="getStatusDescription(doc.status)"
+                      >
                         {{ getStatusLabel(doc.status) }}
                       </span>
                     </div>
-                    
+
+                    <span
+                      v-if="doc.meta_info?.domain"
+                      class="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-medium border"
+                      :class="getDomainColor(doc.meta_info)"
+                      :title="'采用策略: ' + getDomainLabel(doc.meta_info)"
+                    >
+                      {{ getDomainLabel(doc.meta_info) }}
+                    </span>
+
                     <span class="text-sm text-gray-500">{{ formatFileSize(doc.file_size) }}</span>
                     <span class="text-sm text-gray-500">{{ formatDate(doc.created_at) }}</span>
                   </div>
@@ -340,6 +386,12 @@ function formatDate(dateString: string): string {
                 <p class="text-xs text-orange-600 mt-0.5">
                   PDF · DOC · DOCX · XLS · XLSX · TXT · MD · CSV · PNG · JPG · JPEG · BMP · TIFF
                 </p>
+              </div>
+              <div class="mt-2 inline-block px-3 py-1.5 bg-blue-50 border border-blue-200 rounded-lg">
+                <p class="text-xs text-blue-700">
+                  <span class="font-medium">提示：</span>文件名含「财务」「税务」「合同」等关键词，系统自动采用对应的优化切块策略，提升检索精度。
+                </p>
+                <p class="text-xs text-blue-500 mt-1">状态流转：等待中 → 处理中 → 已完成 → 可检索</p>
               </div>
             </div>
           </div>
@@ -429,7 +481,10 @@ function formatDate(dateString: string): string {
                       :size="16"
                       :class="[getStatusColor(selectedDoc.status), selectedDoc.status === 'processing' ? 'animate-spin' : '']"
                     />
-                    <span :class="getStatusColor(selectedDoc.status)">
+                    <span
+                      :class="getStatusColor(selectedDoc.status)"
+                      :title="getStatusDescription(selectedDoc.status)"
+                    >
                       {{ getStatusLabel(selectedDoc.status) }}
                     </span>
                   </div>
@@ -478,10 +533,18 @@ function formatDate(dateString: string): string {
             </div>
           </div>
 
-          <!-- 元信息 -->
-          <div v-if="selectedDoc.meta_info && Object.keys(selectedDoc.meta_info).length > 0" class="bg-gray-50 rounded-xl p-4">
-            <p class="text-sm font-medium text-gray-900 mb-3">元信息</p>
-            <pre class="text-xs text-gray-700 bg-white p-3 rounded-lg overflow-x-auto">{{ JSON.stringify(selectedDoc.meta_info, null, 2) }}</pre>
+          <!-- 分类策略 -->
+          <div v-if="selectedDoc.meta_info?.domain" class="bg-gradient-to-r from-emerald-50 to-teal-50 rounded-xl p-4 border border-emerald-200">
+            <div class="flex items-center gap-2 mb-2">
+              <span class="text-sm font-medium text-gray-900">分类策略</span>
+            </div>
+            <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium border"
+              :class="getDomainColor(selectedDoc.meta_info)">
+              {{ getDomainLabel(selectedDoc.meta_info) }}
+            </div>
+            <p class="text-xs text-gray-500 mt-2">
+              文件名含「财务」「税务」「合同」等关键词自动触发对应策略。未匹配时由 LLM 自动分类。
+            </p>
           </div>
 
           <!-- 错误信息 -->

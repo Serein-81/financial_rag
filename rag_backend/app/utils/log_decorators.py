@@ -415,7 +415,9 @@ def _extract_request_info(args: tuple, kwargs: dict) -> Dict[str, Any]:
     # 尝试从kwargs中获取请求相关信息
     for key in ['ip_address', 'user_agent', 'session_id']:
         if key in kwargs:
-            request_info[key] = kwargs[key]
+            value = kwargs[key]
+            # session_id 可能是 UUID 对象，但数据库字段是 VARCHAR，必须转 str
+            request_info[key] = str(value) if value is not None else None
 
     current_user = kwargs.get('current_user')
     if not current_user:

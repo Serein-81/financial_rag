@@ -763,23 +763,174 @@ class ResultSynthesizer:
     
     def _generate_merge_response(self, content: Dict[str, Any]) -> str:
         """生成合并响应"""
+        public_reports = self._extract_public_reports(content)
+        if public_reports:
+            return "\n\n".join(public_reports)
+
         merged_items = []
+        hidden_keys = {
+            "success",
+            "has_tax_db_data",
+            "tax_data",
+            "tax_data_error",
+            "entities",
+            "metadata",
+            "raw_data",
+            "debug",
+            "trace",
+            "tool_output",
+        }
+        public_keys = {
+            "summary",
+            "analysis_report",
+            "recommendations",
+            "risks",
+            "risk_points",
+            "compliance_status",
+            "risk_assessment",
+            "confidence",
+        }
         
         for key, values in content.get("summary", {}).items():
+            if key in hidden_keys or (key not in public_keys and key.endswith("_data")):
+                continue
             if len(values) == 1:
-                merged_items.append(f"• {key}: {values[0]['value']}")
+                formatted_value = self._format_public_value(values[0]["value"])
+                if formatted_value:
+                    merged_items.append(f"• {self._display_key(key)}: {formatted_value}")
             else:
                 unique_values = list({json.dumps(v, sort_keys=True): v for v in values}.values())
                 
                 if len(unique_values) == 1:
-                    merged_items.append(f"• {key}: {unique_values[0]['value']}")
+                    formatted_value = self._format_public_value(unique_values[0]["value"])
+                    if formatted_value:
+                        merged_items.append(f"• {self._display_key(key)}: {formatted_value}")
                 else:
-                    merged_items.append(f"• {key}:")
+                    display_key = self._display_key(key)
+                    child_items = []
                     for v in unique_values:
-                        merged_items.append(f"  - {v['value']}（来源: {v['source']}）")
+                        formatted_value = self._format_public_value(v["value"])
+                        if formatted_value:
+                            child_items.append(f"  - {formatted_value}（来源: {v['source']}）")
+                    if child_items:
+                        merged_items.append(f"• {display_key}:")
+                        merged_items.extend(child_items)
+
+        if not merged_items:
+            for source_type, details in content.get("details", {}).items():
+                public_details = self._format_public_details(details)
+                if public_details:
+                    merged_items.append(f"### {self._display_key(source_type)}")
+                    merged_items.extend(public_details)
         
         header = "📊 综合分析结果：\n"
-        return header + "\n".join(merged_items)
+        if merged_items:
+            return header + "\n".join(merged_items)
+        return "抱歉，暂未生成可展示的分析结论。请补充更具体的业务背景后重试。"
+
+    def _extract_public_reports(self, content: Dict[str, Any]) -> List[str]:
+        reports = []
+        report_keys = ("analysis_report", "report", "final_report", "content")
+        for details in content.get("details", {}).values():
+            if isinstance(details, str) and details.strip() and not self._looks_internal_text(details):
+                reports.append(details.strip())
+                continue
+            if not isinstance(details, dict):
+                continue
+            for key in report_keys:
+                value = details.get(key)
+                if isinstance(value, str) and value.strip() and not self._looks_internal_text(value):
+                    reports.append(value.strip())
+                    break
+        return reports
+
+    def _format_public_details(self, details: Any) -> List[str]:
+        if isinstance(details, str):
+            return [details.strip()] if details.strip() and not self._looks_internal_text(details) else []
+        if not isinstance(details, dict):
+            return []
+
+        lines = []
+        recommendations = details.get("recommendations")
+        if isinstance(recommendations, list) and recommendations:
+            lines.append("#### 建议")
+            lines.extend(f"- {item}" for item in recommendations if item)
+
+        risk_assessment = details.get("risk_assessment")
+        if isinstance(risk_assessment, dict):
+            risk_level = risk_assessment.get("risk_level")
+            risk_factors = risk_assessment.get("risk_factors")
+            if risk_level:
+                lines.append(f"- 风险等级：{self._translate_value(risk_level)}")
+            if isinstance(risk_factors, list) and risk_factors:
+                lines.append("#### 风险提示")
+                lines.extend(f"- {item}" for item in risk_factors if item)
+
+        analysis = details.get("analysis")
+        if isinstance(analysis, dict):
+            compliance_status = analysis.get("compliance_status")
+            if compliance_status:
+                lines.append(f"- 合规状态：{self._translate_value(compliance_status)}")
+            risk_points = analysis.get("risk_points")
+            if isinstance(risk_points, list) and risk_points and "#### 风险提示" not in lines:
+                lines.append("#### 风险提示")
+                lines.extend(f"- {item}" for item in risk_points if item)
+
+        confidence = details.get("confidence")
+        if isinstance(confidence, (int, float)):
+            lines.append(f"- 置信度：{confidence:.0%}")
+
+        return lines
+
+    def _format_public_value(self, value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, bool):
+            return ""
+        if isinstance(value, list):
+            return "；".join(str(item) for item in value if item)
+        if isinstance(value, dict):
+            return ""
+        return self._translate_value(value)
+
+    def _display_key(self, key: str) -> str:
+        return {
+            "tax": "税务分析",
+            "taxspecialist": "税务分析",
+            "tax_specialist": "税务分析",
+            "recommendations": "建议",
+            "risk_points": "风险提示",
+            "risks": "风险提示",
+            "compliance_status": "合规状态",
+            "risk_assessment": "风险评估",
+            "confidence": "置信度",
+            "analysis_report": "分析报告",
+        }.get(str(key).lower(), str(key).replace("_", " "))
+
+    def _translate_value(self, value: Any) -> str:
+        text = str(value)
+        return {
+            "high": "高",
+            "medium": "中",
+            "low": "低",
+            "review_required": "需要复核",
+            "compliant": "合规",
+            "non_compliant": "不合规",
+            "TaxType.OTHER": "其他税种",
+        }.get(text, text)
+
+    def _looks_internal_text(self, text: str) -> bool:
+        stripped = text.strip()
+        internal_markers = (
+            "has_tax_db_data",
+            "tax_data",
+            "tax_data_error",
+            "TaxType.",
+            "<TaxType.",
+            "'success':",
+            '"success":',
+        )
+        return stripped.startswith("{") or any(marker in stripped for marker in internal_markers)
     
     def _generate_hierarchical_response(self, content: Dict[str, Any]) -> str:
         """生成层次化响应"""

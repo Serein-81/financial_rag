@@ -20,6 +20,9 @@ from app.api.v1.endpoints import agent_task as agent_task_endpoint
 from app.api.v1.endpoints.circuit_breaker_api import router as circuit_breaker_router
 from app.observability.router import router as observability_router
 
+# 🆕 Skills 系统
+from app.api.v1.endpoints.skills import router as skills_router
+
 # 🔒 导入租户中间件
 from app.middleware.tenant_middleware import TenantContextMiddleware
 # 🔒 导入日志中间件
@@ -159,7 +162,22 @@ async def lifespan(app: FastAPI):
             logger.warning(f"⚠️ ARQ Worker 运行时错误: {e}")
         except Exception as e:
             logger.warning(f"⚠️ ARQ Worker 启动失败: {e}")
-        
+
+        # 🆕 初始化技能系统
+        try:
+            from app.skills.skill_registry import SkillRegistry
+            from pathlib import Path
+            skills_dir = Path(__file__).resolve().parent.parent / "skills"
+            count = await SkillRegistry.initialize(scan_paths=[skills_dir])
+            app.state.skill_registry = SkillRegistry
+            logger.info(f"✅ 技能系统初始化完成: {count} 个技能")
+        except ImportError as e:
+            logger.warning(f"⚠️ 技能系统导入失败: {e}")
+        except RuntimeError as e:
+            logger.warning(f"⚠️ 技能系统运行时错误: {e}")
+        except Exception as e:
+            logger.warning(f"⚠️ 技能系统初始化失败: {e}")
+
         yield
 
         logger.info(f"🛑 {settings.PROJECT_NAME} 正在关闭...")
@@ -355,6 +373,9 @@ app.include_router(policy_agent.router, prefix="/api/v1", tags=["Policy Notifica
 
 # Agent 任务状态 API（用于前端水合）
 app.include_router(agent_task_endpoint.router, prefix="/api/v1", tags=["Agent Task Status"]) # 🆕 任务状态持久化与恢复
+
+# 🆕 Skills 系统 API
+app.include_router(skills_router)
 
 @app.get("/")
 def root():

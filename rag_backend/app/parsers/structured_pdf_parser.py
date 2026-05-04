@@ -13,59 +13,138 @@ logger = logging.getLogger(__name__)
 ENABLE_UNSTRUCTURED = os.getenv("ENABLE_UNSTRUCTURED_PARSER", "false").lower() == "true"
 UNSTRUCTURED_API_URL = os.getenv("UNSTRUCTURED_API_URL", "http://unstructured-api:8000")
 
+# 扫描件判定阈值：提取字符数 < 文件字节数 × 此比例 时判断为扫描件
+SCAN_THRESHOLD_RATIO = 0.08
+
 
 class StructuredPDFParser(FileParserStrategy):
     """
-    结构化PDF解析器
-    
-    核心功能:
-    1. 字体大小分析 -> 推断标题层级
-    2. 布局分析 -> 识别段落边界  
-    3. 表格检测 -> 结构化表格数据
-    4. 构建文档树 -> 统一结构化格式
+    结构化PDF解析器（混合模式）
+
+    解析策略（自适应三级降级）:
+    1. pymupdf4llm: 本地快速解析，文字型 PDF 首选（200MB，<2秒/100页）
+    2. unstructured-api: 扫描件/OCR 场景，需要高质量识别时启用（可能耗尽内存）
+    3. PyMuPDF 启发式: 无条件降级兜底
+
+    选择逻辑:
+    - 先用 pymupdf4llm 快速解析
+    - 如果提取文本量 < 文件大小的 8%，判定为扫描件，走 unstructured-api（如果启用）
+    - 如果 pymupdf4llm 不可用或 unstructured 也不可用，最终降级到 PyMuPDF 启发式
     """
-    
+
     def get_supported_mime_types(self) -> List[str]:
         return ["application/pdf"]
-    
+
     async def parse(self, file_bytes: bytes) -> str:
         """
-        解析PDF文件，提取结构化内容
-        
+        解析PDF文件，提取结构化内容（自适应混合模式）
+
         Args:
             file_bytes: PDF文件的字节流
-            
+
         Returns:
             str: 结构化的Markdown格式文本
         """
         if not self.validate_file(file_bytes):
             raise ValueError("PDF文件为空或无效")
-        
+
+        # ── 第1级: 尝试 pymupdf4llm 快速解析（文字型 PDF）──
+        fallback_markdown = None
+        try:
+            markdown = await self._parse_with_pymupdf4llm(file_bytes)
+            if markdown and markdown.strip():
+                text_len = len(markdown.strip())
+                file_size = len(file_bytes)
+                ratio = text_len / file_size if file_size > 0 else 0
+
+                # 提取文本量 > 阈值 → 文字型 PDF，直接返回
+                if ratio >= SCAN_THRESHOLD_RATIO:
+                    logger.info(
+                        f"pymupdf4llm 解析成功: 文本 {text_len} / 文件 {file_size} "
+                        f"= {ratio:.1%}, 文字型 PDF"
+                    )
+                    return markdown.strip()
+
+                # 提取文本量 < 阈值 → 疑似扫描件，保存结果作为 fallback
+                logger.info(
+                    f"pymupdf4llm 提取文本过少 ({ratio:.1%} < {SCAN_THRESHOLD_RATIO:.0%}), "
+                    f"疑似扫描件，尝试 OCR 引擎"
+                )
+                fallback_markdown = markdown.strip()
+            else:
+                logger.info("pymupdf4llm 返回空，尝试 OCR 引擎")
+
+        except ImportError:
+            logger.warning("pymupdf4llm 未安装，尝试降级到启发式解析")
+        except Exception as e:
+            logger.warning(f"pymupdf4llm 解析失败: {e}，尝试降级方案")
+
+        # ── 第2级: 扫描件 → 尝试 unstructured-api OCR ──
         if ENABLE_UNSTRUCTURED:
-            logger.info(f"🚀 [Parser] 启用重型解析引擎: {UNSTRUCTURED_API_URL}")
-            return await self._parse_with_unstructured(file_bytes)
+            logger.info(f"启用重型解析引擎 (OCR): {UNSTRUCTURED_API_URL}")
+            try:
+                return await self._parse_with_unstructured(file_bytes)
+            except Exception as e:
+                logger.warning(f"Unstructured API 解析失败: {e}")
+                if fallback_markdown:
+                    logger.info("使用 pymupdf4llm 已有结果作为 fallback")
+                    return fallback_markdown
         else:
-            logger.info("🟢 [Parser] 启用轻量解析模式 (PyMuPDF + 启发式规则)")
-            structured_content = await asyncio.to_thread(
-                self._extract_structured_content, file_bytes
-            )
-            if not structured_content.strip():
-                raise ValueError("PDF文件内容为空")
-            return structured_content.strip()
-    
+            if fallback_markdown:
+                logger.info("重型解析引擎未启用，使用 pymupdf4llm 已有结果")
+                return fallback_markdown
+
+        # ── 第3级: PyMuPDF 启发式解析（无条件兜底）──
+        logger.info("启用轻量解析模式 (PyMuPDF + 启发式规则)")
+        structured_content = await asyncio.to_thread(
+            self._extract_structured_content, file_bytes
+        )
+        if not structured_content.strip():
+            raise ValueError("PDF文件内容为空")
+        return structured_content.strip()
+
+    async def _parse_with_pymupdf4llm(self, file_bytes: bytes) -> str:
+        """
+        使用 pymupdf4llm 进行本地快速解析（带表格识别）。
+
+        优势：
+        - 内存 < 200MB，无需 GPU
+        - 文字型 PDF 表格识别质量接近 unstructured
+        - 速度约 1-2秒/100页
+
+        pymupdf4llm.to_markdown() 接受文件路径字符串或 pymupdf.Document 对象，
+        不支持直接传 bytes。因此先用 fitz.open(stream=...) 打开。
+        """
+        import pymupdf4llm
+
+        def _sync_convert() -> str:
+            doc = fitz.open(stream=file_bytes, filetype="pdf")
+            try:
+                result = pymupdf4llm.to_markdown(
+                    doc,
+                    page_chunks=False,
+                    show_progress=False,
+                    write_images=False,
+                )
+                return result or ""
+            finally:
+                doc.close()
+
+        return await asyncio.to_thread(_sync_convert)
+
     async def _parse_with_unstructured(self, file_bytes: bytes) -> str:
-        """使用 Unstructured API 进行重型版面解析"""
+        """使用 Unstructured API 进行重型版面解析（OCR + 表格识别）"""
         import requests
-        
+
         try:
             response = requests.post(
                 f"{UNSTRUCTURED_API_URL}/general/v0/general",
                 files={"files": ("document.pdf", file_bytes, "application/pdf")}
             )
             response.raise_for_status()
-            
+
             result = response.json()
-            
+
             if isinstance(result, list) and len(result) > 0:
                 return self._parse_unstructured_response(result)
             else:
@@ -73,7 +152,7 @@ class StructuredPDFParser(FileParserStrategy):
                 return await asyncio.to_thread(
                     self._extract_structured_content, file_bytes
                 )
-                
+
         except requests.exceptions.ConnectionError:
             logger.error(f"无法连接到 Unstructured API: {UNSTRUCTURED_API_URL}")
             logger.info("降级到轻量解析模式...")

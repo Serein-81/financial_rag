@@ -1,5 +1,8 @@
-"""图构建服务（融合 GraphRAG：进度回调 + 错误处理 + 并发支持 + LLM摘要 + 语义合并）"""
+"""图构建服务（合并 GraphRAG：进度回调 + 错误处理 + 并发支持 + 增量缓存 + LLM摘要）"""
+import hashlib
+import json
 import logging
+import time
 import asyncio
 from typing import List, Dict, Any, Optional, Callable
 
@@ -14,8 +17,44 @@ from app.utils.progress_callback import ProgressCallback
 logger = logging.getLogger(__name__)
 
 
+class ExtractionCache:
+    """
+    提取结果内存缓存（TTL 1 小时，最大 200 条）
+
+    key: md5(text) → value: {"entities": [...], "relations": [...]}
+    部署后可以换成 Redis，接口不变
+    """
+    def __init__(self, ttl: int = 3600, max_size: int = 200):
+        self._cache: Dict[str, Any] = {}
+        self._timestamps: Dict[str, float] = {}
+        self._ttl = ttl
+        self._max_size = max_size
+
+    def get(self, text: str) -> Optional[Dict]:
+        key = hashlib.md5(text.encode('utf-8')).hexdigest()
+        if key in self._cache:
+            if time.time() - self._timestamps[key] < self._ttl:
+                logger.info(f"[提取缓存] 命中缓存: {text[:30]}...")
+                return self._cache[key]
+            else:
+                del self._cache[key]
+                del self._timestamps[key]
+        return None
+
+    def set(self, text: str, result: Dict):
+        key = hashlib.md5(text.encode('utf-8')).hexdigest()
+        if len(self._cache) >= self._max_size:
+            # 移除最旧的
+            oldest = min(self._timestamps, key=self._timestamps.get)
+            del self._cache[oldest]
+            del self._timestamps[oldest]
+        self._cache[key] = result
+        self._timestamps[key] = time.time()
+        logger.info(f"[提取缓存] 已缓存: {text[:30]}... ({len(self._cache)}条)")
+
+
 class GraphBuilder:
-    """图构建器（融合 GraphRAG 优势：支持进度回调和错误处理 + LLM摘要）"""
+    """图构建器（融合 GraphRAG 优势：支持进度回调和错误处理 + LLM摘要 + 增量缓存）"""
 
     def __init__(
         self,
@@ -27,6 +66,7 @@ class GraphBuilder:
         self.relation_extractor = relation_extractor
         self.neo4j_manager = neo4j_manager
         self.max_concurrency = 3
+        self._cache = ExtractionCache()
 
     async def build_from_text(
         self,
@@ -56,25 +96,39 @@ class GraphBuilder:
             entities_data = []
             relations_data = []
 
-            if extract_entities:
-                progress.info(f"📤 开始提取实体，文本长度: {len(text)}")
-                entities_data = await self.entity_extractor.extract(text)
+            # 缓存检查：相同文本的提取结果直接复用
+            cached = self._cache.get(text)
+            if cached and extract_entities:
+                entities_data = cached.get("entities", [])
+                relations_data = cached.get("relations", [])
+                progress.info(f"📦 缓存命中! 复用 {len(entities_data)} 个实体, {len(relations_data)} 个关系")
+                # 缓存命中：跳过 LLM，直接写入 Neo4j
+            else:
+                if extract_entities:
+                    progress.info(f"📤 开始提取实体，文本长度: {len(text)}")
+                    entities_data = await self.entity_extractor.extract(text)
 
-                if not entities_data:
-                    progress.warning("⚠️ 未提取到任何实体")
-                else:
-                    progress.success(f"✅ 提取到 {len(entities_data)} 个实体")
+                    if not entities_data:
+                        progress.warning("⚠️ 未提取到任何实体")
+                    else:
+                        progress.success(f"✅ 提取到 {len(entities_data)} 个实体")
 
-            if extract_relations and entities_data:
-                progress.info("📤 开始提取关系")
-                relations_data = await self.relation_extractor.extract(
-                    text, entities_data
-                )
+                if extract_relations and entities_data:
+                    progress.info("📤 开始提取关系")
+                    relations_data = await self.relation_extractor.extract(
+                        text, entities_data
+                    )
 
-                if not relations_data:
-                    progress.warning("⚠️ 未提取到任何关系")
-                else:
-                    progress.success(f"✅ 提取到 {len(relations_data)} 个关系")
+                    if not relations_data:
+                        progress.warning("⚠️ 未提取到任何关系")
+                    else:
+                        progress.success(f"✅ 提取到 {len(relations_data)} 个关系")
+
+                # 写入缓存
+                self._cache.set(text, {
+                    "entities": entities_data,
+                    "relations": relations_data
+                })
 
             created_entities = []
             if entities_data:
@@ -216,73 +270,56 @@ class GraphBuilder:
         tenant_id: Optional[str] = None,
         progress: Optional[ProgressCallback] = None
     ) -> List[Dict[str, Any]]:
-        """批量创建实体（支持消歧和置信度）"""
+        """批量创建实体（UNWIND 一次往返，支持消歧和置信度）"""
+        if not entities:
+            return []
+
+        # 预处理实体数据，构造 UNWIND 所需的 rows
+        rows = []
+        for entity in entities:
+            properties = entity.get("properties", {}) or {}
+            if isinstance(properties, str):
+                properties = {}
+            if user_id:
+                properties["user_id"] = str(user_id)
+            if session_id:
+                properties["session_id"] = str(session_id)
+            if "confidence" in entity:
+                properties["confidence"] = entity["confidence"]
+            if "original_name" in entity:
+                properties["original_name"] = entity["original_name"]
+
+            entity_name = entity["name"]
+            unique_key = f"{entity_name}_{entity['type']}"
+            if "original_name" in entity:
+                unique_key = f"{entity['original_name']}_{entity_name}_{entity['type']}"
+
+            rows.append({
+                "name": entity_name,
+                "entity_type": entity["type"],
+                "tenant_id": tenant_id,
+                "properties": properties,
+                "unique_key": unique_key,
+                "confidence": entity.get("confidence", 1.0),
+            })
+
+        # 单次 UNWIND 写入
+        created_count = self.neo4j_manager.batch_create_entities(rows, tenant_id)
+
+        # 构造返回列表（不依赖 Neo4j 返回的 ID）
         created = []
+        for row in rows:
+            created.append({
+                "name": row["name"],
+                "type": row["entity_type"],
+                "properties": row["properties"],
+                "id": row.get("unique_key"),
+                "confidence": row["confidence"],
+            })
+            if progress:
+                progress.debug(f"✅ 创建实体: {row['name']} ({row['entity_type']})")
 
-        for idx, entity in enumerate(entities):
-            try:
-                if progress:
-                    progress.debug(f"创建实体: {entity.get('name', 'unknown')}")
-
-                properties = entity.get("properties", {}) or {}
-                if isinstance(properties, str):
-                    properties = {}
-                if user_id:
-                    properties["user_id"] = str(user_id)
-                if session_id:
-                    properties["session_id"] = str(session_id)
-
-                if "confidence" in entity:
-                    properties["confidence"] = entity["confidence"]
-                if "original_name" in entity:
-                    properties["original_name"] = entity["original_name"]
-
-                entity_name = entity["name"]
-                unique_key = f"{entity_name}_{entity['type']}"
-
-                if "original_name" in entity:
-                    unique_key = f"{entity['original_name']}_{entity_name}_{entity['type']}"
-
-                result = self.neo4j_manager.create_entity(
-                    name=entity_name,
-                    entity_type=entity["type"],
-                    tenant_id=tenant_id,
-                    properties=properties,
-                    unique_key=unique_key
-                )
-
-                if result:
-                    created.append({
-                        "name": entity_name,
-                        "type": entity["type"],
-                        "properties": properties,
-                        "id": result.get("id"),
-                        "confidence": entity.get("confidence", 1.0)
-                    })
-
-                    if progress:
-                        progress.debug(f"✅ 创建实体: {entity_name} ({entity['type']})")
-
-            except (ValueError, KeyError) as e:
-                if progress:
-                    progress.warning(f"创建实体数据错误 {entity.get('name', 'unknown')}: {e}")
-            except (OSError, IOError) as e:
-                if progress:
-                    progress.warning(f"创建实体IO错误 {entity.get('name', 'unknown')}: {e}")
-            except (ValueError, KeyError) as e:
-                if progress:
-                    progress.warning(f"创建关系数据错误: {e}")
-            except (OSError, IOError) as e:
-                if progress:
-                    progress.warning(f"创建关系IO错误: {e}")
-            except Exception as e:
-                if progress:
-                    progress.warning(f"创建实体失败 {entity.get('name', 'unknown')}: {e}")
-                else:
-                    logger.warning(f"创建实体失败 {entity.get('name', 'unknown')}: {e}")
-                continue
-
-        logger.info(f"批量创建实体完成: {len(created)}/{len(entities)}")
+        logger.info(f"UNWIND批量创建实体完成: {created_count}/{len(entities)}")
         return created
 
     async def _batch_create_relations(
@@ -293,51 +330,44 @@ class GraphBuilder:
         tenant_id: Optional[str] = None,
         progress: Optional[ProgressCallback] = None
     ) -> List[Dict[str, Any]]:
-        """批量创建关系"""
-        created = []
+        """批量创建关系（UNWIND 一次往返）"""
+        if not relations:
+            return []
 
+        # 预处理关系数据
+        rows = []
         for relation in relations:
-            try:
-                if progress:
-                    progress.debug(
-                        f"创建关系: {relation['source']} -[{relation['type']}]-> {relation['target']}"
-                    )
+            properties = relation.get("properties", {})
+            if user_id:
+                properties["user_id"] = str(user_id)
+            if session_id:
+                properties["session_id"] = str(session_id)
 
-                properties = relation.get("properties", {})
-                if user_id:
-                    properties["user_id"] = str(user_id)
-                if session_id:
-                    properties["session_id"] = str(session_id)
+            rows.append({
+                "source": relation["source"],
+                "target": relation["target"],
+                "type": relation["type"],
+                "properties": properties,
+            })
 
-                result = self.neo4j_manager.create_relation(
-                    source_name=relation["source"],
-                    target_name=relation["target"],
-                    relation_type=relation["type"],
-                    tenant_id=tenant_id,
-                    properties=properties
+        # 单次 UNWIND 写入
+        created_count = self.neo4j_manager.batch_create_relations(rows, tenant_id)
+
+        created = []
+        for row in rows:
+            created.append({
+                "source": row["source"],
+                "target": row["target"],
+                "type": row["type"],
+                "properties": row["properties"],
+                "id": None,  # UNWIND 不返回单个 ID
+            })
+            if progress:
+                progress.debug(
+                    f"创建关系: {row['source']} -[{row['type']}]-> {row['target']}"
                 )
 
-                if result:
-                    created.append({
-                        "source": relation["source"],
-                        "target": relation["target"],
-                        "type": relation["type"],
-                        "properties": properties,
-                        "id": result.get("id")
-                    })
-
-            except Exception as e:
-                if progress:
-                    progress.warning(
-                        f"创建关系失败 {relation['source']}->{relation['target']}: {e}"
-                    )
-                else:
-                    logger.warning(
-                        f"创建关系失败 {relation['source']}->{relation['target']}: {e}"
-                    )
-                continue
-
-        logger.info(f"批量创建关系完成: {len(created)}/{len(relations)}")
+        logger.info(f"UNWIND批量创建关系完成: {created_count}/{len(relations)}")
         return created
 
     async def build_from_memory(

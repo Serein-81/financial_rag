@@ -121,9 +121,29 @@ class ToolResultFormatter:
             if len(content) > max_content_length:
                 content = content[:max_content_length] + "..."
             
-            source = ""
+            metadata_parts = []
             if hasattr(result, 'source_file') and result.source_file:
-                source = f"（来源：{result.source_file}）"
+                metadata_parts.append(f"来源：{result.source_file}")
+            if hasattr(result, 'score') and result.score is not None:
+                metadata_parts.append(f"相似度：{float(result.score):.2%}")
+            if getattr(result, 'answerability_score', None) is not None:
+                metadata_parts.append(f"可回答性：{float(result.answerability_score):.2%}")
+            flags = getattr(result, 'evidence_flags', None) or {}
+            if flags:
+                quality_notes = []
+                if flags.get("has_process_steps"):
+                    quality_notes.append("包含流程步骤")
+                elif flags.get("asks_process"):
+                    quality_notes.append("缺少明确流程步骤")
+                if flags.get("is_code_or_plan_fragment"):
+                    quality_notes.append("偏代码/方案片段")
+                if not flags.get("enough_context", True):
+                    quality_notes.append("上下文不足")
+                if flags.get("top_gap_clear"):
+                    quality_notes.append("top1分差明显")
+                if quality_notes:
+                    metadata_parts.append(f"证据质量：{'、'.join(quality_notes)}")
+            source = f"（{' | '.join(metadata_parts)}）" if metadata_parts else ""
             
             formatted_results.append(source + "\n" + content if source else content)
         

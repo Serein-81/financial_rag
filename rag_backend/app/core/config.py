@@ -27,9 +27,9 @@ class Settings(BaseSettings):
     PGBOUNCER_DATABASE: Optional[str] = None  # PgBouncer 中的数据库名（默认使用 POSTGRES_DB）
 
     # 数据库连接池配置（优化用于 PgBouncer）
-    DB_POOL_SIZE: int = 5  # 基础连接数（PgBouncer 模式下可以设小一些）
-    DB_MAX_OVERFLOW: int = 5  # 最大溢出连接数
-    DB_POOL_TIMEOUT: int = 30  # 连接获取超时（秒）
+    DB_POOL_SIZE: int = 10  # 基础连接数（后端处理+前端轮询共用）
+    DB_MAX_OVERFLOW: int = 20  # 最大溢出连接数（应对批量处理峰值）
+    DB_POOL_TIMEOUT: int = 60  # 连接获取超时（秒）
     DB_POOL_RECYCLE: int = 3600  # 连接回收时间（秒）
 
     # 3. 最终的连接字符串 (代码动态拼接，不需要在 env 里写)
@@ -263,14 +263,26 @@ class Settings(BaseSettings):
     SMS_DAILY_LIMIT: int = 3  # 每日发送次数限制
     
     # 知识图谱配置
-    ENABLE_KNOWLEDGE_GRAPH: bool = False
-    ENABLE_ENTITY_EXTRACTION: bool = False
-    ENABLE_RELATION_EXTRACTION: bool = False
+    ENABLE_KNOWLEDGE_GRAPH: bool = True
+    ENABLE_ENTITY_EXTRACTION: bool = True
+    ENABLE_RELATION_EXTRACTION: bool = True   # 已开启：入库时同时提取实体和关系
     ENABLE_COREFERENCE_RESOLUTION: bool = True  # 指代消解
     ENTITY_CONFIDENCE_THRESHOLD: float = 0.7  # 实体置信度阈值
     ENTITY_EXTRACTION_METHOD: str = "llm"  # llm 或 spacy
     ENTITY_EXTRACTION_MODEL: str = "glm-4-flash"
-    
+
+    # 图查询分类器配置
+    # mode: "keyword_only" 保持原有关键词匹配逻辑, "llm_first" 优先使用轻量LLM判断(回退到关键词)
+    GRAPH_CLASSIFIER_MODE: str = "llm_first"
+    GRAPH_CLASSIFIER_MODEL: str = "deepseek/deepseek-chat"  # 分类器使用的轻量模型
+    GRAPH_CLASSIFIER_CACHE_TTL: int = 300  # 分类结果缓存时间(秒)
+
+    # 延迟图抽取: 对话完成后后台提取实体并写入Neo4j(不阻塞对话流)
+    ENABLE_DEFERRED_GRAPH_EXTRACTION: bool = True
+
+    # 多智能体编排器是否启用图检索
+    ENABLE_ORCHESTRATOR_GRAPH: bool = True
+
     # Neo4j 配置
     NEO4J_URI: str = "bolt://localhost:7687"
     NEO4J_USER: str = "neo4j"

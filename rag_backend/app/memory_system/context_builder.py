@@ -352,7 +352,9 @@ class EnhancedContextBuilder:
         if custom_packets:
             packets.extend(custom_packets)
 
-        
+        # 过滤 None 包（防止某些路径下创建了空包）
+        packets = [p for p in packets if p is not None]
+
         return packets
 
     async def _select(
@@ -945,10 +947,8 @@ class EnhancedContextBuilder:
         # 第二步：🧠 语义去重 - 识别并合并相似内容
         result = self._semantic_deduplicate(result)
         
-        if len(packets) != len(result):
-            
-        
-            return result
+        # 始终返回去重后的结果（不要只在长度变化时 return，否则长度相同时返回 None）
+        return result
     
     def _semantic_deduplicate(self, packets: List[ContextPacket]) -> List[ContextPacket]:
         """
@@ -1087,7 +1087,7 @@ class EnhancedContextBuilder:
                 "type": memory_type,
                 "memory_id": memory.id,
                 "access_count": memory.access_count,
-                **memory.metadata
+                **(memory.metadata or {})
             },
             source_type="memory",
             priority=priority_map.get(memory_type, 3),

@@ -8,12 +8,15 @@ Agent 抽象基类
 """
 
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, AsyncGenerator
+from typing import List, Dict, Any, AsyncGenerator, Optional, TYPE_CHECKING
 import time
 import logging
 from ..tools.tool_manager import ToolManager
 from ..llm.base_adapter import BaseLLMAdapter
 from app.services.agent_tracer import agent_tracer
+
+if TYPE_CHECKING:
+    from app.skills.skill_registry import SkillRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -31,17 +34,18 @@ class BaseAgent(ABC):
     """
     
     def __init__(
-        self, 
+        self,
         llm_adapter: BaseLLMAdapter,
         tool_manager: ToolManager,
         agent_name: str = None,
         system_prompt: str = "",
         max_iterations: int = 10,
-        timeout: float = 300.0
+        timeout: float = 300.0,
+        skill_registry: Optional['SkillRegistry'] = None,  # 🆕 技能系统
     ):
         """
         初始化 Agent
-        
+
         Args:
             llm_adapter: 大模型适配器
             tool_manager: 工具管理器
@@ -49,26 +53,31 @@ class BaseAgent(ABC):
             system_prompt: 系统提示词（静态模式，回退方案）
             max_iterations: 最大迭代次数（防止死循环）
             timeout: 超时时间（秒）
+            skill_registry: 技能注册表（可选，注入后 Agent 可获得技能感知能力）
         """
         self.llm = llm_adapter
         self.llm_adapter = llm_adapter
         self.tool_manager = tool_manager
         self.max_iterations = max_iterations
         self.timeout = timeout
-        
+
         # 提示词配置
         self.agent_name = agent_name
         self.system_prompt = system_prompt
-        
+
         # 运行时状态
         self.current_iteration = 0
         self.start_time = 0.0
         self.execution_log = []
-        
+
         # 追踪器
         self.tracer = agent_tracer
         self.current_trace_id = None
         self.enable_tracing = True
+
+        # 🆕 技能系统
+        self.skill_registry = skill_registry
+        self._activated_skill_context: Optional[str] = None
         
         logger.debug(
             "%s initialized: agent_name=%s, prompt_source=%s, tools=%s, "
@@ -88,7 +97,10 @@ class BaseAgent(ABC):
 
         加载顺序：
         1. 从 agent_name 对应的结构化提示词系统加载（优先）
+           模板中的 {skill_descriptions} 在对应的 _load_system_prompt() / _get_prompt_context()
+           中已由 Specialist 负责注入(Level 1: 轻量描述, Level 3: 完整内容按需加载)
         2. 使用 self.system_prompt（静态提示词，作为回退）
+        3. 追加当前激活的技能正文 (Level 2, 由 Orchestrator.skill_dispatch 触发)
 
         Args:
             context: 渲染上下文，包含需要替换的变量（可选）
@@ -100,19 +112,47 @@ class BaseAgent(ABC):
         if self.agent_name:
             try:
                 from app.multi_agent_system.agents.base_agent_prompt import load_agent_prompt
-                
+
                 prompt = load_agent_prompt(
                     agent_name=self.agent_name,
                     context=context,
                     **render_kwargs
                 )
-                
-                if prompt:
-                    return prompt
-            except ImportError:
-                pass
 
-        return self.system_prompt
+                if prompt:
+                    base_prompt = prompt
+                else:
+                    base_prompt = self.system_prompt
+            except ImportError:
+                base_prompt = self.system_prompt
+        else:
+            base_prompt = self.system_prompt
+
+        # 🆕 注入当前激活的技能正文 (Level 2)
+        # 由 Orchestrator.skill_dispatch 节点触发, 仅在技能被匹配时注入
+        if self._activated_skill_context:
+            base_prompt = base_prompt + "\n\n" + self._activated_skill_context
+
+        return base_prompt
+
+    def inject_skill_context(self, skill_body: str):
+        """
+        注入技能正文到 Agent 上下文 (Level 2)
+
+        当技能被激活时, 由外部 (SkillMatcher / Orchestrator / 显式调用) 触发,
+        将完整的 SKILL.md 正文注入到 system prompt 末尾。
+
+        Level 1 (技能描述) 已通过模板变量 {skill_descriptions} 在 system prompt 中。
+        Level 2 (完整正文) 在此处按需注入。
+
+        Args:
+            skill_body: SKILL.md 正文 (不含 frontmatter)
+        """
+        self._activated_skill_context = (
+            "\n## Activated Skill Instructions\n"
+            f"{skill_body}\n"
+            "## End of Skill Instructions\n"
+        )
     
     @abstractmethod
     async def run(self, user_input: str, history: List[Dict] = None, **kwargs) -> str:

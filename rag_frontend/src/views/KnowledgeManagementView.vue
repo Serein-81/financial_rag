@@ -356,11 +356,45 @@ function getStatusIcon(status: string) {
 function getStatusLabel(status: string): string {
   const labels: Record<string, string> = {
     completed: '已完成',
+    ready: '已完成',
     failed: '失败',
     processing: '处理中',
     pending: '等待中'
   }
   return labels[status] || status
+}
+
+function getStatusDescription(status: string): string {
+  const desc: Record<string, string> = {
+    ready: '文档已处理完成，可到对话页检索',
+    completed: '文档已处理完成，可到对话页检索',
+    failed: '文档处理出错，请检查文件格式后重新上传',
+    processing: '文档正在后台解析和向量化，请稍候',
+    pending: '文档已上传，等待后台处理'
+  }
+  return desc[status] || status
+}
+
+function getDomainLabel(meta_info: any): string {
+  if (!meta_info || !meta_info.domain) return ''
+  const labels: Record<string, string> = {
+    finance: '财务类',
+    tax: '税务类',
+    legal: '法务类',
+    general: '通用类'
+  }
+  return labels[meta_info.domain] || ''
+}
+
+function getDomainBadgeClass(meta_info: any): string {
+  if (!meta_info || !meta_info.domain) return ''
+  const classes: Record<string, string> = {
+    finance: 'bg-amber-50 border-amber-200 text-amber-700',
+    tax: 'bg-blue-50 border-blue-200 text-blue-700',
+    legal: 'bg-purple-50 border-purple-200 text-purple-700',
+    general: 'bg-slate-50 border-slate-200 text-slate-600'
+  }
+  return classes[meta_info.domain] || 'bg-slate-50 border-slate-200 text-slate-600'
 }
 
 function formatFileSize(bytes: number | null): string {
@@ -693,6 +727,11 @@ function formatDate(dateString: string): string {
               <h3 class="text-2xl font-bold text-slate-900 mb-2">上传文档</h3>
               <p class="text-slate-600 mb-4">拖拽文件到此处，或点击下方按钮选择文件</p>
               <p class="text-sm text-slate-500">支持 PDF、Word、TXT、Markdown 等格式</p>
+              <div class="mt-3 inline-block px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg">
+                <p class="text-xs text-blue-700">
+                  <span class="font-medium">提示：</span>文件名含「财务」「税务」「合同」等关键词，自动采用对应切块策略，提升检索精度
+                </p>
+              </div>
             </div>
             <button
               @click="triggerFileUpload"
@@ -729,10 +768,20 @@ function formatDate(dateString: string): string {
                       :size="14"
                       :class="[getStatusColor(doc.status), doc.status === 'processing' ? 'animate-spin' : '']"
                     />
-                    <span :class="getStatusColor(doc.status)">
+                    <span
+                      :class="getStatusColor(doc.status)"
+                      :title="getStatusDescription(doc.status)"
+                    >
                       {{ getStatusLabel(doc.status) }}
                     </span>
                   </div>
+                  <span
+                    v-if="doc.meta_info?.domain"
+                    class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border mt-1"
+                    :class="getDomainBadgeClass(doc.meta_info)"
+                  >
+                    {{ getDomainLabel(doc.meta_info) }}
+                  </span>
                 </div>
               </div>
             </div>
@@ -1096,10 +1145,20 @@ function formatDate(dateString: string): string {
                       :size="16"
                       :class="[getStatusColor(selectedDoc.status), selectedDoc.status === 'processing' ? 'animate-spin' : '']"
                     />
-                    <span :class="getStatusColor(selectedDoc.status)">
+                    <span
+                      :class="getStatusColor(selectedDoc.status)"
+                      :title="getStatusDescription(selectedDoc.status)"
+                    >
                       {{ getStatusLabel(selectedDoc.status) }}
                     </span>
                   </div>
+                  <span
+                    v-if="selectedDoc.meta_info?.domain"
+                    class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border mt-2"
+                    :class="getDomainBadgeClass(selectedDoc.meta_info)"
+                  >
+                    {{ getDomainLabel(selectedDoc.meta_info) }}
+                  </span>
                 </div>
               </div>
             </div>

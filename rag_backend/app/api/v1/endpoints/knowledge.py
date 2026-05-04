@@ -240,197 +240,322 @@ async def create_knowledge_base(
 
 
 # ==========================================
-# 🔧 核心逻辑：后台向量化任务
+# Phase 1: 物理切块落库 | Phase 2: 异步充血
 # ==========================================
 async def process_document_task(doc_id: UUID, tenant_id: str):
-    """后台任务：提取文本 -> 切片 -> 向量化 -> 存库"""
-    print(f"⚙️ [后台任务] 开始处理文档: {doc_id}, 租户: {tenant_id}")
+    print(f"[Phase 1] 开始处理文档: {doc_id}, 租户: {tenant_id}")
 
+    domain = "general"
+    chunks_to_insert = []
+    structured_doc = None
+    doc_stats = None
+    doc_filename = ""
+    doc_obj = None
+
+    # ── 初始状态标记（短会话）──
     async with AsyncSessionLocal() as db:
         try:
             if not settings.PGBOUNCER_ENABLED:
                 from app.middleware.tenant_middleware import set_tenant_context_for_db
                 await set_tenant_context_for_db(db, tenant_id)
-            
             doc = await db.get(Document, doc_id)
             if not doc:
-                print(f"❌ 文档不存在: {doc_id}")
+                print(f"文档不存在: {doc_id}")
                 return
-
-            # 验证租户访问权限
             await tenant_security.validate_tenant_access(
-                target_tenant_id=doc.tenant_id,
-                operation="write",
-                resource_type="document"
+                target_tenant_id=doc.tenant_id, operation="write", resource_type="document"
             )
-
             doc.status = "processing"
-            doc.processing_state = "processing"
+            doc.processing_state = "chunking"
             doc.processing_progress = 0
             doc.processing_message = "开始解析文件..."
+            doc_filename = doc.filename
+            doc_obj = doc
             await db.commit()
-            
-            print(f"📄 正在解析文件内容: {doc.filename}")
-            try:
-                # 🌟 使用结构化文档服务解析 - 使用异步版本避免阻塞
-                file_bytes = await minio_service.download_document_async(doc.file_path)
-                print(f"📥 从MinIO下载文件大小: {len(file_bytes)} bytes, file_path: {doc.file_path}")
-                structured_doc = await structured_document_service.parse_document(
-                    file_bytes, doc.filename, doc.file_type
-                )
-                
-                # 获取文档统计信息
-                doc_stats = structured_document_service.get_document_statistics(structured_doc)
-                print(f"📊 文档统计: {doc_stats}")
-                
-                # 保存统计信息到文档meta_info
-                doc.meta_info = doc_stats
-                
-            except (ValueError, KeyError) as e:
-                raise HTTPException(status_code=400, detail=f"结构化文档解析数据错误: {str(e)}")
-            except (OSError, IOError) as e:
-                raise HTTPException(status_code=500, detail=f"结构化文档解析IO错误: {str(e)}")
-            except (OSError, IOError) as e:
-                raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=f"结构化文档解析失败: {str(e)}")
+        except Exception as e:
+            print(f"初始状态标记失败: {e}")
+            return
 
-            print("✂️ 正在进行智能切分...")
-            
-            # 🌟 使用结构化切块
-            # 优化参数：增加chunk_tokens减少碎片化，overlap保证上下文连续性
-            chunk_results = await structured_document_service.chunk_structured_document(
-                structured_doc,
-                chunk_tokens=800,  # 增加到800 tokens，减少碎片化
-                overlap_tokens=80   # 增加到80 tokens，保证上下文重叠
-            )
+    # ── Step 1: 解析文件（无 DB 连接）──
+    try:
+        file_bytes = await minio_service.download_document_async(doc_obj.file_path)
+        structured_doc = await structured_document_service.parse_document(
+            file_bytes, doc_filename, doc_obj.file_type
+        )
+        doc_stats = structured_document_service.get_document_statistics(structured_doc)
+    except Exception as e:
+        async with AsyncSessionLocal() as db:
+            if not settings.PGBOUNCER_ENABLED:
+                from app.middleware.tenant_middleware import set_tenant_context_for_db
+                await set_tenant_context_for_db(db, tenant_id)
+            d = await db.get(Document, doc_id)
+            if d:
+                d.status = "failed"; d.processing_state = "failed"; d.error_msg = f"解析失败: {str(e)[:200]}"
+                await db.commit()
+        return
 
-            if not chunk_results:
-                raise Exception("文本切分后为空")
+    # ── Step 2: 领域检测（无 DB 连接）──
+    from app.chunkers import domain_detector
+    domain = await domain_detector.detect(
+        filename=doc_filename, parsed_doc=structured_doc,
+        kb_category=doc_stats.get("domain") if doc_stats else None,
+    )
 
-            print(f"🧩 文档被切分为 {len(chunk_results)} 个片段，开始向量化...")
-            first_error_msg = None
-            
-            chunks_to_insert = []
-            total_chunks = len(chunk_results)
-            for idx, chunk_result in enumerate(chunk_results):
-                # 检查暂停/取消状态
-                doc = await db.get(Document, doc_id)
-                if doc and doc.processing_state in ["paused", "cancelled"]:
-                    print(f"⏸️ [后台任务] 文档处理已{('暂停' if doc.processing_state == 'paused' else '取消')}")
-                    if doc.processing_state == "paused":
-                        # 暂停等待直到被恢复或取消
+    # 写 domain 到文档 meta_info（短会话）
+    async with AsyncSessionLocal() as db:
+        try:
+            if not settings.PGBOUNCER_ENABLED:
+                from app.middleware.tenant_middleware import set_tenant_context_for_db
+                await set_tenant_context_for_db(db, tenant_id)
+            d = await db.get(Document, doc_id)
+            if d:
+                meta = d.meta_info or {}
+                if doc_stats:
+                    meta.update(doc_stats)
+                meta["domain"] = domain
+                d.meta_info = meta
+                await db.commit()
+        except Exception as e:
+            print(f"写入领域信息失败: {e}")
+
+    # ── Step 3-5: 切块 + 元数据注入 + 关系构建（无 DB 连接）──
+    from app.chunkers import domain_chunker_factory, metadata_injector, relationship_builder
+    chunker = domain_chunker_factory.get_chunker(domain)
+    chunk_results = chunker.chunk(structured_doc, chunk_tokens=800, overlap_tokens=80)
+    if not chunk_results:
+        raise Exception("文本切分后为空")
+    chunk_results = metadata_injector.inject(structured_doc, chunk_results)
+    chunk_results = relationship_builder.build(chunk_results, domain)
+
+    # ── Step 6: 向量化 + 存储（短会话，逐块写入）──
+    first_error_msg = None
+    for idx, chunk_result in enumerate(chunk_results):
+        # 每 5 块检查一次暂停/取消状态（短会话）
+        if idx % 5 == 0:
+            async with AsyncSessionLocal() as db:
+                if not settings.PGBOUNCER_ENABLED:
+                    from app.middleware.tenant_middleware import set_tenant_context_for_db
+                    await set_tenant_context_for_db(db, tenant_id)
+                d = await db.get(Document, doc_id)
+                if d and d.processing_state in ["paused", "cancelled"]:
+                    if d.processing_state == "paused":
                         while True:
-                            await db.refresh(doc)
-                            if doc.processing_state != "paused":
-                                break
-                            if doc.processing_state == "cancelled":
-                                print(f"❌ [后台任务] 文档处理被取消")
-                                doc.status = "failed"
-                                doc.processing_message = "用户取消"
-                                await db.commit()
+                            await db.refresh(d)
+                            if d.processing_state != "paused": break
+                            if d.processing_state == "cancelled":
                                 return
                             await asyncio.sleep(1)
                     else:
-                        doc.status = "failed"
-                        doc.processing_message = "用户取消"
-                        await db.commit()
                         return
-                
-                # 更新进度
-                progress = int((idx + 1) / total_chunks * 50) + 20  # 解析占20%，向量化占20-70%
-                doc.processing_progress = progress
-                doc.processing_message = f"向量化中... {idx + 1}/{total_chunks}"
-                await db.commit()
-                
-                # 每处理5个分块，执行一次简单查询保持数据库连接活跃
-                if idx > 0 and idx % 5 == 0:
-                    try:
-                        await db.execute(text("SELECT 1"))
-                        await db.flush()
-                    except Exception as e:
-                        print(f"⚠️ [后台任务] 连接保持检查失败: {e}")
-                        try:
-                            await db.rollback()
-                        except Exception:
-                            pass
-                
-                vector = await embedding_service.get_embedding(chunk_result.content)
-                if vector:
-                    meta_info = {
-                        "chunk_index": idx, 
-                        "source": doc.filename
-                    }
-                    if chunk_result.metadata:
-                        meta_info.update(chunk_result.metadata)
-                    
-                    chunk = DocumentChunk(
-                        document_id=doc.id,
-                        content=chunk_result.content,
-                        embedding=vector,
-                        chunk_index=idx,
-                        meta_info=meta_info,
-                        heading_path=chunk_result.heading_path,
-                        chunk_start=chunk_result.start,
-                        chunk_end=chunk_result.end,
-                        token_count=chunk_result.tokens,
-                        tenant_id=tenant_id
-                    )
-                    chunks_to_insert.append(chunk)
-                else:
-                    if not first_error_msg:
-                        first_error_msg = "AI 接口调用失败"
-            
-            success_count = len(chunks_to_insert)
-            
-            if chunks_to_insert:
-                db.add_all(chunks_to_insert)
 
-            # 最终刷新状态
-            doc = await db.get(Document, doc_id)
-            if success_count == 0:
-                doc.status = "failed"
-                doc.processing_state = "failed"
-                doc.error_msg = first_error_msg or "所有切片向量化均失败"
-                doc.processing_message = "向量化失败"
-                print(f"❌ [后台任务] 失败：0/{len(chunk_results)} 成功。")
-            elif success_count < len(chunk_results):
-                doc.status = "completed"
-                doc.processing_state = "completed"
-                doc.error_msg = f"部分成功: {success_count}/{len(chunk_results)}"
-                doc.processing_message = "部分完成"
-                doc.processing_progress = 100
-                print(f"⚠️ [后台任务] 部分成功：{success_count}/{len(chunk_results)}")
-            else:
-                doc.status = "completed"
-                doc.processing_state = "completed"
-                doc.error_msg = None
-                doc.processing_message = "处理完成"
-                doc.processing_progress = 100
-                print(f"✅ [后台任务] 处理完全成功！ID: {doc_id}")
+        vector = await embedding_service.get_embedding(chunk_result.content)
+        if vector:
+            meta_info = {"chunk_index": idx, "source": doc_filename, "domain": domain}
+            if chunk_result.metadata:
+                meta_info.update(chunk_result.metadata)
+            chunk = DocumentChunk(
+                document_id=doc_id, content=chunk_result.content, embedding=vector,
+                chunk_index=idx, meta_info=meta_info, heading_path=chunk_result.heading_path,
+                chunk_start=chunk_result.start, chunk_end=chunk_result.end,
+                token_count=chunk_result.tokens, tenant_id=tenant_id,
+                domain=domain, node_type=chunk_result.node_type,
+                summary=chunk_result.summary, relationships=chunk_result.relationships or {},
+            )
+            chunks_to_insert.append(chunk)
+        else:
+            if not first_error_msg: first_error_msg = "向量化接口调用失败"
 
-            await db.commit()
-
-        except (ValueError, KeyError) as e:
-            await db.rollback()
-            print(f"❌ [后台任务] 数据错误: {e}")
-        except (OSError, IOError) as e:
-            await db.rollback()
-            print(f"❌ [后台任务] IO错误: {e}")
-        except Exception as e:
-            await db.rollback()
-            print(f"❌ [后台任务] 严重错误: {e}")
-            async with AsyncSessionLocal() as error_db:
+        # 每 5 块批量写入一次（短会话）
+        if chunks_to_insert and (idx + 1) % 5 == 0 or idx == len(chunk_results) - 1:
+            async with AsyncSessionLocal() as db:
                 if not settings.PGBOUNCER_ENABLED:
                     from app.middleware.tenant_middleware import set_tenant_context_for_db
-                    await set_tenant_context_for_db(error_db, tenant_id)
-                error_doc = await error_db.get(Document, doc_id)
-                if error_doc:
-                    error_doc.status = "failed"
-                    error_doc.processing_state = "failed"
-                    error_doc.error_msg = str(e)[:500]
-                    error_doc.processing_message = f"错误: {str(e)[:100]}"
-                    await error_db.commit()
+                    await set_tenant_context_for_db(db, tenant_id)
+                db.add_all(chunks_to_insert)
+                d = await db.get(Document, doc_id)
+                if d:
+                    progress = int((idx + 1) / len(chunk_results) * 70) + 10
+                    d.processing_progress = progress
+                    d.processing_message = f"向量化中... {idx + 1}/{len(chunk_results)}"
+                await db.commit()
+            chunks_to_insert = []
+
+    # ── 最终状态标记（短会话）──
+    async with AsyncSessionLocal() as db:
+        try:
+            if not settings.PGBOUNCER_ENABLED:
+                from app.middleware.tenant_middleware import set_tenant_context_for_db
+                await set_tenant_context_for_db(db, tenant_id)
+            d = await db.get(Document, doc_id)
+            if d:
+                if first_error_msg and not chunks_to_insert:
+                    d.status = "failed"; d.processing_state = "failed"
+                    d.error_msg = first_error_msg; d.processing_message = "向量化失败"
+                else:
+                    d.status = "ready"; d.processing_state = "ready"
+                    d.error_msg = None; d.processing_message = "Phase 1 完成"
+                    d.processing_progress = 100
+                await db.commit()
+        except Exception as e:
+            print(f"最终状态标记失败: {e}")
+
+    # Phase 2: 仅 legal 领域异步充血（不阻塞主流程）
+    if domain == "legal":
+        import asyncio as _asyncio
+        _asyncio.ensure_future(_run_phase2_enrichment(doc_id, tenant_id, chunks_to_insert))
+
+
+async def _run_phase2_enrichment(doc_id: UUID, tenant_id: str, chunks: list):
+    """
+    Phase 2 异步充血：后台执行实体替换 + 摘要生成。
+    不阻塞 process_document_task 的主流程，通过 asyncio.create_task 调度。
+    """
+    from app.models.document_enrichment_job import EnrichmentJob
+    print(f"[Phase 2] 开始 legal 文档充血: {doc_id}")
+
+    # 收集 PARENT chunk ID
+    parent_chunk_ids = [
+        str(c.id) for c in chunks
+        if hasattr(c, 'node_type') and c.node_type == 'parent'
+    ]
+
+    # 创建任务记录
+    job_ids = []
+    async with AsyncSessionLocal() as db:
+        if not settings.PGBOUNCER_ENABLED:
+            from app.middleware.tenant_middleware import set_tenant_context_for_db
+            await set_tenant_context_for_db(db, tenant_id)
+        try:
+            resolve_job = EnrichmentJob(
+                document_id=doc_id, job_type="entity_resolve",
+                domain="legal", status="running",
+                payload={"chunk_count": len(chunks)}, max_retries=5,
+            )
+            db.add(resolve_job)
+            await db.commit()
+            await db.refresh(resolve_job)
+            job_ids.append(resolve_job.id)
+        except Exception as e:
+            print(f"[Phase 2] 任务记录创建失败: {e}")
+            return
+
+    # ── 执行实体替换（无需重新解析 PDF，从 DB chunks 构建 preamble）──
+    print(f"[Phase 2] 开始实体替换: {doc_id}")
+    try:
+        from app.chunkers.entity_resolver import entity_resolver
+        from app.chunkers.base_chunker import ChunkResult as CR3
+        from app.models.chunk import DocumentChunk
+        from app.models.structured_document import StructuredDocument, DocumentBlock, BlockType, DocumentMetadata
+        from sqlalchemy import select, update
+
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(DocumentChunk)
+                .where(DocumentChunk.document_id == doc_id)
+                .order_by(DocumentChunk.chunk_index)
+            )
+            db_chunks = result.scalars().all()
+
+            if not db_chunks:
+                print(f"[Phase 2] 无 chunk 需要处理: {doc_id}")
+            else:
+                # 从已有 chunk 构建 preamble（前 3000 字符）
+                preamble_text = ""
+                for c in db_chunks[:5]:
+                    preamble_text += (c.content or "") + "\n"
+                preamble_text = preamble_text[:3000]
+
+                # 构建简化的 StructuredDocument（仅含 preamble）
+                simple_doc = StructuredDocument(
+                    title="",
+                    metadata=DocumentMetadata(),
+                )
+                if preamble_text:
+                    simple_doc.add_raw_block(DocumentBlock(
+                        type=BlockType.PARAGRAPH,
+                        content=preamble_text,
+                    ))
+
+                # 将 db chunks 转成 ChunkResult 列表
+                chunk_results = []
+                for db_chunk in db_chunks:
+                    cr = CR3(
+                        content=db_chunk.content or "",
+                        start=db_chunk.chunk_start or 0,
+                        end=db_chunk.chunk_end or len(db_chunk.content or ""),
+                        tokens=db_chunk.token_count or 0,
+                        heading_path=db_chunk.heading_path,
+                        chunk_index=db_chunk.chunk_index,
+                        domain="legal",
+                        node_type=db_chunk.node_type or "leaf",
+                        relationships=db_chunk.relationships or {},
+                    )
+                    chunk_results.append(cr)
+
+                resolved = await entity_resolver.resolve(simple_doc, chunk_results)
+                for cr in resolved:
+                    if cr.chunk_index < len(db_chunks) and cr.content != db_chunks[cr.chunk_index].content:
+                        await db.execute(
+                            update(DocumentChunk)
+                            .where(DocumentChunk.id == db_chunks[cr.chunk_index].id)
+                            .values(content=cr.content)
+                        )
+                await db.commit()
+                print(f"[Phase 2] 实体替换完成: {doc_id}")
+    except Exception as e:
+        print(f"[Phase 2] 实体替换失败: {e}")
+        import traceback; traceback.print_exc()
+
+    # ── 执行摘要生成 ──
+    if parent_chunk_ids:
+        print(f"[Phase 2] 开始摘要生成: {doc_id}, {len(parent_chunk_ids)} 个 PARENT")
+        try:
+            from app.chunkers.summary_generator import summary_generator, ChunkResult as CR2
+            from app.models.chunk import DocumentChunk
+            from sqlalchemy import select, update
+
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(
+                    select(DocumentChunk).where(
+                        DocumentChunk.id.in_([__import__("uuid").UUID(pid) for pid in parent_chunk_ids])
+                    )
+                )
+                parent_db = result.scalars().all()
+                parent_results = []
+                for pchunk in parent_db:
+                    cr = CR2(
+                        content=pchunk.content,
+                        start=pchunk.chunk_start or 0,
+                        end=pchunk.chunk_end or len(pchunk.content or ""),
+                        tokens=pchunk.token_count or 0,
+                        chunk_index=pchunk.chunk_index,
+                        domain="legal", node_type="parent",
+                    )
+                    parent_results.append(cr)
+
+                await summary_generator.generate_for_all(parent_results)
+
+                for cr in parent_results:
+                    if cr.summary:
+                        await db.execute(
+                            update(DocumentChunk)
+                            .where(DocumentChunk.id == parent_chunk_ids[cr.chunk_index])
+                            .values(summary=cr.summary)
+                        )
+                await db.commit()
+                print(f"[Phase 2] 摘要生成完成: {doc_id}")
+        except Exception as e:
+            print(f"[Phase 2] 摘要生成失败: {e}")
+            import traceback; traceback.print_exc()
+
+    # 标记任务完成
+    for jid in job_ids:
+        async with AsyncSessionLocal() as db:
+            job = await db.get(EnrichmentJob, jid)
+            if job:
+                job.status = "completed"
+                await db.commit()
+    print(f"[Phase 2] 全部完成: {doc_id}")
 
 
 @router.delete("/bases/{kb_id}")

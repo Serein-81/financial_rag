@@ -32,27 +32,27 @@
 ## 输出要求
 请以JSON格式输出：
 ```json
-{
+{{
   "is_quality_acceptable": true/false,
-  "scores": {
+  "scores": {{
     "accuracy": 0.0-1.0,
     "completeness": 0.0-1.0,
     "logic": 0.0-1.0,
     "readability": 0.0-1.0,
     "practicality": 0.0-1.0,
     "overall": 0.0-1.0
-  },
+  }},
   "issues": [
-    {
+    {{
       "dimension": "accuracy/completeness/logic/readability/practicality",
       "severity": "minor/moderate/severe",
       "description": "问题描述",
       "suggestion": "改进建议"
-    }
+    }}
   ],
   "improved_answer": "改进后的回答（如果需要改进）",
   "summary": "总体评价（50字内）"
-}
+}}
 ```
 
 ## 评分标准参考

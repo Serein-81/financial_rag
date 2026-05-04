@@ -1,0 +1,73 @@
+[
+  {
+    "id": "FIN-001",
+    "domain": "finance",
+    "question": "2023年第四季度字节跳动的研发费用是多少？",
+    "expected_chunks": ["fin_table_882"],
+    "expected_metadata": {
+      "year": "2023",
+      "quarter": "Q4",
+      "company": "字节跳动"
+    },
+    "difficulty": "medium"
+  },
+  {
+    "id": "FIN-002",
+    "domain": "finance",
+    "question": "2022年历史数据对比显示收入增长了多少？",
+    "expected_chunks": [],
+    "difficulty": "hard"
+  },
+  {
+    "id": "TAX-001",
+    "domain": "tax",
+    "question": "高新技术企业的企业所得税税率是多少？",
+    "expected_chunks": ["tax_clause_102"],
+    "expected_lifecycle": {
+      "effective_date": "2008-01-01",
+      "expiry_date": "2099-12-31"
+    },
+    "difficulty": "easy"
+  },
+  {
+    "id": "TAX-002",
+    "domain": "tax",
+    "question": "小规模纳税人的增值税征收率是多少？",
+    "expected_chunks": [],
+    "difficulty": "medium"
+  },
+  {
+    "id": "LEG-001",
+    "domain": "legal",
+    "question": "如果甲方未按时付款，违约金是多少？",
+    "entity_requirements": {
+      "should_contain": ["XX科技有限公司"],
+      "should_not_contain": ["甲方"]
+    },
+    "difficulty": "hard"
+  },
+  {
+    "id": "LEG-002",
+    "domain": "legal",
+    "question": "合同解除的条件是什么？",
+    "expected_chunks": [],
+    "difficulty": "medium"
+  },
+  {
+    "id": "GEN-001",
+    "domain": "general",
+    "question": "员工产假期间的薪资政策是什么？",
+    "expected_context": {
+      "leaf_text": "员工产假期间，基本工资照发",
+      "parent_summary": "假期薪资"
+    },
+    "difficulty": "easy"
+  },
+  {
+    "id": "GEN-002",
+    "domain": "general",
+    "question": "年假天数如何计算？",
+    "expected_chunks": [],
+    "difficulty": "easy"
+  }
+]

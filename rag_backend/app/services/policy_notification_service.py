@@ -63,9 +63,12 @@ class PolicyNotificationService:
                 llm_adapter = LLMAdapterFactory.create_adapter(default_provider)
                 tool_manager = ToolManager()
                 
+                from app.skills.skill_registry import SkillRegistry as _SR
+
                 self._llm_agent = PolicyNotificationAgent(
                     llm_adapter=llm_adapter,
-                    tool_manager=tool_manager
+                    tool_manager=tool_manager,
+                    skill_registry=_SR,  # 🆕 技能系统
                 )
                 self._use_llm = True
                 logger.info("✅ PolicyNotificationService: LLM Agent 初始化成功")

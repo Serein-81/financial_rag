@@ -25,6 +25,19 @@ import asyncio
 logger = logging.getLogger(__name__)
 
 
+def _get_user_display_name(user) -> str:
+    """Return a human-readable user label for access logs."""
+    if not user:
+        return ""
+
+    for field in ("full_name", "nickname", "username", "email", "id"):
+        value = getattr(user, field, None)
+        if value:
+            return str(value).strip()
+
+    return ""
+
+
 class LoggingMiddleware(BaseHTTPMiddleware):
     """
     日志记录中间件
@@ -72,9 +85,9 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             tags={"component": "http"},
         )
         
-        # 获取用户名用于日志
+        # 获取用户名用于日志；此时用户依赖可能尚未执行，先使用请求上下文兜底。
         user_id = getattr(request.state, "user_id", None)
-        log_prefix = f"{user_id[:8] if user_id else 'anonymous'}"
+        log_prefix = user_id[:8] if user_id else "anonymous"
         
         # 只在慢请求或错误时打印日志
         skip_full_logging = any(request.url.path.startswith(path) for path in self.excluded_paths)
@@ -99,11 +112,11 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             )
             span.set_attribute("http.status_code", response.status_code)
             tracer.end_span(span, "ok" if response.status_code < 500 else "error")
-            user_id = getattr(request.state, "user_id", None)
-            if not user_id and hasattr(request.state, "user"):
-                user = request.state.user
-                user_id = str(getattr(user, "email", None) or getattr(user, "id", "") or "")
-            log_prefix = f"{user_id[:32] if user_id else 'anonymous'}"
+            user = getattr(request.state, "user", None)
+            log_prefix = _get_user_display_name(user)
+            if not log_prefix:
+                user_id = getattr(request.state, "user_id", None)
+                log_prefix = user_id[:32] if user_id else "anonymous"
             
             access_message = (
                 f"[API] [{log_prefix}] {request.method} {request.url.path} "

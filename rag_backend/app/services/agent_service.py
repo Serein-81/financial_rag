@@ -70,6 +70,18 @@ from app.prompts import load_greeting_prompt
 # 导入输出格式化工具
 from app.utils.output_formatter import output_formatter
 
+
+def _clean_stream_content_for_persistence(text: str) -> str:
+    """Clean completed stream output and tolerate older formatter instances."""
+    clean_stream_content = getattr(output_formatter, "clean_stream_content", None)
+    if callable(clean_stream_content):
+        return clean_stream_content(text)
+
+    print("[WARNING] [OutputFormatter] clean_stream_content missing; using compatibility cleanup")
+    cleaned = output_formatter.strip_react_markers_from_buffer(text)
+    cleaned = output_formatter.extract_final_answer(cleaned)
+    return output_formatter.clean_output(cleaned)
+
 # 🧠 导入企业记忆系统
 from app.memory_system import MemoryManager
 
@@ -253,22 +265,23 @@ class EnterpriseAgentService:
         self.llm = langchain_service.llm
         self.tools = langchain_service.tools
     
-    async def chat(self, user_input: str, kb_id: str, session_id: str = None, history: list = None, user_id: str = None) -> str:
+    async def chat(self, user_input: str, kb_id: str, session_id: str = None, history: list = None, user_id: str = None, tenant_id: str = None) -> str:
         """
         非流式对话（集成记忆系统）
-        
+
         Args:
             user_input: 用户输入
             kb_id: 知识库ID
             session_id: 会话ID
             history: 对话历史（已废弃，使用记忆系统替代）
             user_id: 用户ID
-            
+            tenant_id: 租户ID（用于图谱检索和租户隔离）
+
         Returns:
             Agent 回答
         """
         if self.use_custom_framework:
-            return await self._chat_custom(user_input, kb_id, session_id, history, user_id)
+            return await self._chat_custom(user_input, kb_id, session_id, history, user_id, tenant_id)
         else:
             return await self._chat_langchain(user_input, kb_id, session_id, history, user_id)
     
@@ -294,9 +307,9 @@ class EnterpriseAgentService:
             async for chunk in self._chat_stream_langchain(user_input, kb_id, session_id, history, user_id):
                 yield chunk
 
-    async def _chat_custom(self, user_input: str, kb_id: str, session_id: str, history: list, user_id: str) -> str:
+    async def _chat_custom(self, user_input: str, kb_id: str, session_id: str, history: list, user_id: str, tenant_id: str = None) -> str:
         """
-        自定义框架的非流式对话（集成智能路由和记忆系统）
+        自定义框架的非流式对话（集成智能路由、记忆系统和图谱路径推理）
         """
         print(f"[START] [自定义框架] 开始处理: {user_input[:50]}...")
 
@@ -343,7 +356,8 @@ class EnterpriseAgentService:
                 session_id=session_id or "default_session",
                 user_id=user_id or "default_user",
                 top_k=5,
-                enable_routing=True
+                enable_routing=True,
+                tenant_id=tenant_id
             )
 
             kb_context = retrieval_result["combined_context"]
@@ -380,19 +394,40 @@ class EnterpriseAgentService:
                 system_instructions=f"当前检索模式：{route_mode}。如需调用search_enterprise_knowledge工具，请传入知识库ID：{kb_id}"
             )
 
-            # 构建完上下文后，再将用户消息持久化到记忆系统
-            await memory_manager.add_message("user", user_input)
-
             logger.info(f"[记忆系统] 获取增强上下文完成，字符数: {len(memory_context)}")
         else:
             memory_manager = None
             memory_context = ""
             logger.warning("[记忆系统] 缺少session_id或user_id，跳过记忆系统")
 
-        # 🆕 构建增强的用户输入 - 包含RAG上下文和记忆上下文
-        # 提示：RAG上下文优先级高于记忆上下文，因为来自知识库文档
+        # 🔗 图谱路径检索（"X和Y有什么关系"类问题）
+        import re as _re
+        graph_path_text = ""
+        entity_pairs = _re.findall(r'([\u4e00-\u9fa5]{2,6})和([\u4e00-\u9fa5]{2,6})', user_input)
+        if entity_pairs:
+            try:
+                from app.knowledge_graph.neo4j_manager import Neo4jManager as _N
+                _n = _N(uri=settings.NEO4J_URI, user=settings.NEO4J_USER, password=settings.NEO4J_PASSWORD)
+                if _n.driver:
+                    _parts = []
+                    for _s, _t in entity_pairs:
+                        _paths = _n.find_path_between(source_name=_s, target_name=_t, tenant_id=tenant_id, max_depth=4)
+                        if _paths:
+                            _parts.append(f"{_s} ↔ {_t}：")
+                            for _i, _p in enumerate(_paths[:3], 1):
+                                _chain = " → ".join(f"{_e['name']}({_e['type']})" for _e in _p.get('entities', []))
+                                _rels = " → ".join(_p.get('relations', []))
+                                _parts.append(f"  路径{_i}: {_chain}" + (f"\n         关系: {_rels}" if _rels else ""))
+                    _n.close()
+                    if _parts:
+                        graph_path_text = "\n".join(_parts)
+                        logger.info(f"[图谱路径] 智能对话注入: {graph_path_text[:60]}...")
+            except Exception as _e:
+                logger.warning(f"[图谱路径] 智能对话检索失败: {_e}")
+
+        # 🆕 构建增强的用户输入 - 包含RAG上下文 + 图谱路径 + 记忆上下文
         # 注意：使用 XML 格式标记，OutputFormatter 会自动清理
-        
+
         # 构建增强输入（知识库状态已通过模板条件渲染处理）
         if kb_context and kb_context.strip() and kb_context != '（无相关文档）':
             # 知识库有内容时的正常流程
@@ -403,19 +438,26 @@ class EnterpriseAgentService:
 {kb_context}
 </KnowledgeBase>
 
+<GraphPathContext>
+{graph_path_text if graph_path_text else '（无相关图谱路径）'}
+</GraphPathContext>
+
 <MemoryContext>
 {memory_context if memory_context else '（无相关记忆）'}
 </MemoryContext>
 
 <SystemInstructions>
+0. 如果 <GraphPathContext> 包含实体关系路径，请优先用图谱路径回答"X和Y有什么关系"类问题
 1. 请优先使用上述知识库文档回答问题
 2. 如果知识库没有相关信息，再参考记忆上下文
 3. 如需调用 search_enterprise_knowledge 工具，请务必传入知识库ID：{kb_id}
-4. 如果知识库和记忆都没有相关信息，请直接回答"我不知道"，不要编造答案
+4. 请同时参考每段资料的"相似度/可回答性/证据质量"：相似度只表示语义接近，可回答性和证据质量用于判断是否足以回答用户问题
+5. 如果资料标记为"缺少明确流程步骤"、"偏代码/方案片段"或"上下文不足"，不要把它当成完整答案；只能回答其中能确认的部分，并明确说明"知识库未提供完整流程/细节"
+6. 只有完全没有相关信息时，才回答"我不知道"，不要编造答案
 </SystemInstructions>
 </InternalContext>"""
         else:
-            # 知识库无内容时，仅提供用户问题和记忆上下文
+            # 知识库无内容时，仅提供用户问题和记忆上下文 + 图谱路径
             # 关于工具使用的指令已在模板中通过条件渲染自动加载
             enhanced_input = f"""用户问题：{user_input}
 
@@ -423,6 +465,10 @@ class EnterpriseAgentService:
 <MemoryContext>
 {memory_context if memory_context else '（无相关记忆）'}
 </MemoryContext>
+
+<GraphPathContext>
+{graph_path_text if graph_path_text else '（无相关图谱路径）'}
+</GraphPathContext>
 
 <SystemInstructions>
 请基于用户问题和记忆上下文回答
@@ -455,10 +501,8 @@ class EnterpriseAgentService:
                 # 记录回答到监控
                 trace.set_result(result)
 
-            # 🧠 将AI回答添加到记忆系统
-            if memory_manager and result:
-                await memory_manager.add_message("assistant", result)
-                print("[MEMORY] [记忆系统] 已保存AI回答")
+            # 🧠 AI回答已通过 API 层（chat.py）保存到数据库
+            # 记忆系统只用于构建上下文，不存储消息
 
             print(f"[OK] [自定义框架] 处理完成，回答长度: {len(result)}")
             return result
@@ -549,15 +593,29 @@ class EnterpriseAgentService:
             route_mode = "FALLBACK"
         
         # 🆕 在流式开始前，先发送 sources 信息
-        # 使用特殊标记让 chat.py 可以识别并单独处理
-        if rag_results:
+        # 仅在 RAG 模式（非 MEMORY_ONLY）且检索到结果时才展示参考文档
+        if rag_results and route_mode not in ("MEMORY_ONLY", "FALLBACK"):
+            # 只取前 5 条，按 rerank_score 降序
+            _top = sorted(
+                rag_results,
+                key=lambda r: r.get("rerank_score", 0) if isinstance(r, dict) else getattr(r, "rerank_score", 0),
+                reverse=True
+            )[:5]
+            # 归一化分数到 0-100 范围（避免 rerank 原始分过低显示为 1%）
+            _max_score = max(
+                (r.get("rerank_score", 0) if isinstance(r, dict) else getattr(r, "rerank_score", 0))
+                for r in _top
+            )
+            _norm = _max_score if _max_score > 0 else 1.0
             sources_data = [
                 {
-                    "filename": res.source_file,
-                    "score": res.score,
-                    "content": res.content[:200] + "..." if len(res.content) > 200 else res.content
+                    "filename": res.get("source_file", "") if isinstance(res, dict) else getattr(res, "source_file", ""),
+                    "score": (res.get("rerank_score", 0) if isinstance(res, dict) else getattr(res, "rerank_score", 0)) / _norm,
+                    "answerability_score": res.get("answerability_score", None) if isinstance(res, dict) else getattr(res, "answerability_score", None),
+                    "evidence_flags": res.get("evidence_flags", None) if isinstance(res, dict) else getattr(res, "evidence_flags", None),
+                    "content": (res.get("content", "")[:200] + "..." if isinstance(res, dict) and len(res.get("content", "")) > 200 else res.get("content", "")) if isinstance(res, dict) else ((res.content[:200] + "..." if len(res.content) > 200 else res.content) if hasattr(res, "content") else ""),
                 }
-                for res in rag_results
+                for res in _top
             ]
             yield f"__SOURCES_EVENT__:{json.dumps(sources_data, ensure_ascii=False)}"
         
@@ -572,19 +630,40 @@ class EnterpriseAgentService:
                 max_tokens=1500
             )
 
-            # 构建完上下文后，再将用户消息持久化到记忆系统
-            await memory_manager.add_message("user", user_input)
-
             logger.info(f"[记忆系统] 获取上下文完成，字符数: {len(memory_context)}")
         else:
             memory_manager = None
             memory_context = ""
             logger.warning("[记忆系统] 缺少session_id或user_id，跳过记忆系统")
         
-        # 🆕 构建增强的用户输入 - 包含RAG上下文和记忆上下文
-        # 提示：RAG上下文优先级高于记忆上下文，因为来自知识库文档
+        # 🔗 图谱路径检索（"X和Y有什么关系"类问题）
+        import re as _re
+        graph_path_text = ""
+        entity_pairs = _re.findall(r'([\u4e00-\u9fa5]{2,6})和([\u4e00-\u9fa5]{2,6})', user_input)
+        if entity_pairs:
+            try:
+                from app.knowledge_graph.neo4j_manager import Neo4jManager as _N
+                _n = _N(uri=settings.NEO4J_URI, user=settings.NEO4J_USER, password=settings.NEO4J_PASSWORD)
+                if _n.driver:
+                    _parts = []
+                    for _s, _t in entity_pairs:
+                        _paths = _n.find_path_between(source_name=_s, target_name=_t, tenant_id=tenant_id, max_depth=4)
+                        if _paths:
+                            _parts.append(f"{_s} ↔ {_t}：")
+                            for _i, _p in enumerate(_paths[:3], 1):
+                                _chain = " → ".join(f"{_e['name']}({_e['type']})" for _e in _p.get('entities', []))
+                                _rels = " → ".join(_p.get('relations', []))
+                                _parts.append(f"  路径{_i}: {_chain}" + (f"\n         关系: {_rels}" if _rels else ""))
+                    _n.close()
+                    if _parts:
+                        graph_path_text = "\n".join(_parts)
+                        logger.info(f"[图谱路径] 智能对话注入: {graph_path_text[:60]}...")
+            except Exception as _e:
+                logger.warning(f"[图谱路径] 智能对话检索失败: {_e}")
+
+        # 🆕 构建增强的用户输入 - 包含RAG上下文 + 图谱路径 + 记忆上下文
         # 注意：使用 XML 格式标记，OutputFormatter 会自动清理
-        
+
         # 构建增强输入（知识库状态已通过模板条件渲染处理）
         if kb_context and kb_context.strip() and kb_context != '（无相关文档）':
             # 知识库有内容时的正常流程
@@ -595,19 +674,26 @@ class EnterpriseAgentService:
 {kb_context}
 </KnowledgeBase>
 
+<GraphPathContext>
+{graph_path_text if graph_path_text else '（无相关图谱路径）'}
+</GraphPathContext>
+
 <MemoryContext>
 {memory_context if memory_context else '（无相关记忆）'}
 </MemoryContext>
 
 <SystemInstructions>
+0. 如果 <GraphPathContext> 包含实体关系路径，请优先用图谱路径回答"X和Y有什么关系"类问题
 1. 请优先使用上述知识库文档回答问题
 2. 如果知识库没有相关信息，再参考记忆上下文
 3. 如需调用 search_enterprise_knowledge 工具，请务必传入知识库ID：{kb_id}
-4. 如果知识库和记忆都没有相关信息，请直接回答"我不知道"，不要编造答案
+4. 请同时参考每段资料的"相似度/可回答性/证据质量"：相似度只表示语义接近，可回答性和证据质量用于判断是否足以回答用户问题
+5. 如果资料标记为"缺少明确流程步骤"、"偏代码/方案片段"或"上下文不足"，不要把它当成完整答案；只能回答其中能确认的部分，并明确说明"知识库未提供完整流程/细节"
+6. 只有完全没有相关信息时，才回答"我不知道"，不要编造答案
 </SystemInstructions>
 </InternalContext>"""
         else:
-            # 知识库无内容时，仅提供用户问题和记忆上下文
+            # 知识库无内容时，仅提供用户问题和记忆上下文 + 图谱路径
             # 关于工具使用的指令已在模板中通过条件渲染自动加载
             enhanced_input = f"""用户问题：{user_input}
 
@@ -615,6 +701,10 @@ class EnterpriseAgentService:
 <MemoryContext>
 {memory_context if memory_context else '（无相关记忆）'}
 </MemoryContext>
+
+<GraphPathContext>
+{graph_path_text if graph_path_text else '（无相关图谱路径）'}
+</GraphPathContext>
 
 <SystemInstructions>
 请基于用户问题和记忆上下文回答
@@ -657,24 +747,56 @@ class EnterpriseAgentService:
                         new_clean_content = clean_buffer[last_clean_output_length:]
                         last_clean_output_length = len(clean_buffer)
                         if new_clean_content:
+                            # 🔧 修复内容重复：检查增量内容是否已经在之前的输出中出现过
+                            # （当 streaming 阶段与 post-streaming Final Answer 阶段输出重叠时）
+                            # 注意：仅对长度 >= 5 的增量做去重，避免单字符（标点/英文）被错误过滤
+                            if len(new_clean_content) >= 5 and new_clean_content in clean_buffer[:-len(new_clean_content)]:
+                                print(f"[DEDUP] 增量内容重复，跳过 yield | content={repr(new_clean_content[:60])}")
+                                continue
                             yield new_clean_content
                     # 如果剥离后内容变少（标记被移除），更新输出位置但不输出任何内容
                     elif len(clean_buffer) < last_clean_output_length:
                         last_clean_output_length = len(clean_buffer)
                 # 记录回答到监控（使用清理后的完整内容）
                 full_response = clean_buffer  # 使用剥离后的干净内容
+
+                # 🔧 修复内容重复：检查 clean_buffer 是否包含重复的文本
+                # （当 streaming 阶段与 post-streaming Final Answer 阶段输出重叠时会发生）
+                half = len(full_response) // 2
+                if half > 5 and full_response[:half] == full_response[half:2*half]:
+                    dup_text = full_response[:half]
+                    print(f"[DEDUP] 检测到内容完全重复，移除后半段 | 重复内容: {repr(dup_text[:50])}")
+                    full_response = dup_text
+                elif half > 5:
+                    # 也检查后半段是否包含前半段（部分重叠）
+                    from difflib import SequenceMatcher
+                    first_half = full_response[:half]
+                    second_half = full_response[half:]
+                    matcher = SequenceMatcher(None, first_half, second_half)
+                    ratio = matcher.ratio()
+                    if ratio > 0.85:
+                        print(f"[DEDUP] 检测到内容高度重复 (ratio={ratio:.3f})，去重")
+                        # 保留较长的那一段
+                        full_response = max(first_half, second_half, key=len)
+
                 trace.set_result(full_response)
             
-            # 🧠 将完整的AI回答添加到记忆系统（使用深度清理后的内容）
-            if memory_manager and full_response:
-                # 对完整回答进行深度清理后再保存
-                cleaned_full_response = output_formatter.clean_stream_content(full_response)
-                if cleaned_full_response != full_response:
-                    print(f"[FORMAT] [OutputFormatter] 深度清理完成 | 原始: {len(full_response)} → 清理后: {len(cleaned_full_response)}")
-                    full_response = cleaned_full_response
-                await memory_manager.add_message("assistant", full_response)
-                print("[MEMORY] [记忆系统] 已保存AI回答")
-            
+            # 🧠 完整的AI回答已通过 API 层（chat.py）保存到数据库
+            # 记忆系统只用于构建上下文，不存储消息
+
+            # 🆕 延迟图抽取：对话完成后后台提取实体（不阻塞对话流）
+            if settings.ENABLE_DEFERRED_GRAPH_EXTRACTION and user_input and full_response:
+                asyncio.create_task(
+                    self._deferred_graph_extraction_task(
+                        user_input=user_input,
+                        ai_response=full_response,
+                        session_id=session_id or "default_session",
+                        user_id=user_id or "default_user",
+                        tenant_id=tenant_id
+                    )
+                )
+                print("[GRAPH] [延迟图抽取] 已触发后台任务")
+
             print("[OK] [自定义框架] 流式处理完成")
             
         except LLMServiceException as e:
@@ -695,7 +817,136 @@ class EnterpriseAgentService:
         except Exception as e:
             print(f"[ERROR] [自定义框架] 流式处理失败: {str(e)}")
             yield output_formatter.format_error_answer(str(e))
-    
+
+    # ──────────────────────────────────────────────────────
+    # 延迟图抽取：对话完成后后台提取实体到 Neo4j
+    # ──────────────────────────────────────────────────────
+
+    async def _deferred_graph_extraction_task(
+        self,
+        user_input: str,
+        ai_response: str,
+        session_id: str,
+        user_id: str,
+        tenant_id: Optional[str] = None
+    ):
+        """
+        后台任务：对话完成后延迟判断并提取实体到知识图谱
+
+        设计原则：
+        1. 完全异步不阻塞，使用 asyncio.create_task 触发
+        2. 先用轻量LLM快速判断对话是否包含可提取的实体关系
+        3. 只有确认有价值时才运行完整的实体/关系提取管线
+        4. 所有异常被捕获，不影响主流程
+        """
+        try:
+            combined = f"用户：{user_input}\nAI：{ai_response}"
+
+            # 第1步: 轻量LLM预检查 - 判断是否值得提取
+            should_extract = await self._check_conversation_for_graph_extraction(combined)
+            if not should_extract:
+                logger.debug(
+                    f"[延迟图抽取] 对话无需提取: {user_input[:40]}..."
+                )
+                return
+
+            logger.info(
+                f"[延迟图抽取] 开始提取: {user_input[:40]}..."
+            )
+
+            # 第2步: 初始化图构建组件
+            from app.knowledge_graph.entity_extractor import EntityExtractor
+            from app.knowledge_graph.relation_extractor import RelationExtractor
+            from app.knowledge_graph.neo4j_manager import Neo4jManager
+            from app.services.graph_builder import GraphBuilder
+
+            neo4j_manager = Neo4jManager(
+                uri=settings.NEO4J_URI,
+                user=settings.NEO4J_USER,
+                password=settings.NEO4J_PASSWORD
+            )
+            entity_extractor = EntityExtractor()
+            relation_extractor = RelationExtractor()
+            graph_builder = GraphBuilder(
+                entity_extractor, relation_extractor, neo4j_manager
+            )
+
+            # 第3步: 构建知识图谱（写入Neo4j）
+            result = await graph_builder.build_from_text(
+                text=combined,
+                user_id=user_id,
+                session_id=session_id,
+                tenant_id=tenant_id,
+                extract_entities=True,
+                extract_relations=True
+            )
+
+            if result.success:
+                logger.info(
+                    f"[延迟图抽取] 完成 | 实体: {len(result.entities)}, "
+                    f"关系: {len(result.relations)}"
+                )
+            else:
+                logger.warning(
+                    f"[延迟图抽取] 构建失败: {result.message}"
+                )
+
+        except Exception as e:
+            logger.warning(
+                f"[延迟图抽取] 后台任务异常(不影响对话): {e}"
+            )
+
+    async def _check_conversation_for_graph_extraction(
+        self, conversation_text: str
+    ) -> bool:
+        """
+        轻量LLM快速判断对话内容是否包含可提取的企业实体
+
+        使用极简Prompt直接判断实体存在性（而非价值判断），
+        避免LLM因"是否值得"等主观表述而误判。
+        注意: 不传 model 参数，避免 DeepSeek Adapter 的 LangSmith 路径冲突。
+        """
+        try:
+            from app.services.llm_service import llm_service
+
+            # 只取用户问题的前200字符和AI回答的前200字符
+            # 避免AI的"未找到相关信息"类回答干扰实体判断
+            user_part, ai_part = "", ""
+            parts = conversation_text.split("\nAI：", 1)
+            if len(parts) == 2:
+                user_part = parts[0][:200]
+                ai_part = "AI：" + parts[1][:200]
+            else:
+                user_part = conversation_text[:400]
+
+            prompt = (
+                f"分析这段对话是否包含【具体的企业实体信息】。\n"
+                f"包含以下任一就回答 YES：企业名(如华为/腾讯)、人名(如张三/马化腾)、"
+                f"合同/签约/金额等具体商业信息。\n"
+                f"没有具体实体信息就回答 NO。\n\n"
+                f"对话：\n{user_part}\n{ai_part}\n\n"
+                f"回答（YES 或 NO）："
+            )
+
+            result = await llm_service.get_answer(
+                query=prompt,
+                context_chunks=[],
+                history=[],
+            )
+            answer = result.strip().upper()
+            should_extract = "YES" in answer
+            logger.info(
+                f"[延迟图抽取] 预检查结果: {answer[:10]} → "
+                f"{'提取' if should_extract else '跳过'}"
+            )
+            return should_extract
+
+        except Exception as e:
+            logger.warning(
+                f"[延迟图抽取] LLM预检查失败(默认不提取): {e}"
+            )
+            return False
+
     async def _chat_langchain(self, user_input: str, kb_id: str, session_id: str, history: list, user_id: str) -> str:
         """
         LangChain 框架的非流式对话（备用）

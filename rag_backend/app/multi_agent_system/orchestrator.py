@@ -32,11 +32,18 @@ from app.agent_framework.tools.tool_manager import ToolManager
 from app.memory_system.memory_manager import MemoryManager
 from app.core.config import settings
 from app.services.agent_tracer import agent_tracer
+from app.knowledge_graph.neo4j_manager import Neo4jManager
 from app.agent_framework.components import ResultSynthesizer
+from .blackboard_payload import BlackboardPayloadFormatter
 from .result_cache import ResultCache, CacheConfig
 
 # LangGraph 状态类型导入
 from app.langgraph.state import AgentState, SpecialistType
+
+# 🆕 技能系统
+from app.skills.skill_registry import SkillRegistry
+from app.skills.skill_loader import SkillLoader
+from app.skills.skill_matcher import SkillMatcher
 
 
 logger = logging.getLogger(__name__)
@@ -83,57 +90,113 @@ class Nodes:
         self.orchestrator = orchestrator
 
     def _simple_finance_markdown(self, result: dict) -> str:
-        """财务结果降级格式化（当 _format_finance_result 不可用时使用）"""
+        """降级格式化：直接返回原始结果文本"""
         if not isinstance(result, dict):
             return str(result)
-
-        parts = []
-        parts.append("## 💰 财务专家分析报告\n")
-
-        domain = result.get('domain')
-        if domain:
-            domain_name = domain.value if hasattr(domain, 'value') else str(domain)
-            parts.append(f"**分析领域**: {domain_name}\n\n")
-
-        success = result.get('success', False)
-        parts.append(f"**查询状态**: {'✅ 成功' if success else '❌ 失败'}\n\n")
-
-        data_summary = result.get('data_summary', {})
-        if data_summary:
-            parts.append("### 📊 企业财务数据\n")
-            for key in ['total_revenue', 'total_expenses', 'total_profit']:
-                val = data_summary.get(key, 0) or 0
-                label = {'total_revenue': '营业收入', 'total_expenses': '总支出', 'total_profit': '营业利润'}[key]
-                parts.append(f"- **{label}**: {val:,.2f} 元\n")
-            profit_margin = data_summary.get('profit_margin', 0) or 0
-            parts.append(f"- **利润率**: {profit_margin:.2f}%\n")
-            avg_margin = data_summary.get('avg_profit_margin')
-            if avg_margin:
-                parts.append(f"- **平均利润率**: {avg_margin:.2f}%\n")
-            total_tax = data_summary.get('total_corporate_tax')
-            if total_tax:
-                parts.append(f"- **企业所得税**: {total_tax:,.2f} 元\n")
-            parts.append("\n")
-
-        for section, title in [('key_metrics', '🎯 关键发现'), ('risk_factors', '⚠️ 风险因素'), ('recommendations', '💡 建议')]:
-            items = result.get(section, [])
-            if items:
-                parts.append(f"### {title}\n")
-                for i, item in enumerate(items[:5], 1):
-                    parts.append(f"{i}. {item}\n")
-                parts.append("\n")
-
-        return "".join(parts) if parts else str(result)
+        text_answer = result.get("text_answer") or result.get("analysis_report") or result.get("content")
+        return str(text_answer) if text_answer else str(result)
 
     def _simple_specialist_markdown(self, result: dict, title: str) -> str:
-        """通用专家结果降级格式化"""
+        """降级格式化：直接返回原始结果文本"""
         if not isinstance(result, dict):
             return str(result)
-        parts = [f"## {title}\n", f"**查询状态**: {'✅ 成功' if result.get('success') else '❌ 失败'}\n\n"]
-        for key, value in result.items():
-            if key not in ['success', 'domain'] and value:
-                parts.append(f"- **{key}**: {value}\n")
-        return "".join(parts) if parts else str(result)
+        text_answer = result.get("text_answer") or result.get("content")
+        return str(text_answer) if text_answer else str(result)
+
+    # =========================================================================
+    # 🆕 元问题检测
+    # =========================================================================
+
+    @staticmethod
+    def _is_meta_question(query: str) -> bool:
+        """检测是否是元问题（技能询问、配置查询、自我介绍等），不需要 RAG/图谱检索/反思"""
+        q = query.lower()
+        meta_patterns = [
+            "技能", "能力", "会做什么", "擅长", "功能介绍", "工具",
+            "skill", "capability",
+            "你是什么", "你是谁", "你能做什么",
+        ]
+        return any(p in q for p in meta_patterns)
+
+    @staticmethod
+    def _sanitize_llm_text(text: str) -> str:
+        """清理 LLM 输出的纯文本：去除工具调用残留、JSON 包装、错误信息包装"""
+        if not text:
+            return ""
+
+        import re as _re
+
+        # 0. 检测工具调用残留（<tool_call>, <invoke>, {"name":...} 等，出现在文本任何位置）
+        stripped = text.strip()
+        tool_residue_patterns = [
+            r"<tool_call>",
+            r"<invoke\s+name=",
+            r'\{\s*"name"\s*:.*"arguments"',
+            r"Action:\s*\w+",
+        ]
+        is_tool_residue = any(_re.search(p, stripped) for p in tool_residue_patterns)
+        if is_tool_residue:
+            logger.warning(f"[sanitize] 检测到工具调用残留，替换为友好消息")
+            return "抱歉，系统处理时遇到异常，请稍后重试。"
+
+        # 1. 去除 ```json ... ``` 包装
+        json_block = _re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, _re.DOTALL)
+        if json_block:
+            inner = json_block.group(1).strip()
+            # 如果内部是 JSON，尝试提取 executive_summary 或 description 字段
+            if inner.startswith("{") and inner.endswith("}"):
+                try:
+                    import json as _json
+                    parsed = _json.loads(inner)
+                    # 优先提取文本内容
+                    summary = (parsed.get("executive_summary") or
+                               parsed.get("description") or
+                               parsed.get("output_data", {}).get("executive_summary") or
+                               parsed.get("blackboard_action", {}).get("output_data", {}).get("executive_summary"))
+                    if summary and isinstance(summary, str):
+                        return summary.strip()
+                    text = inner  # 无法提取有用文本，继续检查
+                except _json.JSONDecodeError:
+                    text = inner  # 不是合法 JSON，直接用内部文本
+
+        # 2. 去除 ``` ... ``` 代码块（非 JSON），取纯文本
+        code_block = _re.search(r"```\s*\n?(.*?)```", text, _re.DOTALL)
+        if code_block:
+            text = code_block.group(1).strip()
+
+        # 3. 检测纯 JSON 对象（无代码块包裹），提取文本字段
+        stripped2 = text.strip()
+        if stripped2.startswith("{") and stripped2.endswith("}"):
+            try:
+                import json as _json
+                parsed = _json.loads(stripped2)
+                for key in ("executive_summary", "description", "summary", "content", "text_answer", "final_answer"):
+                    val = parsed.get(key)
+                    if val and isinstance(val, str) and len(val) > 10:
+                        return val.strip()
+                # 如果能找到 analysis_type + 其他字段，拼接
+                analysis_type = parsed.get("analysis_type") or parsed.get("domain")
+                summary = parsed.get("executive_summary") or parsed.get("summary") or ""
+                if analysis_type and summary:
+                    return f"**{analysis_type}**\n\n{summary}"
+                return "抱歉，系统未能正确生成回答。请重试。"
+            except _json.JSONDecodeError:
+                pass  # 不是 JSON，继续
+
+        # 4. 检测纯错误内容：短消息且包含"失败"/"error"等关键词
+        result = text.strip()
+        if len(result) < 50 and any(kw in result for kw in ["失败", "error", "异常", "出错", "failed", "exception"]):
+            logger.warning(f"[sanitize] 检测到错误内容短消息，替换: {result[:50]}")
+            return f"抱歉，系统处理时遇到异常：{result[:100]}。请稍后重试。"
+
+        # 5. 检测非常短且无实质内容的回答（< 15 字符）
+        if len(result) < 15:
+            logger.warning(f"[sanitize] 回答过短 ({len(result)} 字符)，补充友好消息")
+            if not result:
+                return "抱歉，系统未能生成回答。请稍后重试。"
+            return result + "\n\n若以上内容不完整，请重新描述您的问题。"
+
+        return result
 
     async def receptionist(self, state: AgentState) -> AgentState:
         logger.info("[节点] receptionist 开始")
@@ -198,7 +261,13 @@ class Nodes:
     
     async def rag_retrieval(self, state: AgentState) -> AgentState:
         logger.info("[节点] rag_retrieval 开始")
-        
+
+        # 🆕 元问题跳过 RAG 检索
+        query = state.get("user_query", "")
+        if self._is_meta_question(query):
+            logger.info("[RAG] 元问题，跳过 RAG 检索")
+            return {**state, "rag_context": []}
+
         if not self.orchestrator.rag_retriever:
             logger.debug("RAG 检索器未初始化，跳过")
             return {**state, "rag_context": []}
@@ -217,22 +286,141 @@ class Nodes:
         except Exception as e:
             logger.warning(f"[RAG] 检索失败: {e}")
             return {**state, "rag_context": []}
-    
-    async def finance_specialist(self, state: AgentState) -> AgentState:
-        logger.info("[节点] finance_specialist 开始")
-        
+
+    async def graph_path_retrieval(self, state: AgentState) -> AgentState:
+        """
+        图谱路径检索节点
+
+        检测用户查询中是否包含"X和Y之间的关系"类问题，
+        如果是，查找两个实体之间的最短路径并注入 context。
+        """
+        query = state.get("user_query", "")
+        logger.info(f"[节点] graph_path_retrieval 开始: {query[:40]}...")
+
+        # ⚡ 轻量规则：检测 "X 和 Y" 样式的实体对
+        # 匹配模式：中文名+和+中文名（各 2-6 字）
+        entity_pairs = re.findall(r'([\u4e00-\u9fa5]{2,6})和([\u4e00-\u9fa5]{2,6})', query)
+        if not entity_pairs:
+            logger.debug("[图谱路径] 未检测到实体对，跳过")
+            return {**state, "graph_path_context": None}
+
+        try:
+            neo4j = Neo4jManager(
+                uri=settings.NEO4J_URI,
+                user=settings.NEO4J_USER,
+                password=settings.NEO4J_PASSWORD
+            )
+            if not neo4j.driver:
+                logger.warning("[图谱路径] Neo4j 不可用")
+                return {**state, "graph_path_context": None}
+
+            tenant_id = state.get("tenant_id") or getattr(self.orchestrator, "tenant_id", None)
+            all_paths = []
+
+            for src, tgt in entity_pairs:
+                logger.info(f"[图谱路径] 查询: {src} ↔ {tgt}")
+                paths = neo4j.find_path_between(
+                    source_name=src,
+                    target_name=tgt,
+                    tenant_id=tenant_id,
+                    max_depth=4
+                )
+                if paths:
+                    all_paths.append({
+                        "source": src,
+                        "target": tgt,
+                        "paths": paths,
+                        "paths_count": len(paths)
+                    })
+                    logger.info(f"[图谱路径] 找到 {len(paths)} 条路径: {src} ↔ {tgt}")
+
+            if all_paths:
+                context = {
+                    "has_graph_paths": True,
+                    "paths": all_paths,
+                    "summary": self._format_graph_paths_for_prompt(all_paths)
+                }
+                logger.info(f"[图谱路径] 共找到 {sum(p['paths_count'] for p in all_paths)} 条路径")
+                return {**state, "graph_path_context": context}
+            else:
+                logger.debug("[图谱路径] 未找到任何路径")
+                return {**state, "graph_path_context": None}
+
+        except Exception as e:
+            logger.warning(f"[图谱路径] 检索失败: {e}")
+            return {**state, "graph_path_context": None}
+        finally:
+            try:
+                neo4j.close()
+            except Exception:
+                pass
+
+    def _format_graph_paths_for_prompt(self, all_paths: List[Dict]) -> str:
+        """将路径结果格式化为 LLM 提示词片段"""
+        parts = ["【知识图谱关系路径】"]
+        for pair in all_paths:
+            parts.append(f"\n{pair['source']} ↔ {pair['target']} 的关系路径：")
+            for i, path in enumerate(pair['paths'], 1):
+                chain = " → ".join(
+                    f"{e['name']}({e['type']})"
+                    for e in path.get('entities', [])
+                )
+                rels = " → ".join(path.get('relations', []))
+                parts.append(f"  路径{i}: {chain}")
+                if rels:
+                    parts.append(f"         关系: {rels}")
+        return "\n".join(parts)
+
+    def _build_specialist_context(self, state: AgentState) -> Dict:
+        """构建专家上下文（含 RAG + 图谱路径结果）"""
         actual_tenant_id = self.orchestrator.tenant_id
         actual_user_id = self.orchestrator.user_id
-        
-        specialist_context = {"tenant_id": actual_tenant_id, "user_id": actual_user_id}
+
+        ctx = {"tenant_id": actual_tenant_id, "user_id": actual_user_id}
+
+        # 注入 RAG 结果
+        rag_ctx = state.get("rag_context", [])
+        if rag_ctx:
+            ctx["rag_context"] = rag_ctx
+
+        # 注入图谱路径结果
+        graph_ctx = state.get("graph_path_context")
+        if graph_ctx and graph_ctx.get("has_graph_paths"):
+            ctx["graph_path_context"] = graph_ctx["summary"]
+
+        return ctx
+
+    def _build_history_dicts(self, state: AgentState) -> Optional[List[Dict]]:
+        """构建历史消息字典列表"""
+        history_msgs = state.get("messages", [])
+        if not history_msgs:
+            return None
+        history_dicts = []
+        for msg in history_msgs[:-1]:  # 排除当前用户消息
+            if hasattr(msg, "role") and hasattr(msg, "content"):
+                history_dicts.append({"role": msg.role, "content": msg.content})
+            elif isinstance(msg, dict):
+                history_dicts.append({"role": msg.get("role", "user"), "content": msg.get("content", "")})
+        return history_dicts or None
+
+    async def finance_specialist(self, state: AgentState) -> AgentState:
+        logger.info("[节点] finance_specialist 开始")
+
+        specialist_context = self._build_specialist_context(state)
         trace_id = state.get("trace_id") or state.get("metadata", {}).get("trace_id")
-        previous_trace_id = getattr(self.orchestrator.finance_specialist, "current_trace_id", None)
         if trace_id:
             self.orchestrator.finance_specialist.current_trace_id = trace_id
+
+        history_dicts = self._build_history_dicts(state)
+        rag_ctx = {"documents": state.get("rag_context", [])} if state.get("rag_context") else None
+        previous_trace_id = getattr(self.orchestrator.finance_specialist, "current_trace_id", None)
+
         try:
             result = await self.orchestrator.finance_specialist.run(
                 user_input=state["user_query"],
-                context=specialist_context
+                history=history_dicts or None,
+                context=specialist_context,
+                rag_context=rag_ctx
             )
             logger.info(f"[财务专家] 分析完成, success={result.get('success')}")
 
@@ -300,35 +488,18 @@ class Nodes:
                 "success": result.get('success', True)
             }
             
-            retry_count = state.get("retry_count", 0)
-            if retry_count > 0:
-                existing_results = []
-                logger.info(f"[财务专家] 重试 #{retry_count} 替换结果")
-            else:
-                existing_results = state.get("specialist_results", [])
-                existing_results = [r for r in existing_results if r.get("source") != "finance"]
-                logger.debug(f"[财务专家] 替换旧结果 | 旧: {len(existing_results)} → 新: {len(existing_results) + 1}")
-            
-            updated_state = {
-                **state,
-                "specialist_results": existing_results + [specialist_data]
-            }
-            
-            return updated_state
+            # 只返回增量字段，不 spread state（避免并行写冲突）
+            return {"specialist_results": [specialist_data]}
         except Exception as e:
             logger.error(f"[财务专家] 执行失败: {e}")
-            updated_state = {
-                **state,
-                "specialist_results": [{"source": "finance", "data": {"error": str(e)}, "confidence": 0.0, "success": False}]
-            }
-            return updated_state
+            return {"specialist_results": [{"source": "finance", "data": {"error": str(e)}, "confidence": 0.0, "success": False}]}
         finally:
             self.orchestrator.finance_specialist.current_trace_id = previous_trace_id
-    
+
     async def tax_specialist(self, state: AgentState) -> AgentState:
         logger.info("[节点] tax_specialist 开始")
-        
-        specialist_context = {"tenant_id": self.orchestrator.tenant_id, "user_id": self.orchestrator.user_id}
+
+        specialist_context = self._build_specialist_context(state)
         try:
             result = await self.orchestrator.tax_specialist.run(user_input=state["user_query"], context=specialist_context)
             logger.info("[税务专家] 分析完成")
@@ -362,25 +533,15 @@ class Nodes:
                 "success": result.get('success', True)
             }
             
-            existing_results = state.get("specialist_results", [])
-            updated_state = {
-                **state,
-                "specialist_results": existing_results + [specialist_data]
-            }
-            
-            return updated_state
+            return {"specialist_results": [specialist_data]}
         except Exception as e:
             logger.error(f"[税务专家] 执行失败: {e}")
-            updated_state = {
-                **state,
-                "specialist_results": [{"source": "tax", "content": f"税务专家分析失败: {str(e)}", "data": {"error": str(e)}, "confidence": 0.0, "success": False}]
-            }
-            return updated_state
-    
+            return {"specialist_results": [{"source": "tax", "content": f"税务专家分析失败: {str(e)}", "data": {"error": str(e)}, "confidence": 0.0, "success": False}]}
+
     async def legal_specialist(self, state: AgentState) -> AgentState:
         logger.info("[节点] legal_specialist 开始")
-        
-        specialist_context = {"tenant_id": self.orchestrator.tenant_id, "user_id": self.orchestrator.user_id}
+
+        specialist_context = self._build_specialist_context(state)
         try:
             result = await self.orchestrator.legal_specialist.run(user_input=state["user_query"], context=specialist_context)
             logger.info("[法律专家] 分析完成")
@@ -405,8 +566,7 @@ class Nodes:
                 except Exception as format_err:
                     logger.warning(f"[法律专家] _format_legal_result 失败，降级: {format_err}")
                     markdown_content = self._simple_specialist_markdown(result, "⚖️ 法律专家分析报告")
-            
-            existing_results = state.get("specialist_results", [])
+
             specialist_data = {
                 "source": "legal",
                 "content": markdown_content,
@@ -415,18 +575,10 @@ class Nodes:
                 "success": result.get('success', True)
             }
             
-            updated_state = {
-                **state,
-                "specialist_results": existing_results + [specialist_data]
-            }
-            
-            return updated_state
+            return {"specialist_results": [specialist_data]}
         except Exception as e:
             logger.error(f"[法律专家] 执行失败: {e}")
-            return {
-                **state,
-                "specialist_results": [{"source": "legal", "content": f"法律专家分析失败: {str(e)}", "data": {"error": str(e)}, "confidence": 0.0, "success": False}]
-            }
+            return {"specialist_results": [{"source": "legal", "content": f"法律专家分析失败: {str(e)}", "data": {"error": str(e)}, "confidence": 0.0, "success": False}]}
     
     async def reflection(self, state: AgentState) -> AgentState:
         logger.info("[节点] reflection 审核开始")
@@ -504,11 +656,16 @@ class Nodes:
             
             return updated_state
         except Exception as e:
-            logger.error(f"[反思] 审核失败: {e}")
+            logger.warning(f"[反思] 审核异常，标记跳过: {e}")
             return {
                 **state,
-                "reflection_result": {"score": 0.7, "acceptable": True},
-                "retry_count": current_retry
+                "reflection_result": {
+                    "score": 0.5,          # 降一半置信度
+                    "acceptable": True,     # 仍然放行（业务连续性）
+                    "skipped": True,        # 🆕 明确标记审查未完成
+                    "issues": [f"质量审查异常: {str(e)[:100]}"],
+                },
+                "retry_count": current_retry,
             }
     
     async def final(self, state: AgentState) -> AgentState:
@@ -516,13 +673,16 @@ class Nodes:
         
         if state.get("needs_clarification") and state.get("clarification_request"):
             clarification = state.get("clarification_request", {})
-            logger.info("[最终答案] 需要追问")
+            question = clarification.get("question", "") if isinstance(clarification, dict) else str(clarification)
+            logger.info("[最终答案] 需要追问: %s", question[:80])
+            # 把追问内容作为 final_answer，前端至少能显示，而不是"处理完成"
+            fallback = f"❓ {question}" if question else "请更详细地描述您的问题，以便我为您提供准确的帮助。"
             return {
                 **state,
-                "final_answer": "",
-                "output": "",
-                "needs_clarification": True,
-                "clarification_request": clarification
+                "final_answer": fallback,
+                "output": fallback,
+                "needs_clarification": False,
+                "clarification_request": None
             }
         
         simple_response = state.get("metadata", {}).get("simple_response")
@@ -664,8 +824,16 @@ class Nodes:
             if failed_sources:
                 logger.info(f"[最终答案] 部分专家失败 (failed: {failed_sources})，仅合成成功结果")
 
-            # 🔧 移除单专家跳过 ResultSynthesizer 的优化
-            # 所有结果（包括单专家）统一通过 ResultSynthesizer 生成结构化报告
+            # 如果只有一个专家且返回了 text_answer，直接返回（跳过合成器）
+            if len(raw_results) == 1:
+                r = raw_results[0]
+                data = r.get("data", {})
+                if isinstance(data, dict) and data.get("text_answer"):
+                    answer = self._sanitize_llm_text(data["text_answer"])
+                    logger.info("[最终答案] 单专家 text_answer，跳过合成器")
+                    return {**state, "final_answer": answer, "output": answer}
+
+            # 多专家场景（或单专家无 text_answer）：使用 ResultSynthesizer 合并
             from app.agent_framework.components.result_synthesizer import ResultSynthesizer
             synthesizer = ResultSynthesizer(llm_adapter=self.orchestrator.llm_adapter)
 
@@ -938,7 +1106,11 @@ class AgentOrchestrator:
         self._capability_config: Dict[str, Any] = {}
         self._specialist_descriptions: str = ""
         self._intent_mapping: Dict[str, str] = {}
-        
+
+        # 🆕 技能系统
+        self.skill_registry = SkillRegistry
+        self.skill_matcher = SkillMatcher(registry=SkillRegistry)
+
         self.initialized = False
         
         self.result_cache: Optional[ResultCache] = None
@@ -1052,13 +1224,18 @@ class AgentOrchestrator:
         if not self.initialized:
             await self.initialize()
         
+        # 🆕 从前端传入的 metadata 中提取 enable_reflection，兼容 orchestrator 默认值
+        enable_reflection = self.enable_reflection
+        if metadata and "enable_reflection" in metadata:
+            enable_reflection = metadata["enable_reflection"]
+
         context = OrchestrationContext(
             session_id=session_id,
             tenant_id=self.tenant_id,
             user_id=self.user_id,
             user_query=user_input,
             context={"history": history or [], **(metadata or {})},
-            enable_reflection=self.enable_reflection,
+            enable_reflection=enable_reflection,
             enable_rag=self.enable_rag
         )
         
@@ -1396,24 +1573,8 @@ class AgentOrchestrator:
             logger.debug("[Router Edge] 路由到 rag_retrieval")
             return "rag_retrieval"
             
-        elif routing_strategy == "single_specialist" or routing_strategy == "report_queue" or intent in ["single_specialist", "report_generation", "risk_analysis", "financial_analysis", "accounting_query"]:
-            if not specialists:
-                logger.debug("[Router Edge] 单专家无指定，默认 finance_specialist")
-                return "finance_specialist"
-            
-            target = specialists[0]
-            logger.debug("[Router Edge] 单专家: %s", target)
-            
-            if target == "finance":
-                return "finance_specialist"
-            elif target == "tax":
-                return "tax_specialist"
-            elif target == "legal":
-                return "legal_specialist"
-            else:
-                return "finance_specialist"
-            
-        elif intent == "multi_specialist":
+        # 多专家判断优先：compliance_check、multi_specialist 意图或 specialists > 1
+        elif intent in ["compliance_check", "multi_specialist"] or len(specialists) > 1:
             logger.debug("[Router Edge] 多专家并行: %s", specialists)
             routes = []
             for s in specialists:
@@ -1423,11 +1584,29 @@ class AgentOrchestrator:
                     routes.append("tax_specialist")
                 elif s == "legal":
                     routes.append("legal_specialist")
-            
+
             if routes:
                 return routes
             return ["finance_specialist"]
-        
+
+        # 单专家：single_specialist 策略或单意图
+        elif routing_strategy in ("single_specialist", "report_queue") or intent in ["risk_analysis", "financial_analysis", "accounting_query", "tax_calculation", "tax_compliance", "contract_review", "legal_consultation"]:
+            if not specialists:
+                logger.debug("[Router Edge] 单专家无指定，默认 finance_specialist")
+                return "finance_specialist"
+
+            target = specialists[0]
+            logger.debug("[Router Edge] 单专家: %s", target)
+
+            if target == "finance":
+                return "finance_specialist"
+            elif target == "tax":
+                return "tax_specialist"
+            elif target == "legal":
+                return "legal_specialist"
+            else:
+                return "finance_specialist"
+
         logger.debug("[Router Edge] 默认路由到 final")
         return "final"
     
@@ -1464,6 +1643,7 @@ class AgentOrchestrator:
         workflow.add_node("receptionist", nodes.receptionist)
         workflow.add_node("intent_router", nodes.intent_router)
         workflow.add_node("rag_retrieval", nodes.rag_retrieval)
+        workflow.add_node("graph_path_retrieval", nodes.graph_path_retrieval)
         workflow.add_node("finance_specialist", nodes.finance_specialist)
         workflow.add_node("tax_specialist", nodes.tax_specialist)
         workflow.add_node("legal_specialist", nodes.legal_specialist)
@@ -1475,8 +1655,12 @@ class AgentOrchestrator:
         workflow.add_edge("receptionist", "intent_router")
         logger.debug("[边定义] receptionist → intent_router")
         
+        # 意图路由后先去查图谱路径，再走 specialists
+        workflow.add_edge("intent_router", "graph_path_retrieval")
+        logger.debug("[边定义] intent_router → graph_path_retrieval")
+
         workflow.add_conditional_edges(
-            "intent_router",
+            "graph_path_retrieval",
             self.route_after_intent,
             {
                 "finance_specialist": "finance_specialist",
@@ -1486,10 +1670,15 @@ class AgentOrchestrator:
                 "final": "final"
             }
         )
-        logger.debug("[边定义] intent_router → (条件边) → specialist/final")
+        logger.debug("[边定义] graph_path_retrieval → (条件边) → specialist/final")
         
         def route_after_analysis(state: AgentState) -> str:
             enable_reflection = state.get("enable_reflection", self.enable_reflection)
+            # 🆕 元问题不管前端是否开启反思，都跳过
+            query = state.get("user_query", "")
+            if hasattr(Nodes, '_is_meta_question') and Nodes._is_meta_question(query):
+                logger.debug("[analysis route] 元问题，跳过反思")
+                return "final"
             logger.debug("[analysis route] enable_reflection=%s", enable_reflection)
             return "reflection" if enable_reflection else "final"
 
@@ -2041,15 +2230,20 @@ class AgentOrchestrator:
             return context
     
     async def process(self, context: OrchestrationContext) -> OrchestrationContext:
-        """处理请求的别名方法（供API路由调用）
-        
+        """处理请求（内部路由到 LangGraph 工作流）
+
         Args:
             context: 编排上下文
-            
+
         Returns:
             更新后的编排上下文
         """
-        return await self.process_context(context)
+        # 🆕 使用 LangGraph 工作流，包含守卫逻辑
+        return await self.process_user_request(
+            user_input=context.user_query,
+            session_id=context.session_id,
+            metadata={'enable_reflection': context.enable_reflection, **(context.context or {})},
+        )
     
     async def initialize(self):
         """
@@ -2100,17 +2294,20 @@ class AgentOrchestrator:
             print("💼 [编排器] 创建专业智能体...")
             self.finance_specialist = FinanceSpecialist(
                 llm_adapter=self.llm_adapter,
-                tool_manager=self.tool_manager
+                tool_manager=self.tool_manager,
+                skill_registry=self.skill_registry,
             )
-            
+
             self.tax_specialist = TaxSpecialist(
                 llm_adapter=self.llm_adapter,
-                tool_manager=self.tool_manager
+                tool_manager=self.tool_manager,
+                skill_registry=self.skill_registry,
             )
-            
+
             self.legal_specialist = LegalSpecialist(
                 llm_adapter=self.llm_adapter,
-                tool_manager=self.tool_manager
+                tool_manager=self.tool_manager,
+                skill_registry=self.skill_registry,
             )
             
             if self.enable_reflection:
@@ -3953,6 +4150,11 @@ class AgentOrchestrator:
     
     def _format_finance_result(self, result: Dict[str, Any]) -> str:
         """格式化财务专家结果"""
+        # 🆕 纯文本回答直接返回（经后处理清洗）
+        text_answer = result.get("text_answer")
+        if text_answer:
+            return Nodes._sanitize_llm_text(str(text_answer))
+
         try:
             # 提取分析结果
             analysis = result.get("analysis", {})

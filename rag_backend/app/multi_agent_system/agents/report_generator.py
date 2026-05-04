@@ -856,7 +856,7 @@ class ReportGenerator(BaseAgent):
         actions = []
         high_risk_findings = [
             f for f in findings 
-            if str(f.get('severity', 'low')).lower() in ['high', 'critical']
+            if str(f.get('severity', 'low')).lower() in ['high', 'critical', 'error', 'risk']
         ]
         
         for finding in high_risk_findings[:5]:
@@ -872,11 +872,23 @@ class ReportGenerator(BaseAgent):
         for finding in findings:
             if isinstance(finding, dict):
                 recs = finding.get('recommendations', [])
+                if isinstance(recs, str):
+                    recs = [recs]
                 for rec in recs:
                     rec_key = rec[:50]
                     if rec_key not in seen:
                         recommendations.append(rec)
                         seen.add(rec_key)
+
+                if not recs:
+                    severity = str(finding.get('severity', 'low')).lower()
+                    message = str(finding.get('message', '')).strip()
+                    if message and severity in ['medium', 'low', 'warning', 'info', 'moderate']:
+                        rec = f"建议优化: {message}"
+                        rec_key = rec[:50]
+                        if rec_key not in seen:
+                            recommendations.append(rec)
+                            seen.add(rec_key)
         
         return recommendations[:10]
     
@@ -888,15 +900,21 @@ class ReportGenerator(BaseAgent):
         for finding in findings:
             if isinstance(finding, dict):
                 legal_basis = finding.get('legal_basis', [])
-                if isinstance(legal_basis, list):
-                    for ref in legal_basis:
-                        ref_key = str(ref)[:50]
-                        if ref_key not in seen:
-                            references.append({
-                                'source': finding.get('type', 'unknown'),
-                                'reference': ref
-                            })
-                            seen.add(ref_key)
+                if isinstance(legal_basis, str):
+                    legal_basis = [legal_basis] if legal_basis.strip() else []
+                elif not isinstance(legal_basis, list):
+                    legal_basis = [legal_basis] if legal_basis else []
+
+                for ref in legal_basis:
+                    ref_text = str(ref).strip()
+                    ref_key = ref_text[:50]
+                    if ref_text and ref_key not in seen:
+                        references.append({
+                            'source': finding.get('type', 'unknown'),
+                            'reference': ref,
+                            'context': str(finding.get('message', ''))[:100]
+                        })
+                        seen.add(ref_key)
         
         return references
     
@@ -1178,16 +1196,6 @@ class ReportGenerator(BaseAgent):
         )
         
         yield self._to_markdown(report)
-    
-    def set_output_agent(self, output_agent) -> None:
-        """设置输出审查智能体（兼容 ReportAgent 接口，已弃用）"""
-        import warnings
-        warnings.warn(
-            "set_output_agent 方法已弃用，请直接使用 ResultSynthesizer",
-            DeprecationWarning,
-            stacklevel=2
-        )
-        self.output_agent = output_agent
     
     def recognize_report_type(self, user_input: str) -> Optional[str]:
         """

@@ -362,6 +362,12 @@ function getVisibilityColor(visibility: VisibilityType): string {
                   PDF · DOC · DOCX · XLS · XLSX · TXT · MD · CSV · PNG · JPG · JPEG · BMP · TIFF
                 </p>
               </div>
+              <div class="inline-block px-4 py-2 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg border border-blue-200 mt-2">
+                <p class="text-xs text-blue-700">
+                  <span class="font-medium">提示：</span>文件名中包含「财务」「税务」「合同」等关键词，系统会自动采用对应的优化策略（财务表格保持完整、税务按条款切分、法务自动替换简称），提升检索精度。
+                </p>
+                <p class="text-xs text-blue-500 mt-1">状态说明：pending(等待) → processing(处理中) → ready(已完成) → 可检索</p>
+              </div>
             </div>
           </div>
 

@@ -10,13 +10,41 @@ Agent 追踪服务
 import time
 import logging
 import asyncio
+import uuid
+import json
 from typing import Dict, Any, List, Optional
 from sqlalchemy import select, func
 from app.db.session import AsyncSessionLocal
 from app.models.agent_trace import AgentTrace, AgentStep
+from app.models.chat import ChatMessage, ChatSession
 from app.langsmith_integration import get_tracer, get_langsmith_config
 
 logger = logging.getLogger(__name__)
+
+
+def _coerce_uuid(value: Any, field_name: str) -> Optional[uuid.UUID]:
+    """Return a UUID object for valid values; drop external ids like thread_xxx."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, uuid.UUID):
+        return value
+    try:
+        return uuid.UUID(str(value))
+    except (ValueError, TypeError, AttributeError):
+        logger.debug("[AgentTracer] Ignoring non-UUID %s for trace DB column: %s", field_name, value)
+        return None
+
+
+def _coerce_text(value: Any) -> Optional[str]:
+    """Serialize trace text fields before writing them to TEXT columns."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        return str(value)
 
 
 class AgentTracerSession:
@@ -56,6 +84,10 @@ class AgentTracerSession:
     
     async def add_step(self, step_data: Dict[str, Any]) -> None:
         """添加步骤到缓冲"""
+        if "content" in step_data:
+            step_data["content"] = _coerce_text(step_data.get("content")) or ""
+        if "tool_output" in step_data:
+            step_data["tool_output"] = _coerce_text(step_data.get("tool_output"))
         step = AgentStep(
             trace_id=self.trace_id,
             user_id=self.user_id,
@@ -131,6 +163,8 @@ class AgentTracer:
             trace_id: 追踪 ID
         """
         langsmith_run_id = None
+        db_session_id = _coerce_uuid(session_id, "session_id")
+        db_message_id = _coerce_uuid(message_id, "message_id")
         if self.langsmith_enabled and self.langsmith_tracer:
             try:
                 with self.langsmith_tracer.trace_agent_run(
@@ -145,13 +179,20 @@ class AgentTracer:
                 logger.warning(f"[AgentTracer] LangSmith start_trace 失败: {e}")
         
         async with AsyncSessionLocal() as db:
+            if db_session_id and not await db.get(ChatSession, db_session_id):
+                logger.debug("[AgentTracer] Ignoring missing chat session for trace DB column: %s", db_session_id)
+                db_session_id = None
+            if db_message_id and not await db.get(ChatMessage, db_message_id):
+                logger.debug("[AgentTracer] Ignoring missing chat message for trace DB column: %s", db_message_id)
+                db_message_id = None
+
             trace = AgentTrace(
                 agent_type=agent_type,
                 user_query=user_query,
                 user_id=user_id,
                 tenant_id=tenant_id,
-                session_id=session_id,
-                message_id=message_id,
+                session_id=db_session_id,
+                message_id=db_message_id,
                 langsmith_run_id=langsmith_run_id,
                 status="running"
             )
@@ -212,10 +253,10 @@ class AgentTracer:
                 tenant_id=self._current_tenant_id,
                 step_number=step_number,
                 step_type=step_type,
-                content=content,
+                content=_coerce_text(content) or "",
                 tool_name=tool_name,
                 tool_input=tool_input,
-                tool_output=tool_output,
+                tool_output=_coerce_text(tool_output),
                 tool_duration=tool_duration,
                 confidence=confidence,
                 extra_metadata=metadata,
@@ -423,7 +464,10 @@ class AgentTracer:
             追踪记录列表
         """
         async with AsyncSessionLocal() as db:
-            query = select(AgentTrace).where(AgentTrace.session_id == session_id)
+            db_session_id = _coerce_uuid(session_id, "session_id")
+            if session_id and not db_session_id:
+                return []
+            query = select(AgentTrace).where(AgentTrace.session_id == db_session_id)
             if user_id:
                 query = query.where(AgentTrace.user_id == user_id)
             if tenant_id:

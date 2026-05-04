@@ -463,7 +463,10 @@ class ReActAgent(BaseAgent):
                     # 🔧 Bug1修复：参数为空说明流式接收结束时 JSON 仍未完整
                     # 此时不应 continue（会跳过 current_prompt 更新导致无限循环）
                     # 而应该添加引导让 LLM 重试
-                    if not tool_call["parameters"]:
+                    # 注意：如果工具本身没有必填参数，空 {} 是合法的不应拒绝
+                    _tool_params = self.tool_manager.tools.get(tool_call["tool_name"], {}).get("parameters", {})
+                    _has_required_param = any(p.get("required", False) for p in _tool_params.values())
+                    if not tool_call["parameters"] and _has_required_param:
                         self._log_action("⚠️ 工具参数不完整，添加引导让 LLM 重试")
                         guidance = (
                             "\n\n注意：您的工具调用格式不完整。请按照以下格式重新输出：\n"
@@ -630,6 +633,17 @@ class ReActAgent(BaseAgent):
                             # 只输出 Final Answer 部分
                             cleaned_answer = output_formatter.clean_output(final_answer)
                             cleaned_answer = self._prepare_answer_for_output(cleaned_answer)
+                            # 🔧 修复：即使 preamble 和 Final Answer 高度相似，
+                            # 仍需检查内容是否已在 Phase 1 流式输出中完整出现
+                            is_dup, dup_msg = self._is_answer_duplicate_with_streamed(
+                                cleaned_answer, streamed_content,
+                                similarity_threshold=0.65
+                            )
+                            if is_dup:
+                                self._log_action("⏭️ Final Answer 与已流式输出内容重复，跳过", {
+                                    "msg": dup_msg
+                                })
+                                return
                             for char in cleaned_answer:
                                 yield char
                         elif overlap_with_streamed > 0.7:
@@ -639,14 +653,48 @@ class ReActAgent(BaseAgent):
                             cleaned_answer = output_formatter.clean_output(final_answer)
                             cleaned_answer = self._prepare_answer_for_output(cleaned_answer)
                             already_output = output_formatter.clean_output(streamed_content)
-                            # 尝试找到已输出内容的结尾位置
-                            if cleaned_answer.startswith(already_output[:min(len(already_output), 50)]):
-                                remaining = cleaned_answer[len(already_output):]
-                                for char in remaining:
-                                    yield char
-                            else:
-                                for char in cleaned_answer:
-                                    yield char
+
+                            # 🔧 修复：改进重叠检测逻辑
+                            # 策略1：使用 _is_answer_duplicate_with_streamed 做整体判断
+                            is_dup, dup_msg = self._is_answer_duplicate_with_streamed(
+                                cleaned_answer, streamed_content,
+                                similarity_threshold=0.65
+                            )
+                            if is_dup:
+                                self._log_action("⏭️ Final Answer 与已流式输出内容重复，跳过", {
+                                    "msg": dup_msg
+                                })
+                                return
+
+                            # 策略2：查找 cleaned_answer 与 already_output 结尾的实际重叠
+                            max_overlap = min(len(already_output), len(cleaned_answer), 50)
+                            overlap_found = False
+                            for n in range(max_overlap, 0, -1):
+                                suffix = already_output[-n:]
+                                if cleaned_answer.startswith(suffix):
+                                    remaining = cleaned_answer[n:]
+                                    if remaining:
+                                        self._log_action("📤 找到重叠后剩余内容", {
+                                            "overlap_len": n,
+                                            "remaining_len": len(remaining)
+                                        })
+                                        for char in remaining:
+                                            yield char
+                                    else:
+                                        self._log_action("⏭️ Final Answer 完全在已输出内容中，跳过")
+                                    overlap_found = True
+                                    break
+
+                            if not overlap_found:
+                                # 策略3：作为最后手段，尝试 found_startswith 检测
+                                if cleaned_answer.startswith(already_output[:min(len(already_output), 50)]):
+                                    remaining = cleaned_answer[len(already_output):]
+                                    if remaining:
+                                        for char in remaining:
+                                            yield char
+                                else:
+                                    for char in cleaned_answer:
+                                        yield char
                         else:
                             final_answer_preview = final_answer[:100] + "..." if len(final_answer) > 100 else final_answer
                             self._log_action("📤 提取 Final Answer", {
@@ -656,6 +704,17 @@ class ReActAgent(BaseAgent):
                             cleaned_answer = output_formatter.clean_output(final_answer)
                             original_len = len(cleaned_answer)
                             cleaned_answer = self._prepare_answer_for_output(cleaned_answer)
+
+                            # 🔧 修复：检查最终答案是否与已流式输出的内容重复
+                            is_dup, dup_msg = self._is_answer_duplicate_with_streamed(
+                                cleaned_answer,
+                                streamed_content
+                            )
+                            if is_dup:
+                                self._log_action("⏭️ Final Answer 与已输出内容重复，跳过", {
+                                    "msg": dup_msg
+                                })
+                                break
 
                             if original_len != len(cleaned_answer):
                                 self._log_action("📦 Final Answer去重", {
@@ -711,10 +770,21 @@ class ReActAgent(BaseAgent):
                             yield char
                     else:
                         already_output = output_formatter.clean_output(streamed_content)
+                        # 🔧 修复：在输出全部内容前检查是否与已流式输出重复
+                        is_dup, dup_msg = self._is_answer_duplicate_with_streamed(
+                            cleaned_answer, streamed_content,
+                            similarity_threshold=0.65
+                        )
+                        if is_dup:
+                            self._log_action("⏭️ 直接回答与已流式输出内容重复，跳过", {
+                                "msg": dup_msg
+                            })
+                            return
                         if cleaned_answer.startswith(already_output[:min(len(already_output), 50)]):
                             remaining = cleaned_answer[len(already_output):]
-                            for char in remaining:
-                                yield char
+                            if remaining:
+                                for char in remaining:
+                                    yield char
                         else:
                             for char in cleaned_answer:
                                 yield char
@@ -958,8 +1028,8 @@ class ReActAgent(BaseAgent):
         # Markdown 格式：## Final Answer\n 或 ## Final Answer 
         # 纯文本格式：Final Answer: 或 final answer:
         patterns = [
-            r'##\s*Final Answer\s*\n(.*?)(?=\n##|\nThought:|\nAction:|\nObservation:|$)',
-            r'##\s*Final Answer\s*:(.*?)(?=\n##|\nThought:|\nAction:|\nObservation:|$)',
+            r'##\s*Final Answer\s*\n(.*?)(?=\n##\s*(?:Thought|Action|Observation)\b|\n(?:Thought|Action|Observation):|$)',
+            r'##\s*Final Answer\s*:(.*?)(?=\n##\s*(?:Thought|Action|Observation)\b|\n(?:Thought|Action|Observation):|$)',
             r'Final Answer:\s*(.*?)(?=\nThought:|\nAction:|\nObservation:|$)',
             r'final answer:\s*(.*?)(?=\nthought:|\naction:|\nobservation:|$)',
         ]
@@ -1295,7 +1365,23 @@ class ReActAgent(BaseAgent):
             return False, ""
         
         similarity = self._calculate_similarity(cleaned_answer, cleaned_streamed)
-        
+
+        # 🔧 修复：如果 cleaned_answer 是 cleaned_streamed 的子串，说明答案已完全输出
+        if cleaned_answer and cleaned_streamed and len(cleaned_answer) >= 3:
+            if cleaned_answer in cleaned_streamed:
+                self._log_action("⚠️ Final Answer 已被完整包含在已输出内容中，跳过", {
+                    "answer": cleaned_answer[:80],
+                    "streamed": cleaned_streamed[:80]
+                })
+                return True, "答案已完整包含在已输出内容中"
+            # 反过来：cleaned_streamed 是 cleaned_answer 的前缀，说明部分已输出
+            if cleaned_streamed and len(cleaned_streamed) >= 3 and cleaned_answer.startswith(cleaned_streamed):
+                remaining = cleaned_answer[len(cleaned_streamed):]
+                self._log_action("📤 部分内容已输出，剩余待输出", {
+                    "remaining_length": len(remaining)
+                })
+                return False, f"待输出剩余 {len(remaining)} 字符"
+
         if similarity > similarity_threshold:
             self._log_action("⚠️ 最终答案与已输出内容重复，跳过输出", {
                 "similarity": similarity,
@@ -1303,7 +1389,7 @@ class ReActAgent(BaseAgent):
                 "streamed_length": len(cleaned_streamed)
             })
             return True, f"内容重复度过高 ({similarity:.2f})，跳过输出"
-        
+
         if cleaned_answer.startswith(cleaned_streamed[:min(len(cleaned_streamed), 50)]):
             remaining_length = len(cleaned_answer) - len(cleaned_streamed)
             if remaining_length > 0:

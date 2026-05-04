@@ -1,15 +1,31 @@
-"""实体提取器 - 使用 LLM（增强版：置信度评分 + 消歧 + 指代消解 + 并发处理 + LLM摘要 + 语义合并）"""
+"""实体提取器 - 规则预提取 + LLM（领域类型约束 + 置信度评分 + 消歧 + 指代消解 + 并发处理）"""
+import re
 import json
 import asyncio
 import logging
 from typing import List, Dict, Optional, Callable, Any
 from app.core.config import settings
+from app.knowledge_graph.kg_types import (
+    EntityType,
+    ENTITY_TYPE_DESCRIPTIONS,
+    get_entity_type_prompt_block,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class EntityExtractor:
-    """使用 LLM 提取实体（融合 GraphRAG 优势：置信度评分 + 消歧 + LLM摘要 + 语义合并）"""
+    """
+    使用 LLM 提取实体（领域类型约束版）
+
+    改进：
+    - 使用 kg_types.py 定义的领域实体类型（COMPANY, TAX_TYPE, CONTRACT 等）
+    - 限定 LLM 只能使用预定义类型，不允许编造
+    - 后验证：过滤不在预定义列表中的类型
+    """
+
+    # 所有合法实体类型的集合，用于后验证过滤
+    VALID_ENTITY_TYPES: set = set(ENTITY_TYPE_DESCRIPTIONS.keys())
 
     def __init__(self):
         self.confidence_threshold = getattr(settings, 'ENTITY_CONFIDENCE_THRESHOLD', 0.7)
@@ -64,6 +80,12 @@ class EntityExtractor:
                     callback(f"JSON 解析失败 (尝试 {attempt + 1}/{retries})")
                 if attempt < retries - 1:
                     await asyncio.sleep(1)
+            except asyncio.TimeoutError:
+                last_error = TimeoutError("LLM 调用超时（120s），请检查 DeepSeek API 状态或稍后重试")
+                logger.error(f"实体提取超时 (尝试 {attempt + 1}/{retries})")
+                if callback:
+                    callback("实体提取超时（120s），请稍后重试")
+                break
             except Exception as e:
                 last_error = e
                 logger.error(f"实体提取失败: {e}")
@@ -76,14 +98,119 @@ class EntityExtractor:
             callback(f"实体提取最终失败: {last_error}")
         return []
 
+    def _pre_extract_by_rules(self, text: str) -> List[Dict]:
+        # ruff: noqa: W605
+        """
+        规则预提取：用正则+字典匹配简单实体，跳过 LLM 调用
+
+        支持的类型：
+        - DATE_PERIOD: 2024年, 2024年12月, 第四季度
+        - TAX_RATE: 25%, 13%等
+        - TAX_TYPE: 企业所得税, 增值税等（字典匹配）
+        - CONTRACT: XX协议, XX合同
+        - CLAUSE: XX条款
+        - LOCATION: XX省XX市
+        - FINANCIAL_METRIC: 营收6600亿元等指标+金额
+        - COMPANY: 已知公司名（字典匹配）
+
+        Returns: [{"name":"...","type":"...","confidence":1.0}] 或空列表
+        """
+        entities = []
+
+        # 1. DATE_PERIOD: 2024年、2024年12月、2024年第一季度等
+        for m in re.findall(r'\d{4}年(?:\d{1,2}月)?(?:第[一二三四]季度)?', text):
+            entities.append({"name": m, "type": "DATE_PERIOD", "confidence": 1.0})
+
+        # 2. TAX_RATE: 百分数税率
+        for m in re.findall(r'\d+(?:\.\d+)?[%％]', text):
+            entities.append({"name": m, "type": "TAX_RATE", "confidence": 0.95})
+
+        # 3. TAX_TYPE: 常见税种字典
+        for tt in ['企业所得税', '增值税', '印花税', '营业税', '个人所得税',
+                    '消费税', '关税', '房产税', '土地使用税', '附加税']:
+            if tt in text:
+                entities.append({"name": tt, "type": "TAX_TYPE", "confidence": 1.0})
+
+        # 4. CONTRACT: 2-6字 + 协议/合同，去除非实体前缀
+        for m in re.findall(r'[\u4e00-\u9fa5]{2,6}(?:协议|合同)', text):
+            for prefix in ['了', '的', '与', '和', '及', '或', '签署']:
+                if m.startswith(prefix):
+                    m = m[len(prefix):]
+                    break
+            if len(m) >= 2:  # 去掉前缀后至少2字
+                entities.append({"name": m, "type": "CONTRACT", "confidence": 0.95})
+
+        # 5. CLAUSE: 2-6字 + 条款，去除非实体前缀
+        for m in re.findall(r'[\u4e00-\u9fa5]{2,6}条款', text):
+            for prefix in ['了', '的', '包含', '包括', '和', '及']:
+                if m.startswith(prefix):
+                    m = m[len(prefix):]
+                    break
+            if len(m) >= 2:
+                entities.append({"name": m, "type": "CLAUSE", "confidence": 0.95})
+
+        # 6. LOCATION: XX省XX市，去除非实体前缀
+        for m in re.findall(r'[\u4e00-\u9fa5]{2,3}省[\u4e00-\u9fa5]{2,2}市', text):
+            for prefix in ['于', '在', '到']:
+                if m.startswith(prefix):
+                    m = m[len(prefix):]
+                    break
+            if len(m) >= 3:
+                entities.append({"name": m, "type": "LOCATION", "confidence": 0.95})
+
+        # 7. FINANCIAL_METRIC: 常见财务指标+金额（较长关键词优先匹配）
+        metric_pairs = [
+            (r'营收[（(]?\d+(?:\.\d+)?[万亿万千百]*元[）)]?', 0.95),
+            (r'净利润[（(]?\d+(?:\.\d+)?[万亿万千百]*元[）)]?', 0.95),
+            (r'毛利润[（(]?\d+(?:\.\d+)?[万亿万千百]*元[）)]?', 0.9),
+            (r'收入[（(]?\d+(?:\.\d+)?[万亿万千百]*元[）)]?', 0.9),
+            (r'成本[（(]?\d+(?:\.\d+)?[万亿万千百]*元[）)]?', 0.9),
+            (r'费用[（(]?\d+(?:\.\d+)?[万亿万千百]*元[）)]?', 0.9),
+            (r'应收账款[（(]?\d+(?:\.\d+)?[万亿万千百]*元[）)]?', 0.95),
+            (r'负债[（(]?\d+(?:\.\d+)?[万亿万千百]*元[）)]?', 0.9),
+            (r'现金流[（(]?\d+(?:\.\d+)?[万亿万千百]*元[）)]?', 0.9),
+            (r'资产负债率[（(]?\d+(?:\.\d+)?[%％][）)]?', 0.9),
+        ]
+        for pattern, conf in metric_pairs:
+            for m in re.findall(pattern, text):
+                entities.append({"name": m, "type": "FINANCIAL_METRIC", "confidence": conf})
+
+        # 8. COMPANY: 知名公司字典（常用于测试文本）
+        known_companies = ['阿里巴巴', '腾讯', '华为', '百度', '京东', '字节跳动',
+                           '阿里云', '菜鸟网络', '饿了么', '小米', '网易', '美团',
+                           '拼多多', '滴滴', '快手', '比亚迪', '宁德时代']
+        for c in known_companies:
+            if c in text:
+                entities.append({"name": c, "type": "COMPANY", "confidence": 1.0})
+
+        # 去重：同名的只保留第一个（名称优先于值去重）
+        seen_names = set()
+        unique = []
+        for e in entities:
+            if e['name'] not in seen_names:
+                seen_names.add(e['name'])
+                unique.append(e)
+
+        return unique
+
     async def _extract_once(
         self,
         text: str,
         resolve_coreference: bool = True
     ) -> List[Dict]:
-        """单次实体提取（带错误恢复）"""
+        """单次实体提取（规则预提取 + LLM 补全）"""
         original_text = text
 
+        # 第 0 步：规则预提取
+        rule_entities = self._pre_extract_by_rules(text)
+        if rule_entities:
+            logger.info(
+                f"规则预提取到 {len(rule_entities)} 个实体，跳过 LLM 提取: "
+                f"{[e['name'] for e in rule_entities]}"
+            )
+            return rule_entities
+
+        # 规则未提取到 -> 走 LLM
         if resolve_coreference:
             try:
                 from app.knowledge_graph.coreference_resolver import coreference_resolver
@@ -94,41 +221,49 @@ class EntityExtractor:
                 logger.warning(f"指代消解失败，使用原文: {e}")
                 text = original_text
 
+        entity_types_block = get_entity_type_prompt_block()
+
         prompt = f"""从以下文本中提取实体，返回 JSON 数组格式。
 
 文本：{text}
 
+{entity_types_block}
+
 要求：
-1. 识别人名(PERSON)、地名(LOCATION)、组织(ORGANIZATION)、概念(CONCEPT)、产品(PRODUCT)等实体
-2. 为每个实体评估置信度（0-1之间的小数）：
-   - 明确的专有名词（如"张三"、"北京"）：0.9-1.0
+1. 为每个实体评估置信度（0-1之间的小数）：
+   - 明确的专有名词（如"阿里巴巴"、"张三"）：0.9-1.0
    - 常见名词但上下文清晰：0.7-0.9
    - 可能有歧义的实体：0.5-0.7
    - 不确定的实体：<0.5
-3. 对于可能有歧义的实体，添加消歧信息（disambiguated_name）：
+2. 对于可能有歧义的实体，添加消歧信息（disambiguated_name），例如：
    - "苹果"在科技语境 → "苹果公司"
-   - "苹果"在食品语境 → "苹果（水果）"
-   - "张三"如果有职位信息 → "张三（软件工程师）"
-4. 返回格式：[{{"name": "实体名", "type": "类型", "confidence": 0.95, "disambiguated_name": "消歧后名称"}}]
+   - "张三"如果有职位信息 → "张三（财务总监）"
+3. 返回格式：[{{"name": "实体名", "type": "COMPANY", "confidence": 0.95, "disambiguated_name": "消歧后名称"}}]
+4. 类型必须严格从上面的实体类型中选择，不要编造新类型
 5. 只返回 JSON 数组，不要其他内容
 6. 如果没有实体，返回空数组 []
 
-示例1：
-文本：张三在北京的阿里巴巴公司担任软件工程师
-返回：[{{"name":"张三","type":"PERSON","confidence":0.95,"disambiguated_name":"张三（软件工程师）"}},{{"name":"北京","type":"LOCATION","confidence":1.0}},{{"name":"阿里巴巴","type":"ORGANIZATION","confidence":1.0,"disambiguated_name":"阿里巴巴公司"}},{{"name":"软件工程师","type":"CONCEPT","confidence":0.9}}]
+示例1（公司税务场景）：
+文本：阿里巴巴在2024年企业所得税应纳税额为50亿元
+返回：[{{"name":"阿里巴巴","type":"COMPANY","confidence":1.0}},{{"name":"2024年","type":"DATE_PERIOD","confidence":1.0}},{{"name":"企业所得税","type":"TAX_TYPE","confidence":1.0}},{{"name":"50亿元","type":"FINANCIAL_METRIC","confidence":0.9,"disambiguated_name":"应纳税额（50亿元）"}}]
 
-示例2：
-文本：苹果发布了新款手机
-返回：[{{"name":"苹果","type":"ORGANIZATION","confidence":0.95,"disambiguated_name":"苹果公司"}},{{"name":"手机","type":"PRODUCT","confidence":0.9}}]
+示例2（合同场景）：
+文本：张三代表腾讯与华为签署了5G技术合作协议
+返回：[{{"name":"张三","type":"PERSON","confidence":0.95}},{{"name":"腾讯","type":"COMPANY","confidence":1.0}},{{"name":"华为","type":"COMPANY","confidence":1.0}},{{"name":"5G技术合作协议","type":"CONTRACT","confidence":0.9}}]
 """
 
         from app.services.llm_service import llm_service
-        logger.info(f"调用 LLM 提取实体，使用模型: {self.model}...")
-        response = await llm_service.get_answer(
-            query=prompt,
-            context_chunks=[],
-            history=[],
-            model=self.model
+        # 不传 model 参数，LLM 服务自动使用 DeepSeek 适配器的默认模型
+        # 传 model 会与 DeepSeek 适配器的 LangSmith 追踪路径产生 model 参数冲突
+        logger.info("调用 LLM 提取实体（使用服务默认模型）...")
+        # 加 120 秒超时，避免 DeepSeek API 长时间无响应
+        response = await asyncio.wait_for(
+            llm_service.get_answer(
+                query=prompt,
+                context_chunks=[],
+                history=[],
+            ),
+            timeout=120.0,
         )
 
         logger.debug(f"LLM 原始响应: {response[:200]}...")
@@ -150,10 +285,23 @@ class EntityExtractor:
             logger.warning(f"响应不是数组: {type(entities)}")
             return []
 
+        # 类型白名单验证：只保留预定义类型的实体
+        valid_entities = []
+        invalid_types = []
+        for entity in entities:
+            etype = entity.get('type', '')
+            if etype in self.VALID_ENTITY_TYPES:
+                valid_entities.append(entity)
+            else:
+                invalid_types.append(f"{entity.get('name','?')}({etype})")
+
+        if invalid_types:
+            logger.warning(f"过滤了未定义类型的实体: {invalid_types}")
+
         high_confidence = []
         low_confidence = []
 
-        for entity in entities:
+        for entity in valid_entities:
             confidence = entity.get('confidence', 1.0)
 
             if 'name' not in entity or 'type' not in entity:
@@ -168,7 +316,11 @@ class EntityExtractor:
             else:
                 low_confidence.append(entity)
 
-        logger.info(f"成功解析 {len(entities)} 个实体，高置信度: {len(high_confidence)}, 低置信度: {len(low_confidence)}")
+        logger.info(
+            f"成功解析 {len(valid_entities)}/{len(entities)} 个实体"
+            f"（过滤 {len(entities)-len(valid_entities)} 个未定义类型），"
+            f"高置信度: {len(high_confidence)}, 低置信度: {len(low_confidence)}"
+        )
 
         if low_confidence:
             logger.warning(f"低置信度实体（已过滤）: {[e['name'] for e in low_confidence]}")

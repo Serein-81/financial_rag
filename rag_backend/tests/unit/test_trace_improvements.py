@@ -9,8 +9,10 @@ pytest.importorskip("sqlalchemy")
 from fastapi import HTTPException
 
 from app.agent_framework.core.base_agent import BaseAgent
+from app.agent_framework.components.result_synthesizer import ResultSynthesizer
 from app.api.v1.endpoints import agent_trace as agent_trace_api
 from app.api.v1.endpoints import tool_trace as tool_trace_api
+from app.services.agent_tracer import _coerce_text
 
 
 class DummyAgent(BaseAgent):
@@ -108,6 +110,23 @@ def test_tool_trace_legacy_response_shape():
     assert legacy["trace_id"] == "trace-1"
     assert legacy["input"] == {"q": "policy"}
     assert legacy["output"] == "ok"
+
+
+def test_agent_tracer_coerces_structured_tool_output_to_text():
+    assert _coerce_text({"intent": "tax_calculation", "confidence": 0.9}) == (
+        '{"intent": "tax_calculation", "confidence": 0.9}'
+    )
+
+
+def test_result_synthesizer_merge_preserves_string_details():
+    synthesizer = ResultSynthesizer(llm_adapter=None)
+
+    response = synthesizer._generate_merge_response({
+        "summary": {},
+        "details": {"tax": {"content": "企业所得税分析明细"}}
+    })
+
+    assert "企业所得税分析明细" in response
 
 
 @pytest.mark.asyncio

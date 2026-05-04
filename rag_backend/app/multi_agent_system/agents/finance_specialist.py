@@ -18,17 +18,21 @@ import asyncio
 import time
 import os
 from datetime import datetime
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, TYPE_CHECKING
 from enum import Enum
 from dataclasses import dataclass
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.services.context_optimizer import ContextOptimizer
 from .base_specialist import BaseSpecialistAgent
 from .base_agent_prompt import load_agent_prompt
 from app.agent_framework.llm.base_adapter import BaseLLMAdapter
 from app.agent_framework.tools.tool_manager import ToolManager
 from ..state import AuditState, Finding, RiskLevel
+
+if TYPE_CHECKING:
+    from app.skills.skill_registry import SkillRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -250,22 +254,25 @@ class FinanceSpecialist(BaseSpecialistAgent):
         self,
         llm_adapter: BaseLLMAdapter,
         tool_manager: ToolManager,
-        specialty: str = "finance"
+        specialty: str = "finance",
+        skill_registry: Optional['SkillRegistry'] = None,  # 🆕 技能系统
     ):
         """
         初始化财务专家
-        
+
         Args:
             llm_adapter: 大模型适配器
             tool_manager: 工具管理器
             specialty: 专业领域标识
+            skill_registry: 技能注册表 (可选)
         """
         super().__init__(
             specialty=specialty,
             llm_adapter=llm_adapter,
             tool_manager=tool_manager,
             max_iterations=10,
-            timeout=60.0
+            timeout=60.0,
+            skill_registry=skill_registry,  # 🆕 技能系统
         )
         
         self._register_financial_mcp_tools()
@@ -275,7 +282,11 @@ class FinanceSpecialist(BaseSpecialistAgent):
         
         system_prompt = self._load_system_prompt()
         self.system_prompt = system_prompt
-    
+
+        # 🆕 上下文优化器：防止多轮工具调用后 context window 溢出
+        model_name = getattr(llm_adapter, "model_name", "default")
+        self.context_optimizer = ContextOptimizer(model_name=model_name)
+
     def _register_financial_mcp_tools(self):
         """
         注册 MCP 财务数据查询工具和时间锚点工具
@@ -337,17 +348,24 @@ class FinanceSpecialist(BaseSpecialistAgent):
     
     def _get_prompt_context(self) -> Dict[str, Any]:
         """获取提示词渲染上下文"""
+        # 与 _build_tool_schemas() 保持同步——只暴露实际可调用的工具
         tools_description = "\n".join([
-            "- get_financial_overview：获取企业财务概览摘要",
-            "- query_financial_data：按收入、成本、利润等类型查询明细",
-            "- get_financial_trend：查询收入、利润、成本等趋势",
-            "- search_financial_data：按关键词检索财务数据",
-            "- get_current_time_and_context：获取当前时间基准",
+            "- get_current_time_and_context：获取当前准确的时间基准",
+            "- get_financial_overview：获取企业财务概览摘要，包括营业收入、成本、利润等关键指标",
         ])
-        
+
+        # 获取领域技能描述 (Level 1: 仅名称+说明, 完整内容按需加载)
+        skill_descriptions = ""
+        try:
+            if self.skill_registry and self.skill_registry.is_initialized():
+                skill_descriptions = self.skill_registry.format_domain_skill_descriptions("finance")
+        except Exception:
+            pass
+
         return {
             "financial_domains": [d.value for d in FinancialDomain],
             "available_tools": tools_description or "无可用工具",
+            "skill_descriptions": skill_descriptions or "暂无可用技能",
             "time_awareness_principle": """## 时间感知原则
 大模型没有生物钟，当处理以下场景时，必须先调用 get_current_time_and_context：
 - 用户询问"今年"、"去年"、"上个月"等相对时间
@@ -666,7 +684,46 @@ class FinanceSpecialist(BaseSpecialistAgent):
                 return domain
         
         return FinancialDomain.OTHER
-    
+
+    # =========================================================================
+    # 🆕 财务数据查询守卫
+    # =========================================================================
+
+    @staticmethod
+    def _should_query_financial_data(user_input: str, domain: FinancialDomain) -> bool:
+        """
+        判断是否需要查询数据库中的财务数据。
+
+        规则：
+        - domain=OTHER（无财务关键词）→ 不查数据（可能是元问题、技能询问等）
+        - 用户输入包含"技能"、"能力"等元关键词 → 不查数据
+        - 用户输入包含明确的财务关键词 → 查数据
+        - 其他情况 → 不查（由 LLM 根据 system prompt 自行决定）
+
+        Args:
+            user_input: 用户输入
+            domain: 识别的财务领域
+
+        Returns:
+            True 表示需要查询财务数据, False 表示不需要
+        """
+        # 规则 1: domain=OTHER 通常不是财务类问题
+        if domain == FinancialDomain.OTHER:
+            return False
+
+        # 规则 2: 如果是关于技能/能力的元问题, 不查数据
+        text_lower = user_input.lower()
+        skill_keywords = [
+            "技能", "能力", "功能", "你会做什么", "擅长",
+            "skill", "capability", "feature",
+        ]
+        for kw in skill_keywords:
+            if kw in text_lower:
+                return False
+
+        # 规则 3: 有明确的财务领域关键词 → 查数据
+        return True
+
     async def calculate_investment_metrics(
         self,
         initial_investment: float,
@@ -834,151 +891,292 @@ class FinanceSpecialist(BaseSpecialistAgent):
         **kwargs
     ) -> Dict[str, Any]:
         """
-        处理财务咨询请求
-        
-        Args:
-            user_input: 用户输入
-            history: 对话历史
-            context: 上下文信息
-            rag_context: RAG检索到的上下文数据（包含企业财务数据）
-            **kwargs: 其他参数
-            
-        Returns:
-            处理结果
+        LLM 驱动模式：通过原生函数调用（native function calling）让 LLM 自主决定调用工具。
+
+        流程:
+        1. 定义可用工具（JSON schema），通过 API tools 参数传给 LLM
+        2. LLM 自主判断是否需要调用工具 → 返回结构化 tool_calls
+        3. 执行工具，将结果加入对话历史
+        4. LLM 基于工具返回的真实数据生成最终回答
         """
         try:
-            entities = self.extract_entities(user_input)
-            domain = self.identify_domain(user_input)
-            
-            logger.debug(f"🔍 [FinanceSpecialist] domain={domain}, entities={entities}")
-            logger.debug(f"🔍 [FinanceSpecialist] RAG上下文: {bool(rag_context)}")
-            
-            query_result: FinancialQueryResult = await self._query_user_financial_data(context)
+            tenant_id = "default"
+            user_id = "default"
+            if context:
+                tenant_id = context.get("tenant_id", "default")
+                user_id = context.get("user_id", "default")
 
-            logger.debug(f"🔍 [FinanceSpecialist] 数据查询结果:")
-            logger.debug(f"   - query_result.has_data: {query_result.has_data}")
-            logger.debug(f"   - query_result.data_summary: {query_result.data_summary}")
-            logger.debug(f"   - query_result.fiscal_year: {query_result.fiscal_year}")
+            has_db_data = False
+            tool_executed = False
 
-            financial_context = rag_context.copy() if rag_context else {}
-            rag_has_data = bool(rag_context and rag_context.get("documents"))
+            # ================================================================
+            # 阶段 1: 构建消息 + 定义工具
+            # ================================================================
+            messages = []
 
-            financial_context["has_financial_data"] = query_result.has_data
-            if query_result.has_data:
-                financial_context["data_summary"] = query_result.data_summary
-                financial_context["data_error"] = None
-                logger.debug(f"✅ [FinanceSpecialist] data_summary 已添加到 financial_context:")
-                logger.debug(f"   - total_revenue: {query_result.data_summary.get('total_revenue')}")
-                logger.debug(f"   - total_profit: {query_result.data_summary.get('total_profit')}")
-                logger.debug(f"   - profit_margin: {query_result.data_summary.get('profit_margin')}")
-            else:
-                financial_context["data_summary"] = None
-                financial_context["data_error"] = query_result.error_message
-                logger.warning(f"⚠️ [FinanceSpecialist] 无有效数据: {query_result.error_message}")
+            # 系统提示词
+            if self.system_prompt:
+                messages.append({"role": "system", "content": self.system_prompt})
 
-            prompt = self._build_finance_prompt(user_input, entities, domain, financial_context)
-            logger.info(f"📝 [_build_finance_prompt] 提示词构建完成，长度: {len(prompt)} 字符")
-            logger.info(f"📝 [FinanceSpecialist] 开始调用 LLM (timeout=60s)...")
-            
-            full_prompt = f"{self.system_prompt}\n\n{prompt}" if self.system_prompt else prompt
-            logger.info(f"📝 [FinanceSpecialist] LLM 调用详情:")
-            logger.info(f"   - prompt length: {len(full_prompt)} chars")
-            logger.debug(f"   - temperature: 0.3")
-            logger.debug(f"   - has system_prompt: {bool(self.system_prompt)}")
-            
-            start_time = time.time()
-            try:
-                llm_response = await asyncio.wait_for(
-                    self.llm_adapter.generate(
-                        prompt=full_prompt,
-                        temperature=0.3
-                    ),
-                    timeout=60.0
+            # 对话历史
+            if history:
+                for msg in history[-5:]:
+                    role = msg.get("role", "user")
+                    content = msg.get("content", "")[:500]
+                    if role in ("user", "assistant"):
+                        messages.append({"role": role, "content": content})
+
+            # RAG 上下文（作为 system 消息注入）
+            if rag_context and rag_context.get("documents"):
+                doc_texts = []
+                for i, doc in enumerate(rag_context["documents"][:3], 1):
+                    c = doc.get("content", "")
+                    if c:
+                        doc_texts.append(f"### 文档{i}\n{c[:1000]}")
+                if doc_texts:
+                    messages.append({
+                        "role": "system",
+                        "content": "## 企业知识库相关文档\n" + "\n".join(doc_texts)
+                    })
+
+            # 当前会话信息
+            messages.append({
+                "role": "system",
+                "content": f"tenant_id: {tenant_id}\nuser_id: {user_id}"
+            })
+
+            # 用户问题
+            messages.append({"role": "user", "content": user_input})
+
+            # 定义可用工具（OpenAI 兼容的 function calling schema）
+            financial_tools = self._build_tool_schemas()
+            if not financial_tools:
+                logger.warning("[FinanceSpecialist] 无可用工具定义，回退到纯文本模式")
+
+            # ================================================================
+            # 阶段 2: 多轮工具调用循环 — LLM 自主决策，可反复调用工具
+            # ================================================================
+            TOOLS_NEEDING_CONTEXT = {"get_financial_overview", "query_financial_data", "get_financial_trend", "search_financial_data"}
+            MAX_TOOL_ROUNDS = 5
+            final_answer = ""
+
+            for round_idx in range(MAX_TOOL_ROUNDS):
+                # 🆕 每次 chat() 前执行上下文优化（防止 context window 溢出）
+                messages = self.context_optimizer.optimize(messages)
+
+                # 每次循环都携带 tools，让 LLM 可以继续调用
+                chat_kwargs = {"messages": messages, "temperature": 0.3}
+                if financial_tools and len(financial_tools) > 0:
+                    chat_kwargs["tools"] = financial_tools
+
+                response = await asyncio.wait_for(
+                    self.llm_adapter.chat(**chat_kwargs),
+                    timeout=120.0,
                 )
-                elapsed = time.time() - start_time
-                logger.info(f"✅ [FinanceSpecialist] LLM 调用成功，耗时: {elapsed:.2f}秒")
-            except asyncio.TimeoutError:
-                elapsed = time.time() - start_time
-                logger.error(f"❌ [FinanceSpecialist] LLM 调用超时 ({elapsed:.2f}秒)")
-                raise
-            except Exception as e:
-                elapsed = time.time() - start_time
-                logger.error(f"❌ [FinanceSpecialist] LLM 调用失败 ({elapsed:.2f}秒): {e}")
-                raise
-            
-            logger.debug(f"🔍 [FinanceSpecialist] LLM响应: {type(llm_response)}")
-            
-            response_text = llm_response.content if hasattr(llm_response, 'content') else str(llm_response)
-            logger.debug(f"🔍 [FinanceSpecialist] LLM响应文本长度: {len(response_text)}")
-            
-            analysis = self._parse_llm_response(response_text, domain, entities)
-            
-            logger.debug(f"🔍 [FinanceSpecialist] 分析完成: domain={analysis.domain}, indicators={len(analysis.financial_indicators)}, risks={len(analysis.risk_factors)}, metrics={len(analysis.key_metrics)}, recs={len(analysis.recommendations)}")
-            
-            risk_assessment = self.assess_financial_risk(analysis, entities)
-            
-            final_recommendations = analysis.recommendations if analysis.recommendations else self._generate_recommendations(analysis, domain)
-            
-            raw_result = {
+
+                # 检查 LLM 是否决定调用工具
+                raw = response.raw_response
+                tool_calls = None
+                if raw:
+                    choice = raw.get("choices", [{}])[0]
+                    msg = choice.get("message", {})
+                    tool_calls = msg.get("tool_calls", None)
+
+                if not tool_calls or len(tool_calls) == 0:
+                    # LLM 选择直接回答，退出循环
+                    logger.info(f"[FinanceSpecialist] 第{round_idx+1}轮: LLM 直接回答，工具调用结束")
+                    final_answer = response.content if hasattr(response, 'content') else str(response)
+                    break
+
+                logger.info(f"[FinanceSpecialist] 第{round_idx+1}轮: LLM 请求调用 {len(tool_calls)} 个工具")
+
+                # 添加 assistant 消息（含 tool_calls）
+                assistant_msg = {"role": "assistant", "content": response.content}
+                # OpenAI 格式: tool_calls 需要 id, type, function
+                normalized_calls = []
+                for tc in tool_calls:
+                    if isinstance(tc, dict):
+                        normalized_calls.append({
+                            "id": tc.get("id", f"call_{round_idx}_{len(normalized_calls)}"),
+                            "type": "function",
+                            "function": {
+                                "name": tc.get("function", {}).get("name", ""),
+                                "arguments": tc.get("function", {}).get("arguments", "{}"),
+                            }
+                        })
+                    else:
+                        normalized_calls.append(tc)
+                assistant_msg["tool_calls"] = normalized_calls
+                messages.append(assistant_msg)
+
+                # 执行每个工具
+                for tc in normalized_calls:
+                    func = tc.get("function", {})
+                    tool_name = func.get("name", "")
+                    try:
+                        raw_args = func.get("arguments", "{}")
+                        tool_args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+                    except json.JSONDecodeError:
+                        tool_args = {}
+
+                    # 只对金融数据工具添加 tenant_id（user_id 不被任何工具接受）
+                    if tool_name in TOOLS_NEEDING_CONTEXT:
+                        tool_args.setdefault("tenant_id", tenant_id)
+
+                    logger.info(f"[FinanceSpecialist] 执行工具: {tool_name}")
+
+                    try:
+                        tool_result = await self.tool_manager.call_tool_raw(
+                            tool_name, trace_id=self.current_trace_id, **tool_args,
+                        )
+                        result_str = json.dumps(tool_result, ensure_ascii=False) if isinstance(tool_result, dict) else str(tool_result)
+                        if isinstance(tool_result, dict) and tool_result.get("status") == "success":
+                            has_db_data = True
+                            tool_executed = True
+                    except Exception as e:
+                        error_msg = str(e)
+                        logger.warning(f"[FinanceSpecialist] 工具 {tool_name} 执行失败: {error_msg}")
+                        # 工具失败时明确告知 LLM 不要再重试同一个工具
+                        result_str = json.dumps({
+                            "status": "error",
+                            "error": f"工具 {tool_name} 执行失败: {error_msg[:200]}",
+                            "message": "此工具不可用，请基于已有知识或上下文信息直接回答，不要再次调用此工具"
+                        }, ensure_ascii=False)
+
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.get("id", ""),
+                        "content": result_str,
+                    })
+            else:
+                # 循环正常结束（达到 MAX_TOOL_ROUNDS 仍未拿到最终回答）
+                logger.warning(f"[FinanceSpecialist] 达到最大工具调用轮数 {MAX_TOOL_ROUNDS}")
+                if not final_answer:
+                    final_answer = "抱歉，系统处理超时。请稍后重试。"
+
+            return {
                 "success": True,
-                "domain": domain,
-                "analysis": analysis.dict(),
-                "risk_assessment": risk_assessment,
-                "entities": {
-                    "amount": entities.amount,
-                    "percentage": entities.percentage,
-                    "period": entities.period,
-                    "currency": entities.currency
-                },
-                "financial_indicators": analysis.financial_indicators,
-                "key_metrics": analysis.key_metrics,
-                "risk_factors": analysis.risk_factors,
-                "recommendations": final_recommendations,
-                "confidence": analysis.confidence,
-                "rag_enabled": rag_has_data,
-                "has_financial_db_data": query_result.has_data,
-                "financial_data_error": query_result.error_message
+                "domain": "general",
+                "text_answer": final_answer,
+                "analysis": {"domain": "general", "confidence": 1.0,
+                             "financial_indicators": {}, "key_metrics": [],
+                             "risk_factors": [], "recommendations": []},
+                "confidence": 1.0,
+                "has_financial_db_data": has_db_data,
+                "tool_executed": tool_executed,
             }
-            
-            clean_result = self._serialize_result(raw_result)
-            logger.info(f"🔍 [FinanceSpecialist] 返回数据 keys: {list(clean_result.keys())}")
-            for k, v in clean_result.items():
-                logger.debug(f"   - {k}: {type(v).__name__} = {str(v)[:80] if v else 'None'}...")
-            return clean_result
-            
-        except (ValueError, KeyError) as e:
-            logger.error(f"财务分析数据失败: {e}")
-            return {
-                "success": False,
-                "error": f"数据错误: {str(e)}",
-                "error_type": "data_error",
-                "fallback": "建议您咨询专业财务顾问获取准确信息"
-            }
-        except asyncio.TimeoutError as e:
-            logger.error(f"财务分析 LLM 调用超时 ({self.timeout}秒): {e}")
-            return {
-                "success": False,
-                "error": f"LLM 调用超时（{self.timeout}秒），请稍后重试",
-                "error_type": "timeout",
-                "fallback": "系统处理超时，建议您简化查询或稍后重试"
-            }
-        except (OSError, IOError) as e:
-            logger.error(f"财务分析IO失败: {e}")
-            return {
-                "success": False,
-                "error": f"IO错误: {str(e)}",
-                "error_type": "io_error",
-                "fallback": "建议您咨询专业财务顾问获取准确信息"
-            }
+
         except Exception as e:
-            logger.error(f"财务分析失败: {e}")
-            logger.error(traceback.format_exc())
-            return {
-                "success": False,
-                "error": str(e),
-                "fallback": "建议您咨询专业财务顾问获取准确信息"
-            }
-    
+            logger.error(f"[FinanceSpecialist] run failed: {e}", exc_info=True)
+            return {"success": False, "error": str(e), "text_answer": "Processing error, please retry"}
+
+    def _build_tool_schemas(self) -> List[Dict[str, Any]]:
+        """
+        构建 OpenAI 兼容的工具定义（function calling schema），与 MCP 工具实际签名一致。
+
+        只有工具管理器初始化后才返回有效工具列表。
+        """
+        if not self.tool_manager:
+            return []
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_current_time_and_context",
+                    "description": "获取当前准确的时间基准，处理时间相关查询时必须先调用此工具",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_financial_overview",
+                    "description": "快速获取企业财务状况的高层摘要，包括营业收入、成本、利润等关键指标，自动聚合数据",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "fiscal_year": {
+                                "type": "integer",
+                                "description": "会计年度，如 2024",
+                            },
+                        },
+                    },
+                },
+            },
+        ]
+
+    @staticmethod
+    def _is_financial_query(user_input: str) -> bool:
+        """判断用户查询是否涉及财务数据，需要主动查库"""
+        # 先排除元问题（技能询问、问候等）
+        meta_keywords = ["技能", "能力", "会做什么", "擅长", "功能介绍", "你好", "你好吗"]
+        text = user_input.lower()
+        for mk in meta_keywords:
+            if mk in text:
+                # 但"财务能力分析"这类复合查询还是要放行
+                if not any(fk in text for fk in ["分析", "评估", "查看", "查询", "报告"]):
+                    return False
+
+        # 财务数据相关关键词
+        financial_keywords = [
+            "利润", "营收", "收入", "成本", "费用", "资产", "负债",
+            "现金流", "财务", "盈利", "亏损", "净利润", "毛利率",
+            "净利率", "周转率", "回报率", "ROE", "ROI", "资产负债表",
+            "利润表", "现金流量表", "财务比率", "增长率", "同比", "环比",
+            "预算", "支出", "收益", "销售额", "营业额",
+            "公司利润", "企业利润", "财务状况", "企业经营", "业绩",
+        ]
+        return any(kw in text for kw in financial_keywords)
+
+    @staticmethod
+    def _response_has_tool_call(response: str) -> bool:
+        patterns = [
+            r"Action:\s*\w+",
+            r'\{\s*"name"\s*:',
+            r"<invoke\s+name=",
+            r"调用工具[:：]\s*\w+",
+            r"查询[:：]\s*\w+",
+        ]
+        return any(re.search(p, response) for p in patterns)
+
+    @staticmethod
+    def _response_has_financial_intent(response: str) -> bool:
+        """宽松检测：判断LLM响应是否表达了需要调用财务工具的意图"""
+        patterns = [
+            r"调用\s*(get_financial_overview|query_financial_data|get_financial_trend|search_financial_data)",
+            r"查询\s*(财务|利润|营收|成本|收入|现金流|资产负债)",
+            r"获取\s*(财务|利润|营收|成本|收入|现金流|资产负债)",
+            r"(需要|应该|准备|让我)\s*(查询|获取|调用)",
+            r"(get_financial_overview|query_financial_data)",
+        ]
+        return any(re.search(p, response) for p in patterns)
+
+    @staticmethod
+    def _extract_tool_call_from_text(text: str):
+        """宽松模式：从文本中提取工具名称和参数"""
+        import re
+
+        # 常见财务工具名列表
+        TOOL_NAMES = [
+            "get_financial_overview", "query_financial_data",
+            "get_financial_trend", "search_financial_data",
+            "get_current_time_and_context",
+        ]
+
+        text_lower = text.lower()
+        for tool in TOOL_NAMES:
+            if tool in text_lower:
+                # 尝试从附近提取参数（年份等）
+                args = {}
+                year_match = re.search(r'(20\d{2})', text)
+                if year_match:
+                    args["fiscal_year"] = int(year_match.group(1))
+                return (tool, args)
+
+        return None
     def _build_finance_prompt(
         self,
         user_input: str,
@@ -987,6 +1185,24 @@ class FinanceSpecialist(BaseSpecialistAgent):
         rag_context: Optional[Dict[str, Any]] = None
     ) -> str:
         """构建财务分析提示词"""
+        # 🆕 技能询问检测：当用户询问"你有什么技能/能力"等元问题时，直接列出技能，不做分析
+        text_lower = user_input.lower()
+        _skill_keywords = ["技能", "能力", "会做什么", "擅长", "功能介绍"]
+        _is_skill_query = any(kw in text_lower for kw in _skill_keywords)
+
+        if _is_skill_query:
+            logger.info(f"📝 [FinanceSpecialist] 检测到技能询问，直接返回技能列表")
+            return (
+                "\n## 用户询问可用技能\n\n"
+                "用户正在询问你可用的技能。请直接列出你的技能清单，**不要做任何财务分析**，"
+                "**不要调用任何工具**。\n\n"
+                "你的技能在系统提示词的「可用技能」章节中已列出，直接引用即可。\n\n"
+                "输出要求：\n"
+                "- 用自然语言列出所有可用技能\n"
+                "- 每个技能给出名称和简短说明\n"
+                "- 提示用户可以进一步询问详情来激活技能\n"
+            )
+
         prompt_parts = [
             "# 财务分析任务\n\n",
             f"## 用户问题\n{user_input}\n\n",
@@ -1427,6 +1643,272 @@ class FinanceSpecialist(BaseSpecialistAgent):
         
         return cleaned
     
+    def _generate_analysis_report(
+        self,
+        user_input: str,
+        domain: FinancialDomain,
+        analysis: FinancialAnalysisResult,
+        risk_assessment: Dict[str, Any],
+        recommendations: List[str],
+        data_summary: Optional[Dict[str, Any]] = None,
+        has_financial_data: bool = False,
+        data_error: Optional[str] = None,
+        rag_enabled: bool = False,
+    ) -> str:
+        """Generate a public-facing Markdown report instead of exposing raw fields."""
+        domain_names = {
+            FinancialDomain.INVESTMENT: "投资分析",
+            FinancialDomain.LOAN: "贷款融资",
+            FinancialDomain.BUDGET: "预算管理",
+            FinancialDomain.FINANCIAL_STATEMENT: "财务报表与风险分析",
+            FinancialDomain.COST_CONTROL: "成本控制",
+            FinancialDomain.CASH_FLOW: "现金流管理",
+            FinancialDomain.TREASURY: "资金管理",
+            FinancialDomain.OTHER: "综合财务分析",
+        }
+        domain_name = domain_names.get(domain, "综合财务分析")
+
+        parts = [
+            "# 企业财务风险分析报告",
+            "",
+            "## 分析概览",
+            f"- **分析主题**：{domain_name}",
+            f"- **置信度**：{analysis.confidence:.0%}",
+        ]
+
+        if has_financial_data and data_summary:
+            revenue = data_summary.get("total_revenue")
+            expenses = data_summary.get("total_expenses")
+            profit = data_summary.get("total_profit")
+            margin = data_summary.get("avg_profit_margin") or data_summary.get("profit_margin")
+            parts.extend(["", "## 企业财务概览"])
+            if revenue is not None:
+                parts.append(f"- **营业收入**：{self._format_money(revenue)}")
+            if expenses is not None:
+                parts.append(f"- **总支出**：{self._format_money(expenses)}")
+            if profit is not None:
+                parts.append(f"- **营业利润**：{self._format_money(profit)}")
+            if margin is not None:
+                parts.append(f"- **利润率**：{self._format_percent(margin)}")
+            fiscal_years = data_summary.get("fiscal_years") or []
+            if fiscal_years:
+                years_preview = ", ".join(str(y) for y in fiscal_years[:8])
+                suffix = "..." if len(fiscal_years) > 8 else ""
+                parts.append(f"- **覆盖年度**：{years_preview}{suffix}")
+        else:
+            parts.extend([
+                "",
+                "## 企业财务概览",
+                "- **数据状态**：未获取到可用于量化分析的企业财务数据",
+                f"- **说明**：{data_error or '当前只能提供通用财务风险分析框架'}",
+            ])
+
+        if analysis.financial_indicators:
+            parts.extend(["", "## 核心指标", "| 指标 | 数值 | 解读 |", "|---|---:|---|"])
+            for key, value in analysis.financial_indicators.items():
+                parts.append(f"| {key} | {self._format_indicator_value(key, value)} | {self._indicator_interpretation(key, value)} |")
+        elif has_financial_data and data_summary:
+            fallback_metrics = self._derive_fallback_metrics(data_summary)
+            if fallback_metrics:
+                parts.extend(["", "## 核心指标", "| 指标 | 数值 | 解读 |", "|---|---:|---|"])
+                for key, value in fallback_metrics.items():
+                    parts.append(f"| {key} | {value} | {self._fallback_metric_interpretation(key, data_summary)} |")
+
+        if analysis.key_metrics:
+            parts.extend(["", "## 关键发现"])
+            parts.extend(f"- {metric}" for metric in analysis.key_metrics[:6])
+
+        risk_factors = risk_assessment.get("risk_factors") or analysis.risk_factors
+        parts.extend(["", "## 风险判断"])
+        if risk_factors:
+            parts.extend(f"{idx}. {risk}" for idx, risk in enumerate(risk_factors[:6], 1))
+        else:
+            parts.append("- 暂未识别到明确高风险信号，但仍建议持续跟踪现金流、利润率和负债变化。")
+
+        if recommendations:
+            parts.extend(["", "## 改进建议"])
+            parts.extend(f"{idx}. {rec}" for idx, rec in enumerate(recommendations[:7], 1))
+
+        parts.extend(["", "## 数据来源与限制"])
+        if has_financial_data:
+            parts.append("- 本报告基于企业财务数据库中的汇总数据生成。")
+            future_years = (data_summary or {}).get("future_fiscal_years") or []
+            if future_years:
+                parts.append(f"- 数据中包含未来或测试年度：{', '.join(str(y) for y in future_years)}，相关结论需结合数据口径复核。")
+        elif rag_enabled:
+            parts.append("- 本报告基于企业知识库文档和通用财务分析框架生成。")
+        else:
+            parts.append("- 当前缺少企业财务数据，无法进行精确量化判断。")
+
+        return "\n".join(parts).strip()
+
+    def _build_timeout_fallback_result(
+        self,
+        user_input: str,
+        domain: FinancialDomain,
+        entities: FinancialEntity,
+        query_result: FinancialQueryResult,
+        rag_enabled: bool = False,
+        error_message: str = "LLM 调用超时，已改用企业数据生成兜底分析",
+        error_type: str = "timeout",
+    ) -> Dict[str, Any]:
+        """Build a public, data-backed fallback when the LLM path fails."""
+        data_summary = query_result.data_summary or {}
+        has_financial_data = query_result.has_data and bool(data_summary)
+
+        indicators: Dict[str, float] = {}
+        if has_financial_data:
+            revenue = data_summary.get("total_revenue") or 0
+            expenses = data_summary.get("total_expenses") or 0
+            profit = data_summary.get("total_profit") or 0
+            if revenue:
+                indicators["营业收入"] = float(revenue)
+                indicators["利润率"] = float(profit) / float(revenue)
+            if expenses:
+                indicators["总支出"] = float(expenses)
+            if profit:
+                indicators["营业利润"] = float(profit)
+
+        risk_factors: List[str] = []
+        future_years = data_summary.get("future_fiscal_years") or []
+        data_quality_notes = data_summary.get("data_quality_notes") or []
+        if future_years:
+            risk_factors.append("数据中包含未来或测试年度，结论需要结合数据口径复核")
+        risk_factors.extend(str(note) for note in data_quality_notes[:3])
+        if not has_financial_data:
+            risk_factors.append("未获取到可用于量化分析的企业财务数据")
+
+        confidence = 0.72 if has_financial_data else 0.35
+        analysis = FinancialAnalysisResult(
+            domain=domain,
+            financial_indicators=indicators,
+            key_metrics=[
+                "企业数据库已返回财务概览，报告基于确定性规则兜底生成",
+                "模型生成阶段超时，未进行扩展性自然语言推理",
+            ],
+            risk_factors=risk_factors,
+            recommendations=[],
+            confidence=confidence,
+        )
+        recommendations = self._generate_recommendations(analysis, domain)
+        risk_assessment = self.assess_financial_risk(analysis, entities)
+        report = self._generate_analysis_report(
+            user_input=user_input,
+            domain=domain,
+            analysis=analysis,
+            risk_assessment=risk_assessment,
+            recommendations=recommendations,
+            data_summary=data_summary,
+            has_financial_data=has_financial_data,
+            data_error=query_result.error_message,
+            rag_enabled=rag_enabled,
+        )
+        report = (
+            f"> 说明：{error_message}，以下结果基于已获取的企业财务数据和规则兜底生成。\n\n"
+            f"{report}"
+        )
+
+        return self._serialize_result({
+            "success": True,
+            "degraded": True,
+            "error_type": error_type,
+            "error": error_message,
+            "domain": domain,
+            "analysis": analysis.dict(),
+            "risk_assessment": risk_assessment,
+            "entities": {
+                "amount": entities.amount,
+                "percentage": entities.percentage,
+                "period": entities.period,
+                "currency": entities.currency,
+            },
+            "financial_indicators": analysis.financial_indicators,
+            "key_metrics": analysis.key_metrics,
+            "risk_factors": analysis.risk_factors,
+            "recommendations": recommendations,
+            "confidence": analysis.confidence,
+            "rag_enabled": rag_enabled,
+            "has_financial_db_data": query_result.has_data,
+            "financial_data_error": query_result.error_message,
+            "analysis_report": report,
+        })
+
+    def _format_money(self, value: Any) -> str:
+        try:
+            return f"{float(value or 0):,.2f} 元"
+        except (TypeError, ValueError):
+            return "暂无数据"
+
+    def _format_percent(self, value: Any) -> str:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return "暂无数据"
+        if abs(number) <= 1:
+            number *= 100
+        return f"{number:.2f}%"
+
+    def _format_indicator_value(self, key: str, value: Any) -> str:
+        key_text = str(key)
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return str(value)
+        if any(token in key_text for token in ("率", "比率", "ROE", "ROA", "margin")):
+            return self._format_percent(number)
+        if any(token in key_text for token in ("收入", "成本", "利润", "金额", "费用", "支出")):
+            return self._format_money(number)
+        return f"{number:,.2f}"
+
+    def _indicator_interpretation(self, key: str, value: Any) -> str:
+        key_text = str(key)
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return "需结合业务口径复核"
+        if "利润率" in key_text or "净利率" in key_text:
+            pct = number * 100 if abs(number) <= 1 else number
+            if pct >= 20:
+                return "盈利能力较强，但需关注可持续性和数据口径"
+            if pct >= 5:
+                return "盈利能力处于可接受区间"
+            return "盈利能力偏弱，需要关注成本费用控制"
+        if "负债" in key_text:
+            pct = number * 100 if abs(number) <= 1 else number
+            if pct >= 70:
+                return "杠杆水平偏高，需关注偿债压力"
+            if pct >= 50:
+                return "杠杆水平中等，建议持续监控"
+            return "杠杆水平相对稳健"
+        return "用于辅助判断财务风险"
+
+    def _derive_fallback_metrics(self, data_summary: Dict[str, Any]) -> Dict[str, str]:
+        metrics = {}
+        revenue = data_summary.get("total_revenue") or 0
+        expenses = data_summary.get("total_expenses") or 0
+        profit = data_summary.get("total_profit") or 0
+        if revenue:
+            metrics["收入规模"] = self._format_money(revenue)
+            metrics["利润率"] = self._format_percent((profit / revenue) if revenue else 0)
+        if expenses:
+            metrics["支出规模"] = self._format_money(expenses)
+        if profit:
+            metrics["利润规模"] = self._format_money(profit)
+        return metrics
+
+    def _fallback_metric_interpretation(self, key: str, data_summary: Dict[str, Any]) -> str:
+        if key == "利润率":
+            revenue = data_summary.get("total_revenue") or 0
+            profit = data_summary.get("total_profit") or 0
+            return self._indicator_interpretation("利润率", (profit / revenue) if revenue else 0)
+        if key == "收入规模":
+            return "反映企业经营体量，是风险分析的基础口径"
+        if key == "支出规模":
+            return "用于观察成本费用压力"
+        if key == "利润规模":
+            return "用于判断盈利能力和安全垫"
+        return "用于辅助判断财务风险"
+
     def _serialize_result(self, result: Dict[str, Any]) -> Dict[str, Any]:
         """
         序列化财务专家结果，清理无法 JSON 序列化的对象

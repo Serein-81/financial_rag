@@ -55,6 +55,20 @@ class ChatMessageSchema(BaseModel):
     )
 
 
+class SourceDocumentMeta(BaseModel):
+    """
+    SOURCE 文档元数据
+
+    消费者：前端 UI
+    用途：提供给前端的"查看原文"链接，不进入 LLM 上下文
+    """
+    document_id: str
+    filename: str
+    file_url: str = ""
+    page_number: int | None = None
+    total_pages: int | None = None
+
+
 class ChatSessionSchema(BaseModel):
     """ChatSession 的序列化 schema（确保时间字段格式正确）"""
     id: str

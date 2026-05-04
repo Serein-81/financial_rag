@@ -118,11 +118,19 @@ async function handleBuildGraph() {
       extract_relations: true
     })
 
+    const entities = result.entities || []
+    const relations = result.relations || []
     buildResult.value = {
-      entities: result.entities,
-      relations: result.relations
+      entities: entities,
+      relations: relations
     }
-    success.value = `成功提取 ${result.entities_count} 个实体和 ${result.relations_count} 个关系`
+    if (!result.success) {
+      error.value = result.message || '构建知识图谱失败'
+    } else if (entities.length === 0) {
+      success.value = '文本分析完成，但未提取到实体（请查看服务端日志）'
+    } else {
+      success.value = `成功提取 ${entities.length} 个实体和 ${relations.length} 个关系`
+    }
   } catch (err: any) {
     error.value = err.message || '构建知识图谱失败'
   } finally {
@@ -183,11 +191,28 @@ async function handleQueryEntity() {
 
 function getEntityTypeColor(type: string): string {
   const colors: Record<string, string> = {
+    'Company': 'bg-blue-100 text-blue-700 border-blue-300',
     'Person': 'bg-emerald-100 text-emerald-700 border-emerald-300',
-    'Organization': 'bg-teal-100 text-teal-700 border-teal-300',
-    'Location': 'bg-green-100 text-green-700 border-green-300',
-    'Event': 'bg-orange-100 text-orange-700 border-orange-300',
+    'Department': 'bg-cyan-100 text-cyan-700 border-cyan-300',
+    'FinancialMetric': 'bg-amber-100 text-amber-700 border-amber-300',
+    'FinancialReport': 'bg-amber-100 text-amber-700 border-amber-300',
+    'Account': 'bg-amber-100 text-amber-700 border-amber-300',
+    'Budget': 'bg-amber-100 text-amber-700 border-amber-300',
+    'TaxType': 'bg-purple-100 text-purple-700 border-purple-300',
+    'TaxPolicy': 'bg-purple-100 text-purple-700 border-purple-300',
+    'TaxRate': 'bg-purple-100 text-purple-700 border-purple-300',
+    'TaxExemption': 'bg-purple-100 text-purple-700 border-purple-300',
+    'Contract': 'bg-rose-100 text-rose-700 border-rose-300',
+    'LegalCase': 'bg-rose-100 text-rose-700 border-rose-300',
+    'Regulation': 'bg-rose-100 text-rose-700 border-rose-300',
+    'Clause': 'bg-rose-100 text-rose-700 border-rose-300',
     'Product': 'bg-teal-100 text-teal-700 border-teal-300',
+    'Service': 'bg-teal-100 text-teal-700 border-teal-300',
+    'Location': 'bg-green-100 text-green-700 border-green-300',
+    'DatePeriod': 'bg-orange-100 text-orange-700 border-orange-300',
+    'Event': 'bg-orange-100 text-orange-700 border-orange-300',
+    'Technology': 'bg-indigo-100 text-indigo-700 border-indigo-300',
+    'Entity': 'bg-gray-100 text-gray-700 border-gray-300',
     'default': 'bg-gray-100 text-gray-700 border-gray-300'
   }
   return colors[type] || colors.default
@@ -304,19 +329,39 @@ function renderGraph() {
   currentLinkSel = linkSel
 
   const nodeColors: Record<string, string> = {
+    'Company': '#3b82f6',
     'Person': '#10b981',
-    'Organization': '#3b82f6',
-    'Location': '#f59e0b',
+    'Department': '#06b6d4',
+    'FinancialMetric': '#f59e0b',
+    'FinancialReport': '#f59e0b',
+    'Account': '#f59e0b',
+    'Budget': '#f59e0b',
+    'TaxType': '#8b5cf6',
+    'TaxPolicy': '#8b5cf6',
+    'TaxRate': '#8b5cf6',
+    'TaxExemption': '#8b5cf6',
+    'Contract': '#e11d48',
+    'LegalCase': '#e11d48',
+    'Regulation': '#e11d48',
+    'Clause': '#e11d48',
+    'Product': '#14b8a6',
+    'Service': '#14b8a6',
+    'Location': '#22c55e',
+    'DatePeriod': '#f97316',
     'Event': '#ef4444',
-    'Product': '#8b5cf6',
+    'Technology': '#6366f1',
     'Entity': '#64748b',
     'default': '#64748b'
   }
 
   function getNodeColor(type: string): string {
     if (!type) return nodeColors.default
-    const upperType = type.charAt(0).toUpperCase() + type.slice(1).toLowerCase()
-    return nodeColors[upperType] || nodeColors.default
+    // 兼容新旧类型名：COMPANY -> Company, TAX_TYPE -> TaxType, FINANCIAL_METRIC -> FinancialMetric
+    const normalized = type
+      .split('_')
+      .map(s => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase())
+      .join('')
+    return nodeColors[normalized] || nodeColors.default
   }
 
   const nodeSel = g.append('g')
@@ -734,12 +779,13 @@ function resetView() {
               聚拢重置
             </button>
           </div>
-          <div class="flex gap-4 mb-4 text-sm text-gray-500">
+          <div class="flex flex-wrap gap-3 mb-4 text-sm text-gray-500">
+            <span>🔵 Company</span>
             <span>🟢 Person</span>
-            <span>🔵 Organization</span>
-            <span>🟠 Location</span>
-            <span>🔴 Event</span>
-            <span>🟣 Product</span>
+            <span>🟣 TaxType/Policy</span>
+            <span>🔴 Contract</span>
+            <span>🟠 FinancialMetric</span>
+            <span>🟡 Location</span>
             <span>⚫ 其他</span>
           </div>
           <div ref="graphContainer" class="w-full h-[500px]"></div>

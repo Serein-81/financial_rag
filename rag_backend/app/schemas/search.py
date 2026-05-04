@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List, Optional, Any, Literal
+from typing import List, Optional, Any, Literal, Dict
 from datetime import datetime
 
 # 用户搜索时的请求体
@@ -74,6 +74,8 @@ class SearchResultItem(BaseModel):
     content: str            # 查到的正文
     source_file: str        # 来源文件名 (方便告诉用户出自哪里)
     page_number: Optional[int] = None
+    answerability_score: Optional[float] = None
+    evidence_flags: Optional[Dict[str, Any]] = None
 
 # 接口返回的整体结构
 class SearchResponse(BaseModel):

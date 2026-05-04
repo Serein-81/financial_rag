@@ -11,7 +11,7 @@
 import re
 import json
 import logging
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, TYPE_CHECKING
 from enum import Enum
 from pydantic import BaseModel, Field, ConfigDict
 from pathlib import Path
@@ -26,6 +26,9 @@ from app.multi_agent_system.clarification_service import (
     ClarificationRequest,
     ClarificationType
 )
+
+if TYPE_CHECKING:
+    from app.skills.skill_registry import SkillRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +134,17 @@ class IntentRouterAgent(BaseAgent):
         "help": r".*?(help|帮助|怎么用|如何使用).*",
         "thanks": r"^.*?(谢谢|thanks|感谢)[\s,，.]*",
         "config_query": r".*?(有没有打开|是否启用|开启了吗|关闭了吗|当前状态|当前配置|我的设置|会话状态)",
+        # 仅匹配不包含具体领域的通用技能询问（^ 锚定开头防止 re.search 从中间位置绕过负向先行断言）
+        # 带"财务/税务/法律/金融"等领域的应路由到对应 specialist 展示实际注册的技能
+        "skill_query": r"^(?=.*(?:技能|skill|能力))(?=.*(?:有哪|是什么|有哪些|有什么|列出|介绍|展示))(?!.*(?:财务|金融|税务|税收|法律|法务|合规|合同|投资|审计)).*",
     }
+    SKILL_QUERY_FALLBACK = (
+        "我具备以下领域的专业技能：\n\n"
+        "**财务领域**：投资分析、财务数据分析、成本控制、预算管理、财务报表分析等\n"
+        "**税务领域**：增值税计算、企业所得税、税务筹划、发票管理等\n"
+        "**法律领域**：合同审查、知识产权、劳动法、合规检查等\n\n"
+        "请告诉我您具体想了解哪个领域，我可以为您详细说明该领域可用的功能和技能。"
+    )
     
     ENTITY_PATTERNS = {
         "money": {
@@ -197,11 +210,12 @@ class IntentRouterAgent(BaseAgent):
         max_iterations: int = 3,
         timeout: float = 30.0,
         specialist_descriptions: str = "",
-        intent_mapping: Dict[str, str] = None
+        intent_mapping: Dict[str, str] = None,
+        skill_registry: Optional['SkillRegistry'] = None,  # 🆕 技能系统
     ):
         """
         初始化意图路由智能体
-        
+
         Args:
             llm_adapter: 大模型适配器
             tool_manager: 工具管理器
@@ -210,27 +224,29 @@ class IntentRouterAgent(BaseAgent):
             timeout: 超时时间
             specialist_descriptions: 专家能力描述
             intent_mapping: 意图到专家的映射
+            skill_registry: 技能注册表（可选）
         """
         self.confidence_threshold = confidence_threshold
         self.prompt_engine = PromptEngine()
         self._specialist_descriptions = specialist_descriptions
         self._intent_mapping = intent_mapping or {}
         self._classification_prompt_cache: Optional[str] = None
-        
+
         self.clarification_service = ClarificationService(
             min_query_length=5,
             confidence_threshold=0.6,
             enable_clarification=True
         )
-        
+
         system_prompt = self._load_system_prompt()
-        
+
         super().__init__(
             llm_adapter=llm_adapter,
             tool_manager=tool_manager,
             system_prompt=system_prompt,
             max_iterations=max_iterations,
-            timeout=timeout
+            timeout=timeout,
+            skill_registry=skill_registry,  # 🆕 技能系统
         )
         
         print("🎯 [意图路由智能体] 初始化完成")
@@ -346,7 +362,10 @@ class IntentRouterAgent(BaseAgent):
         
         if re.search(self.SIMPLE_PATTERNS["config_query"], text_lower):
             return "__CONFIG_QUERY__"
-        
+
+        if re.search(self.SIMPLE_PATTERNS["skill_query"], text_lower):
+            return self.SKILL_QUERY_FALLBACK
+
         return None
     
     def _build_greeting_response(self) -> str:
@@ -557,6 +576,15 @@ class IntentRouterAgent(BaseAgent):
             (["发票", "风险"], IntentCategory.TAX_COMPLIANCE, "发票风险"),
             (["企业", "财务", "风险"], IntentCategory.RISK_ANALYSIS, "企业财务风险"),
             (["财务系统", "风险"], IntentCategory.RISK_ANALYSIS, "财务系统风险"),
+            # 🆕 技能询问: 当"技能/能力"与领域关键词同时出现时路由到对应专家
+            (["财务", "技能"], IntentCategory.FINANCIAL_ANALYSIS, "财务技能询问"),
+            (["财务", "能力"], IntentCategory.FINANCIAL_ANALYSIS, "财务能力询问"),
+            (["税务", "技能"], IntentCategory.TAX_CALCULATION, "税务技能询问"),
+            (["税务", "能力"], IntentCategory.TAX_CALCULATION, "税务能力询问"),
+            (["法律", "技能"], IntentCategory.LEGAL_CONSULTATION, "法律技能询问"),
+            (["法律", "能力"], IntentCategory.LEGAL_CONSULTATION, "法律能力询问"),
+            (["法务", "技能"], IntentCategory.LEGAL_CONSULTATION, "法务技能询问"),
+            (["法务", "能力"], IntentCategory.LEGAL_CONSULTATION, "法务能力询问"),
         ]
         
         for keywords, intent, _ in multi_patterns:
@@ -574,8 +602,11 @@ class IntentRouterAgent(BaseAgent):
             "税": IntentCategory.TAX_CALCULATION,
             "财务": IntentCategory.FINANCIAL_ANALYSIS,
             "报表": IntentCategory.FINANCIAL_ANALYSIS,
+            "利润": IntentCategory.FINANCIAL_ANALYSIS,
+            "盈利": IntentCategory.FINANCIAL_ANALYSIS,
             "合同": IntentCategory.CONTRACT_REVIEW,
             "法律": IntentCategory.LEGAL_CONSULTATION,
+            "法务": IntentCategory.LEGAL_CONSULTATION,
             "政策": IntentCategory.KNOWLEDGE_QUERY,
             "法规": IntentCategory.KNOWLEDGE_QUERY,
             "通知": IntentCategory.KNOWLEDGE_QUERY,
@@ -585,6 +616,7 @@ class IntentRouterAgent(BaseAgent):
             "报告": IntentCategory.REPORT_GENERATION,
             "查询": IntentCategory.KNOWLEDGE_QUERY,
             "知识库": IntentCategory.KNOWLEDGE_QUERY,
+            # 🆕 技能关键词与领域关键词的多词组合已在 multi_patterns 中处理
         }
         
         for keyword, intent in keyword_map.items():
@@ -707,9 +739,9 @@ class IntentRouterAgent(BaseAgent):
             if detected_intent in generic_intents and rule_confidence >= 0.8:
                 should_use_rule = True
                 print("⚠️ [意图路由智能体] LLM返回通用意图，使用规则匹配补充")
-            elif confidence < self.confidence_threshold and rule_confidence > confidence:
+            elif confidence <= self.confidence_threshold and rule_confidence > confidence:
                 should_use_rule = True
-                print("⚠️ [意图路由智能体] 置信度低于阈值，使用规则匹配补充")
+                print(f"⚠️ [意图路由智能体] 置信度({confidence})<=阈值({self.confidence_threshold})，使用规则匹配补充")
             
             if should_use_rule:
                 result = rule_result
