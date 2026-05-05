@@ -1,13 +1,19 @@
-# 企业级 RAG 知识库系统
+# RAG 知识库系统 — 财税法务智能协作平台
 
 <div align="center">
 
-![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.128+-green.svg)
-![Vue.js](https://img.shields.io/badge/Vue.js-3.4+-42b883.svg)
-![License](https://img.shields.io/badge/License-MIT-yellow.svg)
+![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.128+-009688?logo=fastapi)
+![Vue.js](https://img.shields.io/badge/Vue_3-3.4+-42b883?logo=vue.js)
+![LangGraph](https://img.shields.io/badge/LangGraph-1.0+-FF6F00)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16+pgvector-336791?logo=postgresql)
+![Neo4j](https://img.shields.io/badge/Neo4j-5.15-4581C3?logo=neo4j)
+![Docker](https://img.shields.io/badge/Docker-24+-2496ED?logo=docker)
+![License](https://img.shields.io/badge/License-MIT-yellow)
 
-**一个面向财税法务领域的智能问答与知识管理平台**
+**自研 Agent 框架 · 多智能体 LangGraph 编排 · 知识图谱增强 · 10+ LLM 全适配**
+
+[设计亮点](#-设计亮点) · [系统架构](#-系统架构) · [核心特性](#-核心特性详解) · [部署](#-本地部署docker) · [API](#-后端-api-分组)
 
 </div>
 
@@ -15,15 +21,97 @@
 
 ## 📋 项目概述
 
-本项目是一个**企业级 RAG（检索增强生成）知识库系统**，专注于为企业提供专业的财税法务智能问答服务。系统基于 FastAPI + Vue3 技术栈构建，采用多智能体架构，支持文档上传、智能检索、AI 对话等功能。
+本项目是一套**面向财税法务专业领域的 RAG（Retrieval-Augmented Generation）知识库平台**，围绕"检索增强 + 多智能体协作 + 知识图谱"三大核心能力构建。
 
-### 核心价值
+系统采用 **FastAPI + Vue 3** 前后端分离架构，后端 200+ 源文件、50+ API 路由、80+ 业务服务类。核心模块包括自研的 **ReAct/Plan/Reflect Agent 框架**、基于 **LangGraph StateGraph** 的多专家并行编排引擎、**领域感知的 15 种文档分块器**、以及带类型约束的 **Neo4j 知识图谱提取管线**。支持 DeepSeek / OpenAI / Claude / 智谱 / Qwen / Ollama 等 10+ 大模型厂商，通过工厂模式实现零代码切换。
 
-- 🤖 **智能问答** - 基于专业知识库的 AI 对话，支持流式输出
-- 📚 **知识管理** - 多知识库管理，文档自动解析与向量化
-- 🎯 **专业智能体** - 税务、法律、财务领域专家智能体协作
-- 🔍 **语义搜索** - 混合检索 + 知识图谱增强
-- 🔐 **企业级安全** - 租户隔离、角色权限、完整审计日志
+### 核心能力矩阵
+
+| 能力维度 | 技术实现 | 关键指标 |
+|----------|----------|----------|
+| **智能问答** | RAG + ReAct Agent + 原生 Function Calling | 支持 SSE 流式、断线恢复、异步轮询 |
+| **知识管理** | 15 种领域解析器/分块器 + 自动向量化 | 财务/税务/法务/通用四领域自适应 |
+| **专业智能体** | 自研框架 + LangGraph 编排 + 多专家并行 | 40 个注册工具，最多 5 轮循环调用 |
+| **混合检索** | Dense(pgvector) + Sparse(BM25) → RRF → Rerank | Context Recall 0.89, Precision 0.79 |
+| **知识图谱** | Neo4j + 领域类型约束实体/关系提取 | 21 种实体类型 + 26 种关系类型 |
+| **企业级安全** | 多租户隔离 + RBAC + HITL 人工审核 + 熔断 | JWT 黑名单、10 类高风险行为检测 |
+
+### 架构特点 — 为什么这样设计
+
+| 设计选择 | 常规方案 | 我们的方案 | 设计意图 |
+|----------|----------|------------|----------|
+| **Agent 执行** | LangChain Agent | **自研 ReAct/Plan/Reflect 框架** | 轻量可控，摆脱 LangChain 臃肿依赖 |
+| **Agent 编排** | 硬编码 if-else | **LangGraph StateGraph 状态机** | 可视化流程，Postgres 持久化 checkpoint |
+| **工具调用** | LLM 输出 JSON → 正则解析 | **OpenAI tools 参数 → 结构化 tool_calls** | API 级可靠性，杜绝解析失败 |
+| **文档处理** | 通用固定窗口分块 | **领域感知自适应分块 + AST/表格原子化** | 专业文档结构不丢失 |
+| **LLM 接入** | 单一厂商绑定 | **适配器工厂模式，10+ 厂商零代码切换** | 不被任何厂商锁定 |
+| **知识图谱** | 通用 NER | **类型约束 LLM 提取 + 正则预筛 + 四层校验** | 杜绝幻觉，精确可控 |
+| **上下文管理** | 简单截断 | **三级压缩：去冗余 → JSON 摘要 → 滚动压缩** | 多轮对话不溢出 |
+| **多租户隔离** | SET LOCAL / RLS | **ContextVar 传播 + Repository 层显式过滤** | PgBouncer 兼容，无数据库绑定 |
+
+---
+
+## 🎯 设计亮点
+
+### 双 Agent 框架架构
+
+系统独有**两层 Agent 架构**，兼顾编排灵活性与执行可控性：
+
+```
+LangGraph 状态机（编排层）          自研 Agent Framework（执行层）
+┌────────────────────────┐       ┌─────────────────────────┐
+│ Intent Router           │       │ ReActAgent              │
+│   → 三级降级路由         │       │   → 推理-行动-观察 循环   │
+│ Specialist Selector     │       │   → 循环检测+语义去重    │
+│   → 单/多专家分发        │  ──→  │   → 提前终止+结果合成    │
+│ Reflection Gate         │       │ Native Function Calling │
+│   → 质量审查 + 重试      │       │   → 多轮 tools 循环     │
+│ ResultSynthesizer       │       │ Token 预算 + 三级压缩   │
+│   → 多专家结果合并       │       │   → 防 Context 溢出     │
+└────────────────────────┘       └─────────────────────────┘
+```
+
+**为什么需要两层？** LangGraph 负责宏观调度（选哪个专家、要不要反思），自研框架负责微观执行（ReAct 循环、工具调用、循环检测）。这种分层避免了 LangChain 的臃肿，同时保留了灵活的状态机编排能力。
+
+### 原生 Function Calling — 彻底告别正则解析
+
+| 演进阶段 | 工具调用方式 | 可靠性 |
+|---------|-------------|--------|
+| ~~旧方案~~ | LLM 输出 JSON 文本 → 正则匹配 → 提取参数 | ❌ 格式不稳定，频繁失败 |
+| **当前方案** | API `tools` 参数传入定义 → 结构化 `tool_calls` 返回 | ✅ API 级保证 |
+| **多轮循环** | `for _ in range(5)` 每轮都传 tools，LLM 逐步调用 | ✅ 自主决策停止 |
+
+### 领域感知文档处理 — 15 种分块器
+
+| 领域 | 分块器 | 核心技术 |
+|------|--------|----------|
+| **财务** | `FinancialChunker` | 表格原子化（不切碎），指标实体提取，正文↔表格 PARENT/CHILD |
+| **税务** | `TaxChunker` | 条款级正则（按「第X条」），生命周期打标，PREVIOUS/NEXT 链 |
+| **法务** | `LegalChunker` | AST 双层节点（章节 PARENT + 条款 LEAF），异步实体替换 |
+| **通用** | `GeneralChunker` | Auto-Merging 双粒度（256-token 精准 + 1024-token 上下文展开） |
+
+### 知识图谱 — 类型约束的提取管线
+
+区别于通用 NER，系统预设 21 种实体类型 + 26 种关系类型，采用**两阶段提取 + 四层校验**：
+
+```
+文本 → 规则预提取(60%+) → LLM 补全(复杂) → 类型白名单 → 置信度≥0.7 → 关系源验证 → Neo4j
+      ↑ 正则+字典          ↑ 仅规则未覆盖    ↑ 21种限定    ↑ 自动过滤     ↑ source须存在
+```
+
+### 混合检索链路
+
+```
+查询 → Dense(pgvector HNSW) + Sparse(BM25 tsvector)
+     → RRF 融合 → Cross-Encoder Reranker → MMR 多样性
+     → Cliff Prune → 关系展开 → Prompt 组装
+```
+
+**RAGAS 评估**（跨财务/税务/法务，DeepSeek 裁判）：Context Recall **0.89** | Precision **0.79** | Faithfulness **0.75**
+
+### Agent Skill 系统
+
+受 Claude Code Skills 规范启发的自研框架，三级渐进加载（元数据 → SKILL.md → scripts），域范围隔离（`skills/{finance,tax,legal,public}/`），内置 4 个技能。**Skills ≠ Tools**：Tools 是原子 API 调用，Skills 是包含引导流程的完整业务工作流。
 
 ---
 
@@ -82,37 +170,6 @@ docker pull ghcr.io/serein-81/rag-backend:latest
 
 </details>
 
-
-## 🧠 RAG 架构特点
-
-### 多领域感知分块
-
-| 领域 | 切块策略 | 特点 |
-|------|----------|------|
-| **财务** | `FinancialChunker` | 表格原子化（不切碎），指标实体提取（研发费用/营收等），正文↔表格 PARENT/CHILD 关系 |
-| **税务** | `TaxChunker` | 条款级正则切片（按「第X条」分割），生命周期打标（生效/废止日期），PREVIOUS/NEXT 法条链表 |
-| **法务** | `LegalChunker` | AST 双层节点（章节 PARENT + 条款 LEAF），Phase 2 异步实体替换（甲方→公司名） |
-| **通用** | `GeneralChunker` | Auto-Merging 双粒度（256 token 精准检索 + 1024 token 上下文展开） |
-
-### 混合检索链路
-
-```
-查询 → QueryAnalyzer(域路由+意图检测) → Dense(pgvector) + Sparse(tsvector BM25)
-→ RRF 融合 → Cross-Encoder Reranker → MMR 多样性重排 → Cliff Prune(断崖截断)
-→ 时序去重(最新查询) → 关系展开(PARENT/PREVIOUS/NEXT) → 多域 Prompt 组装
-```
-
-### PDF 解析引擎
-
-三级自适应：**pymupdf4llm**（本地文字型，<200MB）→ **unstructured-api OCR**（扫描件）→ **PyMuPDF**（兜底）。提取字符 < 8% 自动判定为扫描件。
-
-### RAGAS 评估结果
-
-跨财务/税务/法务测试集，DeepSeek 裁判：
-
-| context_recall | context_precision | faithfulness |
-|:---:|:---:|:---:|
-| **0.89** | **0.79** | **0.75** |
 
 ## ✨ 核心特性
 
@@ -802,8 +859,8 @@ def reciprocal_rank_fusion(
 ┌─────────────────────────────┼───────────────────────────────────┐
 │                        数据层                                     │
 │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐     │
-│  │PostgreSQL│ │  Redis  │ │ Milvus  │ │  Neo4j  │ │  MinIO  │     │
-│  │ 数据库   │ │  缓存   │ │ 向量库  │ │  图数据库│ │ 对象存储│     │
+│  │PostgreSQL│ │  Redis  │ │PostgreSQL│ │  Neo4j  │ │  MinIO  │     │
+│  │ 主数据库  │ │  缓存   │ │+pgvector │ │ 图数据库 │ │ 对象存储│     │
 │  └─────────┘ └─────────┘ └─────────┘ └─────────┘ └─────────┘     │
 └─────────────────────────────────────────────────────────────────┘
                               │
@@ -838,7 +895,7 @@ def reciprocal_rank_fusion(
 | **后端框架** | FastAPI 0.128+ | 异步高性能 API 框架 |
 | **数据库** | PostgreSQL 16 + pgvector | 关系型数据存储与向量扩展 |
 | **缓存** | Redis 7+ | 会话缓存、频率限制 |
-| **向量检索** | PostgreSQL pgvector / ChromaDB | 语义向量检索，当前 Docker Compose 默认使用 pgvector |
+| **向量检索** | PostgreSQL pgvector (HNSW/IVFFlat) | 语义向量检索，Docker Compose 默认使用 pgvector |
 | **图数据库** | Neo4j | 知识图谱存储 |
 | **对象存储** | MinIO | 文档、图片存储 |
 | **前端框架** | Vue 3.4+ | 渐进式 JavaScript 框架 |
@@ -857,34 +914,60 @@ def reciprocal_rank_fusion(
 
 ```
 My_rag/
-├── rag_backend/                 # 后端服务
+├── rag_backend/                       # 后端服务 (200+ 源文件)
 │   ├── app/
-│   │   ├── api/v1/endpoints/    # API 接口
-│   │   │   ├── auth.py          # 认证接口
-│   │   │   ├── chat.py          # 对话接口
-│   │   │   ├── knowledge.py     # 知识库接口
-│   │   │   ├── search.py        # 搜索接口
-│   │   │   ├── multi_agent.py   # 多智能体接口
-│   │   │   └── ...              # 更多接口
-│   │   ├── agent_framework/     # Agent 框架
-│   │   │   ├── core/            # 核心实现
-│   │   │   ├── llm/             # LLM 适配器
-│   │   │   └── tools/           # 工具管理
-│   │   ├── multi_agent_system/  # 多智能体系统
-│   │   │   ├── agents/          # 专家智能体
-│   │   │   └── pipeline/        # 数据处理管道
-│   │   ├── models/              # 数据模型
-│   │   ├── services/            # 业务逻辑
-│   │   ├── memory_system/       # 记忆系统
-│   │   ├── knowledge_graph/     # 知识图谱
-│   │   ├── langgraph/           # LangGraph 集成
-│   │   ├── parsers/             # 文档解析器
-│   │   └── chunkers/            # 文档分块
-│   ├── .env.example             # 环境变量模板
-│   ├── requirements.txt         # Python 依赖
-│   ├── Dockerfile               # Docker 配置
-│   ├── docker-compose.yml       # Docker Compose 配置
-│   └── .dockerignore            # Docker 忽略规则
+│   │   ├── main.py                    # FastAPI 入口，50+ Router，lifespan 管理
+│   │   ├── core/                      # 配置、JWT、异常体系、资源管理
+│   │   ├── db/                        # AsyncSession 工厂、PgBouncer 双引擎
+│   │   ├── api/
+│   │   │   ├── deps.py               # DI 注入链 (get_db → get_user → 租户验证)
+│   │   │   └── v1/endpoints/         # 50+ 路由模块
+│   │   │       ├── auth.py, chat.py, document.py   # 核心 CRUD
+│   │   │       ├── search.py, knowledge.py         # 检索与知识管理
+│   │   │       ├── multi_agent.py, group_chat.py   # 多智能体 + 群聊
+│   │   │       ├── tax_report.py, financial_health.py  # 财税业务
+│   │   │       └── workflow.py, security.py, ...   # 工作流 + 运维
+│   │   ├── models/                    # 34 个 ORM 模型 (User, Document, Chunk 等)
+│   │   ├── schemas/                   # 26 个 Pydantic 验证模型
+│   │   ├── services/                  # 80+ 业务服务
+│   │   │   ├── search_service.py      # 向量/关键词/混合/文档级检索
+│   │   │   ├── llm_service.py         # LLM 统一调用门面
+│   │   │   ├── hybrid_agent_service.py # 混合智能体管理
+│   │   │   ├── knowledge_graph_service.py # 图谱 CRUD + 路径查询
+│   │   │   ├── invoice/               # 发票识别/计算/风险评估
+│   │   │   └── policy_collector/      # 政策采集爬虫 (+ robots.txt)
+│   │   ├── agent_framework/           # ▸ 自研 Agent 执行框架 ◂
+│   │   │   ├── core/                  # BaseAgent, ReActAgent, PlanAgent, ReflectAgent
+│   │   │   ├── llm/                   # 10+ LLM 适配器 (工厂模式)
+│   │   │   ├── tools/                 # 工具管理器、路由、链式调用
+│   │   │   └── tokens/                # Token 预算管理
+│   │   ├── multi_agent_system/        # ▸ 多智能体编排系统 ◂
+│   │   │   ├── orchestrator.py        # 核心编排器 (~4700 行)
+│   │   │   ├── coordinator.py         # 审计审查协调器
+│   │   │   ├── message_bus.py         # 进程内 Pub/Sub 消息总线
+│   │   │   ├── agents/                # 税务/财务/法务/意图路由/报告生成
+│   │   │   ├── routing/               # 统一请求路由
+│   │   │   └── config/                # Agent 能力 YAML 定义
+│   │   ├── langgraph/                 # ▸ LangGraph 工作流 ◂
+│   │   │   ├── graph.py               # StateGraph 构建与编译
+│   │   │   ├── hybrid/                # 混合编排 (黑板书模式)
+│   │   │   └── tax_workflow/          # 税务工作流示例
+│   │   ├── a2a_protocol/              # ▸ Agent 间通信协议 ◂
+│   │   │   ├── transports/            # HTTP / Local / LangGraph 传输
+│   │   │   ├── dispatcher.py          # 混合调度器
+│   │   │   └── registry.py            # Agent 注册发现
+│   │   ├── chunkers/                  # 15 种领域感知分块器
+│   │   ├── parsers/                   # 多格式文档解析器 (PDF/Word/Excel/Markdown)
+│   │   ├── prompts/                   # YAML + Markdown 提示词模板体系
+│   │   │   └── agents/{react,plan,tax,finance,legal,...}/
+│   │   ├── skills/                    # Agent Skill 系统 (YAML 定义)
+│   │   ├── middleware/                # 租户上下文/日志/限流 中间件
+│   │   ├── observability/             # 自研链路追踪 + 指标 + 日志
+│   │   └── memory_system/             # 四层记忆体系
+│   ├── tests/                         # 100+ 测试文件 (unit/integration/api/agent)
+│   ├── docker-compose.yml             # 7 服务容器编排 (DB/Redis/PgBouncer/Neo4j/MinIO/Backend)
+│   ├── Dockerfile                     # 多阶段构建 (builder → runner, 非 root)
+│   └── requirements.txt               # 170+ 依赖
 │
 ├── rag_frontend/                # 前端应用
 │   ├── src/
