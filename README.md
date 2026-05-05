@@ -108,7 +108,7 @@ docker pull ghcr.io/serein-81/rag-backend:latest
 
 ### RAGAS 评估结果
 
-18 道跨财务/税务/法务测试集，DeepSeek 裁判：
+道跨财务/税务/法务测试集，DeepSeek 裁判：
 
 | context_recall | context_precision | faithfulness |
 |:---:|:---:|:---:|
