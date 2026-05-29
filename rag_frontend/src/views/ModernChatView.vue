@@ -3,7 +3,11 @@ import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { useSessionStore } from '@/stores/session'
 import { useKnowledgeStore } from '@/stores/knowledge'
 import { useAuthStore } from '@/stores/auth'
+import { useFeedbackStore } from '@/stores/feedback'
 import { chatApi } from '@/api/chat'
+import MessageFeedback from '@/components/chat/MessageFeedback.vue'
+import AgenticRagTrace from '@/components/chat/AgenticRagTrace.vue'
+import RetrievalSettingsDrawer from '@/components/chat/RetrievalSettingsDrawer.vue'
 import { useAutoResizeTextarea } from '@/composables/useAutoResizeTextarea'
 import {
   Send,
@@ -24,7 +28,6 @@ import {
   Copy,
   RotateCw,
   History,
-  ThumbsUp,
   Check,
   AlertCircle
 } from 'lucide-vue-next'
@@ -53,6 +56,7 @@ marked.use({ renderer })
 const sessionStore = useSessionStore()
 const knowledgeStore = useKnowledgeStore()
 const authStore = useAuthStore()
+const feedbackStore = useFeedbackStore()
 
 const userInput = ref('')
 const {
@@ -77,7 +81,37 @@ const uploadResult = ref<any>(null)
 
 const sourcesCollapsed = ref<Map<number, boolean>>(new Map())
 const copiedMessageIndex = ref<number | null>(null)
-const likedMessages = ref<Set<number>>(new Set())
+
+// 检索设置抽屉
+const showRetrievalDrawer = ref(false)
+const retrievalSettings = ref(loadRetrievalSettings())
+
+interface RetrievalSettings {
+  retrieval_method: 'simple' | 'graphrag' | 'agentic'
+  max_iterations: number
+  top_k: number
+  enable_rerank: boolean
+  enable_graph_expansion: boolean
+}
+
+function loadRetrievalSettings(): RetrievalSettings {
+  try {
+    const raw = localStorage.getItem('rag_retrieval_settings')
+    if (raw) return JSON.parse(raw)
+  } catch {}
+  return {
+    retrieval_method: 'simple',
+    max_iterations: 3,
+    top_k: 10,
+    enable_rerank: true,
+    enable_graph_expansion: true,
+  }
+}
+
+function saveRetrievalSettings(s: RetrievalSettings) {
+  retrievalSettings.value = s
+  localStorage.setItem('rag_retrieval_settings', JSON.stringify(s))
+}
 
 const streamingContent = ref<Map<number, string>>(new Map())
 
@@ -264,6 +298,11 @@ async function sendMessage() {
       kb_id: selectedKB.value.id,
       session_id: sessionStore.currentSessionId || undefined,
       idempotency_key: idempotencyKey,
+      retrieval_method: retrievalSettings.value.retrieval_method,
+      max_iterations: retrievalSettings.value.max_iterations,
+      top_k: retrievalSettings.value.top_k,
+      enable_rerank: retrievalSettings.value.enable_rerank,
+      enable_graph_expansion: retrievalSettings.value.enable_graph_expansion,
     }, signal)) {
       if (signal.aborted) {
         console.log('[ChatView] 流已被中止，停止处理事件')
@@ -312,6 +351,26 @@ async function sendMessage() {
         }
       } else if (event.type === 'done') {
         console.log('✅ Agent 回答完成')
+        // 后端 done 事件可能携带 meta（message_id / retrieval_history / 耗时等）
+        const eventAny = event as any
+        const meta = eventAny.meta || eventAny.message_meta
+        if (meta) {
+          const msgIndex = sessionStore.currentMessages.length - 1
+          const lastMsg = sessionStore.currentMessages[msgIndex] as any
+          if (lastMsg?.role === 'assistant') {
+            lastMsg.meta = meta
+            if (meta.message_id) lastMsg.id = meta.message_id
+          }
+        }
+      } else if ((event as any).type === 'meta') {
+        // 显式 meta 事件（后端可分开发）
+        const meta = (event as any).data || (event as any).meta
+        const msgIndex = sessionStore.currentMessages.length - 1
+        const lastMsg = sessionStore.currentMessages[msgIndex] as any
+        if (lastMsg?.role === 'assistant' && meta) {
+          lastMsg.meta = meta
+          if (meta.message_id) lastMsg.id = meta.message_id
+        }
       } else if (event.type === 'error') {
         const errorMessage = event.message || '抱歉，AI 服务连接中断或网络不稳定，本次回答没有完整生成。请稍后重试。'
         sessionStore.updateLastMessage(errorMessage)
@@ -531,15 +590,35 @@ function copyMessage(content: string, index: number) {
   }, 2000)
 }
 
-function toggleLike(index: number) {
-  if (likedMessages.value.has(index)) {
-    likedMessages.value.delete(index)
-  } else {
-    likedMessages.value.add(index)
+// 获取消息之前的用户提问（用于反馈携带 query 上下文）
+function getPreviousUserQuery(index: number): string {
+  for (let i = index - 1; i >= 0; i--) {
+    const m = sessionStore.currentMessages[i]
+    if (m.role === 'user') return m.content
   }
-  // 触发响应式更新
-  likedMessages.value = new Set(likedMessages.value)
+  return ''
 }
+
+function onRetrievalSettingsSave(s: RetrievalSettings) {
+  saveRetrievalSettings(s)
+  showRetrievalDrawer.value = false
+}
+
+// 会话切换时同步加载历史反馈，让点赞/评分状态正确回显
+watch(
+  () => sessionStore.currentSessionId,
+  async (sid) => {
+    feedbackStore.clear()
+    if (sid) {
+      try {
+        await feedbackStore.loadSessionFeedbacks(sid)
+      } catch (e) {
+        console.warn('加载历史反馈失败:', e)
+      }
+    }
+  },
+  { immediate: true }
+)
 
 function getStatusIcon(status: string) {
   switch (status) {
@@ -740,19 +819,23 @@ function createNewChat() {
                 </div>
               </div>
 
+              <!-- Agentic RAG 步骤可视化 (assistant 消息 + 含 retrieval_history 时显示) -->
+              <AgenticRagTrace
+                v-if="message.role === 'assistant' && (message as any).meta?.retrieval_history?.length"
+                :history="(message as any).meta.retrieval_history"
+                :evaluation="(message as any).meta?.evaluation"
+                :retrieval-method="(message as any).meta?.retrieval_method"
+                class="mt-3"
+              />
+
               <!-- Message Actions -->
-              <div v-if="message.content" class="flex items-center gap-2 mt-3">
-                <button
-                  @click="toggleLike(index)"
-                  class="p-2 hover:bg-gray-100 rounded-lg transition-all"
-                  :title="likedMessages.has(index) ? '取消点赞' : '点赞'"
-                  :class="likedMessages.has(index) ? 'bg-red-50' : ''"
-                >
-                  <ThumbsUp
-                    :size="16"
-                    :class="likedMessages.has(index) ? 'text-red-500 fill-current' : 'text-gray-400 hover:text-red-500'"
-                  />
-                </button>
+              <div v-if="message.content && message.role === 'assistant'" class="flex items-center gap-2 mt-3">
+                <MessageFeedback
+                  :message="message as any"
+                  :previous-user-query="getPreviousUserQuery(index)"
+                  :session-id="sessionStore.currentSessionId"
+                />
+                <div class="w-px h-4 bg-gray-200 mx-1"></div>
                 <button
                   @click="copyMessage(message.content, index)"
                   class="p-2 hover:bg-gray-100 rounded-lg transition-colors"
@@ -793,6 +876,18 @@ function createNewChat() {
               >
                 <Plus :size="14" />
                 新对话
+              </button>
+              <button
+                @click="showRetrievalDrawer = true"
+                class="px-2.5 py-1 text-xs text-gray-600 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg flex items-center gap-1.5 transition-all"
+                title="检索设置"
+              >
+                <Settings :size="14" />
+                <span>{{
+                  retrievalSettings.retrieval_method === 'simple' ? '简单向量' :
+                  retrievalSettings.retrieval_method === 'graphrag' ? 'GraphRAG' :
+                  'Agentic RAG'
+                }}</span>
               </button>
             </div>
             <div v-if="sessionStore.currentSessionId" class="text-xs text-gray-500">
@@ -979,6 +1074,13 @@ function createNewChat() {
         </div>
       </div>
     </Teleport>
+
+    <!-- 检索设置抽屉 -->
+    <RetrievalSettingsDrawer
+      v-model="showRetrievalDrawer"
+      :settings="retrievalSettings"
+      @save="onRetrievalSettingsSave"
+    />
   </div>
 </template>
 

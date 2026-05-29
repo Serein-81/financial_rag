@@ -4,7 +4,7 @@ import asyncio
 import uuid
 import logging
 from datetime import datetime
-from typing import Optional, Dict, Set
+from typing import Optional, Dict, Set, Any
 from fastapi import APIRouter, Depends, HTTPException
 from starlette.concurrency import iterate_in_threadpool
 from sqlalchemy import select
@@ -52,10 +52,15 @@ async def persist_chat_message(
     sources: Optional[list] = None,
     agent_name: Optional[str] = None,
     turn: Optional[int] = None,
-) -> None:
-    """Persist a chat message for session reload/history APIs."""
+) -> Optional[str]:
+    """Persist a chat message for session reload/history APIs.
+
+    Returns the persisted message UUID (str) on success, None if skipped.
+    Used by G1 so the SSE done event can carry message_id back to the frontend
+    for feedback linkage.
+    """
     if not content:
-        return
+        return None
 
     session_uuid = uuid.UUID(str(session_id))
     async with AsyncSessionLocal() as db:
@@ -75,6 +80,8 @@ async def persist_chat_message(
             session.updated_at = datetime.now()
 
         await db.commit()
+        await db.refresh(message)
+        return str(message.id)
 
 
 def has_stream_error_marker(text: str) -> bool:
@@ -146,9 +153,9 @@ _QA_CACHE_TTL = 30  # 30 秒，仅防连点/误触
 _QA_CACHE_MAX_ITEMS = 500
 
 
-def _get_cached_answer(tenant_id: str, query: str) -> Optional[str]:
-    """获取缓存的问答结果。"""
-    _key = f"{tenant_id}:{hash(query)}"
+def _get_cached_answer(tenant_id: str, query: str, variant: str = "") -> Optional[str]:
+    """获取缓存的问答结果。variant 携带检索设置签名，确保不同设置不会命中同一缓存。"""
+    _key = f"{tenant_id}:{variant}:{hash(query)}"
     _item = _qa_cache.get(_key)
     if _item is None:
         return None
@@ -159,14 +166,14 @@ def _get_cached_answer(tenant_id: str, query: str) -> Optional[str]:
     return _answer
 
 
-def _set_cached_answer(tenant_id: str, query: str, answer: str) -> None:
-    """缓存问答结果。"""
+def _set_cached_answer(tenant_id: str, query: str, answer: str, variant: str = "") -> None:
+    """缓存问答结果。variant 携带检索设置签名，确保不同设置分别缓存。"""
     if len(_qa_cache) >= _QA_CACHE_MAX_ITEMS:
         # 缓存满时清理最旧的 20%
         _keys_to_remove = sorted(_qa_cache.keys(), key=lambda k: _qa_cache[k][1])[:100]
         for _k in _keys_to_remove:
             _qa_cache.pop(_k, None)
-    _key = f"{tenant_id}:{hash(query)}"
+    _key = f"{tenant_id}:{variant}:{hash(query)}"
     _qa_cache[_key] = (answer, time.time())
 
 
@@ -582,6 +589,13 @@ class AgentChatRequest(BaseModel):
     query: str  # 用户问题
     session_id: Optional[str] = None  # 会话持久化ID
 
+    # 📝 检索策略相关（G3：前端透传，后端按能力降级使用，缺省保持向后兼容）
+    retrieval_method: Optional[str] = None  # simple | graphrag | agentic
+    max_iterations: Optional[int] = None  # 1-10，仅 agentic 生效
+    top_k: Optional[int] = None  # 引用几段资料，默认 5
+    enable_rerank: Optional[bool] = None  # 是否启用重排序
+    enable_graph_expansion: Optional[bool] = None  # 是否启用图谱扩展
+
 
 # app/api/v1/endpoints/chat.py 中的 chat_with_agent 函数
 
@@ -759,6 +773,11 @@ async def chat_with_agent_stream(
         bg_user_id: str,
         bg_tenant_id: str,
         bg_persist_tenant_id: str,
+        bg_retrieval_method: Optional[str] = None,
+        bg_max_iterations: Optional[int] = None,
+        bg_top_k: Optional[int] = None,
+        bg_enable_rerank: Optional[bool] = None,
+        bg_enable_graph_expansion: Optional[bool] = None,
     ) -> None:
         """后台运行 Agent 流式对话，与 SSE 连接生命周期无关。"""
         # 设置当前租户和用户上下文，供 get_enterprise_kb_overview 等工具使用
@@ -768,12 +787,39 @@ async def chat_with_agent_stream(
 
         # ── 简单问题缓存命中检查 ──
         # 对于无时效性的重复问题，直接返回缓存结果，跳过 LLM 调用
-        _cached = _get_cached_answer(bg_tenant_id or "", bg_user_query)
+        # 缓存键纳入检索设置签名：切换检索方法/TopK/Rerank/图谱后不会命中旧缓存
+        _cache_variant = (
+            f"{(bg_retrieval_method or 'simple')}|{bg_top_k}|{bg_enable_rerank}"
+            f"|{bg_enable_graph_expansion}|{bg_max_iterations}"
+        )
+        _cached = _get_cached_answer(bg_tenant_id or "", bg_user_query, _cache_variant)
         if _cached is not None:
             logger.info("[CACHE] 简单问题缓存命中，跳过 LLM | query=%s", bg_user_query[:30])
             _safe_put(bg_queue, ("chunk", _cached, 1))
-            _safe_put(bg_queue, ("done", None))
+            # 缓存命中：仍然要透传一个最小 meta 让前端可保存反馈
+            _cached_meta = {
+                "retrieval_method": "cache",
+                "kb_id": bg_kb_id,
+                "chunks_used": [],
+                "retrieval_history": [],
+                "evaluation": None,
+                "retrieval_time_ms": 0,
+                "generation_time_ms": 0,
+                "total_time_ms": 0,
+                "token_count": len(_cached),
+            }
+            _cached_msg_id = await persist_chat_message(
+                session_id=bg_session_id, role="assistant",
+                content=_cached, tenant_id=bg_persist_tenant_id, agent_name="agent",
+            )
+            _cached_meta["message_id"] = _cached_msg_id
+            _safe_put(bg_queue, ("done", _cached_meta))
             return
+
+        # G1: 计时与元数据收集
+        _t_start = time.time()
+        _t_first_chunk: Optional[float] = None
+        _meta_from_service: Dict[str, Any] = {}
 
         try:
             full_response = ""
@@ -787,6 +833,11 @@ async def chat_with_agent_stream(
                 history=[],
                 user_id=bg_user_id,
                 tenant_id=bg_tenant_id,
+                retrieval_method=bg_retrieval_method,
+                max_iterations=bg_max_iterations,
+                top_k=bg_top_k,
+                enable_rerank=bg_enable_rerank,
+                enable_graph_expansion=bg_enable_graph_expansion,
             ):
                 if has_stream_error_marker(chunk):
                     msg = STREAM_USER_ERROR_MESSAGE
@@ -805,8 +856,17 @@ async def chat_with_agent_stream(
                         _safe_put(bg_queue, ("sources", sources_data))
                     except json.JSONDecodeError:
                         print(f"⚠️ [sources解析失败]: {sources_json[:100]}")
+                elif chunk.startswith("__META_EVENT__:"):
+                    # G1/G2: 从 agent_service 接收检索元数据
+                    meta_json = chunk[len("__META_EVENT__:"):]
+                    try:
+                        _meta_from_service = json.loads(meta_json) or {}
+                    except json.JSONDecodeError:
+                        print(f"⚠️ [meta解析失败]: {meta_json[:100]}")
                 else:
                     _seq += 1
+                    if _t_first_chunk is None:
+                        _t_first_chunk = time.time()
                     full_response += chunk
                     # chunk 队列项: (type, payload, seq)
                     _safe_put(bg_queue, ("chunk", chunk, _seq))
@@ -822,15 +882,47 @@ async def chat_with_agent_stream(
                 _safe_put(bg_queue, ("error", msg))
                 return
 
-            await persist_chat_message(
+            _msg_id = await persist_chat_message(
                 session_id=bg_session_id, role="assistant",
                 content=full_response, tenant_id=bg_persist_tenant_id,
                 sources=current_sources or None, agent_name="agent",
             )
             print(f"[CHAT] [后台] AI 回复已保存 | session={bg_session_id[:8]} | length={len(full_response)}")
             # 缓存简单问题的回答，下次重复提问时跳过 LLM
-            _set_cached_answer(bg_tenant_id or "", bg_user_query, full_response)
-            _safe_put(bg_queue, ("done", None))
+            _set_cached_answer(bg_tenant_id or "", bg_user_query, full_response, _cache_variant)
+
+            # G1+G2: 组装完整 meta 在 done 事件中下发
+            _t_end = time.time()
+            _t_first = _t_first_chunk or _t_end
+            _chunks_used = [
+                {
+                    "id": s.get("id") or s.get("chunk_id") or s.get("filename"),
+                    "filename": s.get("filename"),
+                    "score": s.get("score"),
+                }
+                for s in (current_sources or [])
+                if isinstance(s, dict)
+            ]
+            _final_meta = {
+                "message_id": _msg_id,
+                "retrieval_method": _meta_from_service.get("retrieval_method")
+                                    or bg_retrieval_method or "simple",
+                "kb_id": bg_kb_id,
+                "chunks_used": _chunks_used,
+                "retrieval_time_ms": int(max(0.0, (_t_first - _t_start)) * 1000),
+                "generation_time_ms": int(max(0.0, (_t_end - _t_first)) * 1000),
+                "total_time_ms": int(max(0.0, (_t_end - _t_start)) * 1000),
+                "token_count": len(full_response),  # 粗略估算；底层 usage 待接入后精确化
+                # G2: Agentic RAG 步骤透传
+                "retrieval_history": _meta_from_service.get("retrieval_history") or [],
+                "evaluation": _meta_from_service.get("evaluation"),
+                # 回显前端选择，便于调试 / UI 高亮当前模式
+                "top_k": _meta_from_service.get("top_k") or bg_top_k,
+                "enable_rerank": _meta_from_service.get("enable_rerank"),
+                "enable_graph_expansion": _meta_from_service.get("enable_graph_expansion"),
+                "max_iterations": _meta_from_service.get("max_iterations") or bg_max_iterations,
+            }
+            _safe_put(bg_queue, ("done", _final_meta))
 
         except Exception as e:
             print(f"[CHAT] [后台] 处理异常: {e}")
@@ -879,11 +971,17 @@ async def chat_with_agent_stream(
                 bg_user_id=str(current_user.id),
                 bg_tenant_id=tenant_context.get("tenant_id") or str(getattr(current_user, "tenant_id", "") or ""),
                 bg_persist_tenant_id=_persist_tenant_id,
+                bg_retrieval_method=request.retrieval_method,
+                bg_max_iterations=request.max_iterations,
+                bg_top_k=request.top_k,
+                bg_enable_rerank=request.enable_rerank,
+                bg_enable_graph_expansion=request.enable_graph_expansion,
             )
         )
         _background_tasks.add(_bg_task)
         _bg_task.add_done_callback(_background_tasks.discard)
 
+        _last_meta: Optional[Dict[str, Any]] = None
         try:
             while True:
                 item = await _queue.get()
@@ -892,6 +990,8 @@ async def chat_with_agent_stream(
                 event_type = item[0]
 
                 if event_type == "done":
+                    # G1: item[1] 是完整 meta 字典；event_generator 末尾会拼到 done 事件
+                    _last_meta = item[1] if len(item) > 1 else None
                     break
                 if event_type == "error":
                     yield f"data: {json.dumps({'type': 'error', 'message': str(item[1])})}\n\n"
@@ -904,7 +1004,10 @@ async def chat_with_agent_stream(
                 elif event_type == "sources":
                     yield f"data: {json.dumps({'type': 'sources', 'sources': item[1]})}\n\n"
 
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            _done_payload: Dict[str, Any] = {'type': 'done'}
+            if isinstance(_last_meta, dict):
+                _done_payload['meta'] = _last_meta
+            yield f"data: {json.dumps(_done_payload, ensure_ascii=False)}\n\n"
 
         except GeneratorExit:
             print(f"[CHAT] 客户端断开 SSE，后台任务继续 | session={session_id[:8]}")

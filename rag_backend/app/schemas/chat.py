@@ -20,6 +20,21 @@ class ChatRequest(BaseModel):
     # 使用 default_factory=list 防止“可变默认参数”陷阱
     history: Annotated[List[Dict[str, Any]], Field(default_factory=list)]
 
+    # 📝 检索策略相关（前端透传，后端按能力降级使用，缺省保持向后兼容）
+    retrieval_method: Optional[str] = Field(
+        None,
+        description="检索方法: simple | graphrag | agentic（默认根据 unified_retriever 自动路由）",
+    )
+    max_iterations: Optional[int] = Field(
+        None, ge=1, le=10, description="Agentic RAG 最大迭代轮数（仅 agentic 生效）"
+    )
+    enable_rerank: Optional[bool] = Field(
+        None, description="是否启用 Cross-Encoder 重排序（默认按 .env 配置）"
+    )
+    enable_graph_expansion: Optional[bool] = Field(
+        None, description="是否启用知识图谱扩展（默认 True）"
+    )
+
 
 # --- 进阶请求体 (V2 持久化接口使用) ---
 class ChatRequestPersistent(ChatRequest):

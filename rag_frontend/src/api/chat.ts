@@ -64,14 +64,22 @@ export const chatApi = {
       query: string
       session_id?: string | null
       idempotency_key?: string
+      // P0 新增：检索控制（前端传给后端，后端可选支持）
+      retrieval_method?: 'simple' | 'graphrag' | 'agentic'
+      max_iterations?: number
+      top_k?: number
+      enable_rerank?: boolean
+      enable_graph_expansion?: boolean
     },
     signal?: AbortSignal  // 👈 支持外部中止
   ): AsyncGenerator<{
-    type: 'init' | 'chunk' | 'done' | 'sources' | 'error'
+    type: 'init' | 'chunk' | 'done' | 'sources' | 'error' | 'meta'
     session_id?: string
     content?: string
     sources?: any[]
     message?: string
+    meta?: Record<string, any>      // P0 新增：消息元数据
+    data?: Record<string, any>      // P0 新增：通用数据
   }, void, unknown> {
     const token = localStorage.getItem('rag_token')
 
