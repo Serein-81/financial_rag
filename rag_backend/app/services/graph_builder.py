@@ -567,6 +567,6 @@ class GraphBuilder:
                 message=error_msg
             )
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self, tenant_id: str) -> Dict[str, Any]:
         """获取图统计信息"""
-        return self.neo4j_manager.get_graph_stats()
+        return self.neo4j_manager.get_graph_stats(tenant_id)

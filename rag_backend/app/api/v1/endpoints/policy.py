@@ -588,22 +588,27 @@ async def export_policy_report_pdf(
                 except Exception as e:
                     logger.warning(f"获取政策 {pid} 失败: {e}")
         
+        tenant_id = str(current_user.tenant_id) if current_user.tenant_id else "default"
+
         if query and len(policies_data) < top_k:
-            results = await policy_retrieval_service.search_policies(
+            search_result = await policy_retrieval_service.list_policies(
                 query=query,
-                top_k=top_k - len(policies_data),
-                filters=None
+                page=1,
+                page_size=top_k - len(policies_data),
+                tenant_id=tenant_id
             )
-            for result in results:
+            for result in search_result.get("policies", []):
                 if result.get("policy_id") and not any(p.get("policy_id") == result.get("policy_id") for p in policies_data):
                     policies_data.append(result)
-        
+
         if not policies_data:
-            policies_data = await policy_retrieval_service.search_policies(
-                query="",
-                top_k=top_k,
-                filters=None
+            list_result = await policy_retrieval_service.list_policies(
+                query=None,
+                page=1,
+                page_size=top_k,
+                tenant_id=tenant_id
             )
+            policies_data = list_result.get("policies", [])
         
         report_data = {
             "policies": policies_data,

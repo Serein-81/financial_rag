@@ -193,8 +193,11 @@ async def get_graph_stats(
     获取图统计信息
     """
     try:
-        stats = graph_builder.get_stats()
-        return GraphStatsResponse(**stats)
+        stats = graph_builder.get_stats(str(current_user.tenant_id))
+        return GraphStatsResponse(
+            total_entities=stats.get("entities", 0),
+            total_relations=stats.get("relations", 0),
+        )
     except (ValueError, KeyError) as e:
         raise HTTPException(status_code=400, detail=f"数据错误: {str(e)}")
     except (OSError, IOError) as e:

@@ -4,6 +4,7 @@
 
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 import uuid
 
@@ -106,14 +107,14 @@ async def get_audit_task(
     try:
         # 查询任务（带租户隔离）
         result = await db.execute(
-            "SELECT * FROM audit_tasks WHERE id = :task_id AND tenant_id = :tenant_id",
+            text("SELECT * FROM audit_tasks WHERE id = :task_id AND tenant_id = :tenant_id"),
             {"task_id": task_id, "tenant_id": tenant_id}
         )
         task = result.fetchone()
-        
+
         if not task:
             raise HTTPException(status_code=404, detail="审查任务不存在")
-        
+
         return AuditTaskResponse(
             id=str(task.id),
             tenant_id=task.tenant_id,
@@ -148,20 +149,20 @@ async def get_audit_results(
     try:
         # 检查任务是否存在且属于当前租户
         task_result = await db.execute(
-            "SELECT * FROM audit_tasks WHERE id = :task_id AND tenant_id = :tenant_id",
+            text("SELECT * FROM audit_tasks WHERE id = :task_id AND tenant_id = :tenant_id"),
             {"task_id": task_id, "tenant_id": tenant_id}
         )
         task = task_result.fetchone()
-        
+
         if not task:
             raise HTTPException(status_code=404, detail="审查任务不存在")
-        
+
         if task.status != "completed":
             raise HTTPException(status_code=400, detail=f"任务尚未完成，当前状态: {task.status}")
         
         # 查询审查结果
         results_query = await db.execute(
-            "SELECT * FROM audit_results WHERE task_id = :task_id AND tenant_id = :tenant_id",
+            text("SELECT * FROM audit_results WHERE task_id = :task_id AND tenant_id = :tenant_id"),
             {"task_id": task_id, "tenant_id": tenant_id}
         )
         results = results_query.fetchall()
@@ -215,7 +216,7 @@ async def get_agent_collaborations(
     try:
         # 检查任务是否存在且属于当前租户
         task_result = await db.execute(
-            "SELECT id FROM audit_tasks WHERE id = :task_id AND tenant_id = :tenant_id",
+            text("SELECT id FROM audit_tasks WHERE id = :task_id AND tenant_id = :tenant_id"),
             {"task_id": task_id, "tenant_id": tenant_id}
         )
         task = task_result.fetchone()
@@ -225,11 +226,11 @@ async def get_agent_collaborations(
         
         # 查询协作记录
         collab_result = await db.execute(
-            """
-            SELECT * FROM agent_collaborations 
-            WHERE task_id = :task_id AND tenant_id = :tenant_id 
+            text("""
+            SELECT * FROM agent_collaborations
+            WHERE task_id = :task_id AND tenant_id = :tenant_id
             ORDER BY timestamp DESC
-            """,
+            """),
             {"task_id": task_id, "tenant_id": tenant_id}
         )
         collaborations = collab_result.fetchall()
@@ -321,8 +322,8 @@ async def list_audit_tasks(
             LIMIT :limit OFFSET :skip
         """
         params.update({"limit": limit, "skip": skip})
-        
-        result = await db.execute(query, params)
+
+        result = await db.execute(text(query), params)
         tasks = result.fetchall()
         
         return [

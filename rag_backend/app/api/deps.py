@@ -385,14 +385,10 @@ def get_tenant_context() -> dict:
     }
 
 
-def get_tenant_db():
-    """
-    获取租户数据库会话（别名）
-    
-    Returns:
-        AsyncSession: 数据库会话
-    """
-    return get_db_with_tenant_context
+# 租户数据库会话依赖别名。
+# 必须直接指向 get_db_with_tenant_context 这个 async generator，
+# 否则 Depends(get_tenant_db) 注入的是函数对象而非 AsyncSession。
+get_tenant_db = get_db_with_tenant_context
 
 
 # 为了向后兼容和统一命名，提供别名
