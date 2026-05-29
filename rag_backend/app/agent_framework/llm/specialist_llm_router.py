@@ -8,6 +8,7 @@
 
 import logging
 from typing import Optional, Dict
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -153,7 +154,7 @@ class SpecialistLLMRouter:
         """
         try:
             result = await db.execute(
-                TenantSettings.__table__.select().where(TenantSettings.tenant_id == tenant_id)
+                select(TenantSettings).where(TenantSettings.tenant_id == tenant_id)
             )
             tenant_settings = result.scalar_one_or_none()
             

@@ -24,6 +24,25 @@ from .errors import ERROR_PREFIX
 logger = logging.getLogger(__name__)
 
 
+# 进程级 LangSmith 熔断开关：
+# LangSmith 包装客户端在某些网络环境（如 Docker 内无法访问 LangSmith 端点）下会挂起，
+# 直到超时才回退到 httpx。由于专家适配器按请求重建，旧逻辑导致**每个请求**都白白支付一次
+# 超时代价。一旦任意实例探测到追踪客户端超时/失败，立即进程级禁用，后续实例不再尝试，
+# 把代价从"每请求一次"降为"进程内至多一次"。
+_LANGSMITH_RUNTIME_DISABLED = False
+
+
+def _langsmith_runtime_disabled() -> bool:
+    return _LANGSMITH_RUNTIME_DISABLED
+
+
+def _disable_langsmith_runtime(reason: str):
+    global _LANGSMITH_RUNTIME_DISABLED
+    if not _LANGSMITH_RUNTIME_DISABLED:
+        _LANGSMITH_RUNTIME_DISABLED = True
+        logger.warning(f"[DeepSeek] LangSmith 追踪已进程级熔断，后续请求将直接使用 httpx: {reason}")
+
+
 def _get_langsmith_traced_client(api_key: str, base_url: str):
     """
     获取 LangSmith 追踪客户端（使用统一管理器）
@@ -72,11 +91,13 @@ class DeepSeekAdapter(BaseLLMAdapter):
         self.client = None
         self.langsmith_client = None
         
-        # 如果启用了 LangSmith，获取追踪客户端
-        if self.enable_langsmith:
+        # 如果启用了 LangSmith，且进程级熔断未触发，获取追踪客户端
+        if self.enable_langsmith and not _langsmith_runtime_disabled():
             self.langsmith_client = _get_langsmith_traced_client(api_key, base_url)
             if self.langsmith_client:
                 logger.info("✅ LangSmith 追踪已启用（供应商无关模式）")
+        elif self.enable_langsmith:
+            logger.info("ℹ️ LangSmith 追踪已配置，但因进程级熔断已禁用，使用标准 HTTP 客户端")
         
         logger.info("✅ DeepSeek 适配器初始化完成")
         logger.info(f"   - 模型: {self.model_name}")
@@ -211,6 +232,9 @@ class DeepSeekAdapter(BaseLLMAdapter):
             # 优先使用 LangSmith 包装的客户端（如果启用）
             if self.langsmith_client:
                 logger.info("[DeepSeek] 使用 LangSmith 追踪客户端...")
+                # 超时阈值需高于模型正常生成耗时（否则健康的慢生成会被误判超时），
+                # 默认 30s，可通过 LANGSMITH_TRACE_TIMEOUT 配置。
+                ls_timeout = float(getattr(settings, "LANGSMITH_TRACE_TIMEOUT", 30.0) or 30.0)
                 try:
                     response = await asyncio.wait_for(
                         self.langsmith_client.chat.completions.create(
@@ -220,10 +244,16 @@ class DeepSeekAdapter(BaseLLMAdapter):
                             max_tokens=max_tokens,
                             **request_kwargs
                         ),
-                        timeout=30.0,  # LangSmith 可能挂起，30s 超时回退到 httpx
+                        timeout=ls_timeout,
                     )
-                except asyncio.TimeoutError:
-                    logger.warning("[DeepSeek] LangSmith 追踪客户端超时(30s)，回退到标准 HTTP 客户端")
+                except (asyncio.TimeoutError, Exception) as ls_err:
+                    # 超时或任意异常：触发进程级熔断，后续请求不再尝试追踪客户端，回退 httpx
+                    if isinstance(ls_err, asyncio.TimeoutError):
+                        reason = f"追踪客户端超时({ls_timeout:.0f}s)"
+                    else:
+                        reason = f"追踪客户端异常: {type(ls_err).__name__}: {ls_err}"
+                    logger.warning(f"[DeepSeek] {reason}，回退到标准 HTTP 客户端")
+                    _disable_langsmith_runtime(reason)
                     self.langsmith_client = None
                     # 不 return，继续到下面的 httpx 路径
                 else:

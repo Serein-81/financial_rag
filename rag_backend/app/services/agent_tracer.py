@@ -146,7 +146,8 @@ class AgentTracer:
         user_id: str,
         tenant_id: str,
         session_id: str = None,
-        message_id: str = None
+        message_id: str = None,
+        model_name: str = None
     ) -> str:
         """
         开始一次新的追踪
@@ -194,6 +195,7 @@ class AgentTracer:
                 session_id=db_session_id,
                 message_id=db_message_id,
                 langsmith_run_id=langsmith_run_id,
+                model_name=model_name,
                 status="running"
             )
             

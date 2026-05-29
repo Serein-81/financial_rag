@@ -85,7 +85,8 @@ class ReActAgent(BaseAgent):
                     user_id=kwargs.get("user_id") or "unknown",
                     tenant_id=kwargs.get("tenant_id") or "unknown",
                     session_id=kwargs.get("session_id"),
-                    message_id=kwargs.get("message_id")
+                    message_id=kwargs.get("message_id"),
+                    model_name=getattr(self.llm_adapter, "model_name", None)
                 )
             except (ValueError, KeyError) as e:
                 print(f"⚠️ 开始追踪数据错误: {e}")

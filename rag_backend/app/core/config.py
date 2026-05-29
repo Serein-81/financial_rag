@@ -167,6 +167,8 @@ class Settings(BaseSettings):
     # Ollama 本地部署 Embedding 配置
     OLLAMA_EMBEDDING_MODEL: str = "nomic-embed-text"
     OLLAMA_BASE_URL: str = "http://localhost:11434"
+    # Ollama 本地对话模型（需支持 Function Calling，如 qwen2.5 / llama3.1）
+    OLLAMA_CHAT_MODEL: str = "qwen2.5"
     
     # 硅基流动 Embedding 配置
     SILICONFLOW_API_KEY: str = ""

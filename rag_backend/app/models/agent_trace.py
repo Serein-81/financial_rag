@@ -37,6 +37,7 @@ class AgentTrace(Base):
     user_query = Column(Text, nullable=False)
     final_answer = Column(Text, nullable=True)
     langsmith_run_id = Column(String, nullable=True)
+    model_name = Column(String(200), nullable=True, index=True)  # 本次执行实际使用的 LLM 模型
     
     # 执行统计
     total_iterations = Column(Integer, default=0)

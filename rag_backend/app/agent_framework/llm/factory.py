@@ -232,12 +232,26 @@ class LLMAdapterFactory:
                 base_url=settings.QWEN_BASE_URL,
                 verify_ssl=settings.QWEN_VERIFY_SSL
             )
-        
+
+        # Ollama（本地部署，OpenAI 兼容端点）
+        elif provider == "ollama":
+            from .deepseek_adapter import DeepSeekAdapter
+
+            base_url = f"{settings.OLLAMA_BASE_URL.rstrip('/')}/v1"
+            logger.debug(f"   - 模型: {settings.OLLAMA_CHAT_MODEL}")
+            logger.debug(f"   - Base URL: {base_url}")
+
+            return DeepSeekAdapter(
+                api_key="ollama",
+                model_name=settings.OLLAMA_CHAT_MODEL,
+                base_url=base_url
+            )
+
         # 不支持的提供商
         else:
             raise ValueError(
                 f"不支持的 LLM 提供商: {provider}\n"
-                f"支持的提供商: zhipu, openai, claude, minimax, xinference, huggingface, modelscope, baichuan, gpt, deepseek, qwen\n"
+                f"支持的提供商: zhipu, openai, claude, minimax, xinference, huggingface, modelscope, baichuan, gpt, deepseek, qwen, ollama\n"
                 f"请在 .env 中设置 LLM_PROVIDER"
             )
     
@@ -260,7 +274,8 @@ class LLMAdapterFactory:
             "baichuan",
             "gpt",
             "deepseek",
-            "qwen"
+            "qwen",
+            "ollama"
         ]
     
     @staticmethod

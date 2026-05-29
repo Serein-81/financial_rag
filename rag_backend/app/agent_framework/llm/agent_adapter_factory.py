@@ -174,17 +174,33 @@ class AgentLLMAdapterFactory:
         
         elif provider == "qwen":
             from .qwen_adapter import QwenAdapter
-            
+
             api_key = api_key or settings.GPT_API_KEY
             base_url = base_url or settings.GPT_BASE_URL
             model = model or "qwen/qwen3.6-plus:free"
-            
+
             return QwenAdapter(
                 api_key=api_key,
                 model_name=model,
                 base_url=base_url
             )
-        
+
+        # Ollama（本地部署，OpenAI 兼容端点）
+        # 复用 DeepSeekAdapter：它实现了完整的 Function Calling（保留 tool_calls），
+        # 直连 OpenAIAdapter 会丢工具调用，导致 ReAct 工具循环失效。
+        elif provider == "ollama":
+            from .deepseek_adapter import DeepSeekAdapter
+
+            base_url = base_url or f"{settings.OLLAMA_BASE_URL.rstrip('/')}/v1"
+            model = model or settings.OLLAMA_CHAT_MODEL
+            api_key = api_key or "ollama"  # Ollama 不校验 Key，占位即可
+
+            return DeepSeekAdapter(
+                api_key=api_key,
+                model_name=model,
+                base_url=base_url
+            )
+
         else:
             logger.warning(f"[智能体适配器工厂] 不支持的提供商: {provider}，使用默认适配器")
             from .factory import create_llm_adapter
