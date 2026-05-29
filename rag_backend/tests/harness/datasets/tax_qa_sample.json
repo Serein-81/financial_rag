@@ -1,0 +1,67 @@
+{
+  "name": "tax_qa_sample",
+  "version": "1.0",
+  "description": "税务问答示例数据集",
+  "metadata": {
+    "created_at": "2026-05-21",
+    "domain": "tax",
+    "language": "zh-CN"
+  },
+  "test_cases": [
+    {
+      "id": "tax_001",
+      "query": "企业所得税的标准税率是多少？",
+      "expected_answer": "企业所得税的标准税率为25%。",
+      "ground_truth_chunks": ["doc_tax_rate_001"],
+      "difficulty": "easy",
+      "category": "factual",
+      "kb_id": "tax_kb",
+      "tags": ["企业所得税", "税率"],
+      "metadata": {}
+    },
+    {
+      "id": "tax_002",
+      "query": "小型微利企业享受哪些税收优惠？",
+      "expected_answer": "小型微利企业所得税税率为20%，年应纳税所得额不超过100万元的部分，减按12.5%计入应纳税所得额，实际税负为2.5%；超过100万元但不超过300万元的部分，减按25%计入，实际税负为5%。",
+      "ground_truth_chunks": ["doc_small_enterprise_001", "doc_tax_incentive_001"],
+      "difficulty": "medium",
+      "category": "reasoning",
+      "kb_id": "tax_kb",
+      "tags": ["小型微利企业", "税收优惠"],
+      "metadata": {}
+    },
+    {
+      "id": "tax_003",
+      "query": "为什么高新技术企业能享受15%的优惠税率？",
+      "expected_answer": "高新技术企业享受15%的优惠税率是因为国家鼓励科技创新和技术进步。根据《企业所得税法》规定，国家需要重点扶持的高新技术企业，减按15%的税率征收企业所得税，目的是促进企业加大研发投入，推动产业升级和经济转型。",
+      "ground_truth_chunks": ["doc_high_tech_001", "doc_policy_reason_001", "doc_law_001"],
+      "difficulty": "hard",
+      "category": "multi_hop",
+      "kb_id": "tax_kb",
+      "tags": ["高新技术企业", "税收优惠", "政策原因"],
+      "metadata": {}
+    },
+    {
+      "id": "tax_004",
+      "query": "企业所得税和个人所得税有什么区别？",
+      "expected_answer": "企业所得税是对企业经营所得征收的税，纳税主体是企业法人；个人所得税是对个人收入征收的税，纳税主体是自然人。主要区别包括：1) 纳税主体不同；2) 税率结构不同（企业所得税为比例税率，个人所得税为超额累进税率）；3) 计税依据不同；4) 扣除项目不同。",
+      "ground_truth_chunks": ["doc_corporate_tax_001", "doc_personal_tax_001", "doc_tax_comparison_001"],
+      "difficulty": "medium",
+      "category": "comparison",
+      "kb_id": "tax_kb",
+      "tags": ["企业所得税", "个人所得税", "对比"],
+      "metadata": {}
+    },
+    {
+      "id": "tax_005",
+      "query": "如何计算企业所得税应纳税额？",
+      "expected_answer": "企业所得税应纳税额的计算步骤：1) 计算应纳税所得额 = 收入总额 - 不征税收入 - 免税收入 - 各项扣除 - 以前年度亏损；2) 计算应纳税额 = 应纳税所得额 × 适用税率 - 减免税额 - 抵免税额。一般企业适用25%的税率，小型微利企业和高新技术企业享受优惠税率。",
+      "ground_truth_chunks": ["doc_tax_calculation_001", "doc_tax_formula_001"],
+      "difficulty": "medium",
+      "category": "procedural",
+      "kb_id": "tax_kb",
+      "tags": ["企业所得税", "计算方法", "流程"],
+      "metadata": {}
+    }
+  ]
+}
