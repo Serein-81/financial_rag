@@ -27,20 +27,11 @@ async def get_rate_limit_stats(
     - strategy: 当前使用的限流策略
     - enabled: 限流是否启用
     """
-    from app.main import app
-    
-    rate_limit_middleware = None
-    for middleware in app.user_middleware:
-        if hasattr(middleware, "cls") and middleware.cls == RateLimitMiddleware:
-            for handler in app.middleware_stack._middleware:
-                if isinstance(handler, RateLimitMiddleware):
-                    rate_limit_middleware = handler
-                    break
-            break
-    
+    rate_limit_middleware = RateLimitMiddleware._instance
+
     if rate_limit_middleware:
         return rate_limit_middleware.get_stats()
-    
+
     return {
         "error": "Rate limit middleware not found",
         "enabled": False,
@@ -61,17 +52,8 @@ async def reset_rate_limit_key(
     Returns:
         操作结果
     """
-    from app.main import app
-    
-    rate_limit_middleware = None
-    for middleware in app.user_middleware:
-        if hasattr(middleware, "cls") and middleware.cls == RateLimitMiddleware:
-            for handler in app.middleware_stack._middleware:
-                if isinstance(handler, RateLimitMiddleware):
-                    rate_limit_middleware = handler
-                    break
-            break
-    
+    rate_limit_middleware = RateLimitMiddleware._instance
+
     if rate_limit_middleware:
         await rate_limit_middleware.reset_key(key)
         return {
@@ -79,7 +61,7 @@ async def reset_rate_limit_key(
             "message": f"限流键 {key} 已重置",
             "key": key,
         }
-    
+
     return {
         "status": "error",
         "message": "Rate limit middleware not found",
@@ -96,17 +78,8 @@ async def cleanup_expired_limits(
     Returns:
         清理结果统计
     """
-    from app.main import app
-    
-    rate_limit_middleware = None
-    for middleware in app.user_middleware:
-        if hasattr(middleware, "cls") and middleware.cls == RateLimitMiddleware:
-            for handler in app.middleware_stack._middleware:
-                if isinstance(handler, RateLimitMiddleware):
-                    rate_limit_middleware = handler
-                    break
-            break
-    
+    rate_limit_middleware = RateLimitMiddleware._instance
+
     if rate_limit_middleware:
         await rate_limit_middleware.cleanup_expired()
         return {

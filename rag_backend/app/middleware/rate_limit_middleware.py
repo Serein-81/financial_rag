@@ -116,8 +116,12 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         "/api/v1/security/audit/report",
     }
     
+    # 最近创建的实例引用，供管理 API（rate_limit.py）跨中间件栈获取
+    _instance: "RateLimitMiddleware | None" = None
+
     def __init__(self, app, strategy: str = "sliding_window"):
         super().__init__(app)
+        RateLimitMiddleware._instance = self
         self.strategy = RateLimitStrategy(strategy)
         self.enabled = settings.RATE_LIMIT_ENABLED
         
