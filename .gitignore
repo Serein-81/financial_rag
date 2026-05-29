@@ -161,6 +161,9 @@ rag_backend/pytest.ini
 *.swp
 *.swo
 
+# Claude Code 本地配置（机器相关，不入库）
+.claude/settings.local.json
+
 # 操作系统产生的文件
 .DS_Store
 Thumbs.db
