@@ -3,9 +3,27 @@ PDF 导出服务
 提供税务报告、财务分析、合同审核等业务的 PDF 导出功能
 """
 
-from typing import Dict, Any, List
+import glob
+import os
+import warnings
+from typing import Dict, Any, List, Optional
 from datetime import datetime
 from fpdf import FPDF
+
+
+def _find_cjk_font() -> Optional[str]:
+    """查找一个可用的中文 TTF 字体（pyfpdf 不支持 .ttc 集合，必须为单一 .ttf）"""
+    candidates = [
+        "/usr/share/fonts/truetype/arphic-gbsn00lp/gbsn00lp.ttf",
+        "/usr/share/fonts/truetype/arphic/gbsn00lp.ttf",
+        "/usr/share/fonts/truetype/arphic-bsmi00lp/bsmi00lp.ttf",
+    ]
+    candidates += glob.glob("/usr/share/fonts/**/*.ttf", recursive=True)
+    for path in candidates:
+        name = os.path.basename(path).lower()
+        if os.path.isfile(path) and any(k in name for k in ("gbsn", "bsmi", "gkai", "bkai", "uming", "ukai", "cjk", "noto", "wqy", "han")):
+            return path
+    return None
 
 
 class PDFExportService:
@@ -17,6 +35,20 @@ class PDFExportService:
         self.subheading_font_size = 12
         self.body_font_size = 10
         self.margin = 15
+        # 中文字体：找到则用 "CJK" 字体族，否则回退到 Helvetica（仅支持 ASCII）
+        self._cjk_font_path = _find_cjk_font()
+        self.font_family = "CJK" if self._cjk_font_path else self.font_family
+
+    def _create_pdf(self) -> FPDF:
+        """创建并初始化 FPDF 实例，注册中文字体（若可用）"""
+        pdf = FPDF()
+        pdf.set_auto_page_break(auto=True, margin=20)
+        if self._cjk_font_path:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                for style in ("", "B", "I", "BI"):
+                    pdf.add_font(self.font_family, style, self._cjk_font_path, uni=True)
+        return pdf
 
     def export_tax_analysis_report(self, report_data: Dict[str, Any]) -> bytes:
         """
@@ -28,8 +60,7 @@ class PDFExportService:
         Returns:
             PDF 文件的字节数据
         """
-        pdf = FPDF()
-        pdf.set_auto_page_break(auto=True, margin=20)
+        pdf = self._create_pdf()
         pdf.add_page()
 
         self._add_header(pdf, "税务分析报告")
@@ -70,7 +101,7 @@ class PDFExportService:
 
         self._add_footer(pdf)
 
-        return pdf.output()
+        return pdf.output(dest="S").encode("latin-1")
 
     def export_financial_health_report(self, report_data: Dict[str, Any]) -> bytes:
         """
@@ -82,8 +113,7 @@ class PDFExportService:
         Returns:
             PDF 文件的字节数据
         """
-        pdf = FPDF()
-        pdf.set_auto_page_break(auto=True, margin=20)
+        pdf = self._create_pdf()
         pdf.add_page()
 
         self._add_header(pdf, "财务健康监控报告")
@@ -105,7 +135,7 @@ class PDFExportService:
 
         self._add_footer(pdf)
 
-        return pdf.output()
+        return pdf.output(dest="S").encode("latin-1")
 
     def export_contract_review_report(self, report_data: Dict[str, Any]) -> bytes:
         """
@@ -117,8 +147,7 @@ class PDFExportService:
         Returns:
             PDF 文件的字节数据
         """
-        pdf = FPDF()
-        pdf.set_auto_page_break(auto=True, margin=20)
+        pdf = self._create_pdf()
         pdf.add_page()
 
         self._add_header(pdf, "合同审核报告")
@@ -143,15 +172,15 @@ class PDFExportService:
 
         self._add_footer(pdf)
 
-        return pdf.output()
+        return pdf.output(dest="S").encode("latin-1")
 
     def _add_header(self, pdf: FPDF, title: str):
         """添加 PDF 头部"""
-        pdf.set_font("Helvetica", "B", self.title_font_size)
+        pdf.set_font(self.font_family, "B", self.title_font_size)
         pdf.set_xy(self.margin, self.margin)
         pdf.cell(0, 10, title, ln=True, align="C")
 
-        pdf.set_font("Helvetica", "", self.body_font_size)
+        pdf.set_font(self.font_family, "", self.body_font_size)
         pdf.ln(5)
         pdf.set_x(self.margin)
         pdf.cell(0, 6, f"生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", ln=True)
@@ -160,18 +189,18 @@ class PDFExportService:
     def _add_footer(self, pdf: FPDF):
         """添加 PDF 尾部"""
         pdf.ln(10)
-        pdf.set_font("Helvetica", "I", 8)
+        pdf.set_font(self.font_family, "I", 8)
         pdf.set_x(self.margin)
         pdf.cell(0, 5, "本报告由智能税务系统自动生成，仅供参考。具体税务处理请咨询专业税务顾问。", ln=True)
 
     def _add_section(self, pdf: FPDF, title: str, data: Dict[str, Any]):
         """添加普通数据节"""
         pdf.ln(5)
-        pdf.set_font("Helvetica", "B", self.heading_font_size)
+        pdf.set_font(self.font_family, "B", self.heading_font_size)
         pdf.set_x(self.margin)
         pdf.cell(0, 8, title, ln=True)
 
-        pdf.set_font("Helvetica", "", self.body_font_size)
+        pdf.set_font(self.font_family, "", self.body_font_size)
         for key, value in data.items():
             pdf.set_x(self.margin + 5)
             pdf.multi_cell(0, 5, f"{key}: {value}")
@@ -179,11 +208,11 @@ class PDFExportService:
     def _add_info_section(self, pdf: FPDF, title: str, data: Dict[str, Any]):
         """添加信息节（表格形式）"""
         pdf.ln(5)
-        pdf.set_font("Helvetica", "B", self.heading_font_size)
+        pdf.set_font(self.font_family, "B", self.heading_font_size)
         pdf.set_x(self.margin)
         pdf.cell(0, 8, title, ln=True)
 
-        pdf.set_font("Helvetica", "", self.body_font_size)
+        pdf.set_font(self.font_family, "", self.body_font_size)
         pdf.set_fill_color(240, 240, 240)
 
         for key, value in data.items():
@@ -194,11 +223,11 @@ class PDFExportService:
     def _add_text_section(self, pdf: FPDF, title: str, text: str):
         """添加文本节"""
         pdf.ln(5)
-        pdf.set_font("Helvetica", "B", self.heading_font_size)
+        pdf.set_font(self.font_family, "B", self.heading_font_size)
         pdf.set_x(self.margin)
         pdf.cell(0, 8, title, ln=True)
 
-        pdf.set_font("Helvetica", "", self.body_font_size)
+        pdf.set_font(self.font_family, "", self.body_font_size)
         pdf.set_x(self.margin + 5)
         pdf.multi_cell(0, 5, text)
 
@@ -218,22 +247,22 @@ class PDFExportService:
     def _add_policy_benefits(self, pdf: FPDF, policies: List[Dict[str, Any]]):
         """添加优惠政策部分"""
         pdf.ln(5)
-        pdf.set_font("Helvetica", "B", self.heading_font_size)
+        pdf.set_font(self.font_family, "B", self.heading_font_size)
         pdf.set_x(self.margin)
         pdf.cell(0, 8, "四、可享受的优惠政策", ln=True)
 
         if not policies:
-            pdf.set_font("Helvetica", "I", self.body_font_size)
+            pdf.set_font(self.font_family, "I", self.body_font_size)
             pdf.set_x(self.margin + 5)
             pdf.cell(0, 5, "暂无匹配的优惠政策", ln=True)
             return
 
         for i, policy in enumerate(policies[:10], 1):
-            pdf.set_font("Helvetica", "B", self.subheading_font_size)
+            pdf.set_font(self.font_family, "B", self.subheading_font_size)
             pdf.set_x(self.margin + 5)
             pdf.cell(0, 6, f"{i}. {policy.get('policy_title', '未知政策')}", ln=True)
 
-            pdf.set_font("Helvetica", "", self.body_font_size)
+            pdf.set_font(self.font_family, "", self.body_font_size)
             details = [
                 f"   来源: {policy.get('policy_source', 'N/A')}",
                 f"   匹配级别: {policy.get('match_level', 'N/A')}",
@@ -254,12 +283,12 @@ class PDFExportService:
     def _add_risk_assessment(self, pdf: FPDF, risks: List[Dict[str, Any]]):
         """添加风险评估部分"""
         pdf.ln(5)
-        pdf.set_font("Helvetica", "B", self.heading_font_size)
+        pdf.set_font(self.font_family, "B", self.heading_font_size)
         pdf.set_x(self.margin)
         pdf.cell(0, 8, "五、风险评估结果", ln=True)
 
         if not risks:
-            pdf.set_font("Helvetica", "I", self.body_font_size)
+            pdf.set_font(self.font_family, "I", self.body_font_size)
             pdf.set_x(self.margin + 5)
             pdf.cell(0, 5, "未发现明显风险", ln=True)
             return
@@ -268,11 +297,11 @@ class PDFExportService:
             severity = risk.get("severity", "low")
             severity_text = self._get_severity_text(severity)
 
-            pdf.set_font("Helvetica", "B", self.subheading_font_size)
+            pdf.set_font(self.font_family, "B", self.subheading_font_size)
             pdf.set_x(self.margin + 5)
             pdf.cell(0, 6, f"{i}. [{severity_text}] {risk.get('risk_type', '未知风险')}", ln=True)
 
-            pdf.set_font("Helvetica", "", self.body_font_size)
+            pdf.set_font(self.font_family, "", self.body_font_size)
             pdf.set_x(self.margin + 5)
             pdf.multi_cell(0, 5, f"   描述: {risk.get('description', 'N/A')}")
 
@@ -286,23 +315,23 @@ class PDFExportService:
     def _add_optimization_suggestions(self, pdf: FPDF, suggestions: List[Dict[str, Any]]):
         """添加优化建议部分"""
         pdf.ln(5)
-        pdf.set_font("Helvetica", "B", self.heading_font_size)
+        pdf.set_font(self.font_family, "B", self.heading_font_size)
         pdf.set_x(self.margin)
         pdf.cell(0, 8, "七、优化建议", ln=True)
 
         if not suggestions:
-            pdf.set_font("Helvetica", "I", self.body_font_size)
+            pdf.set_font(self.font_family, "I", self.body_font_size)
             pdf.set_x(self.margin + 5)
             pdf.cell(0, 5, "暂无优化建议", ln=True)
             return
 
         for i, suggestion in enumerate(suggestions[:5], 1):
-            pdf.set_font("Helvetica", "B", self.subheading_font_size)
+            pdf.set_font(self.font_family, "B", self.subheading_font_size)
             pdf.set_x(self.margin + 5)
             priority = self._get_priority_text(suggestion.get("priority", "medium"))
             pdf.cell(0, 6, f"{i}. [{priority}] {suggestion.get('category', '未知类别')}", ln=True)
 
-            pdf.set_font("Helvetica", "", self.body_font_size)
+            pdf.set_font(self.font_family, "", self.body_font_size)
             pdf.set_x(self.margin + 5)
             pdf.multi_cell(0, 5, f"   现状: {suggestion.get('current_situation', 'N/A')}")
 
@@ -317,23 +346,23 @@ class PDFExportService:
     def _add_anomalies_section(self, pdf: FPDF, anomalies: List[Dict[str, Any]]):
         """添加财务异常部分"""
         pdf.ln(5)
-        pdf.set_font("Helvetica", "B", self.heading_font_size)
+        pdf.set_font(self.font_family, "B", self.heading_font_size)
         pdf.set_x(self.margin)
         pdf.cell(0, 8, "二、财务异常检测", ln=True)
 
         if not anomalies:
-            pdf.set_font("Helvetica", "I", self.body_font_size)
+            pdf.set_font(self.font_family, "I", self.body_font_size)
             pdf.set_x(self.margin + 5)
             pdf.cell(0, 5, "未检测到财务异常", ln=True)
             return
 
         for i, anomaly in enumerate(anomalies[:10], 1):
             severity = self._get_severity_text(anomaly.get("severity", "low"))
-            pdf.set_font("Helvetica", "B", self.subheading_font_size)
+            pdf.set_font(self.font_family, "B", self.subheading_font_size)
             pdf.set_x(self.margin + 5)
             pdf.cell(0, 6, f"{i}. [{severity}] {anomaly.get('anomaly_type', '未知异常')}", ln=True)
 
-            pdf.set_font("Helvetica", "", self.body_font_size)
+            pdf.set_font(self.font_family, "", self.body_font_size)
             pdf.set_x(self.margin + 5)
             pdf.multi_cell(0, 5, f"   描述: {anomaly.get('description', 'N/A')}")
 
@@ -345,11 +374,11 @@ class PDFExportService:
     def _add_trends_section(self, pdf: FPDF, trends: Dict[str, Any]):
         """添加趋势分析部分"""
         pdf.ln(5)
-        pdf.set_font("Helvetica", "B", self.heading_font_size)
+        pdf.set_font(self.font_family, "B", self.heading_font_size)
         pdf.set_x(self.margin)
         pdf.cell(0, 8, "三、趋势分析", ln=True)
 
-        pdf.set_font("Helvetica", "", self.body_font_size)
+        pdf.set_font(self.font_family, "", self.body_font_size)
         for key, value in trends.items():
             pdf.set_x(self.margin + 5)
             pdf.cell(0, 5, f"{key}: {value}", ln=True)
@@ -357,40 +386,40 @@ class PDFExportService:
     def _add_recommendations(self, pdf: FPDF, recommendations: List[str]):
         """添加建议部分"""
         pdf.ln(5)
-        pdf.set_font("Helvetica", "B", self.heading_font_size)
+        pdf.set_font(self.font_family, "B", self.heading_font_size)
         pdf.set_x(self.margin)
         pdf.cell(0, 8, "四、改进建议", ln=True)
 
         if not recommendations:
-            pdf.set_font("Helvetica", "I", self.body_font_size)
+            pdf.set_font(self.font_family, "I", self.body_font_size)
             pdf.set_x(self.margin + 5)
             pdf.cell(0, 5, "暂无建议", ln=True)
             return
 
         for i, rec in enumerate(recommendations[:5], 1):
-            pdf.set_font("Helvetica", "", self.body_font_size)
+            pdf.set_font(self.font_family, "", self.body_font_size)
             pdf.set_x(self.margin + 5)
             pdf.multi_cell(0, 5, f"{i}. {rec}")
 
     def _add_clauses_section(self, pdf: FPDF, clauses: List[Dict[str, Any]]):
         """添加合同条款部分"""
         pdf.ln(5)
-        pdf.set_font("Helvetica", "B", self.heading_font_size)
+        pdf.set_font(self.font_family, "B", self.heading_font_size)
         pdf.set_x(self.margin)
         pdf.cell(0, 8, "二、合同条款分析", ln=True)
 
         if not clauses:
-            pdf.set_font("Helvetica", "I", self.body_font_size)
+            pdf.set_font(self.font_family, "I", self.body_font_size)
             pdf.set_x(self.margin + 5)
             pdf.cell(0, 5, "未提取到条款", ln=True)
             return
 
         for i, clause in enumerate(clauses[:10], 1):
-            pdf.set_font("Helvetica", "B", self.subheading_font_size)
+            pdf.set_font(self.font_family, "B", self.subheading_font_size)
             pdf.set_x(self.margin + 5)
             pdf.cell(0, 6, f"{i}. {clause.get('clause_type', '未知条款')}", ln=True)
 
-            pdf.set_font("Helvetica", "", self.body_font_size)
+            pdf.set_font(self.font_family, "", self.body_font_size)
             pdf.set_x(self.margin + 5)
             pdf.multi_cell(0, 5, f"   内容: {clause.get('content', 'N/A')[:100]}...")
 
@@ -403,23 +432,23 @@ class PDFExportService:
     def _add_risks_section(self, pdf: FPDF, risks: List[Dict[str, Any]]):
         """添加风险评估部分"""
         pdf.ln(5)
-        pdf.set_font("Helvetica", "B", self.heading_font_size)
+        pdf.set_font(self.font_family, "B", self.heading_font_size)
         pdf.set_x(self.margin)
         pdf.cell(0, 8, "三、风险评估", ln=True)
 
         if not risks:
-            pdf.set_font("Helvetica", "I", self.body_font_size)
+            pdf.set_font(self.font_family, "I", self.body_font_size)
             pdf.set_x(self.margin + 5)
             pdf.cell(0, 5, "未发现明显风险", ln=True)
             return
 
         for i, risk in enumerate(risks[:10], 1):
             severity = self._get_severity_text(risk.get("severity", "low"))
-            pdf.set_font("Helvetica", "B", self.subheading_font_size)
+            pdf.set_font(self.font_family, "B", self.subheading_font_size)
             pdf.set_x(self.margin + 5)
             pdf.cell(0, 6, f"{i}. [{severity}] {risk.get('risk_type', '未知风险')}", ln=True)
 
-            pdf.set_font("Helvetica", "", self.body_font_size)
+            pdf.set_font(self.font_family, "", self.body_font_size)
             pdf.set_x(self.margin + 5)
             pdf.multi_cell(0, 5, f"   描述: {risk.get('description', 'N/A')}")
 
@@ -432,18 +461,18 @@ class PDFExportService:
     def _add_findings_section(self, pdf: FPDF, findings: List[Dict[str, Any]]):
         """添加关键发现部分"""
         pdf.ln(5)
-        pdf.set_font("Helvetica", "B", self.heading_font_size)
+        pdf.set_font(self.font_family, "B", self.heading_font_size)
         pdf.set_x(self.margin)
         pdf.cell(0, 8, "四、关键发现", ln=True)
 
         if not findings:
-            pdf.set_font("Helvetica", "I", self.body_font_size)
+            pdf.set_font(self.font_family, "I", self.body_font_size)
             pdf.set_x(self.margin + 5)
             pdf.cell(0, 5, "未发现关键问题", ln=True)
             return
 
         for i, finding in enumerate(findings[:5], 1):
-            pdf.set_font("Helvetica", "", self.body_font_size)
+            pdf.set_font(self.font_family, "", self.body_font_size)
             pdf.set_x(self.margin + 5)
             pdf.multi_cell(0, 5, f"{i}. {finding.get('description', 'N/A')}")
 
@@ -499,8 +528,7 @@ class PDFExportService:
         Returns:
             PDF 文件的字节数据
         """
-        pdf = FPDF()
-        pdf.set_auto_page_break(auto=True, margin=20)
+        pdf = self._create_pdf()
         pdf.add_page()
 
         self._add_header(pdf, "政策报告")
@@ -521,22 +549,22 @@ class PDFExportService:
 
         self._add_footer(pdf)
 
-        return pdf.output()
+        return pdf.output(dest="S").encode("latin-1")
 
     def _add_policies_section(self, pdf: FPDF, policies: List[Dict[str, Any]]):
         """添加政策列表部分"""
         pdf.ln(5)
-        pdf.set_font("Helvetica", "B", self.heading_font_size)
+        pdf.set_font(self.font_family, "B", self.heading_font_size)
         pdf.set_x(self.margin)
         pdf.cell(0, 8, "一、政策列表", ln=True)
 
         for i, policy in enumerate(policies, 1):
             pdf.ln(3)
-            pdf.set_font("Helvetica", "B", self.subheading_font_size)
+            pdf.set_font(self.font_family, "B", self.subheading_font_size)
             pdf.set_x(self.margin)
             pdf.cell(0, 6, f"{i}. {policy.get('policy_title', policy.get('title', '未知政策'))}", ln=True)
 
-            pdf.set_font("Helvetica", "", self.body_font_size)
+            pdf.set_font(self.font_family, "", self.body_font_size)
 
             details = []
             if policy.get("policy_source"):
@@ -583,7 +611,7 @@ class PDFExportService:
 
             if pdf.get_y() > 250:
                 pdf.add_page()
-                pdf.set_font("Helvetica", "B", self.heading_font_size)
+                pdf.set_font(self.font_family, "B", self.heading_font_size)
                 pdf.set_x(self.margin)
                 pdf.cell(0, 8, "（续）", ln=True)
                 pdf.ln(3)
@@ -591,7 +619,7 @@ class PDFExportService:
     def _add_empty_section(self, pdf: FPDF, message: str):
         """添加空数据提示"""
         pdf.ln(5)
-        pdf.set_font("Helvetica", "I", self.body_font_size)
+        pdf.set_font(self.font_family, "I", self.body_font_size)
         pdf.set_x(self.margin + 5)
         pdf.cell(0, 5, message, ln=True)
 

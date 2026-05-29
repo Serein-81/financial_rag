@@ -47,6 +47,7 @@ RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debia
     libgl1 \
     libglib2.0-0 \
     ghostscript \
+    fonts-arphic-gbsn00lp \
     && rm -rf /var/lib/apt/lists/*\
     && apt-get clean
 
