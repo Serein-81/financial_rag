@@ -44,6 +44,7 @@ class ClauseType(str, Enum):
     INDEMNIFICATION = "indemnification"  # 赔偿条款
     ASSIGNMENT = "assignment"  # 转让条款
     GOVERNING_LAW = "governing_law"  # 适用法律条款
+    OTHER = "other"  # 其他条款
 
 
 class ReviewStatus(str, Enum):

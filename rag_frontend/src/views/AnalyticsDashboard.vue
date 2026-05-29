@@ -33,7 +33,7 @@ const authStore = useAuthStore()
 const groupChatStore = useGroupChatStore()
 
 const isAdmin = computed(() => authStore.isAdmin || localStorage.getItem('rag_user_role') === 'admin')
-const currentUserId = computed(() => authStore.userEmail || '')
+const currentUserId = computed(() => authStore.userId || '')
 
 const isLoading = ref(false)
 const error = ref<string | null>(null)
