@@ -54,3 +54,16 @@ from .scheduled_task import (
 from .workflow_trace import WorkflowTrace, WorkflowNodeExecution, WorkflowStatus
 from .custom_tool import CustomTool, CustomToolKind, CustomToolStatus
 from .document_enrichment_job import EnrichmentJob
+from .feedback import (
+    UserFeedback,
+    FailureCase,
+    ImprovementRecord,
+    FeedbackType,
+    FailureType,
+    FailureStatus,
+    ImprovementType
+)
+from .user_multimodal_config import (
+    UserMultiModalConfig,
+    UserMultiModalUsageLog
+)

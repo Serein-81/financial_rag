@@ -239,6 +239,18 @@ const menuGroups = computed<MenuGroup[]>(() => {
         { path: '/chat-logs', icon: ScrollText, label: '日志详情', name: 'chat-logs' },
         { path: '/notifications', icon: Bell, label: '通知中心', name: 'notifications' },
         { path: '/task-management', icon: Clock, label: '定时任务', name: 'task-management' },
+        { path: '/multimodal-usage', icon: BarChart, label: '多模态用量', name: 'multimodal-usage' },
+        { path: '/feedback-management', icon: ListChecks, label: '反馈管理', name: 'feedback-management', permission: 'admin' },
+        { path: '/failure-analysis', icon: AlertTriangle, label: '失败分析', name: 'failure-analysis', permission: 'admin' },
+      ]
+    },
+    {
+      id: 'preferences',
+      title: '个人偏好',
+      icon: Settings,
+      defaultExpanded: false,
+      items: [
+        { path: '/settings/multimodal', icon: Settings, label: '多模态配置', name: 'multimodal-settings' },
       ]
     },
     {
@@ -247,6 +259,7 @@ const menuGroups = computed<MenuGroup[]>(() => {
       icon: Wrench,
       defaultExpanded: false,
       items: [
+        { path: '/settings/models', icon: Bot, label: 'API模型配置', name: 'model-settings', permission: 'admin' },
         { path: '/custom-tools', icon: Wrench, label: '智能体工具', name: 'custom-tools', permission: 'admin' },
         { path: '/agent-center', icon: Bot, label: '智能体中心', name: 'agent-center', permission: 'admin' },
         { path: '/intent-debug', icon: Brain, label: '意图调试', name: 'intent-debug', permission: 'admin' },

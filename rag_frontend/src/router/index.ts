@@ -255,6 +255,39 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/AnimationDemoView.vue'),
     meta: { requiresAuth: true },
   },
+  // === 模型配置中心（对话/向量/重排）· 管理员 ===
+  {
+    path: '/settings/models',
+    name: 'model-settings',
+    component: () => import('@/views/ModelSettingsView.vue'),
+    meta: { requiresAuth: true, requiresAdmin: true },
+  },
+  // === P0 新增: 多模态配置 + 用量 ===
+  {
+    path: '/settings/multimodal',
+    name: 'multimodal-settings',
+    component: () => import('@/views/MultiModalSettingsView.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/multimodal-usage',
+    name: 'multimodal-usage',
+    component: () => import('@/views/MultiModalUsageView.vue'),
+    meta: { requiresAuth: true },
+  },
+  // === P1 反馈管理后台 ===
+  {
+    path: '/feedback-management',
+    name: 'feedback-management',
+    component: () => import('@/views/FeedbackManagementView.vue'),
+    meta: { requiresAuth: true, requiresAdmin: true },
+  },
+  {
+    path: '/failure-analysis',
+    name: 'failure-analysis',
+    component: () => import('@/views/FailureAnalysisView.vue'),
+    meta: { requiresAuth: true, requiresAdmin: true },
+  },
   {
     path: '/:pathMatch(.*)*',
     name: 'not-found',
