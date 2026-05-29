@@ -318,6 +318,9 @@ async def process_document_task(doc_id: UUID, tenant_id: str):
         except Exception as e:
             print(f"写入领域信息失败: {e}")
 
+    # ── Step 2.5: 多模态表格解析 + 用量记录（尽力而为，失败不阻塞主流程）──
+    await _record_multimodal_usage(doc_id, tenant_id, structured_doc)
+
     # ── Step 3-5: 切块 + 元数据注入 + 关系构建（无 DB 连接）──
     from app.chunkers import domain_chunker_factory, metadata_injector, relationship_builder
     chunker = domain_chunker_factory.get_chunker(domain)
@@ -403,6 +406,44 @@ async def process_document_task(doc_id: UUID, tenant_id: str):
     if domain == "legal":
         import asyncio as _asyncio
         _asyncio.ensure_future(_run_phase2_enrichment(doc_id, tenant_id, chunks_to_insert))
+
+
+async def _record_multimodal_usage(doc_id: UUID, tenant_id: str, structured_doc) -> None:
+    """将解析出的表格块送入 MultiModalService，使多模态解析与用量统计在入库时真实发生。
+
+    尽力而为：此处任何失败都不得中断主入库流程。
+    图片/图表块当前未在 StructuredDocument 中保留原始字节，暂不接入 parse_chart。
+    """
+    if structured_doc is None:
+        return
+
+    from app.models.structured_document import BlockType
+    table_blocks = [
+        b for b in (structured_doc.raw_blocks or [])
+        if b.type == BlockType.TABLE and b.table_data and b.table_data.rows
+    ]
+    if not table_blocks:
+        return
+
+    try:
+        from app.services.multimodal_service import get_multimodal_service
+        async with AsyncSessionLocal() as db:
+            if not settings.PGBOUNCER_ENABLED:
+                from app.middleware.tenant_middleware import set_tenant_context_for_db
+                await set_tenant_context_for_db(db, tenant_id)
+            service = await get_multimodal_service(db, tenant_id)
+            for block in table_blocks:
+                td = block.table_data
+                try:
+                    await service.parse_table(
+                        [td.headers] + td.rows,
+                        caption=td.caption,
+                        document_id=doc_id,
+                    )
+                except Exception as e:
+                    print(f"[多模态] 表格用量记录失败 doc={doc_id}: {e}")
+    except Exception as e:
+        print(f"[多模态] 用量记录初始化失败 doc={doc_id}: {e}")
 
 
 async def _run_phase2_enrichment(doc_id: UUID, tenant_id: str, chunks: list):
@@ -1001,6 +1042,15 @@ async def upload_document_to_kb(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     visibility: Optional[str] = Form(None),
+    # G6: 分块策略参数（前端透传，后台 process_document_task 按 doc.meta_info 读取）
+    chunking_method: Optional[str] = Form(
+        None, description="分块方法: fixed | adaptive（默认按 .env / domain router）"
+    ),
+    min_chunk_size: Optional[int] = Form(None, description="最小块大小（字符）"),
+    max_chunk_size: Optional[int] = Form(None, description="最大块大小（字符）"),
+    enable_llm_boundary: Optional[bool] = Form(
+        None, description="自适应分块时是否启用 LLM 边界识别"
+    ),
     db: AsyncSession = Depends(get_db_with_tenant_context),
     current_user: User = Depends(get_current_user_from_token),
     tenant_id: str = Depends(validate_write_access)
@@ -1019,6 +1069,10 @@ async def upload_document_to_kb(
         background_tasks: 后台任务
         file: 上传的文件
         visibility: 文档可见性（private/public），企业知识库可选，私人知识库强制 private
+        chunking_method: 分块方法（fixed/adaptive），传入则覆盖默认
+        min_chunk_size: 自适应分块最小块大小（字符）
+        max_chunk_size: 自适应分块最大块大小（字符）
+        enable_llm_boundary: 自适应分块是否启用 LLM 边界识别
         db: 数据库会话（已设置租户上下文）
         current_user: 当前用户
         tenant_id: 当前租户ID（已验证写入权限）
@@ -1155,6 +1209,17 @@ async def upload_document_to_kb(
                 detail=f"Failed to upload file to storage: {str(e)}"
             )
 
+        # G6: 把分块策略持久化到 meta_info.chunking，供后台 process_document_task 读取
+        _chunking_meta = {
+            k: v for k, v in {
+                "method": chunking_method,
+                "min_chunk_size": min_chunk_size,
+                "max_chunk_size": max_chunk_size,
+                "enable_llm_boundary": enable_llm_boundary,
+            }.items() if v is not None
+        }
+        _doc_meta = {"chunking": _chunking_meta} if _chunking_meta else {}
+
         # 写入数据库记录（document_visibility 已在前面确定）
         new_doc = Document(
             kb_id=kb_id,
@@ -1166,7 +1231,8 @@ async def upload_document_to_kb(
             hash=file_hash,
             status="pending",
             tenant_id=tenant_id,
-            visibility=document_visibility
+            visibility=document_visibility,
+            meta_info=_doc_meta,
         )
         db.add(new_doc)
         await db.commit()
