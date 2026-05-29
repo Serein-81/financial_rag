@@ -33,9 +33,14 @@ def route_by_intent(state: AgentState) -> str:
     """
     intent = state.get("intent")
     intent_confidence = state.get("intent_confidence", 0.0)
-    
+
     logger.info(f"[路由] Intent={intent}, Confidence={intent_confidence:.2f}")
-    
+
+    # Adaptive RAG：trivial 短路到 direct_answer，省 ~60% token
+    short_circuit = route_by_complexity(state)
+    if short_circuit is not None:
+        return short_circuit
+
     if intent is None:
         logger.info("[路由] 无意图信息，转向人工审核")
         return "human_review"
@@ -208,6 +213,68 @@ def create_iteration_check(max_iterations: int) -> Callable[[AgentState], str]:
         return "continue"
     
     return check_iteration
+
+
+def route_after_grader(state: AgentState) -> str:
+    """检索评分后的路由：充足则放行，不足且未达上限则改写重检。
+
+    Returns:
+        "rewrite" → 进入 query_rewriter（回流 rag_retrieval）
+        "proceed" → 进入下游 single_specialist_router
+    """
+    score = state.get("retrieval_quality_score") or 0.0
+    iters = state.get("retrieval_iterations") or 0
+    max_iters = state.get("max_retrieval_iterations") or 2
+
+    if score < 0.6 and iters < max_iters:
+        logger.info(
+            f"[路由] 检索评分 {score:.2f} 低于阈值，第 {iters + 1} 次改写"
+        )
+        return "rewrite"
+
+    logger.info(
+        f"[路由] 检索评分 {score:.2f} 达标或已达改写上限 ({iters}/{max_iters})，放行"
+    )
+    return "proceed"
+
+
+def route_after_faithfulness(state: AgentState) -> str:
+    """忠实度检查后的路由：达标进 reflection；不达标且未达上限则重生成。
+
+    Returns:
+        "regenerate" → 回到 aggregator 重新生成
+        "proceed" → 进入 reflection（或 final_answer）
+    """
+    score = state.get("faithfulness_score")
+    if score is None:
+        score = 1.0
+    regens = state.get("regenerate_count") or 0
+    max_regens = state.get("max_regenerate_count") or 1
+
+    if score < 0.7 and regens < max_regens:
+        logger.info(
+            f"[路由] 忠实度 {score:.2f} 低于阈值，第 {regens + 1} 次重生成"
+        )
+        return "regenerate"
+
+    logger.info(
+        f"[路由] 忠实度 {score:.2f} 达标或已达重生成上限 ({regens}/{max_regens})，放行"
+    )
+    return "proceed"
+
+
+def route_by_complexity(state: AgentState) -> Optional[str]:
+    """Adaptive RAG：根据 complexity 字段短路简单查询。
+
+    Returns:
+        "direct_answer" 若 complexity == "trivial"
+        None  → 不短路，走原有路由
+    """
+    complexity = state.get("complexity")
+    if complexity == "trivial":
+        logger.info("[路由] complexity=trivial，短路到 direct_answer")
+        return "direct_answer"
+    return None
 
 
 def create_error_check() -> Callable[[AgentState], str]:

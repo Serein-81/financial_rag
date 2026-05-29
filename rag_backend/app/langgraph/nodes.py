@@ -4,13 +4,14 @@ LangGraph 节点函数
 封装现有的 Agent 为 LangGraph 节点
 """
 
+import re
 import time
 import logging
-from typing import Dict, Any, Callable
+from typing import Dict, Any, Callable, Optional
 
 from .state import (
-    AgentState, 
-    SpecialistResult, 
+    AgentState,
+    SpecialistResult,
     SpecialistType,
     add_specialist_result,
     add_error,
@@ -18,6 +19,65 @@ from .state import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# 复杂度推断：trivial 触发 Adaptive RAG 短路
+_TRIVIAL_PATTERNS = re.compile(
+    r"^(你好|您好|hi|hello|嗨|hey|谢谢|thanks|感谢|再见|bye|拜拜)[\s,，.!！?？]*$",
+    re.IGNORECASE,
+)
+_REASONING_KEYWORDS = ("为什么", "如何", "怎么", "比较", "区别", "原因", "影响", "分析", "评估")
+
+
+def _build_aggregator_query_with_hint(state: AgentState) -> str:
+    """重生成时把 unfaithful 句作为修正信号附加到 query 上。
+
+    第一次进 aggregator 时（regenerate_count == 0），直接返回原 query。
+    第二次开始，会把 unfaithful_sentences 拼接为系统提示，让 aggregator 严格
+    依据 rag_context 重新作答。
+    """
+    original = state["user_query"]
+    regen = state.get("regenerate_count") or 0
+    unfaithful = state.get("unfaithful_sentences") or []
+
+    if regen <= 0 or not unfaithful:
+        return original
+
+    hint_lines = "\n".join(f"- {s}" for s in unfaithful[:5])
+    return (
+        f"{original}\n\n"
+        f"[忠实度修正第 {regen} 次] 上一次的答案包含以下未被资料支持的内容，"
+        f"请严格基于检索到的资料重新作答，避免编造任何事实：\n{hint_lines}"
+    )
+
+
+def _infer_complexity(query: str, agent_complexity: Optional[Any] = None) -> str:
+    """推断 query 复杂度，用于 Adaptive RAG 短路。
+
+    Returns:
+        "trivial"   - 闲聊/问候，跳过 RAG
+        "factual"   - 单跳事实查询
+        "reasoning" - 多跳推理
+        "deep"      - 调研型（预留）
+    """
+    q = (query or "").strip()
+    if not q or _TRIVIAL_PATTERNS.match(q) or len(q) <= 4:
+        return "trivial"
+
+    # 借用 agent 自身的复杂度信号（若有）
+    agent_value = None
+    if agent_complexity is not None:
+        agent_value = getattr(agent_complexity, "value", None) or str(agent_complexity)
+        agent_value = agent_value.lower()
+
+    if agent_value in ("very_high", "very_complex"):
+        return "deep"
+    if agent_value in ("high", "complex"):
+        return "reasoning"
+
+    if any(kw in q for kw in _REASONING_KEYWORDS):
+        return "reasoning"
+    return "factual"
 
 
 class AgentNodeFactory:
@@ -93,31 +153,38 @@ class AgentNodeFactory:
     def create_intent_node(self) -> Callable:
         """
         创建意图识别节点
-        
+
         封装 IntentRouterAgent
         """
         async def intent_node(state: AgentState) -> AgentState:
-            """意图识别节点 - 分类用户意图"""
+            """意图识别节点 - 分类用户意图 + 复杂度评估（Adaptive RAG）"""
             logger.info(f"[Intent] 分析意图: {state['user_query'][:50]}...")
-            
+
             try:
                 agent = self.get_or_create_agent("intent")
                 intent_result = await agent.analyze(
                     user_input=state["user_query"],
                     context=state["metadata"].get("receptionist_response")
                 )
-                
+
+                # Adaptive RAG：从 agent 结果或启发式规则推断复杂度
+                complexity = _infer_complexity(
+                    state["user_query"],
+                    getattr(intent_result, "complexity", None)
+                )
+
                 return {
                     **state,
                     "intent": intent_result.category,
                     "intent_confidence": intent_result.confidence,
                     "routing_strategy": intent_result.routing_strategy,
-                    "target_specialists": intent_result.target_specialists
+                    "target_specialists": intent_result.target_specialists,
+                    "complexity": complexity,
                 }
             except Exception as e:
                 logger.error(f"[Intent] 错误: {e}")
                 return add_error(state, f"Intent 错误: {str(e)}")
-        
+
         return intent_node
     
     def create_specialist_node(self, specialist_type: SpecialistType) -> Callable:
@@ -198,14 +265,21 @@ class AgentNodeFactory:
         创建 RAG 检索节点
         """
         async def rag_node(state: AgentState) -> AgentState:
-            """RAG 检索节点"""
-            logger.info("[RAG] 执行知识检索")
-            
+            """RAG 检索节点
+
+            优先使用 rewritten_query（来自 QueryRewriter 的回流），否则用原始 user_query。
+            """
+            effective_query = state.get("rewritten_query") or state["user_query"]
+            iter_count = state.get("retrieval_iterations") or 0
+            logger.info(
+                f"[RAG] 执行知识检索 (iter={iter_count}, query={effective_query[:50]!r})"
+            )
+
             try:
                 rag_retriever = self.get_or_create_agent("rag_retriever")
-                
+
                 docs = await rag_retriever.retrieve(
-                    query=state["user_query"],
+                    query=effective_query,
                     tenant_id=state["tenant_id"],
                     top_k=state["metadata"].get("rag_top_k", 5)
                 )
@@ -226,27 +300,32 @@ class AgentNodeFactory:
         创建聚合节点 - 汇总多个专家的结果
         """
         async def aggregator_node(state: AgentState) -> AgentState:
-            """聚合节点 - 汇总专家回答"""
+            """聚合节点 - 汇总专家回答
+
+            支持忠实度重生成：当 regenerate_count > 0 时，把上一次的 unfaithful 句
+            作为修正信号附加到 query 上，引导 aggregator 严格依据资料重答。
+            """
             logger.info(f"[Aggregator] 汇总 {len(state['specialist_results'])} 个专家结果")
-            
+
             try:
                 agent = self.get_or_create_agent("aggregator")
-                
+
+                effective_query = _build_aggregator_query_with_hint(state)
                 aggregated = await agent.aggregate(
-                    query=state["user_query"],
+                    query=effective_query,
                     specialist_results=state["specialist_results"],
                     rag_context=state.get("rag_context")
                 )
-                
+
                 return {
                     **state,
                     "aggregated_response": aggregated
                 }
-                
+
             except Exception as e:
                 logger.error(f"[Aggregator] 错误: {e}")
                 return add_error(state, f"Aggregator 错误: {str(e)}")
-        
+
         return aggregator_node
     
     def create_final_answer_node(self) -> Callable:

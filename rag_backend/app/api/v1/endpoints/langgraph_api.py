@@ -35,6 +35,8 @@ class LangGraphQueryRequest(BaseModel):
     enable_reflection: bool = Field(True, description="是否启用反思审核")
     enable_streaming: bool = Field(False, description="是否启用流式输出")
     enable_persistence: bool = Field(True, description="是否启用状态持久化")
+    enable_agentic_rag: bool = Field(True, description="是否启用 CRAG 闭环（检索评分+查询改写）")
+    enable_faithfulness_check: bool = Field(True, description="是否启用忠实度检查（幻觉检测）")
     confidence_threshold: float = Field(0.7, ge=0.0, le=1.0, description="置信度阈值")
     max_iterations: int = Field(10, ge=1, le=50, description="最大迭代次数")
     metadata: Optional[Dict[str, Any]] = Field(default_factory=dict, description="额外元数据")
@@ -73,20 +75,29 @@ _workflow_configs: Dict[str, Dict[str, Any]] = {}
 def get_workflow_builder(
     tenant_id: str,
     enable_reflection: bool = True,
-    enable_persistence: bool = True
+    enable_persistence: bool = True,
+    enable_agentic_rag: bool = True,
+    enable_faithfulness_check: bool = True,
 ) -> MultiAgentWorkflowBuilder:
     """获取或创建工作流构建器"""
-    key = f"{tenant_id}_{enable_reflection}_{enable_persistence}"
-    
+    key = (
+        f"{tenant_id}_{enable_reflection}_{enable_persistence}"
+        f"_{enable_agentic_rag}_{enable_faithfulness_check}"
+    )
+
     if key not in _workflow_builders:
         agents_registry = _create_agents_registry()
-        
+        quality_llm = _get_quality_llm_service()
+
         builder = MultiAgentWorkflowBuilder(
             agents_registry=agents_registry,
             enable_checkpointer=enable_persistence,
             enable_reflection=enable_reflection,
             max_iterations=10,
-            max_retries=3
+            max_retries=3,
+            enable_agentic_rag=enable_agentic_rag,
+            enable_faithfulness_check=enable_faithfulness_check,
+            quality_llm_service=quality_llm,
         )
         
         builder.compile()
@@ -95,10 +106,47 @@ def get_workflow_builder(
             "tenant_id": tenant_id,
             "enable_reflection": enable_reflection,
             "enable_persistence": enable_persistence,
+            "enable_agentic_rag": enable_agentic_rag,
+            "enable_faithfulness_check": enable_faithfulness_check,
             "created_at": datetime.now()
         }
-    
+
     return _workflow_builders[key]
+
+
+class _QualityLLMWrapper:
+    """把 BaseLLMAdapter 包装成 quality_nodes 期望的 {generate(prompt) -> str} 接口。
+
+    Adapter.generate() 返回 LLMResponse 对象，但 RetrievalGrader / QueryRewriter /
+    FaithfulnessChecker 直接处理字符串。这里做一层薄包装。
+    """
+
+    def __init__(self, adapter):
+        self._adapter = adapter
+
+    async def generate(self, prompt: str, max_tokens: int = 300) -> str:
+        response = await self._adapter.generate(
+            prompt=prompt,
+            temperature=0.0,
+            max_tokens=max_tokens,
+        )
+        return getattr(response, "content", str(response))
+
+
+def _get_quality_llm_service():
+    """获取质量评估用的 LLM 服务（用于 grader / rewriter / faithfulness checker）。
+
+    返回 None 时所有质量节点降级到规则模式，零额外 API 调用。
+    """
+    try:
+        from app.agent_framework.llm.factory import create_llm_adapter
+        adapter = create_llm_adapter()
+        return _QualityLLMWrapper(adapter)
+    except Exception as e:
+        logger.warning(
+            f"[langgraph_api] 未能获取质量评估 LLM，降级到规则模式: {e}"
+        )
+        return None
 
 
 def _create_agents_registry() -> Dict[str, Any]:
@@ -173,11 +221,13 @@ async def langgraph_query(
         builder = get_workflow_builder(
             tenant_id=tenant_context["tenant_id"],
             enable_reflection=request.enable_reflection,
-            enable_persistence=request.enable_persistence
+            enable_persistence=request.enable_persistence,
+            enable_agentic_rag=request.enable_agentic_rag,
+            enable_faithfulness_check=request.enable_faithfulness_check,
         )
-        
+
         config = {"configurable": {"thread_id": thread_id}} if request.enable_persistence else {}
-        
+
         result = await builder.invoke(
             session_id=session_id,
             tenant_id=tenant_context["tenant_id"],
@@ -250,11 +300,13 @@ async def langgraph_stream(
         builder = get_workflow_builder(
             tenant_id=tenant_context["tenant_id"],
             enable_reflection=request.enable_reflection,
-            enable_persistence=request.enable_persistence
+            enable_persistence=request.enable_persistence,
+            enable_agentic_rag=request.enable_agentic_rag,
+            enable_faithfulness_check=request.enable_faithfulness_check,
         )
-        
+
         config = {"configurable": {"thread_id": thread_id}} if request.enable_persistence else {}
-        
+
         try:
             async for state in builder.stream(
                 session_id=session_id,

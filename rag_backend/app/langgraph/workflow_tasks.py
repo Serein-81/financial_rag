@@ -71,14 +71,27 @@ class LangGraphWorkflowTask(ARAbstractTask):
         return self._postgres_saver
     
     def _get_workflow_builder(self, agents_registry: Dict[str, Any]):
-        """获取工作流构建器"""
+        """获取工作流构建器（默认启用 Agentic RAG 闭环 + 忠实度检查）"""
         if self._workflow_builder is None:
+            quality_llm = self._get_quality_llm()
             self._workflow_builder = MultiAgentWorkflowBuilder(
                 agents_registry=agents_registry,
                 enable_checkpointer=True,
-                enable_reflection=True
+                enable_reflection=True,
+                enable_agentic_rag=True,
+                enable_faithfulness_check=True,
+                quality_llm_service=quality_llm,
             )
         return self._workflow_builder
+
+    @staticmethod
+    def _get_quality_llm():
+        """获取质量评估 LLM 包装（与 langgraph_api 共用同一份 wrapper）。"""
+        try:
+            from app.api.v1.endpoints.langgraph_api import _get_quality_llm_service
+            return _get_quality_llm_service()
+        except Exception:
+            return None
     
     async def _update_task_status(
         self,

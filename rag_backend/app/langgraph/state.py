@@ -163,6 +163,26 @@ class AgentState(BaseModel):
     needs_clarification: bool = False
     clarification_request: Optional[Dict[str, Any]] = None
 
+    # ── 复杂度路由（Adaptive RAG） ──
+    # trivial: 闲聊/问候，跳过整条链路
+    # factual: 单跳事实，走 RAG + 单专家
+    # reasoning: 多跳推理，走完整链路
+    # deep: 调研型，预留给 Orchestrator-Worker
+    complexity: Optional[str] = None
+
+    # ── 检索质量评分（CRAG 闭环） ──
+    retrieval_quality_score: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    missing_aspects: List[str] = Field(default_factory=list)
+    retrieval_iterations: int = Field(default=0, ge=0)
+    max_retrieval_iterations: int = Field(default=2, ge=0, le=5)
+    rewritten_query: Optional[str] = None
+
+    # ── 忠实度检查（Hallucination Checker） ──
+    faithfulness_score: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    unfaithful_sentences: List[str] = Field(default_factory=list)
+    regenerate_count: int = Field(default=0, ge=0)
+    max_regenerate_count: int = Field(default=1, ge=0, le=3)
+
     # ── 兼容 TypedDict 的 dict-style API ──
 
     def __getitem__(self, key):

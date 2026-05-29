@@ -18,7 +18,14 @@ from .conditional import (
     route_by_intent,
     route_by_specialists,
     route_reflection_result,
-    create_parallel_routing
+    create_parallel_routing,
+    route_after_grader,
+    route_after_faithfulness,
+)
+from .quality_nodes import (
+    RetrievalGrader,
+    QueryRewriter,
+    FaithfulnessChecker,
 )
 
 logger = logging.getLogger(__name__)
@@ -39,11 +46,14 @@ class MultiAgentWorkflowBuilder:
         enable_reflection: bool = True,
         max_iterations: int = 10,
         max_retries: int = 3,
-        db_session_factory=None
+        db_session_factory=None,
+        enable_agentic_rag: bool = True,
+        enable_faithfulness_check: bool = True,
+        quality_llm_service=None,
     ):
         """
         初始化工作流构建器
-        
+
         Args:
             agents_registry: Agent 注册表
             enable_checkpointer: 是否启用状态持久化
@@ -51,6 +61,9 @@ class MultiAgentWorkflowBuilder:
             max_iterations: 最大迭代次数
             max_retries: 最大重试次数
             db_session_factory: 数据库会话工厂（用于 PostgresSaver）
+            enable_agentic_rag: 是否启用 CRAG 闭环（grader + query rewriter）
+            enable_faithfulness_check: 是否启用忠实度检查（hallucination checker）
+            quality_llm_service: 评估/改写/核查使用的 LLM 服务（None 时降级到规则模式）
         """
         self.agents_registry = agents_registry
         self.enable_checkpointer = enable_checkpointer
@@ -58,17 +71,23 @@ class MultiAgentWorkflowBuilder:
         self.max_iterations = max_iterations
         self.max_retries = max_retries
         self.db_session_factory = db_session_factory
-        
+        self.enable_agentic_rag = enable_agentic_rag
+        self.enable_faithfulness_check = enable_faithfulness_check
+        self.quality_llm_service = quality_llm_service
+
         self.node_factory = AgentNodeFactory(agents_registry)
         self.graph: Optional[StateGraph] = None
         self.compiled_graph: Optional[Any] = None
         self._postgres_saver = None
-        
+
         logger.info("[WorkflowBuilder] 初始化完成")
         logger.info(f"  - Checkpointer: {enable_checkpointer}")
         logger.info(f"  - Reflection: {enable_reflection}")
         logger.info(f"  - Max Iterations: {max_iterations}")
         logger.info(f"  - Max Retries: {max_retries}")
+        logger.info(f"  - Agentic RAG (CRAG): {enable_agentic_rag}")
+        logger.info(f"  - Faithfulness Check: {enable_faithfulness_check}")
+        logger.info(f"  - Quality LLM: {'启用' if quality_llm_service else '规则模式'}")
         logger.info(f"  - PostgresSaver: {'启用' if db_session_factory else '未配置(使用 MemorySaver)'}")
     
     def build(self) -> StateGraph:
@@ -95,6 +114,17 @@ class MultiAgentWorkflowBuilder:
         workflow.add_node("intent", self.node_factory.create_intent_node())
         
         workflow.add_node("rag_retrieval", self.node_factory.create_rag_retrieval_node())
+
+        if self.enable_agentic_rag:
+            grader = RetrievalGrader(llm_service=self.quality_llm_service)
+            rewriter = QueryRewriter(llm_service=self.quality_llm_service)
+            workflow.add_node("retrieval_grader", grader.as_node())
+            workflow.add_node("query_rewriter", rewriter.as_node())
+
+        if self.enable_faithfulness_check:
+            checker = FaithfulnessChecker(llm_service=self.quality_llm_service)
+            workflow.add_node("faithfulness_checker", checker.as_node())
+            workflow.add_node("regenerate_aggregator", self._create_regenerate_aggregator_node())
         
         workflow.add_node("finance_specialist", 
                          self.node_factory.create_specialist_node(SpecialistType.FINANCE))
@@ -133,11 +163,19 @@ class MultiAgentWorkflowBuilder:
         workflow.add_edge("legal_specialist", "aggregator")
         workflow.add_edge("report_specialist", "aggregator")
         workflow.add_edge("direct_answer", "aggregator")
-        
-        if self.enable_reflection:
+
+        # 忠实度检查：aggregator → faithfulness_checker → (reflection | regenerate)
+        if self.enable_faithfulness_check:
+            workflow.add_edge("aggregator", "faithfulness_checker")
+            workflow.add_edge("regenerate_aggregator", "aggregator")
+        elif self.enable_reflection:
             workflow.add_edge("aggregator", "reflection")
         else:
             workflow.add_edge("aggregator", "final_answer")
+
+        # Agentic RAG：rag_retrieval → grader → (rewriter | single_specialist_router)
+        if self.enable_agentic_rag:
+            workflow.add_edge("query_rewriter", "rag_retrieval")
         
         workflow.add_edge("final_answer", END)
         workflow.add_edge("final_answer_with_suggestions", END)
@@ -160,11 +198,35 @@ class MultiAgentWorkflowBuilder:
             }
         )
         
-        workflow.add_conditional_edges(
-            "rag_retrieval",
-            lambda state: "single_specialist_router",
-            {"single_specialist_router": "single_specialist_router"}
-        )
+        # rag_retrieval 路由：启用 CRAG 时插入 grader，否则直接进 single_specialist_router
+        if self.enable_agentic_rag:
+            workflow.add_edge("rag_retrieval", "retrieval_grader")
+            workflow.add_conditional_edges(
+                "retrieval_grader",
+                route_after_grader,
+                {
+                    "rewrite": "query_rewriter",
+                    "proceed": "single_specialist_router",
+                }
+            )
+        else:
+            workflow.add_conditional_edges(
+                "rag_retrieval",
+                lambda state: "single_specialist_router",
+                {"single_specialist_router": "single_specialist_router"}
+            )
+
+        # 忠实度检查后路由：达标进 reflection / final_answer；不达标重新生成
+        if self.enable_faithfulness_check:
+            faith_targets = {
+                "regenerate": "regenerate_aggregator",
+                "proceed": "reflection" if self.enable_reflection else "final_answer",
+            }
+            workflow.add_conditional_edges(
+                "faithfulness_checker",
+                route_after_faithfulness,
+                faith_targets
+            )
         
         workflow.add_conditional_edges(
             "single_specialist_router",
@@ -276,6 +338,28 @@ class MultiAgentWorkflowBuilder:
         
         return final_answer_with_suggestions_node
     
+    def _create_regenerate_aggregator_node(self) -> Callable:
+        """重生成桥接节点：增加 regenerate_count 并清空旧响应，让 aggregator 重新生成。
+
+        被 faithfulness_checker 在分数不达标时触发，通向 aggregator。
+        """
+        async def regenerate_node(state: AgentState) -> AgentState:
+            count = state.get("regenerate_count") or 0
+            unfaithful = state.get("unfaithful_sentences") or []
+            logger.warning(
+                f"[Regenerate] 触发重生成 ({count + 1}), "
+                f"unfaithful={len(unfaithful)} 句"
+            )
+            return {
+                **state,
+                "regenerate_count": count + 1,
+                "aggregated_response": None,
+                "faithfulness_score": None,
+                "unfaithful_sentences": [],
+            }
+
+        return regenerate_node
+
     def _create_error_handler_node(self) -> Callable:
         """创建错误处理节点"""
         async def error_handler_node(state: AgentState) -> AgentState:
