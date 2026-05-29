@@ -31,6 +31,21 @@ from app.core.exceptions import (
 )
 
 
+class _AgenticLLMBridge:
+    """把 BaseLLMAdapter 适配成 Agentic 节点期望的 ``generate(prompt, max_tokens) -> str``。
+
+    RetrievalPlanner / ResultEvaluator 约定 llm_service.generate 返回纯文本字符串，
+    而底层适配器返回 LLMResponse 对象，这里做一层薄封装。
+    """
+
+    def __init__(self, adapter):
+        self._adapter = adapter
+
+    async def generate(self, prompt: str, max_tokens: int = 300) -> str:
+        resp = await self._adapter.generate(prompt, temperature=0.1, max_tokens=max_tokens)
+        return resp.content if hasattr(resp, "content") else str(resp)
+
+
 class _SingletonMeta(type):
     """
     单例元类
@@ -285,10 +300,23 @@ class EnterpriseAgentService:
         else:
             return await self._chat_langchain(user_input, kb_id, session_id, history, user_id)
     
-    async def chat_stream(self, user_input: str, kb_id: str, session_id: str, history: list, user_id: str = None, tenant_id: str = None) -> AsyncGenerator[str, None]:
+    async def chat_stream(
+        self,
+        user_input: str,
+        kb_id: str,
+        session_id: str,
+        history: list,
+        user_id: str = None,
+        tenant_id: str = None,
+        retrieval_method: Optional[str] = None,
+        max_iterations: Optional[int] = None,
+        top_k: Optional[int] = None,
+        enable_rerank: Optional[bool] = None,
+        enable_graph_expansion: Optional[bool] = None,
+    ) -> AsyncGenerator[str, None]:
         """
         流式对话（集成记忆系统）
-        
+
         Args:
             user_input: 用户输入
             kb_id: 知识库ID
@@ -296,12 +324,24 @@ class EnterpriseAgentService:
             history: 对话历史（已废弃，使用记忆系统替代）
             user_id: 用户ID
             tenant_id: 租户ID（用于图谱检索）
-            
+            retrieval_method: 检索方法覆写（simple/graphrag/agentic，None 走自动路由）
+            max_iterations: Agentic 最大迭代轮数（仅 agentic 生效）
+            top_k: 引用片段数量（None 走默认 5）
+            enable_rerank: 是否启用重排序（None 按 .env 配置）
+            enable_graph_expansion: 是否启用图谱扩展（None 按默认）
+
         Yields:
-            逐步生成的内容
+            逐步生成的内容；额外通过 `__META_EVENT__:` 上报检索元数据
         """
         if self.use_custom_framework:
-            async for chunk in self._chat_stream_custom(user_input, kb_id, session_id, history, user_id, tenant_id):
+            async for chunk in self._chat_stream_custom(
+                user_input, kb_id, session_id, history, user_id, tenant_id,
+                retrieval_method=retrieval_method,
+                max_iterations=max_iterations,
+                top_k=top_k,
+                enable_rerank=enable_rerank,
+                enable_graph_expansion=enable_graph_expansion,
+            ):
                 yield chunk
         else:
             async for chunk in self._chat_stream_langchain(user_input, kb_id, session_id, history, user_id):
@@ -528,11 +568,40 @@ class EnterpriseAgentService:
             traceback.print_exc()
             return f"抱歉，处理过程中出现错误：{str(e)}"
     
-    async def _chat_stream_custom(self, user_input: str, kb_id: str, session_id: str, history: list, user_id: str, tenant_id: str = None) -> AsyncGenerator[str, None]:
+    async def _chat_stream_custom(
+        self,
+        user_input: str,
+        kb_id: str,
+        session_id: str,
+        history: list,
+        user_id: str,
+        tenant_id: str = None,
+        retrieval_method: Optional[str] = None,
+        max_iterations: Optional[int] = None,
+        top_k: Optional[int] = None,
+        enable_rerank: Optional[bool] = None,
+        enable_graph_expansion: Optional[bool] = None,
+    ) -> AsyncGenerator[str, None]:
         """
         自定义框架的流式对话（集成记忆系统）
         """
         print(f"[STREAM] [自定义框架] 开始流式处理: {user_input[:50]}...")
+        # G3: 检索参数覆写（None 走默认）；G1/G2: 元数据收集
+        _method = (retrieval_method or "").lower().strip()
+        _effective_top_k = top_k if (top_k is not None and top_k > 0) else 5
+        _effective_enable_rerank = True if enable_rerank is None else bool(enable_rerank)
+        _effective_enable_graph = True if enable_graph_expansion is None else bool(enable_graph_expansion)
+        # 迭代轮数：仅 agentic 生效，缺省 3，限制在 1-10
+        _effective_max_iter = max_iterations if (max_iterations and max_iterations > 0) else 3
+        _effective_max_iter = min(max(_effective_max_iter, 1), 10)
+        # retrieval_method 对图谱的语义覆写：
+        #   simple   → 纯向量混合检索，强制关闭图谱
+        #   graphrag → 强制开启图谱
+        #   agentic / 未指定 → 沿用 enable_graph_expansion 开关
+        if _method == "simple":
+            _effective_enable_graph = False
+        elif _method == "graphrag":
+            _effective_enable_graph = True
         
         # 问候语检测 - 跳过所有检索，直接流式回答
         if is_greeting_query(user_input):
@@ -558,21 +627,54 @@ class EnterpriseAgentService:
         
         # 🆕 第一步：使用统一检索器获取外部知识（包括 sources）
         rag_results = []
+        _agentic_history: list = []
+        _agentic_evaluation = None
         try:
-            retrieval_result = await unified_retriever.retrieve(
-                query=user_input,
-                kb_id=kb_id,
-                session_id=session_id or "default_session",
-                user_id=user_id or "default_user",
-                top_k=5,
-                enable_routing=True,
-                enable_graph=True,
-                tenant_id=tenant_id
-            )
+            if _method == "agentic":
+                # Agentic RAG：多轮自主检索（plan → retrieve → evaluate → 循环 → aggregate）
+                retrieval_result = await self._agentic_retrieve(
+                    query=user_input,
+                    kb_id=kb_id,
+                    session_id=session_id or "default_session",
+                    user_id=user_id or "default_user",
+                    tenant_id=tenant_id,
+                    max_iterations=_effective_max_iter,
+                    top_k=_effective_top_k,
+                    enable_rerank=_effective_enable_rerank,
+                    enable_graph=_effective_enable_graph,
+                )
+                _agentic_history = retrieval_result.get("retrieval_history", [])
+                _agentic_evaluation = retrieval_result.get("evaluation")
+            else:
+                retrieval_result = await unified_retriever.retrieve(
+                    query=user_input,
+                    kb_id=kb_id,
+                    session_id=session_id or "default_session",
+                    user_id=user_id or "default_user",
+                    top_k=_effective_top_k,
+                    enable_routing=True,
+                    enable_graph=_effective_enable_graph,
+                    enable_rerank=_effective_enable_rerank,
+                    tenant_id=tenant_id
+                )
             rag_results = retrieval_result.get("rag_results", [])
             kb_context = retrieval_result.get("combined_context", "")
             route_mode = retrieval_result.get("mode", "HYBRID")
             print(f"[STATS] [检索模式] {route_mode}，获取到 {len(rag_results)} 条 RAG 结果")
+
+            # G1/G2: 上报检索元数据给上层（chat.py SSE 端点），统一在 done 事件里合并到 meta
+            _meta_payload = {
+                "retrieval_method": (_method or (route_mode or "simple").lower()),
+                "kb_id": kb_id,
+                "top_k": _effective_top_k,
+                "enable_rerank": _effective_enable_rerank,
+                "enable_graph_expansion": _effective_enable_graph,
+                "max_iterations": _effective_max_iter,
+                # Agentic RAG 多轮检索轨迹（非 agentic 模式为空）
+                "retrieval_history": _agentic_history,
+                "evaluation": _agentic_evaluation,
+            }
+            yield f"__META_EVENT__:{json.dumps(_meta_payload, ensure_ascii=False)}"
         except ValidationException as e:
             print(f"[WARNING] [统一检索] 验证失败: {e}")
             kb_context = ""
@@ -817,6 +919,186 @@ class EnterpriseAgentService:
         except Exception as e:
             print(f"[ERROR] [自定义框架] 流式处理失败: {str(e)}")
             yield output_formatter.format_error_answer(str(e))
+
+    # ──────────────────────────────────────────────────────
+    # Agentic RAG：多轮自主检索循环
+    # 复用 RetrievalPlanner（查询规划/改写）+ ResultEvaluator（结果评估），
+    # 以真实的 unified_retriever 作为执行引擎，逐轮累积结果直到足够或到达上限。
+    # ──────────────────────────────────────────────────────
+    async def _build_agentic_llm_bridge(self, tenant_id: Optional[str]):
+        """解析 Agentic 评估/改写所用 LLM：租户 DB 配置覆盖，env 兜底；不回写。
+
+        失败时返回 None，由 RetrievalPlanner/ResultEvaluator 自动回退到规则版。
+        """
+        try:
+            from app.agent_framework.llm.specialist_llm_router import SpecialistLLMRouter
+            from app.agent_framework.llm.agent_llm_config import AgentType
+
+            adapter = None
+            if tenant_id:
+                from app.db.session import AsyncSessionLocal
+                async with AsyncSessionLocal() as _db:
+                    adapter = await SpecialistLLMRouter.get_adapter_for_specialist(
+                        AgentType.CHAT, tenant_id=tenant_id, db=_db
+                    )
+            else:
+                adapter = SpecialistLLMRouter.get_default_adapter()
+
+            if adapter is None:
+                return None
+            return _AgenticLLMBridge(adapter)
+        except Exception as e:
+            logger.warning(f"[Agentic] LLM bridge 初始化失败，回退规则评估/改写: {e}")
+            return None
+
+    async def _agentic_retrieve(
+        self,
+        query: str,
+        kb_id: str,
+        session_id: str,
+        user_id: str,
+        tenant_id: Optional[str],
+        max_iterations: int,
+        top_k: int,
+        enable_rerank: bool,
+        enable_graph: bool,
+    ) -> Dict[str, Any]:
+        """多轮自主检索，返回与 unified_retriever.retrieve 兼容的结果字典，
+        额外携带 retrieval_history（前端轨迹）与 evaluation（最终评估）。"""
+        import time as _time
+        from app.langgraph.agentic_rag_nodes import RetrievalPlanner, ResultEvaluator
+        from app.langgraph.agentic_rag_state import AgenticRAGState, RetrievalStep
+
+        # LLM 智能评估 + 查询改写（DB 覆盖 + env 兜底；失败则回退规则版）
+        llm_bridge = await self._build_agentic_llm_bridge(tenant_id)
+        planner = RetrievalPlanner(llm_service=llm_bridge)
+        evaluator = ResultEvaluator(llm_service=llm_bridge, threshold=0.7)
+
+        state: AgenticRAGState = {
+            "query": query,
+            "kb_id": kb_id,
+            "iteration_count": 0,
+            "max_iterations": max_iterations,
+            "retrieval_history": [],
+            "all_results": [],
+        }
+
+        history_payload: List[Dict[str, Any]] = []
+        last_context = ""
+
+        while True:
+            # ── 规划本轮查询（首轮原样，后续按评估缺失方面改写）──
+            state = await planner.plan(state)
+            cur_q = state.get("current_query") or query
+            action = state.get("next_action") or "vector_search"
+            # 规则评估给出的泛化缺失方面（“需要更多相关信息”）无检索价值，退回原始查询
+            if "需要更多相关信息" in cur_q or "没有找到相关信息" in cur_q:
+                cur_q = query
+
+            iteration = state.get("iteration_count", 0)
+            t0 = _time.time()
+            try:
+                res = await unified_retriever.retrieve(
+                    query=cur_q,
+                    kb_id=kb_id,
+                    session_id=session_id,
+                    user_id=user_id,
+                    top_k=top_k,
+                    enable_routing=False,   # agentic 自己控制流程，强制走 KB 检索
+                    enable_graph=enable_graph,
+                    enable_rerank=enable_rerank,
+                    tenant_id=tenant_id,
+                )
+            except Exception as e:
+                logger.warning(f"[Agentic] 第 {iteration + 1} 轮检索失败: {e}")
+                res = {"rag_results": [], "combined_context": ""}
+
+            round_results = res.get("rag_results", []) or []
+            if res.get("combined_context"):
+                last_context = res["combined_context"]
+            dt_ms = int((_time.time() - t0) * 1000)
+
+            # 记录步骤（dataclass 进 state 供评估器使用）
+            step = RetrievalStep(
+                step_number=iteration + 1,
+                action=action,
+                query=cur_q,
+                parameters={"top_k": top_k},
+                results=round_results,
+                result_count=len(round_results),
+            )
+            state.setdefault("retrieval_history", []).append(step)
+            state["current_results"] = round_results
+            state["iteration_count"] = iteration + 1
+
+            # 累积去重（按 id，回退到 content 前 100 字）
+            all_results = state.get("all_results", [])
+            seen = {(r.get("id") or (r.get("content", "")[:100])) for r in all_results}
+            for r in round_results:
+                key = r.get("id") or (r.get("content", "")[:100])
+                if key not in seen:
+                    all_results.append(r)
+                    seen.add(key)
+            state["all_results"] = all_results
+
+            # 前端轨迹
+            history_payload.append({
+                "step_number": iteration + 1,
+                "action": action,
+                "query": cur_q,
+                "result_count": len(round_results),
+                "duration_ms": dt_ms,
+            })
+
+            # ── 评估是否足够，决定是否继续 ──
+            state = await evaluator.evaluate(state)
+            if not state.get("should_continue"):
+                break
+
+        # ── 聚合：合并全部结果，按分数排序取 top_k ──
+        merged = state.get("all_results", [])
+        merged_sorted = sorted(
+            merged,
+            key=lambda r: (r.get("rerank_score") if r.get("rerank_score") is not None else r.get("score", 0)) or 0,
+            reverse=True,
+        )
+        final_chunks = merged_sorted[: max(1, top_k)]
+
+        combined_context = "\n\n".join(
+            f"{i + 1}. {(c.get('content') or '').strip()}"
+            for i, c in enumerate(final_chunks)
+            if (c.get("content") or "").strip()
+        )
+        if not combined_context.strip():
+            combined_context = last_context
+
+        ev = state.get("evaluation")
+        evaluation_payload = None
+        if ev is not None:
+            evaluation_payload = {
+                "is_sufficient": ev.is_sufficient,
+                "coverage_score": ev.coverage_score,
+                "relevance_score": ev.relevance_score,
+                "completeness_score": ev.completeness_score,
+                "overall_score": ev.overall_score,
+                "missing_aspects": ev.missing_aspects,
+                "reasoning": ev.reasoning,
+            }
+            if history_payload:
+                history_payload[-1]["reasoning"] = ev.reasoning
+
+        logger.info(
+            f"[Agentic] 完成 {state.get('iteration_count', 0)} 轮检索，"
+            f"累计 {len(merged)} 条，最终 {len(final_chunks)} 条"
+        )
+
+        return {
+            "rag_results": final_chunks,
+            "combined_context": combined_context,
+            "mode": "AGENTIC",
+            "retrieval_history": history_payload,
+            "evaluation": evaluation_payload,
+        }
 
     # ──────────────────────────────────────────────────────
     # 延迟图抽取：对话完成后后台提取实体到 Neo4j

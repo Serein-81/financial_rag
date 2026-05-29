@@ -47,6 +47,7 @@ class UnifiedRetriever:
         top_k: int = 5,
         enable_routing: bool = True,
         enable_graph: bool = True,
+        enable_rerank: bool = True,
         tenant_id: Optional[str] = None,
         _skip_metric_filter: bool = False,
     ) -> Dict[str, Any]:
@@ -104,7 +105,15 @@ class UnifiedRetriever:
         )
 
         # ── Step 4: Reranker + Cliff Prune ──
-        pruned = await self._rerank_and_prune(query, candidates)
+        if enable_rerank:
+            pruned = await self._rerank_and_prune(query, candidates, top_k=top_k)
+        else:
+            # 关闭重排序：保留 RRF 融合顺序，仅按 top_k 截断
+            # 把已有的 RRF/向量分数回填到 rerank_score，保证上层 sources 展示与排序正常
+            for c in candidates:
+                if "rerank_score" not in c:
+                    c["rerank_score"] = c.get("score") or c.get("rrf_score") or 0.0
+            pruned = candidates[: max(1, top_k)]
 
         # ── Step 4.5: 时序去重 ──
         deduped = await hybrid_search_engine.temporal_dedup(
@@ -139,35 +148,43 @@ class UnifiedRetriever:
         }
 
     async def _rerank_and_prune(
-        self, query: str, candidates: List[Dict],
+        self, query: str, candidates: List[Dict], top_k: int = 10,
     ) -> List[Dict]:
-        """Reranker + MMR 多样性 + Cliff Prune 精排截断"""
+        """Reranker + MMR 多样性 + Cliff Prune 精排截断
+
+        top_k 控制最终返回的文档块数量；rerank/MMR 使用更宽的候选池，
+        最后由 cliff_prune 按分数断崖在 [min_results, top_k] 之间动态截断。
+        """
         if not candidates:
             return []
+
+        # 最终返回上限，候选池取其 2 倍（至少 20）以保证精排有足够素材
+        final_k = max(1, top_k)
+        pool_k = max(20, final_k * 2)
 
         try:
             reranked = await rerank_service.rerank(
                 query=query,
                 documents=[c["content"] for c in candidates],
-                top_k=20, max_chars_per_doc=1000,
+                top_k=pool_k, max_chars_per_doc=1000,
             )
         except Exception as e:
             logger.warning(f"[Reranker] 失败，降级为 RRF 排序: {e}")
-            return candidates[:20]
+            return candidates[:final_k]
 
         for rr in reranked:
             if rr.index < len(candidates):
                 candidates[rr.index]["rerank_score"] = rr.relevance_score
 
-        # MMR 多样性重排
+        # MMR 多样性重排（候选数取 max(final_k, 10)，给 cliff_prune 留选择空间）
         mmr_result = await self._mmr_rerank(
             query=query, candidates=candidates,
-            top_k=15, lambda_param=0.6,
+            top_k=max(final_k, 10), lambda_param=0.6,
         )
 
         return cliff_prune(
             items=mmr_result, score_key="rerank_score",
-            min_results=3, max_results=20, cliff_threshold=0.15,
+            min_results=min(3, final_k), max_results=final_k, cliff_threshold=0.15,
         )
 
     async def _mmr_rerank(

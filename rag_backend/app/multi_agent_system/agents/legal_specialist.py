@@ -526,6 +526,7 @@ class LegalSpecialist(BaseSpecialistAgent):
         user_input: str,
         history: List[Dict[str, Any]] = None,
         context: Dict[str, Any] = None,
+        rag_context: Optional[Dict[str, Any]] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -535,6 +536,7 @@ class LegalSpecialist(BaseSpecialistAgent):
             user_input: 用户输入
             history: 对话历史
             context: 上下文信息
+            rag_context: RAG 检索到的知识库上下文（{"documents": [...]}）
             **kwargs: 其他参数
 
         Returns:
@@ -548,6 +550,16 @@ class LegalSpecialist(BaseSpecialistAgent):
             prompt = self._build_legal_prompt(user_input, entities, domain)
 
             full_prompt = f"{self.system_prompt}\n\n{prompt}" if self.system_prompt else prompt
+
+            # 🆕 P2: 注入知识库 grounding，让法律分析基于检索到的法规/合同材料而非纯模型记忆
+            if rag_context and rag_context.get("documents"):
+                doc_texts = []
+                for i, doc in enumerate(rag_context["documents"][:3], 1):
+                    c = doc.get("content", "")
+                    if c:
+                        doc_texts.append(f"### 文档{i}\n{c[:1000]}")
+                if doc_texts:
+                    full_prompt = "## 企业知识库相关文档\n" + "\n".join(doc_texts) + "\n\n" + full_prompt
             llm_response = await self.llm_adapter.generate(
                 prompt=full_prompt,
                 temperature=0.3

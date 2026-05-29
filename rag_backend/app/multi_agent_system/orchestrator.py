@@ -262,30 +262,39 @@ class Nodes:
     async def rag_retrieval(self, state: AgentState) -> AgentState:
         logger.info("[节点] rag_retrieval 开始")
 
-        # 🆕 元问题跳过 RAG 检索
         query = state.get("user_query", "")
-        if self._is_meta_question(query):
-            logger.info("[RAG] 元问题，跳过 RAG 检索")
-            return {**state, "rag_context": []}
+
+        # 🆕 P2: 该节点现在作为所有路径的专家前置步骤运行，需对不需要知识库的轻量路径自跳过，
+        # 避免给问候/直接回答/澄清/元问题白跑一次向量检索。
+        # ⚠️ 只返回增量字段（不 spread state）——rag_context 是 operator.add reduce 通道，
+        #     spread 整个 state 会重复累加 messages/specialist_results 等带 reducer 的通道。
+        intent = state.get("intent", "")
+        routing = state.get("routing_strategy", "")
+        if (
+            state.get("needs_clarification")
+            or intent in ("direct_answer", "simple")
+            or routing == "direct_answer"
+            or self._is_meta_question(query)
+        ):
+            logger.info("[RAG] 直接回答/澄清/元问题路径，跳过 RAG 检索")
+            return {"rag_context": []}
 
         if not self.orchestrator.rag_retriever:
             logger.debug("RAG 检索器未初始化，跳过")
-            return {**state, "rag_context": []}
+            return {"rag_context": []}
         try:
             rag_context = await self.orchestrator.rag_retriever.retrieve(
-                query=state["user_query"],
+                query=query,
                 tenant_id=self.orchestrator.tenant_id,
                 top_k=5
             )
             results = rag_context.results if rag_context else []
             docs = [{"content": r.content, "source": r.source, "score": r.relevance_score} for r in results]
             logger.info(f"[RAG] 检索到 {len(docs)} 条文档")
-            
-            updated_state = {**state, "rag_context": docs}
-            return updated_state
+            return {"rag_context": docs}
         except Exception as e:
             logger.warning(f"[RAG] 检索失败: {e}")
-            return {**state, "rag_context": []}
+            return {"rag_context": []}
 
     async def graph_path_retrieval(self, state: AgentState) -> AgentState:
         """
@@ -500,8 +509,13 @@ class Nodes:
         logger.info("[节点] tax_specialist 开始")
 
         specialist_context = self._build_specialist_context(state)
+        rag_ctx = {"documents": state.get("rag_context", [])} if state.get("rag_context") else None
         try:
-            result = await self.orchestrator.tax_specialist.run(user_input=state["user_query"], context=specialist_context)
+            result = await self.orchestrator.tax_specialist.run(
+                user_input=state["user_query"],
+                context=specialist_context,
+                rag_context=rag_ctx,
+            )
             logger.info("[税务专家] 分析完成")
 
             if not result.get('success', True):
@@ -542,8 +556,13 @@ class Nodes:
         logger.info("[节点] legal_specialist 开始")
 
         specialist_context = self._build_specialist_context(state)
+        rag_ctx = {"documents": state.get("rag_context", [])} if state.get("rag_context") else None
         try:
-            result = await self.orchestrator.legal_specialist.run(user_input=state["user_query"], context=specialist_context)
+            result = await self.orchestrator.legal_specialist.run(
+                user_input=state["user_query"],
+                context=specialist_context,
+                rag_context=rag_ctx,
+            )
             logger.info("[法律专家] 分析完成")
 
             if not result.get('success', True):
@@ -640,14 +659,19 @@ class Nodes:
             
             actual_score = quality_result.get('scores', {}).get('overall', quality_result.get('score', 0.0))
             is_acceptable = quality_result.get('is_quality_acceptable', quality_result.get('acceptable', False))
-            
+
             logger.info(f"[反思] 质量分数: {actual_score:.2f}, 可接受: {is_acceptable}")
-            
+
             new_retry_count = current_retry + 1 if not is_acceptable else current_retry
-            
+
             updated_state = {
                 **state,
-                "reflection_result": {"score": actual_score, "acceptable": is_acceptable},
+                # 🆕 P1: 保留 issues，供 _build_repair_plan 判定失败类型，实现针对性打回
+                "reflection_result": {
+                    "score": actual_score,
+                    "acceptable": is_acceptable,
+                    "issues": quality_result.get("issues", []),
+                },
                 "retry_count": new_retry_count
             }
             
@@ -1278,7 +1302,12 @@ class AgentOrchestrator:
             if trace_id:
                 initial_state["trace_id"] = trace_id
                 initial_state.setdefault("metadata", {})["trace_id"] = trace_id
-            
+
+            # 🆕 P5: 让前端 metadata 传入的 enable_reflection 真正进入图状态。
+            # _create_initial_blackboard_state 内部用实例默认值写入，会丢弃 per-request 开关，
+            # 这里用上面计算好的（已合并 metadata 的）值覆盖，使前端反思开关生效。
+            initial_state["enable_reflection"] = enable_reflection
+
             # 2️⃣ 执行 LangGraph 状态机（带超时保护）
             logger.debug("[状态机] 执行 LangGraph 工作流")
             MAX_WORKFLOW_TIMEOUT = 120  # 最大执行时间 120 秒
@@ -1570,9 +1599,10 @@ class AgentOrchestrator:
             return "final"
             
         elif intent == "rag_only" or routing_strategy == "rag_retrieval":
-            logger.debug("[Router Edge] 路由到 rag_retrieval")
-            return "rag_retrieval"
-            
+            # RAG 已在 rag_retrieval 节点前置完成，直接去 final 由其基于 rag_context 生成答案
+            logger.debug("[Router Edge] RAG 已前置，路由到 final")
+            return "final"
+
         # 多专家判断优先：compliance_check、multi_specialist 意图或 specialists > 1
         elif intent in ["compliance_check", "multi_specialist"] or len(specialists) > 1:
             logger.debug("[Router Edge] 多专家并行: %s", specialists)
@@ -1609,7 +1639,82 @@ class AgentOrchestrator:
 
         logger.debug("[Router Edge] 默认路由到 final")
         return "final"
-    
+
+    # 专家领域 → LangGraph 节点名 映射（修复打回时的领域错配）
+    _SPECIALIST_NODE_MAP = {
+        "finance": "finance_specialist",
+        "tax": "tax_specialist",
+        "legal": "legal_specialist",
+    }
+
+    @staticmethod
+    def _classify_failure_type(review_result: Dict[str, Any]) -> str:
+        """根据质量审查的 issues 文本，粗分失败类型，便于针对性重做。"""
+        issues = review_result.get("issues", []) or []
+        texts: List[str] = []
+        for it in issues:
+            if isinstance(it, dict):
+                texts.append(str(it.get("description", "")))
+            else:
+                texts.append(str(it))
+        blob = " ".join(texts)
+
+        if any(k in blob for k in ["笼统", "缺少", "不够详细", "过于简单", "不具体", "流程", "泛泛", "空洞", "浅"]):
+            return "shallow_answer"
+        if any(k in blob for k in ["错误", "不准确", "有误", "事实", "前后矛盾"]):
+            return "factual_error"
+        if any(k in blob for k in ["不完整", "遗漏", "缺失", "未覆盖", "没有回答"]):
+            return "incomplete"
+        if any(k in blob for k in ["跑题", "无关", "答非所问", "偏离"]):
+            return "off_topic"
+        return "quality_issue"
+
+    def _build_repair_plan(
+        self,
+        review_result: Dict[str, Any],
+        user_input: str,
+        specialist_results: List[Dict[str, Any]],
+        fallback_target: str = "finance_specialist",
+    ) -> Dict[str, Any]:
+        """
+        构建反思打回（repair）计划：决定把不合格的回答打回给**实际运行过的领域专家**，
+        并标注失败类型。修复了旧逻辑无论什么领域都打回 finance 的错配问题。
+
+        Args:
+            review_result: 质量审查结果（含 scores / issues / is_quality_acceptable）
+            user_input: 用户原始查询
+            specialist_results: 已运行专家的结果列表（每项含 specialist_type 或 source）
+            fallback_target: 无法识别专家时的兜底目标节点
+
+        Returns:
+            {"target": str|List[str], "targets": List[str], "failure_type": str, "score": float}
+        """
+        targets: List[str] = []
+        for r in (specialist_results or []):
+            if not isinstance(r, dict):
+                continue
+            stype = r.get("specialist_type") or r.get("source")
+            node = None
+            if stype in self._SPECIALIST_NODE_MAP:
+                node = self._SPECIALIST_NODE_MAP[stype]
+            elif stype in self._SPECIALIST_NODE_MAP.values():
+                node = stype
+            if node and node not in targets:
+                targets.append(node)
+
+        if not targets:
+            targets = [fallback_target or "finance_specialist"]
+
+        scores = review_result.get("scores", {}) if isinstance(review_result, dict) else {}
+        score = scores.get("overall", review_result.get("score", 0.0))
+
+        return {
+            "target": targets[0] if len(targets) == 1 else targets,
+            "targets": targets,
+            "failure_type": self._classify_failure_type(review_result),
+            "score": score,
+        }
+
     async def _execute_langgraph_workflow(
         self,
         initial_state: Dict[str, Any],
@@ -1655,22 +1760,26 @@ class AgentOrchestrator:
         workflow.add_edge("receptionist", "intent_router")
         logger.debug("[边定义] receptionist → intent_router")
         
-        # 意图路由后先去查图谱路径，再走 specialists
+        # 意图路由后先去查图谱路径，再跑 RAG，最后路由到专家/直接回答
         workflow.add_edge("intent_router", "graph_path_retrieval")
         logger.debug("[边定义] intent_router → graph_path_retrieval")
 
+        # 🆕 P2: RAG 前移为专家前置步骤——无论单/多专家还是 rag_only 路径都先检索知识库，
+        # 让税务/法律/财务专家拿到 grounding（rag_retrieval 节点内部对问候/澄清/元问题自跳过）
+        workflow.add_edge("graph_path_retrieval", "rag_retrieval")
+        logger.debug("[边定义] graph_path_retrieval → rag_retrieval")
+
         workflow.add_conditional_edges(
-            "graph_path_retrieval",
+            "rag_retrieval",
             self.route_after_intent,
             {
                 "finance_specialist": "finance_specialist",
                 "tax_specialist": "tax_specialist",
                 "legal_specialist": "legal_specialist",
-                "rag_retrieval": "rag_retrieval",
                 "final": "final"
             }
         )
-        logger.debug("[边定义] graph_path_retrieval → (条件边) → specialist/final")
+        logger.debug("[边定义] rag_retrieval → (条件边) → specialist/final")
         
         def route_after_analysis(state: AgentState) -> str:
             enable_reflection = state.get("enable_reflection", self.enable_reflection)
@@ -1689,33 +1798,46 @@ class AgentOrchestrator:
         workflow.add_conditional_edges("finance_specialist", route_after_analysis, analysis_routes)
         workflow.add_conditional_edges("tax_specialist", route_after_analysis, analysis_routes)
         workflow.add_conditional_edges("legal_specialist", route_after_analysis, analysis_routes)
-        workflow.add_conditional_edges("rag_retrieval", route_after_analysis, analysis_routes)
+        # 注意：rag_retrieval 已前移为专家前置步骤，不再直连 reflection
         
-        def check_reflection(state: AgentState) -> str:
+        def check_reflection(state: AgentState) -> str | List[str]:
             """反思审核后的条件路由：根据质量评估结果决定下一步"""
             res = state.get("reflection_result", {})
             acceptable = res.get("acceptable", True)
             retries = state.get("retry_count", 0)
             max_retries = state.get("max_retries", 3)
             logger.debug("[反思路由] acceptable=%s, retry_count=%s/%s", acceptable, retries, max_retries)
-            
+
             if acceptable:
                 logger.debug("[反思路由] 质量达标，路由到 final")
                 return "final"
-            else:
-                logger.debug("[反思路由] 质量不达标")
-                if retries >= max_retries:
-                    logger.warning("[架构级熔断] 已达最大重试次数 (%s>=%s)，强制放行", retries, max_retries)
-                    return "final"
-                logger.debug("[反思路由] 打回重做 (第 %s 次)", retries + 1)
-                return "finance_specialist"
-        
+
+            logger.debug("[反思路由] 质量不达标")
+            if retries >= max_retries:
+                logger.warning("[架构级熔断] 已达最大重试次数 (%s>=%s)，强制放行", retries, max_retries)
+                return "final"
+
+            # 🆕 P1: 打回给**实际运行过**的专家，而非永远 finance（修复税务/法律答案被财务重做的领域错配）
+            specialists = state.get("specialists_needed", [])
+            fallback = self._SPECIALIST_NODE_MAP.get(specialists[0], "finance_specialist") if specialists else "finance_specialist"
+            plan = self._build_repair_plan(
+                review_result=state.get("reflection_result", {}) or {},
+                user_input=state.get("user_query", ""),
+                specialist_results=state.get("specialist_results", []),
+                fallback_target=fallback,
+            )
+            targets = plan.get("targets") or [plan.get("target", fallback)]
+            logger.debug("[反思路由] 打回重做 (第 %s 次): %s (failure=%s)", retries + 1, targets, plan.get("failure_type"))
+            return targets if len(targets) > 1 else targets[0]
+
         workflow.add_conditional_edges(
             "reflection",
             check_reflection,
             {
                 "final": "final",
-                "finance_specialist": "finance_specialist"
+                "finance_specialist": "finance_specialist",
+                "tax_specialist": "tax_specialist",
+                "legal_specialist": "legal_specialist"
             }
         )
         workflow.add_edge("final", END)
