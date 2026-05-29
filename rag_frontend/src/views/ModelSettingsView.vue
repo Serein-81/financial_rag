@@ -11,6 +11,8 @@ import {
   type ChatRole,
   type TestConnectionResult,
   type UsageOverview,
+  type EmbeddingTestResult,
+  type RerankTestResult,
 } from '@/api/model-config'
 
 const activeTab = ref<'chat' | 'usage' | 'embedding' | 'rerank'>('chat')
@@ -39,7 +41,166 @@ function fmtTime(t?: string | null): string {
 
 watch(activeTab, (tab) => {
   if (tab === 'usage' && !overview.value) loadOverview()
+  if (tab === 'embedding' && !embProviders.value.length) loadEmbedding()
+  if (tab === 'rerank' && !rrkProviders.value.length) loadRerank()
 })
+
+function findProvider(list: ProviderInfo[], id: string): ProviderInfo | undefined {
+  return list.find(p => p.id === id)
+}
+
+// ===== 向量模型（Embedding）=====
+const embProviders = ref<ProviderInfo[]>([])
+const embRequiredDim = ref(1024)
+const embOllamaModels = ref<string[]>([])
+const embTest = ref<EmbeddingTestResult | null>(null)
+const embBusy = reactive({ loading: false, testing: false, saving: false, detecting: false })
+const embForm = reactive({ provider: '', model: '', base_url: '', api_key: '', showKey: false })
+
+const embCloud = computed(() => embProviders.value.filter(p => p.group === 'cloud'))
+const embLocal = computed(() => embProviders.value.filter(p => p.group === 'local'))
+const embProviderInfo = computed(() => findProvider(embProviders.value, embForm.provider))
+
+function embModelOptions(): string[] {
+  if (embProviderInfo.value?.group === 'local' && embOllamaModels.value.length) return embOllamaModels.value
+  return embProviderInfo.value?.models || []
+}
+
+async function loadEmbedding() {
+  embBusy.loading = true
+  try {
+    const [cat, cfg] = await Promise.all([
+      modelConfigApi.getEmbeddingCatalog(),
+      modelConfigApi.getEmbeddingConfig(),
+    ])
+    embProviders.value = cat.providers
+    embRequiredDim.value = cat.required_dim
+    embForm.provider = cfg.provider
+    embForm.model = cfg.model || ''
+    embForm.base_url = cfg.base_url || ''
+    embForm.api_key = cfg.api_key || ''
+  } catch (e: any) {
+    ElMessage.error('加载向量模型配置失败：' + (e?.response?.data?.detail || e?.message || e))
+  } finally {
+    embBusy.loading = false
+  }
+}
+
+function onEmbProviderChange() {
+  embForm.model = ''
+  embForm.base_url = ''
+  embTest.value = null
+  embOllamaModels.value = []
+}
+
+async function detectEmbOllama() {
+  embBusy.detecting = true
+  try {
+    const res = await modelConfigApi.listOllamaModels(embForm.base_url || undefined)
+    embOllamaModels.value = res.models.map(m => m.name).filter(Boolean) as string[]
+    if (!embOllamaModels.value.length) ElMessage.warning('未检测到本地模型，请先 `ollama pull bge-m3`')
+    else { if (!embForm.model) embForm.model = embOllamaModels.value[0]; ElMessage.success(`检测到 ${embOllamaModels.value.length} 个本地模型`) }
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '检测失败，请确认 Ollama 已启动')
+  } finally {
+    embBusy.detecting = false
+  }
+}
+
+async function testEmbedding() {
+  embBusy.testing = true
+  embTest.value = null
+  try {
+    embTest.value = await modelConfigApi.testEmbedding({
+      provider: embForm.provider, model: embForm.model || undefined,
+      api_key: embForm.api_key || undefined, base_url: embForm.base_url || undefined,
+    })
+  } catch (e: any) {
+    embTest.value = { ok: false, error: e?.response?.data?.detail || e?.message || '测试失败' }
+  } finally {
+    embBusy.testing = false
+  }
+}
+
+async function saveEmbedding() {
+  try {
+    await ElMessageBox.confirm(
+      `更换向量模型有风险：新模型维度必须等于 ${embRequiredDim.value}，否则会与已建索引不兼容（系统会校验并拒绝）。确认保存？`,
+      '确认保存向量模型', { type: 'warning' }
+    )
+  } catch { return }
+  embBusy.saving = true
+  try {
+    const res = await modelConfigApi.updateEmbeddingConfig({
+      provider: embForm.provider, model: embForm.model || undefined,
+      api_key: embForm.api_key || undefined, base_url: embForm.base_url || undefined,
+    })
+    ElMessage.success(`已保存并生效（维度 ${res.dim}）`)
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || e?.message || '保存失败')
+  } finally {
+    embBusy.saving = false
+  }
+}
+
+// ===== 重排模型（Rerank）=====
+const rrkProviders = ref<ProviderInfo[]>([])
+const rrkTest = ref<RerankTestResult | null>(null)
+const rrkBusy = reactive({ loading: false, testing: false, saving: false })
+const rrkForm = reactive({ provider: '', model: '', base_url: '', api_key: '', showKey: false, enabled: true, top_k: 10 })
+const rrkProviderInfo = computed(() => findProvider(rrkProviders.value, rrkForm.provider))
+
+async function loadRerank() {
+  rrkBusy.loading = true
+  try {
+    const [cat, cfg] = await Promise.all([
+      modelConfigApi.getRerankCatalog(),
+      modelConfigApi.getRerankConfig(),
+    ])
+    rrkProviders.value = cat.providers
+    rrkForm.provider = cfg.provider
+    rrkForm.model = cfg.model || ''
+    rrkForm.base_url = cfg.base_url || ''
+    rrkForm.api_key = cfg.api_key || ''
+    rrkForm.enabled = cfg.enabled
+    rrkForm.top_k = cfg.top_k || 10
+  } catch (e: any) {
+    ElMessage.error('加载重排模型配置失败：' + (e?.response?.data?.detail || e?.message || e))
+  } finally {
+    rrkBusy.loading = false
+  }
+}
+
+async function testRerank() {
+  rrkBusy.testing = true
+  rrkTest.value = null
+  try {
+    rrkTest.value = await modelConfigApi.testRerank({
+      provider: rrkForm.provider, model: rrkForm.model || undefined,
+      api_key: rrkForm.api_key || undefined, base_url: rrkForm.base_url || undefined,
+    })
+  } catch (e: any) {
+    rrkTest.value = { ok: false, error: e?.response?.data?.detail || e?.message || '测试失败' }
+  } finally {
+    rrkBusy.testing = false
+  }
+}
+
+async function saveRerank() {
+  rrkBusy.saving = true
+  try {
+    await modelConfigApi.updateRerankConfig({
+      provider: rrkForm.provider, model: rrkForm.model || undefined,
+      api_key: rrkForm.api_key || undefined, base_url: rrkForm.base_url || undefined,
+      enabled: rrkForm.enabled, top_k: rrkForm.top_k,
+    })
+    ElMessage.success('重排配置已保存并生效')
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || e?.message || '保存失败')
+  } finally {
+    rrkBusy.saving = false
+  }
+}
 
 const providers = ref<ProviderInfo[]>([])
 const cloudProviders = computed(() => providers.value.filter(p => p.group === 'cloud'))
@@ -448,24 +609,133 @@ async function reset(role: string) {
         </div>
       </el-tab-pane>
 
-      <!-- ============ 向量模型（第 2 步） ============ -->
+      <!-- ============ 向量模型 Embedding（部署级） ============ -->
       <el-tab-pane name="embedding">
         <template #label><span class="tab-label"><RefreshCw :size="15" /> 向量模型</span></template>
+
         <el-alert
-          type="warning" :closable="false" show-icon
-          title="第 2 步开放"
-          description="向量（Embedding）模型按租户配置正在开发中。注意：切换向量模型会改变向量维度，使已建索引失效，需重建知识库索引——因此该项需配套维度变更保护后再开放。"
+          type="warning" :closable="false" show-icon class="hint"
+          title="部署级配置 · 维度必须匹配"
+          :description="`向量模型为整个部署共用（非按租户）。新模型输出维度必须等于 ${embRequiredDim}，否则与已建索引不兼容，保存时会被拒绝。更换不同维度模型需先重建知识库索引。`"
         />
+
+        <el-card class="role-card" shadow="never" v-loading="embBusy.loading">
+          <el-form label-width="92px" label-position="left" class="role-form">
+            <el-form-item label="提供商">
+              <el-select v-model="embForm.provider" filterable style="width: 320px" @change="onEmbProviderChange">
+                <el-option-group label="☁ 云端 API">
+                  <el-option v-for="p in embCloud" :key="p.id" :label="p.name" :value="p.id" />
+                </el-option-group>
+                <el-option-group label="🖥 本地部署">
+                  <el-option v-for="p in embLocal" :key="p.id" :label="p.name" :value="p.id" />
+                </el-option-group>
+              </el-select>
+              <el-tag size="small" type="info" effect="plain" class="ml8">要求 {{ embRequiredDim }} 维</el-tag>
+            </el-form-item>
+
+            <el-form-item label="模型">
+              <el-select v-model="embForm.model" filterable allow-create default-first-option placeholder="选择或输入模型名" style="width: 320px">
+                <el-option v-for="m in embModelOptions()" :key="m" :label="m" :value="m" />
+              </el-select>
+              <el-button v-if="embProviderInfo?.supports_detect" class="ml8" :loading="embBusy.detecting" @click="detectEmbOllama">
+                <Download :size="14" /> 检测本地模型
+              </el-button>
+            </el-form-item>
+
+            <el-form-item label="Base URL">
+              <el-input v-model="embForm.base_url" :placeholder="embProviderInfo?.default_base_url || '默认（留空使用提供商默认地址）'" style="width: 420px" autocomplete="off" name="emb-base-url" />
+            </el-form-item>
+
+            <el-form-item v-if="embProviderInfo?.requires_api_key" label="API Key">
+              <el-input v-model="embForm.api_key" :type="embForm.showKey ? 'text' : 'password'" placeholder="留空则回退使用服务端 .env 全局密钥" style="width: 420px" autocomplete="new-password" name="emb-api-key">
+                <template #suffix>
+                  <component :is="embForm.showKey ? EyeOff : Eye" :size="15" style="cursor:pointer" @click="embForm.showKey = !embForm.showKey" />
+                </template>
+              </el-input>
+            </el-form-item>
+
+            <el-form-item v-if="embProviderInfo?.note">
+              <el-text type="warning" size="small"><Info :size="13" style="vertical-align:-2px" /> {{ embProviderInfo?.note }}</el-text>
+            </el-form-item>
+
+            <el-form-item v-if="embTest">
+              <el-text v-if="embTest.ok && embTest.compatible" type="success" size="small">
+                <CheckCircle2 :size="14" style="vertical-align:-2px" /> 可用，输出 {{ embTest.dim }} 维（与索引兼容）
+              </el-text>
+              <el-text v-else-if="embTest.ok" type="danger" size="small">
+                <XCircle :size="14" style="vertical-align:-2px" /> 输出 {{ embTest.dim }} 维，与要求 {{ embTest.required_dim }} 维不兼容，保存会被拒绝
+              </el-text>
+              <el-text v-else type="danger" size="small"><XCircle :size="14" style="vertical-align:-2px" /> {{ embTest.error }}</el-text>
+            </el-form-item>
+
+            <el-form-item>
+              <el-button :loading="embBusy.testing" @click="testEmbedding"><Zap :size="14" /> 测试 / 检测维度</el-button>
+              <el-button type="primary" :loading="embBusy.saving" @click="saveEmbedding"><Save :size="14" /> 保存</el-button>
+            </el-form-item>
+          </el-form>
+        </el-card>
       </el-tab-pane>
 
-      <!-- ============ 重排模型（第 3 步） ============ -->
+      <!-- ============ 重排模型 Rerank（部署级） ============ -->
       <el-tab-pane name="rerank">
         <template #label><span class="tab-label"><RefreshCw :size="15" /> 重排模型</span></template>
+
         <el-alert
-          type="warning" :closable="false" show-icon
-          title="第 3 步开放"
-          description="重排（Rerank）模型配置正在开发中。本地 Ollama 不提供原生 Rerank，本地模式下将提示关闭重排或继续使用云端重排服务。"
+          type="info" :closable="false" show-icon class="hint"
+          title="部署级配置"
+          description="重排（Rerank）模型为整个部署共用。本地 Ollama 无原生 Rerank；本地优先场景可关闭重排或继续使用云端重排服务。"
         />
+
+        <el-card class="role-card" shadow="never" v-loading="rrkBusy.loading">
+          <el-form label-width="92px" label-position="left" class="role-form">
+            <el-form-item label="启用重排">
+              <el-switch v-model="rrkForm.enabled" />
+              <el-text size="small" type="info" class="ml8">关闭后检索将跳过重排，直接用融合排序结果</el-text>
+            </el-form-item>
+
+            <template v-if="rrkForm.enabled">
+              <el-form-item label="提供商">
+                <el-select v-model="rrkForm.provider" filterable style="width: 320px">
+                  <el-option v-for="p in rrkProviders" :key="p.id" :label="p.name" :value="p.id" />
+                </el-select>
+              </el-form-item>
+
+              <el-form-item label="模型">
+                <el-select v-model="rrkForm.model" filterable allow-create default-first-option placeholder="选择或输入模型名" style="width: 320px">
+                  <el-option v-for="m in (rrkProviderInfo?.models || [])" :key="m" :label="m" :value="m" />
+                </el-select>
+              </el-form-item>
+
+              <el-form-item label="Base URL">
+                <el-input v-model="rrkForm.base_url" :placeholder="rrkProviderInfo?.default_base_url || '重排服务地址'" style="width: 420px" autocomplete="off" name="rrk-base-url" />
+              </el-form-item>
+
+              <el-form-item v-if="rrkProviderInfo?.requires_api_key" label="API Key">
+                <el-input v-model="rrkForm.api_key" :type="rrkForm.showKey ? 'text' : 'password'" placeholder="留空则回退使用服务端 .env 全局密钥" style="width: 420px" autocomplete="new-password" name="rrk-api-key">
+                  <template #suffix>
+                    <component :is="rrkForm.showKey ? EyeOff : Eye" :size="15" style="cursor:pointer" @click="rrkForm.showKey = !rrkForm.showKey" />
+                  </template>
+                </el-input>
+              </el-form-item>
+
+              <el-form-item label="Top K">
+                <el-input-number v-model="rrkForm.top_k" :min="1" :max="50" />
+              </el-form-item>
+
+              <el-form-item v-if="rrkTest">
+                <el-text v-if="rrkTest.ok" type="success" size="small">
+                  <CheckCircle2 :size="14" style="vertical-align:-2px" /> 可用（{{ rrkTest.latency_ms }}ms，返回 {{ rrkTest.results_count }} 条）
+                </el-text>
+                <el-text v-else type="danger" size="small"><XCircle :size="14" style="vertical-align:-2px" /> {{ rrkTest.error }}</el-text>
+              </el-form-item>
+            </template>
+
+            <el-form-item>
+              <el-button v-if="rrkForm.enabled" :loading="rrkBusy.testing" @click="testRerank"><Zap :size="14" /> 测试连接</el-button>
+              <el-button type="primary" :loading="rrkBusy.saving" @click="saveRerank"><Save :size="14" /> 保存</el-button>
+            </el-form-item>
+          </el-form>
+        </el-card>
       </el-tab-pane>
     </el-tabs>
 

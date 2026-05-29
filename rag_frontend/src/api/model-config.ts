@@ -1,6 +1,6 @@
 // 模型配置 API
 // 对应后端 rag_backend/app/api/v1/endpoints/agent_llm_config.py (prefix: /api/v1/agents)
-import { get, post, del } from '@/utils/request'
+import { get, post, put, del } from '@/utils/request'
 
 // ==================== Types ====================
 
@@ -108,6 +108,42 @@ export interface UsageOverview {
   tenants: TenantOverview[]
 }
 
+// ===== 向量模型（Embedding）· 部署级 =====
+export interface EmbeddingConfig {
+  provider: string
+  model?: string | null
+  api_key?: string | null
+  base_url?: string | null
+  is_custom?: boolean
+  required_dim?: number
+}
+
+export interface EmbeddingTestResult {
+  ok: boolean
+  error?: string
+  dim?: number
+  required_dim?: number
+  compatible?: boolean
+}
+
+// ===== 重排模型（Rerank）· 部署级 =====
+export interface RerankConfig {
+  provider: string
+  model?: string | null
+  api_key?: string | null
+  base_url?: string | null
+  enabled: boolean
+  top_k?: number
+  is_custom?: boolean
+}
+
+export interface RerankTestResult {
+  ok: boolean
+  error?: string
+  latency_ms?: number
+  results_count?: number
+}
+
 // ==================== API ====================
 
 export const modelConfigApi = {
@@ -139,6 +175,24 @@ export const modelConfigApi = {
 
   /** 管理员视角：各企业/各角色当前生效模型 + 调用统计 */
   getUsageOverview: () => get<UsageOverview>('/agents/llm-config/usage-overview'),
+
+  // ===== 向量模型（Embedding）=====
+  getEmbeddingConfig: () => get<EmbeddingConfig>('/agents/llm-config/embedding'),
+  getEmbeddingCatalog: () =>
+    get<{ providers: ProviderInfo[]; required_dim: number }>('/agents/llm-config/embedding/catalog'),
+  testEmbedding: (p: Partial<EmbeddingConfig>) =>
+    post<EmbeddingTestResult>('/agents/llm-config/embedding/test', p),
+  updateEmbeddingConfig: (p: Partial<EmbeddingConfig>) =>
+    put<{ message: string; dim: number }>('/agents/llm-config/embedding', p),
+
+  // ===== 重排模型（Rerank）=====
+  getRerankConfig: () => get<RerankConfig>('/agents/llm-config/rerank'),
+  getRerankCatalog: () =>
+    get<{ providers: ProviderInfo[] }>('/agents/llm-config/rerank/catalog'),
+  testRerank: (p: Partial<RerankConfig>) =>
+    post<RerankTestResult>('/agents/llm-config/rerank/test', p),
+  updateRerankConfig: (p: Partial<RerankConfig>) =>
+    put<{ message: string }>('/agents/llm-config/rerank', p),
 }
 
 export default modelConfigApi

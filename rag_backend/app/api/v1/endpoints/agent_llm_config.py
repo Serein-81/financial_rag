@@ -45,6 +45,24 @@ class TestConnectionRequest(BaseModel):
     base_url: Optional[str] = Field(None, description="自定义 Base URL")
 
 
+class EmbeddingConfigRequest(BaseModel):
+    """Embedding（向量）模型配置请求（部署级）"""
+    provider: str = Field(..., description="Embedding 提供商")
+    model: Optional[str] = Field(None, description="模型名称")
+    api_key: Optional[str] = Field(None, description="API Key")
+    base_url: Optional[str] = Field(None, description="自定义 Base URL")
+
+
+class RerankConfigRequest(BaseModel):
+    """Rerank（重排）模型配置请求（部署级）"""
+    provider: Optional[str] = Field(None, description="Rerank 提供商")
+    model: Optional[str] = Field(None, description="模型名称")
+    api_key: Optional[str] = Field(None, description="API Key")
+    base_url: Optional[str] = Field(None, description="自定义 Base URL")
+    enabled: Optional[bool] = Field(None, description="是否启用重排")
+    top_k: Optional[int] = Field(None, ge=1, description="返回前 K 个")
+
+
 # provider id -> settings 中对应的「当前模型」字段名
 _PROVIDER_MODEL_ATTR = {
     "gpt": "GPT_MODEL",
@@ -494,3 +512,177 @@ async def get_usage_overview(
                 "“最近对话模型 / 各模型调用次数”来自 agent_traces 实际记录（迁移前的旧对话显示为“未记录”）。",
         "tenants": tenants_out,
     }
+
+
+# ==================== Embedding（向量）模型配置 · 部署级 ====================
+
+@router.get("/llm-config/embedding")
+async def get_embedding_config(
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: User = Depends(deps.require_admin_user),
+):
+    """获取当前生效的 Embedding 配置（DB 覆盖 → .env 兜底）"""
+    from app.services import system_config_service
+    cfg = await system_config_service.get_embedding_config(db)
+    cfg["required_dim"] = system_config_service.EMBEDDING_DIM
+    return cfg
+
+
+@router.get("/llm-config/embedding/catalog")
+async def get_embedding_catalog(
+    current_user: User = Depends(deps.require_admin_user),
+):
+    """Embedding 提供商目录 + 维度要求"""
+    from app.services import system_config_service
+    return {
+        "providers": system_config_service.EMBEDDING_PROVIDERS,
+        "required_dim": system_config_service.EMBEDDING_DIM,
+    }
+
+
+@router.post("/llm-config/embedding/test")
+async def test_embedding(
+    request: EmbeddingConfigRequest,
+    current_user: User = Depends(deps.require_admin_user),
+):
+    """测试 Embedding 配置：实际编码一段文本，返回输出维度与是否兼容"""
+    from app.services.embedding_factory import EmbeddingAdapterFactory
+    from app.services import system_config_service
+    try:
+        adapter = EmbeddingAdapterFactory.create_adapter(
+            provider=request.provider, model=request.model,
+            api_key=request.api_key, base_url=request.base_url,
+        )
+        vec, _ = await asyncio.wait_for(
+            adapter.encode_queries("连通性测试", return_tokens=False), timeout=30.0
+        )
+    except asyncio.TimeoutError:
+        return {"ok": False, "error": "编码超时（30s），请检查服务地址与网络"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+    dim = len(vec) if vec else 0
+    required = system_config_service.EMBEDDING_DIM
+    return {
+        "ok": True,
+        "dim": dim,
+        "required_dim": required,
+        "compatible": dim == required,
+    }
+
+
+@router.put("/llm-config/embedding")
+async def update_embedding_config(
+    request: EmbeddingConfigRequest,
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: User = Depends(deps.require_admin_user),
+):
+    """
+    保存 Embedding 配置（部署级）。
+
+    维度守卫：先实际编码验证输出维度，必须等于主检索维度（避免破坏已建索引）；
+    不匹配则拒绝保存。保存成功后热重载 embedding 服务。
+    """
+    from app.services.embedding_factory import EmbeddingAdapterFactory
+    from app.services import system_config_service
+    from app.services.embedding_service import embedding_service
+
+    required = system_config_service.EMBEDDING_DIM
+    try:
+        adapter = EmbeddingAdapterFactory.create_adapter(
+            provider=request.provider, model=request.model,
+            api_key=request.api_key, base_url=request.base_url,
+        )
+        vec, _ = await asyncio.wait_for(
+            adapter.encode_queries("维度校验", return_tokens=False), timeout=30.0
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"配置不可用，未保存：{e}")
+
+    dim = len(vec) if vec else 0
+    if dim != required:
+        raise HTTPException(
+            status_code=400,
+            detail=f"维度不兼容：该模型输出 {dim} 维，但主检索向量列为 {required} 维。"
+                   f"切换不同维度的 Embedding 模型会使已建索引失效，已阻止保存。"
+                   f"如确需更换，请先重建知识库索引并调整向量列维度。",
+        )
+
+    await system_config_service.save_embedding_config(request.model_dump(), db)
+    await embedding_service.reload()
+    return {"message": "Embedding 配置已保存并生效", "dim": dim}
+
+
+# ==================== Rerank（重排）模型配置 · 部署级 ====================
+
+@router.get("/llm-config/rerank")
+async def get_rerank_config(
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: User = Depends(deps.require_admin_user),
+):
+    """获取当前生效的 Rerank 配置（DB 覆盖 → .env 兜底）"""
+    from app.services import system_config_service
+    return await system_config_service.get_rerank_config(db)
+
+
+@router.get("/llm-config/rerank/catalog")
+async def get_rerank_catalog(
+    current_user: User = Depends(deps.require_admin_user),
+):
+    """Rerank 提供商目录"""
+    from app.services import system_config_service
+    return {"providers": system_config_service.RERANK_PROVIDERS}
+
+
+@router.post("/llm-config/rerank/test")
+async def test_rerank(
+    request: RerankConfigRequest,
+    current_user: User = Depends(deps.require_admin_user),
+):
+    """测试 Rerank 配置：对样例文档重排，返回是否可用"""
+    from app.services import system_config_service
+    cfg = await system_config_service.get_rerank_config()
+    api_key = request.api_key or cfg["api_key"]
+    model = request.model or cfg["model"]
+    base_url = request.base_url or cfg["base_url"]
+    if not api_key:
+        return {"ok": False, "error": "未配置 API Key"}
+
+    payload = {
+        "model": model,
+        "query": "增值税专用发票如何抵扣？",
+        "documents": ["增值税专用发票可用于进项税额抵扣。", "企业所得税税率为25%。"],
+        "top_n": 2,
+        "return_documents": False,
+    }
+    start = time.monotonic()
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                base_url,
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json=payload,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+    latency_ms = int((time.monotonic() - start) * 1000)
+    results = data.get("results", [])
+    return {"ok": True, "latency_ms": latency_ms, "results_count": len(results)}
+
+
+@router.put("/llm-config/rerank")
+async def update_rerank_config(
+    request: RerankConfigRequest,
+    db: AsyncSession = Depends(deps.get_db),
+    current_user: User = Depends(deps.require_admin_user),
+):
+    """保存 Rerank 配置（部署级）并热重载"""
+    from app.services import system_config_service
+    from app.services.rerank_service import rerank_service
+
+    await system_config_service.save_rerank_config(request.model_dump(), db)
+    await rerank_service.reload()
+    return {"message": "Rerank 配置已保存并生效"}

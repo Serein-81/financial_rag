@@ -25,19 +25,38 @@ class EmbeddingService:
     
     _instance = None
     _adapter = None
-    
+
     def __new__(cls):
         """单例模式"""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
-    
-    def _get_adapter(self):
-        """懒加载适配器"""
-        if self._adapter is None:
-            from app.services.embedding_factory import EmbeddingAdapterFactory
+
+    async def _ensure_adapter(self):
+        """懒加载适配器：优先用部署级配置（DB），失败回退 .env"""
+        if self._adapter is not None:
+            return self._adapter
+
+        from app.services.embedding_factory import EmbeddingAdapterFactory
+        try:
+            from app.services import system_config_service
+            cfg = await system_config_service.get_embedding_config()
+            self._adapter = EmbeddingAdapterFactory.create_adapter(
+                provider=cfg.get("provider"),
+                model=cfg.get("model"),
+                api_key=cfg.get("api_key"),
+                base_url=cfg.get("base_url"),
+            )
+            logger.info(f"[EmbeddingService] 使用配置: {cfg.get('provider')}/{cfg.get('model')}")
+        except Exception as e:
+            logger.warning(f"[EmbeddingService] 加载部署级配置失败，回退 .env: {e}")
             self._adapter = EmbeddingAdapterFactory.create_adapter()
         return self._adapter
+
+    async def reload(self) -> None:
+        """重置适配器，下次调用按最新配置重建（保存配置后调用）"""
+        self._adapter = None
+        logger.info("[EmbeddingService] 适配器已重置，将按最新配置重建")
     
     async def get_embedding(self, text: str) -> List[float]:
         """
@@ -50,7 +69,7 @@ class EmbeddingService:
             向量列表
         """
         logger.debug(f"[EmbeddingService] get_embedding 调用 | text长度={len(text) if text else 0}")
-        adapter = self._get_adapter()
+        adapter = await self._ensure_adapter()
         embedding, _ = await adapter.encode_queries(text, return_tokens=False)
         logger.debug(f"[EmbeddingService] get_embedding 返回 | embedding长度={len(embedding) if embedding else 0}")
         return embedding
@@ -65,7 +84,7 @@ class EmbeddingService:
         Returns:
             向量列表
         """
-        adapter = self._get_adapter()
+        adapter = await self._ensure_adapter()
         embeddings, _ = await adapter.encode(texts, task_type="document")
         return embeddings
     
@@ -79,7 +98,7 @@ class EmbeddingService:
         Returns:
             (embedding, token_count) 元组
         """
-        adapter = self._get_adapter()
+        adapter = await self._ensure_adapter()
         return await adapter.encode_queries(text, return_tokens=True)
     
     async def get_embeddings_with_tokens(
@@ -95,7 +114,7 @@ class EmbeddingService:
         Returns:
             (embeddings, total_tokens) 元组
         """
-        adapter = self._get_adapter()
+        adapter = await self._ensure_adapter()
         return await adapter.encode(texts, task_type="document", return_tokens=True)
     
     def get_current_provider(self) -> str:

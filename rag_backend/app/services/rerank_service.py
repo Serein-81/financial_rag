@@ -68,24 +68,48 @@ class RerankService:
     def __init__(self):
         if self._initialized:
             return
-        
+
+        # .env 默认值（会被部署级 DB 配置覆盖，见 _ensure_config）
         self.api_key = settings.SILICONFLOW_API_KEY
         self.model_name = getattr(settings, 'SILICONFLOW_RERANK_MODEL', 'Pro/BAAI/bge-reranker-v2-m3')
         self.base_url = "https://api.siliconflow.cn/v1/rerank"
         self.top_n = settings.RERANK_TOP_K
         self.return_documents = True
         self.score_threshold = getattr(settings, 'RERANK_SCORE_THRESHOLD', 0.5)
-        
+        self.enabled = settings.ENABLE_RERANK
+        self._config_loaded = False
+
         self._initialized = True
-        
+
         if not self.api_key:
             logger.warning("⚠️ 硅基流动 API Key 未配置，Rerank 服务将不可用")
         else:
             logger.info(f"✅ Rerank 服务初始化完成")
             logger.info(f"   - 模型: {self.model_name}")
             logger.info(f"   - Base URL: {self.base_url}")
-            logger.info(f"   - API Key: {self.api_key[:8]}...{self.api_key[-4:]}")
-    
+
+    async def _ensure_config(self) -> None:
+        """懒加载部署级 Rerank 配置（DB 覆盖 → .env），失败保留 .env 默认"""
+        if self._config_loaded:
+            return
+        try:
+            from app.services import system_config_service
+            cfg = await system_config_service.get_rerank_config()
+            self.api_key = cfg.get("api_key") or self.api_key
+            self.model_name = cfg.get("model") or self.model_name
+            self.base_url = cfg.get("base_url") or self.base_url
+            self.top_n = cfg.get("top_k") or self.top_n
+            self.enabled = bool(cfg.get("enabled"))
+        except Exception as e:
+            logger.warning(f"[Rerank] 加载部署级配置失败，保留 .env 默认: {e}")
+        finally:
+            self._config_loaded = True
+
+    async def reload(self) -> None:
+        """重置配置，下次调用按最新部署级配置重载（保存配置后调用）"""
+        self._config_loaded = False
+        logger.info("[Rerank] 配置已重置，将按最新配置重载")
+
     def _get_client(self) -> httpx.AsyncClient:
         """获取或创建 HTTP 客户端"""
         if self._client is None:
@@ -111,10 +135,16 @@ class RerankService:
         Returns:
             按相关性分数降序排列的 RerankResult 列表
         """
-        if not self.api_key:
-            logger.error("❌ 硅基流动 API Key 未配置")
+        await self._ensure_config()
+
+        if not self.enabled:
+            logger.info("ℹ️ Rerank 已被管理员关闭，跳过重排")
             return []
-        
+
+        if not self.api_key:
+            logger.error("❌ Rerank API Key 未配置")
+            return []
+
         if not documents:
             logger.warning("⚠️ 文档列表为空")
             return []
