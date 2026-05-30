@@ -97,7 +97,7 @@ class ZhipuAdapter(BaseLLMAdapter):
 
             response = self.client.chat.completions.create(**request_params)
 
-            content = response.choices[0].message.content
+            content = response.choices[0].message.content or ""  # tool_calls 时 content 为 None，防 len(None)
             usage = response.usage
 
             print(f"[OK] [ZhipuAI] Generation complete, length: {len(content)} chars")
@@ -243,7 +243,7 @@ class ZhipuAdapter(BaseLLMAdapter):
 
             response = self.client.chat.completions.create(**request_params)
 
-            content = response.choices[0].message.content
+            content = response.choices[0].message.content or ""  # tool_calls 时 content 为 None，防 len(None)
             usage = response.usage
 
             print(f"[OK] [ZhipuAI] Chat complete, length: {len(content)} chars")
@@ -297,7 +297,7 @@ class ZhipuAdapter(BaseLLMAdapter):
 
             response = self.client.chat.completions.create(**request_params)
 
-            content = response.choices[0].message.content
+            content = response.choices[0].message.content or ""  # tool_calls 时 content 为 None，防 len(None)
             usage = response.usage
 
             return LLMResponse(

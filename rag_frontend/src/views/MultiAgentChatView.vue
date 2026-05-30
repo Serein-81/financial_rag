@@ -29,9 +29,7 @@ import {
   Shield,
   Lightbulb,
   AlertCircle,
-  History,
-  Trash2,
-  ChevronLeft
+  History
 } from 'lucide-vue-next'
 
 import { marked } from 'marked'
@@ -58,11 +56,14 @@ const renderer = new marked.Renderer()
 
 
 
-renderer.code = function({ text, lang }: { text: string; lang?: string }) {
+// marked v11 的 renderer.code 是位置参数 (code: string, lang?: string)，
+// 不能用 v12+ 的对象解构 ({ text, lang })，否则 code 恒为 undefined，
+// hljs.highlight(undefined) 抛错会让整个 marked.parse 失败、退回原始 markdown。
+renderer.code = function(code: string, lang?: string): string {
 
   const language = lang && hljs.getLanguage(lang) ? lang : 'plaintext'
 
-  const highlighted = hljs.highlight(text, { language }).value
+  const highlighted = hljs.highlight(code ?? '', { language }).value
 
   return `<pre class="hljs"><div class="code-header"><span class="code-lang">${language}</span><button class="copy-btn" onclick="navigator.clipboard.writeText(this.closest('pre').querySelector('code').textContent)"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg> 复制</button></div><code class="language-${language}">${highlighted}</code></pre>`
 
@@ -1575,6 +1576,9 @@ function clearChat() {
 
   clearState()
 
+  showHistory.value = true
+  loadChatHistory()
+
 }
 
 
@@ -1667,8 +1671,16 @@ function renderMarkdown(content: string): string {
       }) || html || content
     }
     return html || content
-  } catch {
-    return content
+  } catch (e) {
+    // marked 解析失败时不要直接吐原始 markdown（HTML 会把换行折叠成一行，
+    // 表格/标题语法变成乱码）。转义后按换行转 <br>，至少保证可读。
+    console.warn('[MultiAgent] markdown 渲染失败，降级为纯文本:', e)
+    const escaped = (content || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/\n/g, '<br>')
+    return escaped
   }
 }
 
@@ -2115,7 +2127,7 @@ function renderMarkdown(content: string): string {
 
 
 
-      <div v-if="messages.length > 0" class="p-3 border-t border-gray-200 space-y-2 shrink-0 bg-white">
+      <div v-if="messages.length > 0 || showHistory" class="p-3 border-t border-gray-200 space-y-2 shrink-0 bg-white">
         <div v-if="streamInterrupted" class="flex items-start gap-1.5 p-1.5 bg-yellow-50 rounded border border-yellow-200">
           <AlertTriangle :size="12" class="text-yellow-600 flex-shrink-0 mt-0.5" />
           <div class="flex-1">
@@ -2265,10 +2277,8 @@ function renderMarkdown(content: string): string {
             </span>
             <Loader2 v-if="historyLoading" :size="11" class="text-gray-400 animate-spin" />
           </div>
-
-          <!-- DB 历史（服务端，跨设备持久）-->
-          <div v-if="!historyLoading && !dbHistory.length && !localHistory.length" class="text-xs text-gray-400 text-center py-4">暂无历史记录</div>
-          <div v-if="dbHistory.length" class="space-y-1.5 max-h-56 overflow-y-auto pr-0.5 mb-2">
+          <div v-if="!historyLoading && !dbHistory.length" class="text-xs text-gray-400 text-center py-4">暂无历史记录</div>
+          <div v-if="dbHistory.length" class="space-y-1.5 max-h-64 overflow-y-auto pr-0.5">
             <div
               v-for="item in dbHistory"
               :key="item.session_id"
@@ -2280,33 +2290,6 @@ function renderMarkdown(content: string): string {
                 <span class="text-[10px] text-gray-400">{{ formatHistoryDate(item.created_at || '') }}</span>
                 <span v-if="item.primary_intent" class="text-[10px] px-1 bg-blue-100 text-blue-700 rounded">{{ item.primary_intent }}</span>
                 <span v-if="item.specialists?.length" class="text-[10px] text-gray-400">{{ item.specialists.join('·') }}</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- 本地历史（浏览器缓存，有完整消息）-->
-          <div v-if="localHistory.length" class="mt-2 pt-2 border-t border-dashed border-gray-200">
-            <p class="text-[10px] text-gray-400 mb-1.5">本地缓存（含完整消息）</p>
-            <div class="space-y-1.5 max-h-40 overflow-y-auto pr-0.5">
-              <div
-                v-for="item in localHistory"
-                :key="item.id"
-                class="group bg-gray-50 border border-gray-200 rounded p-2 cursor-pointer hover:border-blue-300 hover:bg-blue-50 transition-all"
-                @click="restoreLocalChat(item)"
-              >
-                <div class="flex items-start justify-between gap-1">
-                  <p class="text-xs text-gray-700 line-clamp-2 flex-1 leading-relaxed">{{ item.preview }}</p>
-                  <button
-                    @click.stop="deleteLocalHistoryItem(item.id)"
-                    class="opacity-0 group-hover:opacity-100 p-0.5 text-gray-400 hover:text-red-500 transition-all flex-shrink-0"
-                  >
-                    <Trash2 :size="10" />
-                  </button>
-                </div>
-                <div class="flex items-center gap-2 mt-1">
-                  <span class="text-[10px] text-gray-400">{{ formatHistoryDate(item.savedAt) }}</span>
-                  <span class="text-[10px] text-gray-400">{{ item.messageCount }} 条消息</span>
-                </div>
               </div>
             </div>
           </div>

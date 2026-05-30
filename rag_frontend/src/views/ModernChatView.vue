@@ -4,7 +4,7 @@ import { useSessionStore } from '@/stores/session'
 import { useKnowledgeStore } from '@/stores/knowledge'
 import { useAuthStore } from '@/stores/auth'
 import { useFeedbackStore } from '@/stores/feedback'
-import { chatApi } from '@/api/chat'
+import { chatApi, type AgentStreamEvent } from '@/api/chat'
 import MessageFeedback from '@/components/chat/MessageFeedback.vue'
 import AgenticRagTrace from '@/components/chat/AgenticRagTrace.vue'
 import RetrievalSettingsDrawer from '@/components/chat/RetrievalSettingsDrawer.vue'
@@ -115,6 +115,11 @@ function saveRetrievalSettings(s: RetrievalSettings) {
 
 const streamingContent = ref<Map<number, string>>(new Map())
 
+// 🌊 检索/生成进度提示（Agentic 多轮检索期间显示"正在检索第 N 轮…"，首个正文 chunk 到达后清空）
+const streamingStatus = ref('')
+// 🔖 断点续传：记录本次生成已收到的最大 seq，切页返回后据此从断点继续
+const lastSeq = ref(0)
+
 // 👇 后台生成轮询：当页面切换导致 SSE 断开时，用于等待 AI 在后台完成的异步结果
 const isPolling = ref(false)
 const pollingMessage = ref('')         // "AI 正在思考...（5秒）"
@@ -151,10 +156,10 @@ onMounted(async () => {
       })
       // 如果最后一条消息是用户的，说明 AI 可能在后台继续生成中
       // （页面切换导致流中断，但后端以后台 asyncio.Task 继续运行）
-      // 启动轮询，每隔 2 秒重新加载消息，直到 AI 回答出现或超时
+      // 优先走断点续传实时显示，缓冲不可用时回退轮询
       const lastMsg = sessionStore.currentMessages[sessionStore.currentMessages.length - 1]
       if (lastMsg && lastMsg.role === 'user') {
-        startPolling()
+        recoverGeneratingSession()
       }
     } catch (err) {
       // loadSession 失败（如 token 过期、会话被删除）
@@ -184,7 +189,7 @@ onMounted(async () => {
       })
       const lastMsg = sessionStore.currentMessages[sessionStore.currentMessages.length - 1]
       if (lastMsg && lastMsg.role === 'user') {
-        startPolling()
+        recoverGeneratingSession()
       }
     } catch (err) {
       console.warn('[ChatView] 自动加载最新会话失败:', err)
@@ -200,24 +205,8 @@ onMounted(async () => {
     if (document.visibilityState !== 'visible') return
     if (!sessionStore.currentSessionId) return
     if (isPolling.value || isLoading.value) return
-
-    try {
-      const _token = localStorage.getItem('rag_token')
-      const res = await fetch(`/api/v1/chat/task/status/${sessionStore.currentSessionId}`, {
-        headers: _token ? { Authorization: `Bearer ${_token}` } : undefined,
-      })
-      const data = await res.json()
-      if (data.status === 'completed') {
-        // 后台任务已完成，加载最新消息
-        await sessionStore.loadSession(sessionStore.currentSessionId)
-        scrollToBottom()
-      } else if (data.status === 'generating') {
-        // 后台仍在生成，启动轮询
-        startPolling()
-      }
-    } catch (err) {
-      console.warn('[ChatView] 页面可见性检查失败:', err)
-    }
+    // 走统一恢复入口：completed→loadSession，generating+resumable→断点续传，否则轮询
+    await recoverGeneratingSession()
   }
   document.addEventListener('visibilitychange', _visibilityHandler)
 })
@@ -243,6 +232,172 @@ watch(() => selectedKB.value?.id, async (newId) => {
     await knowledgeStore.fetchDocuments(newId)
   }
 })
+
+// 流式累积状态（sendMessage 与断点续传共用）
+interface StreamState { aiContent: string; currentSources: any[] }
+
+// 处理单个 Agent SSE 事件，写入末尾 assistant 气泡。返回 true 表示流已结束（done/error）。
+function handleAgentEvent(event: AgentStreamEvent, state: StreamState): boolean {
+  if (typeof event.seq === 'number' && event.seq > lastSeq.value) {
+    lastSeq.value = event.seq
+  }
+  switch (event.type) {
+    case 'init':
+      if (event.session_id) {
+        sessionStore.setCurrentSession(event.session_id)
+        sessionStore.fetchSessions()
+      }
+      break
+    case 'progress':
+      // 检索/评估进度，显示在气泡内（首个正文 chunk 到达后清空）
+      streamingStatus.value = event.message || '处理中…'
+      break
+    case 'chunk':
+      if (event.content) {
+        // 兼容旧的 sources 前缀通道
+        if (typeof event.content === 'string' &&
+            (event.content.startsWith('__SOURCES__:') || event.content.startsWith('__SOURCES_EVENT__:'))) {
+          try {
+            const sourcesJson = event.content.replace(/^__(SOURCES|SOURCES_EVENT)__:/, '')
+            state.currentSources = JSON.parse(sourcesJson)
+            if (state.currentSources.length > 0) {
+              const msgIndex = sessionStore.currentMessages.length - 1
+              const lastMsg = sessionStore.currentMessages[msgIndex]
+              if (lastMsg?.role === 'assistant') lastMsg.sources = state.currentSources
+              sourcesCollapsed.value.set(msgIndex, true)
+            }
+          } catch (e) {
+            console.error('解析sources失败:', e)
+          }
+        } else {
+          streamingStatus.value = ''  // 首个正文到达，清空进度提示
+          state.aiContent += event.content
+          sessionStore.updateLastMessage(state.aiContent, state.currentSources.length > 0 ? state.currentSources : undefined)
+          scrollToBottom()
+        }
+      }
+      break
+    case 'sources':
+      if (event.sources) {
+        state.currentSources = event.sources
+        if (state.currentSources.length > 0) {
+          const msgIndex = sessionStore.currentMessages.length - 1
+          const lastMsg = sessionStore.currentMessages[msgIndex]
+          if (lastMsg?.role === 'assistant') lastMsg.sources = state.currentSources
+          sourcesCollapsed.value.set(msgIndex, true)
+        }
+      }
+      break
+    case 'done': {
+      streamingStatus.value = ''
+      const meta = (event as any).meta || (event as any).message_meta
+      if (meta) {
+        const msgIndex = sessionStore.currentMessages.length - 1
+        const lastMsg = sessionStore.currentMessages[msgIndex] as any
+        if (lastMsg?.role === 'assistant') {
+          lastMsg.meta = meta
+          if (meta.message_id) lastMsg.id = meta.message_id
+        }
+      }
+      return true
+    }
+    case 'meta': {
+      const meta = (event as any).data || (event as any).meta
+      const msgIndex = sessionStore.currentMessages.length - 1
+      const lastMsg = sessionStore.currentMessages[msgIndex] as any
+      if (lastMsg?.role === 'assistant' && meta) {
+        lastMsg.meta = meta
+        if (meta.message_id) lastMsg.id = meta.message_id
+      }
+      break
+    }
+    case 'error': {
+      streamingStatus.value = ''
+      const errorMessage = event.message || '抱歉，AI 服务连接中断或网络不稳定，本次回答没有完整生成。请稍后重试。'
+      sessionStore.updateLastMessage(errorMessage)
+      state.aiContent = errorMessage
+      console.error('Agent stream error:', errorMessage)
+      return true
+    }
+  }
+  return false
+}
+
+// 断点续传：切页返回且后端仍在生成时，从 lastSeq 继续接收同一次生成的事件，追加到既有气泡（不新建，防重复）
+async function resumeAgentStream() {
+  const sid = sessionStore.currentSessionId
+  if (!sid) return
+
+  // 定位/复用末尾的 assistant 气泡；末尾若不是 assistant（如刚 loadSession 只有 user）则补一个空气泡
+  const msgs = sessionStore.currentMessages
+  const last = msgs[msgs.length - 1]
+  let baseContent = ''
+  let baseSources: any[] = []
+  if (last && last.role === 'assistant') {
+    baseContent = last.content || ''
+    baseSources = (last.sources as any[]) || []
+  } else {
+    sessionStore.addMessage({
+      role: 'assistant',
+      content: '',
+      sender_name: 'AI助手',
+      sender_avatar: undefined,
+      created_at: new Date().toISOString(),
+    })
+  }
+  const state: StreamState = { aiContent: baseContent, currentSources: baseSources }
+
+  streamAbortController = new AbortController()
+  const signal = streamAbortController.signal
+  isLoading.value = true
+  streamingStatus.value = '正在恢复生成…'
+  try {
+    for await (const event of chatApi.streamAgentChatResume(sid, lastSeq.value, signal)) {
+      if (signal.aborted) break
+      // 续传收尾标记：后台已结束/缓冲已清，转 loadSession 兜底拉取完整回答
+      if (event.type === 'done' && (event.resume === 'no_buffer' || event.resume === 'already_done')) {
+        await sessionStore.loadSession(sid)
+        scrollToBottom()
+        break
+      }
+      if (handleAgentEvent(event, state)) break
+    }
+  } catch (err: any) {
+    if (err?.name === 'AbortError') return
+    console.warn('[ChatView] 续传失败，回退轮询:', err)
+    startPolling()
+  } finally {
+    isLoading.value = false
+    streamingStatus.value = ''
+    streamAbortController = null
+  }
+}
+
+// 统一的"恢复生成态"入口：查任务状态决定 loadSession / 续传 / 轮询
+async function recoverGeneratingSession() {
+  const sid = sessionStore.currentSessionId
+  if (!sid) return
+  try {
+    const token = localStorage.getItem('rag_token')
+    const res = await fetch(`/api/v1/chat/task/status/${sid}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    })
+    const data = await res.json()
+    if (data.status === 'completed') {
+      await sessionStore.loadSession(sid)
+      scrollToBottom()
+    } else if (data.status === 'generating') {
+      if (data.resumable) {
+        await resumeAgentStream()
+      } else {
+        startPolling()
+      }
+    }
+  } catch (err) {
+    console.warn('[ChatView] 恢复生成态检查失败，回退轮询:', err)
+    startPolling()
+  }
+}
 
 async function sendMessage() {
   // ⚡ 同步锁：在 JS 事件循环中，同步代码按调用栈顺序原子执行，
@@ -289,8 +444,10 @@ async function sendMessage() {
   const signal = streamAbortController.signal
 
   try {
-    let aiContent = ''
-    let currentSources: any[] = []
+    // 重置本次生成的续传状态
+    lastSeq.value = 0
+    streamingStatus.value = ''
+    const streamState: StreamState = { aiContent: '', currentSources: [] }
 
     const idempotencyKey = crypto.randomUUID?.() // 幂等键：防止重复请求写库
     for await (const event of chatApi.streamAgentChat({
@@ -308,75 +465,7 @@ async function sendMessage() {
         console.log('[ChatView] 流已被中止，停止处理事件')
         break
       }
-
-      if (event.type === 'init' && event.session_id) {
-        sessionStore.setCurrentSession(event.session_id)
-        await sessionStore.fetchSessions()
-      } else if (event.type === 'chunk' && event.content) {
-        // 检查是否是sources数据（支持两种前缀）
-        if (typeof event.content === 'string' &&
-            (event.content.startsWith('__SOURCES__:') || event.content.startsWith('__SOURCES_EVENT__:'))) {
-          try {
-            const sourcesJson = event.content.replace(/^__(SOURCES|SOURCES_EVENT)__:/, '')
-            currentSources = JSON.parse(sourcesJson)
-            // 👇 修复：仅更新sources，不再用空字符串覆盖内容
-            if (currentSources.length > 0) {
-              const msgIndex = sessionStore.currentMessages.length - 1
-              // 保留现有内容，只更新sources
-              const lastMsg = sessionStore.currentMessages[msgIndex]
-              if (lastMsg?.role === 'assistant') {
-                lastMsg.sources = currentSources
-              }
-              sourcesCollapsed.value.set(msgIndex, true) // 默认折叠
-            }
-          } catch (e) {
-            console.error('解析sources失败:', e)
-          }
-        } else {
-          aiContent += event.content
-          sessionStore.updateLastMessage(aiContent, currentSources.length > 0 ? currentSources : undefined)
-          scrollToBottom()
-        }
-      } else if (event.type === 'sources' && event.sources) {
-        // 👇 修复：仅更新sources，不再用空字符串覆盖内容
-        currentSources = event.sources
-        if (currentSources.length > 0) {
-          const msgIndex = sessionStore.currentMessages.length - 1
-          const lastMsg = sessionStore.currentMessages[msgIndex]
-          if (lastMsg?.role === 'assistant') {
-            // 保留现有内容，只更新sources
-            lastMsg.sources = currentSources
-          }
-          sourcesCollapsed.value.set(msgIndex, true) // 默认折叠
-        }
-      } else if (event.type === 'done') {
-        console.log('✅ Agent 回答完成')
-        // 后端 done 事件可能携带 meta（message_id / retrieval_history / 耗时等）
-        const eventAny = event as any
-        const meta = eventAny.meta || eventAny.message_meta
-        if (meta) {
-          const msgIndex = sessionStore.currentMessages.length - 1
-          const lastMsg = sessionStore.currentMessages[msgIndex] as any
-          if (lastMsg?.role === 'assistant') {
-            lastMsg.meta = meta
-            if (meta.message_id) lastMsg.id = meta.message_id
-          }
-        }
-      } else if ((event as any).type === 'meta') {
-        // 显式 meta 事件（后端可分开发）
-        const meta = (event as any).data || (event as any).meta
-        const msgIndex = sessionStore.currentMessages.length - 1
-        const lastMsg = sessionStore.currentMessages[msgIndex] as any
-        if (lastMsg?.role === 'assistant' && meta) {
-          lastMsg.meta = meta
-          if (meta.message_id) lastMsg.id = meta.message_id
-        }
-      } else if (event.type === 'error') {
-        const errorMessage = event.message || '抱歉，AI 服务连接中断或网络不稳定，本次回答没有完整生成。请稍后重试。'
-        sessionStore.updateLastMessage(errorMessage)
-        aiContent = errorMessage
-        console.error('Agent stream error:', errorMessage)
-      }
+      if (handleAgentEvent(event, streamState)) break
     }
   } catch (error: any) {
     // 👇 忽略因 abort 触发的错误
@@ -771,8 +860,13 @@ function createNewChat() {
                   <span v-if="isStreamingMessage(index)" class="streaming-cursor" aria-hidden="true"></span>
                 </div>
                 <div v-else class="flex items-center gap-2">
+                  <!-- 检索/生成进度（Agentic 多轮检索期间）：有进度文案则显示文案，否则骨架屏 -->
+                  <div v-if="isStreamingMessage(index) && streamingStatus" class="flex items-center gap-2 text-sm text-gray-500">
+                    <Loader2 :size="16" class="animate-spin text-emerald-500" />
+                    <span>{{ streamingStatus }}</span>
+                  </div>
                   <!-- 骨架屏加载动画 -->
-                  <div class="space-y-2 animate-pulse">
+                  <div v-else class="space-y-2 animate-pulse">
                     <div class="flex gap-2">
                       <div class="h-4 bg-gray-200 rounded w-24"></div>
                       <div class="h-4 bg-gray-200 rounded w-32"></div>

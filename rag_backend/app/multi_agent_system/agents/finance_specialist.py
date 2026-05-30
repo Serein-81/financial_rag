@@ -1011,7 +1011,8 @@ class FinanceSpecialist(BaseSpecialistAgent):
                 if not tool_calls or len(tool_calls) == 0:
                     # LLM 选择直接回答，退出循环
                     logger.info(f"[FinanceSpecialist] 第{round_idx+1}轮: LLM 直接回答，工具调用结束")
-                    final_answer = response.content if hasattr(response, 'content') else str(response)
+                    # content 可能为 None（空回复），用 `or ""` 兜底防 len(None)
+                    final_answer = (getattr(response, 'content', None) or "").strip()
                     # 流式推送最终回答（分批模拟打字机，零额外 API 消耗）
                     await _push_stream(final_answer)
                     break
@@ -1084,6 +1085,11 @@ class FinanceSpecialist(BaseSpecialistAgent):
                 logger.warning(f"[FinanceSpecialist] 达到最大工具调用轮数 {MAX_TOOL_ROUNDS}")
                 if not final_answer:
                     final_answer = "抱歉，系统处理超时。请稍后重试。"
+                await _push_stream(final_answer)
+
+            # 空答案兜底（模型偶发空回复，break 路径未覆盖）
+            if not (final_answer or "").strip():
+                final_answer = "抱歉，本次未能生成有效的分析结果，请稍后重试或换一种问法。"
                 await _push_stream(final_answer)
 
             return {

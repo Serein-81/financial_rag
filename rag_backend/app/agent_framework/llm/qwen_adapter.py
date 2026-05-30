@@ -242,7 +242,8 @@ class QwenAdapter(BaseLLMAdapter):
 
             if "choices" in result and len(result["choices"]) > 0:
                 choice = result["choices"][0]
-                content = choice.get("message", {}).get("content", "")
+                # 仅 tool_calls 时 content 为 null，用 `or ""` 防 len(None)
+                content = choice.get("message", {}).get("content") or ""
                 finish_reason = choice.get("finish_reason", "stop")
 
                 return LLMResponse(

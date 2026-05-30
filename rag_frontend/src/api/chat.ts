@@ -72,15 +72,7 @@ export const chatApi = {
       enable_graph_expansion?: boolean
     },
     signal?: AbortSignal  // 👈 支持外部中止
-  ): AsyncGenerator<{
-    type: 'init' | 'chunk' | 'done' | 'sources' | 'error' | 'meta'
-    session_id?: string
-    content?: string
-    sources?: any[]
-    message?: string
-    meta?: Record<string, any>      // P0 新增：消息元数据
-    data?: Record<string, any>      // P0 新增：通用数据
-  }, void, unknown> {
+  ): AsyncGenerator<AgentStreamEvent, void, unknown> {
     const token = localStorage.getItem('rag_token')
 
     const response = await fetch('/api/v1/chat/agent_chat_stream', {
@@ -97,41 +89,89 @@ export const chatApi = {
       throw new Error(`HTTP ${response.status}`)
     }
 
-    const reader = response.body?.getReader()
-    if (!reader) {
-      throw new Error('No reader available')
+    yield* parseSSEStream(response, signal)
+  },
+
+  // 断点续传：切页返回后从 lastSeq 继续接收同一次生成的事件流（GET + SSE）
+  async *streamAgentChatResume(
+    sessionId: string,
+    lastSeq: number = 0,
+    signal?: AbortSignal
+  ): AsyncGenerator<AgentStreamEvent, void, unknown> {
+    const token = localStorage.getItem('rag_token')
+
+    const response = await fetch(
+      `/api/v1/chat/agent_chat_resume/${sessionId}?last_seq=${lastSeq}`,
+      {
+        method: 'GET',
+        headers: {
+          ...(token && { 'Authorization': `Bearer ${token}` }),
+        },
+        signal,
+      }
+    )
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`)
     }
 
-    const decoder = new TextDecoder('utf-8')
-    let buffer = ''
+    yield* parseSSEStream(response, signal)
+  },
+}
 
-    while (true) {
-      // 👇 每次迭代检查是否已中止
-      if (signal?.aborted) {
-        console.log('[SSE] 流已被外部中止')
-        break
-      }
+// Agent SSE 事件统一类型（普通流与断点续传共用）
+export interface AgentStreamEvent {
+  type: 'init' | 'chunk' | 'done' | 'sources' | 'error' | 'meta' | 'progress'
+  session_id?: string
+  content?: string
+  sources?: any[]
+  message?: string
+  meta?: Record<string, any>
+  data?: Record<string, any>
+  seq?: number                    // 断点续传序号
+  stage?: string                  // progress: 阶段（retrieval/evaluate）
+  round?: number                  // progress: 检索轮次
+  resume?: string                 // done: 续传收尾标记（no_buffer/already_done）
+}
 
-      const { done, value } = await reader.read()
-      if (done) break
+// 复用的 SSE 解析：fetch Response.body → getReader → 按 \n\n 拆 data: 帧
+async function* parseSSEStream(
+  response: Response,
+  signal?: AbortSignal
+): AsyncGenerator<AgentStreamEvent, void, unknown> {
+  const reader = response.body?.getReader()
+  if (!reader) {
+    throw new Error('No reader available')
+  }
 
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n\n')
+  const decoder = new TextDecoder('utf-8')
+  let buffer = ''
 
-      // Keep the last incomplete line in buffer
-      buffer = lines.pop() || ''
+  while (true) {
+    if (signal?.aborted) {
+      console.log('[SSE] 流已被外部中止')
+      break
+    }
 
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          try {
-            const jsonStr = line.slice(6) // Remove 'data: ' prefix
-            const event = JSON.parse(jsonStr)
-            yield event
-          } catch (error) {
-            console.error('Failed to parse SSE line:', line, error)
-          }
+    const { done, value } = await reader.read()
+    if (done) break
+
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n\n')
+
+    // Keep the last incomplete frame in buffer
+    buffer = lines.pop() || ''
+
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        try {
+          const jsonStr = line.slice(6) // Remove 'data: ' prefix
+          const event = JSON.parse(jsonStr)
+          yield event
+        } catch (error) {
+          console.error('Failed to parse SSE line:', line, error)
         }
       }
     }
-  },
+  }
 }

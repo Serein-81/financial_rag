@@ -118,12 +118,27 @@ def _safe_put(q: asyncio.Queue, item: tuple) -> None:
 # key = session_id, value = [(seq, type, payload), ...]
 # 保留最近 500 条或 5 分钟后清理。
 _stream_buffers: Dict[str, list] = {}
+# 会话完成（done/error 入缓冲）时间戳，用于 TTL 惰性清理。
+_stream_buffer_done_at: Dict[str, float] = {}
 _STREAM_BUFFER_MAX_ITEMS = 500
 _STREAM_BUFFER_TTL = 300  # 5 分钟
 
 
+def _sweep_expired_buffers() -> None:
+    """惰性清理：移除已完成且超过 TTL 的会话缓冲。
+    在 _add_to_buffer / resume 入口顺带调用，避免单独的清理任务。"""
+    if not _stream_buffer_done_at:
+        return
+    _now = time.time()
+    _expired = [sid for sid, ts in _stream_buffer_done_at.items() if _now - ts > _STREAM_BUFFER_TTL]
+    for sid in _expired:
+        _stream_buffers.pop(sid, None)
+        _stream_buffer_done_at.pop(sid, None)
+
+
 def _add_to_buffer(session_id: str, seq: int, event_type: str, payload: any) -> None:
-    """添加 chunk 到会话缓冲"""
+    """添加事件到会话缓冲（chunk/sources/progress/done/error 均入缓冲，供断点续传回放）"""
+    _sweep_expired_buffers()
     if session_id not in _stream_buffers:
         _stream_buffers[session_id] = []
     buf = _stream_buffers[session_id]
@@ -131,6 +146,9 @@ def _add_to_buffer(session_id: str, seq: int, event_type: str, payload: any) -> 
     # 超过上限时丢弃最旧的
     if len(buf) > _STREAM_BUFFER_MAX_ITEMS:
         buf[:50] = []  # 一次丢弃 50 条
+    # 终止事件：登记完成时间，TTL 后由 _sweep_expired_buffers 清理
+    if event_type in ("done", "error"):
+        _stream_buffer_done_at[session_id] = time.time()
 
 
 def _get_buffer_since(session_id: str, last_seq: int) -> list:
@@ -139,9 +157,15 @@ def _get_buffer_since(session_id: str, last_seq: int) -> list:
     return [item for item in buf if item[0] > last_seq]
 
 
+def _buffer_has_terminal(session_id: str) -> bool:
+    """会话缓冲是否已包含终止事件（done/error）"""
+    return any(item[1] in ("done", "error") for item in _stream_buffers.get(session_id, []))
+
+
 def _cleanup_buffer(session_id: str) -> None:
     """清理会话缓冲"""
     _stream_buffers.pop(session_id, None)
+    _stream_buffer_done_at.pop(session_id, None)
 
 
 # ── 短时问答缓存 ──
@@ -711,6 +735,14 @@ async def get_chat_task_status(
             if not _session or str(_session.user_id) != str(current_user.id):
                 raise HTTPException(status_code=404, detail="会话不存在")
 
+            # 优先看流缓冲：存在且未终止 → 后台仍在实时生成，可走断点续传。
+            # （这也修复了同会话连续提问时，因旧 assistant 回答存在而被误判 completed 的问题）
+            _sweep_expired_buffers()
+            if session_id in _stream_buffers and not _buffer_has_terminal(session_id):
+                _buf = _stream_buffers.get(session_id, [])
+                _max_seq = max((it[0] for it in _buf), default=0)
+                return {"status": "generating", "resumable": True, "buffer_seq": _max_seq}
+
             # 检查是否有 assistant 回答
             _result = await _db.execute(
                 select(ChatMessage).where(
@@ -725,6 +757,79 @@ async def get_chat_task_status(
     except Exception as _e:
         logger.warning(f"[CHAT] 任务状态查询失败: {_e}")
         return {"status": "unknown", "error": str(_e)}
+
+
+@router.get("/agent_chat_resume/{session_id}")
+async def agent_chat_resume(
+    session_id: str,
+    last_seq: int = 0,
+    current_user: User = Depends(deps.get_current_user),
+):
+    """断点续传 SSE：回放会话缓冲中 seq > last_seq 的事件，并 tail 后续新事件，
+    直到遇到终止事件（done/error）。供前端切页返回后从断点继续实时显示。
+
+    事件格式与 /agent_chat_stream 完全一致（chunk/sources/progress/done/error，均带 seq）。
+    鉴权用 Bearer（前端用 fetch+getReader 消费，非 EventSource）。"""
+    try:
+        _su = uuid.UUID(str(session_id))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="无效的 session_id")
+    async with AsyncSessionLocal() as _db:
+        _session = await _db.get(ChatSession, _su)
+        if not _session or str(_session.user_id) != str(current_user.id):
+            raise HTTPException(status_code=404, detail="会话不存在")
+
+    async def _resume_gen():
+        _sweep_expired_buffers()
+        # 缓冲不存在：后台任务已结束并被清理（或本就无任务）。
+        # 让前端走 loadSession 兜底拉取已存库的完整回答。
+        if session_id not in _stream_buffers:
+            yield f"data: {json.dumps({'type': 'done', 'resume': 'no_buffer'}, ensure_ascii=False)}\n\n"
+            return
+
+        _emitted = last_seq
+        _idle_loops = 0
+        _MAX_IDLE = 600  # 600 × 0.3s ≈ 180s 无新事件则放弃 tail
+        try:
+            while True:
+                pending = _get_buffer_since(session_id, _emitted)
+                if pending:
+                    _idle_loops = 0
+                    for seq, etype, payload in pending:
+                        if seq > _emitted:
+                            _emitted = seq
+                        if etype == "chunk":
+                            yield f"data: {json.dumps({'type': 'chunk', 'content': payload, 'seq': seq}, ensure_ascii=False)}\n\n"
+                        elif etype == "sources":
+                            yield f"data: {json.dumps({'type': 'sources', 'sources': payload, 'seq': seq}, ensure_ascii=False)}\n\n"
+                        elif etype == "progress":
+                            _p = {'type': 'progress', 'seq': seq}
+                            if isinstance(payload, dict):
+                                _p.update(payload)
+                            yield f"data: {json.dumps(_p, ensure_ascii=False)}\n\n"
+                        elif etype == "done":
+                            _d = {'type': 'done', 'seq': seq}
+                            if isinstance(payload, dict):
+                                _d['meta'] = payload
+                            yield f"data: {json.dumps(_d, ensure_ascii=False)}\n\n"
+                            return
+                        elif etype == "error":
+                            yield f"data: {json.dumps({'type': 'error', 'message': str(payload), 'seq': seq}, ensure_ascii=False)}\n\n"
+                            return
+                else:
+                    # 无新事件：若已包含终止项但 seq ≤ last_seq（前端已收到）→ 直接收尾
+                    if _buffer_has_terminal(session_id):
+                        yield f"data: {json.dumps({'type': 'done', 'resume': 'already_done'}, ensure_ascii=False)}\n\n"
+                        return
+                    _idle_loops += 1
+                    if _idle_loops >= _MAX_IDLE:
+                        yield f"data: {json.dumps({'type': 'error', 'message': '续传超时，请刷新页面'}, ensure_ascii=False)}\n\n"
+                        return
+                    await asyncio.sleep(0.3)
+        except (asyncio.CancelledError, GeneratorExit):
+            return
+
+    return StreamingResponse(_resume_gen(), media_type="text/event-stream")
 
 
 @router.post("/agent_chat_stream")
@@ -812,6 +917,7 @@ async def chat_with_agent_stream(
         if _cached is not None:
             logger.info("[CACHE] 简单问题缓存命中，跳过 LLM | query=%s", bg_user_query[:30])
             _safe_put(bg_queue, ("chunk", _cached, 1))
+            _add_to_buffer(bg_session_id, 1, "chunk", _cached)
             # 缓存命中：仍然要透传一个最小 meta 让前端可保存反馈
             _cached_meta = {
                 "retrieval_method": "cache",
@@ -829,18 +935,19 @@ async def chat_with_agent_stream(
                 content=_cached, tenant_id=bg_persist_tenant_id, agent_name="agent",
             )
             _cached_meta["message_id"] = _cached_msg_id
-            _safe_put(bg_queue, ("done", _cached_meta))
+            _safe_put(bg_queue, ("done", _cached_meta, 2))
+            _add_to_buffer(bg_session_id, 2, "done", _cached_meta)
             return
 
         # G1: 计时与元数据收集
         _t_start = time.time()
         _t_first_chunk: Optional[float] = None
         _meta_from_service: Dict[str, Any] = {}
+        _seq = 0  # SSE 序列号（提到 try 外，确保异常分支也能引用）
 
         try:
             full_response = ""
             current_sources = []
-            _seq = 0  # SSE 序列号
 
             async for chunk in agent_service.chat_stream(
                 user_input=bg_user_query,
@@ -869,9 +976,21 @@ async def chat_with_agent_stream(
                     try:
                         sources_data = json.loads(sources_json)
                         current_sources = sources_data if isinstance(sources_data, list) else []
-                        _safe_put(bg_queue, ("sources", sources_data))
+                        _seq += 1
+                        _safe_put(bg_queue, ("sources", sources_data, _seq))
+                        _add_to_buffer(bg_session_id, _seq, "sources", sources_data)
                     except json.JSONDecodeError:
                         print(f"⚠️ [sources解析失败]: {sources_json[:100]}")
+                elif chunk.startswith("__PROGRESS_EVENT__:"):
+                    # 检索进度事件（Agentic 多轮检索期间实时下发）
+                    progress_json = chunk[len("__PROGRESS_EVENT__:"):]
+                    try:
+                        progress_data = json.loads(progress_json)
+                        _seq += 1
+                        _safe_put(bg_queue, ("progress", progress_data, _seq))
+                        _add_to_buffer(bg_session_id, _seq, "progress", progress_data)
+                    except json.JSONDecodeError:
+                        print(f"⚠️ [progress解析失败]: {progress_json[:100]}")
                 elif chunk.startswith("__META_EVENT__:"):
                     # G1/G2: 从 agent_service 接收检索元数据
                     meta_json = chunk[len("__META_EVENT__:"):]
@@ -895,7 +1014,9 @@ async def chat_with_agent_stream(
                     session_id=bg_session_id, role="assistant",
                     content=msg, tenant_id=bg_persist_tenant_id, agent_name="agent",
                 )
-                _safe_put(bg_queue, ("error", msg))
+                _seq += 1
+                _safe_put(bg_queue, ("error", msg, _seq))
+                _add_to_buffer(bg_session_id, _seq, "error", msg)
                 return
 
             _msg_id = await persist_chat_message(
@@ -938,11 +1059,15 @@ async def chat_with_agent_stream(
                 "enable_graph_expansion": _meta_from_service.get("enable_graph_expansion"),
                 "max_iterations": _meta_from_service.get("max_iterations") or bg_max_iterations,
             }
-            _safe_put(bg_queue, ("done", _final_meta))
+            _seq += 1
+            _safe_put(bg_queue, ("done", _final_meta, _seq))
+            _add_to_buffer(bg_session_id, _seq, "done", _final_meta)
 
         except Exception as e:
             print(f"[CHAT] [后台] 处理异常: {e}")
-            _safe_put(bg_queue, ("error", str(e)))
+            _seq += 1
+            _safe_put(bg_queue, ("error", str(e), _seq))
+            _add_to_buffer(bg_session_id, _seq, "error", str(e))
 
     async def event_generator():
         # 先把 session_id 发给前端
@@ -998,6 +1123,7 @@ async def chat_with_agent_stream(
         _bg_task.add_done_callback(_background_tasks.discard)
 
         _last_meta: Optional[Dict[str, Any]] = None
+        _last_done_seq: Optional[int] = None
         try:
             while True:
                 item = await _queue.get()
@@ -1005,12 +1131,19 @@ async def chat_with_agent_stream(
                     break
                 event_type = item[0]
 
+                # 终止事件携带 seq（item[2]），便于前端记录 lastSeq 后续断点续传
+                _evt_seq = item[2] if len(item) > 2 else None
+
                 if event_type == "done":
                     # G1: item[1] 是完整 meta 字典；event_generator 末尾会拼到 done 事件
                     _last_meta = item[1] if len(item) > 1 else None
+                    _last_done_seq = _evt_seq
                     break
                 if event_type == "error":
-                    yield f"data: {json.dumps({'type': 'error', 'message': str(item[1])})}\n\n"
+                    _err_payload = {'type': 'error', 'message': str(item[1])}
+                    if _evt_seq is not None:
+                        _err_payload['seq'] = _evt_seq
+                    yield f"data: {json.dumps(_err_payload, ensure_ascii=False)}\n\n"
                     break
 
                 if event_type == "chunk":
@@ -1018,16 +1151,30 @@ async def chat_with_agent_stream(
                     _payload, _seq = item[1], item[2]
                     yield f"data: {json.dumps({'type': 'chunk', 'content': _payload, 'seq': _seq})}\n\n"
                 elif event_type == "sources":
-                    yield f"data: {json.dumps({'type': 'sources', 'sources': item[1]})}\n\n"
+                    _src_payload = {'type': 'sources', 'sources': item[1]}
+                    if _evt_seq is not None:
+                        _src_payload['seq'] = _evt_seq
+                    yield f"data: {json.dumps(_src_payload, ensure_ascii=False)}\n\n"
+                elif event_type == "progress":
+                    # 检索进度：{'type':'progress','seq':N,'stage':...,'round':...,'message':...}
+                    _prog_payload = {'type': 'progress'}
+                    if isinstance(item[1], dict):
+                        _prog_payload.update(item[1])
+                    if _evt_seq is not None:
+                        _prog_payload['seq'] = _evt_seq
+                    yield f"data: {json.dumps(_prog_payload, ensure_ascii=False)}\n\n"
 
             _done_payload: Dict[str, Any] = {'type': 'done'}
             if isinstance(_last_meta, dict):
                 _done_payload['meta'] = _last_meta
+            if _last_done_seq is not None:
+                _done_payload['seq'] = _last_done_seq
             yield f"data: {json.dumps(_done_payload, ensure_ascii=False)}\n\n"
 
         except GeneratorExit:
-            print(f"[CHAT] 客户端断开 SSE，后台任务继续 | session={session_id[:8]}")
-            _cleanup_buffer(session_id)
+            # 客户端断开（切页/刷新）：后台任务继续，缓冲保留供断点续传。
+            # 不再 _cleanup_buffer——否则 resume 端点无源可读。缓冲由 TTL 惰性清理。
+            print(f"[CHAT] 客户端断开 SSE，后台任务继续，缓冲保留 | session={session_id[:8]}")
             return
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")

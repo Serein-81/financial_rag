@@ -24,6 +24,18 @@ def _svc(monkeypatch, bridge=None):
     return svc
 
 
+async def _run_agentic(svc, **kwargs):
+    """消费 _agentic_retrieve 异步生成器：收集 progress 事件，返回 (result_dict, progress_list)。"""
+    result = None
+    progress = []
+    async for kind, payload in svc._agentic_retrieve(**kwargs):
+        if kind == "progress":
+            progress.append(payload)
+        else:
+            result = payload
+    return result, progress
+
+
 def _make_retrieve(results_per_round, captured_queries=None):
     """构造一个 AsyncMock，按调用次数返回不同轮次的结果。"""
     calls = {"n": 0}
@@ -54,7 +66,8 @@ async def test_agentic_stops_when_sufficient(monkeypatch):
     monkeypatch.setattr(agent_service_module.unified_retriever, "retrieve", AsyncMock(side_effect=retrieve_fn))
     svc = _svc(monkeypatch)
 
-    result = await svc._agentic_retrieve(
+    result, progress = await _run_agentic(
+        svc,
         query="企业所得税 税率 优惠",
         kb_id="kb1", session_id="s1", user_id="u1", tenant_id="t1",
         max_iterations=3, top_k=10, enable_rerank=True, enable_graph=False,
@@ -66,24 +79,57 @@ async def test_agentic_stops_when_sufficient(monkeypatch):
     assert result["evaluation"]["is_sufficient"] is True
     assert result["mode"] == "AGENTIC"
     assert result["combined_context"]
+    # 进度事件：至少包含一轮的 retrieval/evaluate
+    assert any(p.get("stage") == "retrieval" for p in progress)
+    assert any(p.get("stage") == "evaluate" for p in progress)
 
 
 @pytest.mark.asyncio
 async def test_agentic_stops_at_max_iterations(monkeypatch):
-    """结果始终不足 → 跑满 max_iterations 即停（规则评估）。"""
-    poor = [[{"id": "x", "content": "无关内容"}]]
-    retrieve_fn, calls = _make_retrieve(poor)
+    """结果"不充分但不算无用"（中等分）→ 跑满 max_iterations 即停（规则评估）。
+
+    构造每轮返回相同的 3 条、其中 1 条命中查询关键词，规则评估综合分约 0.47：
+    既低于充分性阈值 0.7（不会"足够即停"），又高于前置短路阈值 0.2（不会被短路），
+    因此会一直检索到 max_iterations。
+    """
+    mid = [[
+        {"id": "1", "content": "企业所得税 的相关说明"},
+        {"id": "2", "content": "无关内容甲"},
+        {"id": "3", "content": "无关内容乙"},
+    ]]
+    retrieve_fn, calls = _make_retrieve(mid)
     monkeypatch.setattr(agent_service_module.unified_retriever, "retrieve", AsyncMock(side_effect=retrieve_fn))
     svc = _svc(monkeypatch)
 
-    result = await svc._agentic_retrieve(
-        query="完全不同的查询词",
+    result, _progress = await _run_agentic(
+        svc,
+        query="企业所得税 优惠 政策",
         kb_id="kb1", session_id="s1", user_id="u1", tenant_id="t1",
         max_iterations=2, top_k=10, enable_rerank=True, enable_graph=False,
     )
 
     assert calls["n"] == 2
     assert len(result["retrieval_history"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_agentic_short_circuits_on_hopeless_score(monkeypatch):
+    """前置短路：首轮整体分极低（知识库基本无相关内容）→ 不再续检索，1 轮即停。"""
+    poor = [[{"id": "x", "content": "完全无关的内容"}]]
+    retrieve_fn, calls = _make_retrieve(poor)
+    monkeypatch.setattr(agent_service_module.unified_retriever, "retrieve", AsyncMock(side_effect=retrieve_fn))
+    svc = _svc(monkeypatch)
+
+    result, _progress = await _run_agentic(
+        svc,
+        query="支付宝和移动支付什么关系",
+        kb_id="kb1", session_id="s1", user_id="u1", tenant_id="t1",
+        max_iterations=3, top_k=10, enable_rerank=True, enable_graph=False,
+    )
+
+    # 低分短路：只跑了 1 轮（而非 max_iterations=3）
+    assert calls["n"] == 1
+    assert len(result["retrieval_history"]) == 1
 
 
 @pytest.mark.asyncio
@@ -95,7 +141,8 @@ async def test_agentic_dedup_and_top_k(monkeypatch):
     monkeypatch.setattr(agent_service_module.unified_retriever, "retrieve", AsyncMock(side_effect=retrieve_fn))
     svc = _svc(monkeypatch)
 
-    result = await svc._agentic_retrieve(
+    result, _progress = await _run_agentic(
+        svc,
         query="zzz",
         kb_id="kb1", session_id="s1", user_id="u1", tenant_id="t1",
         max_iterations=2, top_k=3, enable_rerank=True, enable_graph=False,
@@ -140,7 +187,8 @@ async def test_agentic_uses_llm_eval_and_rewrite(monkeypatch):
     bridge = _FakeBridge()
     svc = _svc(monkeypatch, bridge=bridge)
 
-    result = await svc._agentic_retrieve(
+    result, _progress = await _run_agentic(
+        svc,
         query="企业所得税优惠",
         kb_id="kb1", session_id="s1", user_id="u1", tenant_id="t1",
         max_iterations=3, top_k=10, enable_rerank=True, enable_graph=True,

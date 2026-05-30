@@ -346,7 +346,10 @@ class DeepSeekAdapter(BaseLLMAdapter):
 
             if "choices" in result and len(result["choices"]) > 0:
                 choice = result["choices"][0]
-                content = choice.get("message", {}).get("content", "")
+                # 当 LLM 仅返回 tool_calls 时 message.content 为 JSON null，
+                # .get("content", "") 会拿到 None（键存在、默认值不生效），
+                # 必须用 `or ""` 兜底，否则后续 len(content) 抛 NoneType 异常。
+                content = choice.get("message", {}).get("content") or ""
                 finish_reason = choice.get("finish_reason", "stop")
 
                 logger.info(f"[DeepSeek] 提取到内容，长度: {len(content)} 字符")

@@ -94,9 +94,9 @@ class HuggingFaceAdapter(BaseLLMAdapter):
             data = response.json()
 
             if isinstance(data, list) and len(data) > 0:
-                content = data[0].get("generated_text", "")
+                content = data[0].get("generated_text") or ""
             elif isinstance(data, dict):
-                content = data.get("generated_text", "")
+                content = data.get("generated_text") or ""
             else:
                 content = str(data)
 

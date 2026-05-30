@@ -149,7 +149,7 @@ class BaiChuanAdapter(BaseLLMAdapter):
 
             data = response.json()
 
-            content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            content = data.get("choices", [{}])[0].get("message", {}).get("content") or ""
             usage = data.get("usage", {})
 
             return LLMResponse(

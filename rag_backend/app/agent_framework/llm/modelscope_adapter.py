@@ -128,7 +128,7 @@ class ModelScopeAdapter(BaseLLMAdapter):
 
             data = response.json()
 
-            content = data.get("output", {}).get("text", "")
+            content = data.get("output", {}).get("text") or ""
             usage = data.get("usage", {})
 
             return LLMResponse(

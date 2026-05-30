@@ -333,105 +333,131 @@ class ReActAgent(BaseAgent):
                 streamed_content = ""  # 用于跟踪已流式输出的内容
                 usage_info = None
                 chunk_count = 0
-                
+
+                # 🌊 真流式：检测到 ## Final Answer 标记后，把标记之后的正文按增量逐字输出。
+                # final_answer_emitted_len 记录已输出的正文长度（基于 lstrip 后的 body 切片，索引稳定）。
+                final_answer_emitted_len = 0
+
                 # 是否应该流式输出内容（无工具调用时）
                 should_stream_output = True
                 # 缓冲区的最小长度（达到后才开始流式输出，避免过早输出被截断）
                 # 优化：保持3个字符的最小缓冲，与后端 BUFFER_SIZE=5 配合实现流畅打字机效果
                 MIN_BUFFER_FOR_STREAM = 3
 
+                # ── 单个增量文本的流式决策（dict 的 "delta"/"content" 与纯字符串 chunk 共用）──
+                # 返回应当逐字输出给用户的字符列表；同步更新 response_text / streamed_content /
+                # should_stream_output / final_answer_emitted_len 等闭包状态。
+                # 关键：DeepSeek 等适配器 stream_generate 直接 yield 字符串（非 dict），
+                # 必须让字符串 chunk 也走同一套真流式逻辑，否则只能靠末尾 replay 整段刷出。
+                def _decide_stream_output(delta_content: str):
+                    nonlocal response_text, streamed_content, should_stream_output, final_answer_emitted_len
+                    if not delta_content:
+                        return []
+                    response_text += delta_content
+                    out_chars = []
+
+                    has_final_answer_marker = (
+                        "Final Answer" in response_text or
+                        "final answer" in response_text
+                    )
+                    if has_final_answer_marker:
+                        should_stream_output = False
+
+                    # 检查是否需要工具调用（使用更严格的检测）
+                    tool_patterns = ["\nAction:", "\naction:", "Action Input:", "action input:"]
+                    needs_tool = any(pattern in response_text for pattern in tool_patterns)
+                    has_xml_invoke = "<invoke" in response_text and "name=" in response_text
+                    needs_tool = needs_tool or has_xml_invoke
+                    has_markdown_action = bool(re.search(
+                        r'##\s*Action\s*\n\s*\w+\s*\(', response_text, re.IGNORECASE
+                    ))
+                    needs_tool = needs_tool or has_markdown_action
+
+                    if needs_tool:
+                        tool_call_detected = False
+                        try:
+                            import json
+                            json_match = re.search(r'Action Input:\s*([\s\S]*?)(?:\n|$)', response_text)
+                            if json_match:
+                                json_str = json_match.group(1).strip()
+                                if json_str.startswith('{') and json_str.endswith('}'):
+                                    json.loads(json_str)
+                                    tool_call_detected = True
+                            if "</invoke>" in response_text:
+                                if re.search(r'<invoke\s+name="([^"]+)"', response_text, re.IGNORECASE):
+                                    tool_call_detected = True
+                            if not tool_call_detected:
+                                inline_json_match = re.search(r'\w+\s*\(\s*(\{[^()]*\})\s*\)', response_text)
+                                if inline_json_match:
+                                    try:
+                                        json.loads(inline_json_match.group(1))
+                                        tool_call_detected = True
+                                    except json.JSONDecodeError:
+                                        pass
+                        except (json.JSONDecodeError, re.error):
+                            pass
+                        if tool_call_detected:
+                            should_stream_output = False
+                            logger.info("[Agent] 检测到完整工具调用，停止流式输出")
+                    elif has_final_answer_marker:
+                        # 🌊 真流式：定位 ## Final Answer 标记末尾，把其后的正文按增量逐字输出。
+                        # 仅做轻量 lstrip，不逐字 clean_output（避免截断跨 chunk 的未完成标记）。
+                        _fa_match = re.search(
+                            r'##?\s*Final\s*Answer\s*[:：]?', response_text, re.IGNORECASE
+                        )
+                        if _fa_match:
+                            body = response_text[_fa_match.end():].lstrip(" :：\n\r\t")
+                            if len(body) > final_answer_emitted_len:
+                                new_part = body[final_answer_emitted_len:]
+                                final_answer_emitted_len = len(body)
+                                streamed_content += new_part
+                                out_chars.extend(new_part)
+                    elif len(response_text) > MIN_BUFFER_FOR_STREAM and should_stream_output:
+                        # 标记前若已出现 ReAct 内部推理段（## Thought/## Action 等），一律只缓冲不输出，
+                        # 避免泄漏思考过程；仅当 LLM 完全不按格式、直接给答案时才走打字机流式。
+                        has_reasoning_marker = bool(re.search(
+                            r'##?\s*(Thought|Action|Observation)\b'
+                            r'|(?:^|\n)\s*(Thought|Action|Observation)\s*[:：]',
+                            response_text, re.IGNORECASE
+                        ))
+                        if not has_reasoning_marker:
+                            streamed_content += delta_content
+                            out_chars.extend(delta_content)
+                    return out_chars
+
                 async for chunk in self.llm.stream_generate(current_prompt, temperature=0.1):
                     chunk_count += 1
                     logger.debug(f"[Agent] Chunk #{chunk_count}: type={type(chunk).__name__}, value={repr(chunk)[:200]}")
-                    
+
                     if isinstance(chunk, dict):
                         logger.debug(f"[Agent] Chunk keys: {chunk.keys()}")
-                        if "delta" in chunk:
-                            delta_content = chunk["delta"]
-                            response_text += delta_content
-                            has_final_answer_marker = (
-                                "Final Answer" in response_text or
-                                "final answer" in response_text
-                            )
-                            if has_final_answer_marker:
-                                should_stream_output = False
-                            # 检查是否需要工具调用（使用更严格的检测）
-                            tool_patterns = ["\nAction:", "\naction:", "Action Input:", "action input:"]
-                            needs_tool = any(pattern in response_text for pattern in tool_patterns)
-                            # 也检测 XML 格式的工具调用（MiniMax 格式）
-                            has_xml_invoke = "<invoke" in response_text and "name=" in response_text
-                            needs_tool = needs_tool or has_xml_invoke
-                            # 也检测 ## Action 格式（内联函数调用格式）
-                            # 例如: ## Action\nsearch_enterprise_knowledge({"query": "..."})
-                            has_markdown_action = bool(re.search(
-                                r'##\s*Action\s*\n\s*\w+\s*\(', response_text, re.IGNORECASE
-                            ))
-                            needs_tool = needs_tool or has_markdown_action
-                            
-                            # 检查 JSON 是否完整（如果包含 Action Input）或 XML 格式或内联格式
-                            if needs_tool:
-                                tool_call_detected = False
-                                try:
-                                    import json
-                                    # 模式1: ReAct Action Input 格式
-                                    json_match = re.search(r'Action Input:\s*([\s\S]*?)(?:\n|$)', response_text)
-                                    if json_match:
-                                        json_str = json_match.group(1).strip()
-                                        if json_str.startswith('{') and json_str.endswith('}'):
-                                            json.loads(json_str)  # 验证 JSON 完整性
-                                            tool_call_detected = True
-
-                                    # 模式2: MiniMax XML 格式
-                                    if "</invoke>" in response_text:
-                                        xml_pattern = r'<invoke\s+name="([^"]+)"'
-                                        if re.search(xml_pattern, response_text, re.IGNORECASE):
-                                            tool_call_detected = True
-
-                                    # 模式3: 内联函数调用格式 tool_name({...})
-                                    # 匹配 ## Action\nfunction_name({"key": "value"})
-                                    if not tool_call_detected:
-                                        inline_json_match = re.search(
-                                            r'\w+\s*\(\s*(\{[^()]*\})\s*\)', response_text
-                                        )
-                                        if inline_json_match:
-                                            try:
-                                                json.loads(inline_json_match.group(1))
-                                                tool_call_detected = True
-                                            except json.JSONDecodeError:
-                                                pass
-
-                                except (json.JSONDecodeError, re.error):
-                                    pass
-
-                                if tool_call_detected:
-                                    should_stream_output = False
-                                    logger.info("[Agent] 检测到完整工具调用，停止流式输出")
-                            elif has_final_answer_marker:
-                                logger.info("[Agent] 检测到 Final Answer 标记，等待完整答案后输出")
-                            elif len(response_text) > MIN_BUFFER_FOR_STREAM and should_stream_output:
-                                # 流式输出内容（逐字符输出以实现打字机效果）
-                                new_content = delta_content
-                                for char in new_content:
-                                    yield char
-                                    streamed_content += char
-                        elif "content" in chunk:
-                            content = chunk["content"]
-                            response_text += content
-                            logger.debug(f"[Agent] ✓ Added content: '{content[:30]}...', total: {len(response_text)}")
-                        elif "usage" in chunk:
-                            usage_info = chunk["usage"]
-                            logger.debug(f"[Agent] Got usage info: {usage_info}")
-                        elif chunk.get("type") == "error":
+                        _ctype = chunk.get("type")
+                        if _ctype == "error":
                             error_content = chunk.get("content", "")
                             logger.error(f"[Agent] LLM 流式响应错误: {error_content}")
                             response_text += f"\n[错误] {error_content}\n"
-                        elif chunk.get("type") == "done":
+                        elif _ctype == "done":
+                            # 最终完整内容：已由 delta 增量累积，跳过避免重复累加
                             done_content = chunk.get("content", "")
                             logger.info(f"[Agent] ✓ ✓ ✓ 流式响应完成！chunk_count={chunk_count}, collected={len(response_text)}, done_content={len(done_content)}")
+                        elif _ctype == "usage" or "usage" in chunk:
+                            usage_info = chunk.get("data") or chunk.get("usage")
+                            logger.debug(f"[Agent] Got usage info: {usage_info}")
+                        elif "delta" in chunk:
+                            # zhipu 格式：{"delta": "..."}
+                            for _ch in _decide_stream_output(chunk["delta"]):
+                                yield _ch
+                        elif "content" in chunk:
+                            # openai/claude/baichuan/modelscope/xinference/huggingface 格式：
+                            # {"type":"delta","content":"..."} —— 增量 token，需真流式
+                            for _ch in _decide_stream_output(chunk.get("content", "")):
+                                yield _ch
+                        else:
+                            logger.debug(f"[Agent] 未知 dict chunk，忽略: {list(chunk.keys())}")
                     else:
-                        str_chunk = str(chunk)
-                        response_text += str_chunk
-                        logger.debug(f"[Agent] ✓ Added str chunk: '{str_chunk[:30]}...', total: {len(response_text)}")
+                        # DeepSeek 等适配器：stream_generate 直接 yield 字符串增量
+                        for _ch in _decide_stream_output(str(chunk)):
+                            yield _ch
                 
                 #  注意：不在此处检查 Final Answer
                 # 原因：流式传输中途 response_text 不完整，提取会截断答案

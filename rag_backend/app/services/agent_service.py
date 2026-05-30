@@ -632,7 +632,10 @@ class EnterpriseAgentService:
         try:
             if _method == "agentic":
                 # Agentic RAG：多轮自主检索（plan → retrieve → evaluate → 循环 → aggregate）
-                retrieval_result = await self._agentic_retrieve(
+                # _agentic_retrieve 为异步生成器：检索期间 yield ("progress", {...}) 实时进度，
+                # 最终 yield ("result", {...})。progress 经 __PROGRESS_EVENT__ 通道透给 SSE 端点。
+                retrieval_result = {}
+                async for _kind, _payload in self._agentic_retrieve(
                     query=user_input,
                     kb_id=kb_id,
                     session_id=session_id or "default_session",
@@ -642,7 +645,11 @@ class EnterpriseAgentService:
                     top_k=_effective_top_k,
                     enable_rerank=_effective_enable_rerank,
                     enable_graph=_effective_enable_graph,
-                )
+                ):
+                    if _kind == "progress":
+                        yield f"__PROGRESS_EVENT__:{json.dumps(_payload, ensure_ascii=False)}"
+                    else:
+                        retrieval_result = _payload
                 _agentic_history = retrieval_result.get("retrieval_history", [])
                 _agentic_evaluation = retrieval_result.get("evaluation")
             else:
@@ -962,8 +969,11 @@ class EnterpriseAgentService:
         top_k: int,
         enable_rerank: bool,
         enable_graph: bool,
-    ) -> Dict[str, Any]:
-        """多轮自主检索，返回与 unified_retriever.retrieve 兼容的结果字典，
+    ) -> AsyncGenerator[tuple, None]:
+        """多轮自主检索（异步生成器）。
+
+        检索期间 yield ("progress", {...}) 进度事件供上层实时下发；
+        全部完成后 yield ("result", {...})，其结果字典与 unified_retriever.retrieve 兼容，
         额外携带 retrieval_history（前端轨迹）与 evaluation（最终评估）。"""
         import time as _time
         from app.langgraph.agentic_rag_nodes import RetrievalPlanner, ResultEvaluator
@@ -987,6 +997,13 @@ class EnterpriseAgentService:
         last_context = ""
 
         while True:
+            # 进度：开始本轮检索（round = 当前已完成轮数 + 1）
+            _round = state.get("iteration_count", 0) + 1
+            yield ("progress", {
+                "stage": "retrieval",
+                "round": _round,
+                "message": f"正在检索第 {_round} 轮…",
+            })
             # ── 规划本轮查询（首轮原样，后续按评估缺失方面改写）──
             state = await planner.plan(state)
             cur_q = state.get("current_query") or query
@@ -1050,6 +1067,12 @@ class EnterpriseAgentService:
                 "duration_ms": dt_ms,
             })
 
+            # 进度：检索完成，开始评估
+            yield ("progress", {
+                "stage": "evaluate",
+                "round": _round,
+                "message": "正在评估检索结果…",
+            })
             # ── 评估是否足够，决定是否继续 ──
             state = await evaluator.evaluate(state)
             if not state.get("should_continue"):
@@ -1092,13 +1115,13 @@ class EnterpriseAgentService:
             f"累计 {len(merged)} 条，最终 {len(final_chunks)} 条"
         )
 
-        return {
+        yield ("result", {
             "rag_results": final_chunks,
             "combined_context": combined_context,
             "mode": "AGENTIC",
             "retrieval_history": history_payload,
             "evaluation": evaluation_payload,
-        }
+        })
 
     # ──────────────────────────────────────────────────────
     # 延迟图抽取：对话完成后后台提取实体到 Neo4j

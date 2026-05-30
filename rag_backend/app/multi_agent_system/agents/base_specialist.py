@@ -590,7 +590,9 @@ class BaseSpecialistAgent(BaseAgent):
             choices = raw.get("choices", [])
             message_dict = choices[0].get("message", {}) if choices else {}
             raw_tool_calls = message_dict.get("tool_calls") or []
-            response_text = llm_response.content or message_dict.get("content", "")
+            # 注意末尾 `or ""`：content 为 null 时 .get("content","") 仍返回 None，
+            # `"" or None` = None，会让下游 len(response_text) 崩溃，必须强制转空串。
+            response_text = llm_response.content or message_dict.get("content") or ""
             finish_reason = (choices[0].get("finish_reason", "stop") if choices else "stop")
 
             if not raw_tool_calls or finish_reason == "stop":
@@ -675,5 +677,42 @@ class BaseSpecialistAgent(BaseAgent):
                     "tool_call_id": res["call_id"],
                     "content": res["content"],
                 })
+
+        # ── 空回复兜底 ──
+        # 模型偶发返回空文本（finish_reason=stop 但 content 为空）。
+        # 此时工具结果已在 current_messages 里，用一次无工具的强制合成把答案救回来。
+        if not (response_text or "").strip():
+            logger.warning(f"[{self.specialty}] 模型返回空回复，触发强制合成兜底")
+            try:
+                forced = await asyncio.wait_for(
+                    self.llm_adapter.chat(
+                        messages=current_messages + [{
+                            "role": "user",
+                            "content": "请基于以上已获取的信息，用中文给出完整、结构化的分析回答。",
+                        }],
+                        temperature=temperature,
+                    ),
+                    timeout=timeout,
+                )
+                response_text = (forced.content or "").strip()
+                if chunk_callback and response_text:
+                    _BATCH = 4
+                    for _i in range(0, len(response_text), _BATCH):
+                        try:
+                            await chunk_callback(response_text[_i:_i + _BATCH])
+                        except Exception:
+                            pass
+                        await asyncio.sleep(0)
+            except Exception as e:
+                logger.warning(f"[{self.specialty}] 空回复兜底合成失败: {e}")
+
+        # 最终兜底：仍为空则给友好提示，避免前端显示空白
+        if not (response_text or "").strip():
+            response_text = "抱歉，本次未能生成有效的分析结果，请稍后重试或换一种问法。"
+            if chunk_callback:
+                try:
+                    await chunk_callback(response_text)
+                except Exception:
+                    pass
 
         return response_text, tool_results_log
