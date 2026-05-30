@@ -146,6 +146,10 @@ rag_backend/start_pgbouncer.ps1
 rag_backend/TEST_COMMANDS.bat
 rag_backend/TEST_COMMANDS.sh
 
+# PgBouncer 配置实际渲染产物（含上游 PG 密码），仓库内仅保留 *.template
+rag_backend/docker/pgbouncer.ini
+rag_backend/docker/pgbouncer_transaction_mode.ini
+
 # ==========================
 # 12. pytest 配置（仅本地使用）
 # ==========================

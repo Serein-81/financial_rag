@@ -1,12 +1,18 @@
 ; ===========================================
-; PgBouncer Transaction 模式配置文件
-; 用于 Docker Compose 环境
+; PgBouncer Transaction 模式配置 · 模板
+; ===========================================
+; 真正运行使用的 pgbouncer_transaction_mode.ini 由
+;   rag_backend/docker/render_pgbouncer.py
+; 从本模板渲染（替换 ${POSTGRES_PASSWORD} 等占位符），
+; 渲染产物已被 .gitignore 排除，不会再泄漏密码到 git。
+;
+; 使用：
+;   cd rag_backend && python docker/render_pgbouncer.py
+;   docker compose up -d pgbouncer
 ; ===========================================
 
 [databases]
-; any 数据库配置
-; 使用通配符连接所有数据库到 PostgreSQL
-* = host=db port=5432 user=postgres password=REDACTED_PG_PASSWORD
+* = host=db port=5432 user=postgres password=${POSTGRES_PASSWORD}
 
 [pgbouncer]
 listen_addr = 0.0.0.0

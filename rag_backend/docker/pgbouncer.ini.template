@@ -1,11 +1,13 @@
 ; ===========================================
-; PgBouncer Transaction 模式配置文件
-; 用于 Docker 容器环境
+; PgBouncer Transaction 模式配置 · 模板（备用，docker-compose 默认使用 _transaction_mode 版）
+; ===========================================
+; 真正运行使用的 pgbouncer.ini 由 render_pgbouncer.py 从本模板渲染。
+; 见同目录下 pgbouncer_transaction_mode.ini.template 的注释。
 ; ===========================================
 
 [databases]
 ; 格式: 数据库名 = host=主机 port=端口 dbname=数据库名 user=用户名 password=密码
-rag_db = host=db port=5432 dbname=rag_db user=postgres password=REDACTED_PG_PASSWORD
+rag_db = host=db port=5432 dbname=rag_db user=postgres password=${POSTGRES_PASSWORD}
 
 [pgbouncer]
 ; 网络配置

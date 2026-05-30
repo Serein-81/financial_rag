@@ -288,7 +288,7 @@ class Settings(BaseSettings):
     # Neo4j 配置
     NEO4J_URI: str = "bolt://localhost:7687"
     NEO4J_USER: str = "neo4j"
-    NEO4J_PASSWORD: str = "REDACTED_NEO4J_PASSWORD"
+    NEO4J_PASSWORD: str = ""  # 必填，从 .env 读取（与 POSTGRES_PASSWORD 一致：默认空，强制 .env 提供）
     NEO4J_DATABASE: str = "neo4j"
     
     # 专家智能体类型列表
