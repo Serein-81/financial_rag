@@ -12,7 +12,7 @@
  Target Server Version : 160013 (160013)
  File Encoding         : 65001
 
- Date: 30/05/2026 20:49:45
+ Date: 30/05/2026 21:53:59
 */
 
 
@@ -4210,6 +4210,9 @@ ALTER TABLE "public"."multi_agent_reports" ADD CONSTRAINT "multi_agent_reports_p
 -- ----------------------------
 -- Indexes structure for table multi_agent_sessions
 -- ----------------------------
+CREATE INDEX "idx_ma_session_session_id" ON "public"."multi_agent_sessions" USING btree (
+  "session_id" COLLATE "pg_catalog"."default" "pg_catalog"."text_ops" ASC NULLS LAST
+);
 CREATE INDEX "idx_ma_session_tenant_created" ON "public"."multi_agent_sessions" USING btree (
   "tenant_id" COLLATE "pg_catalog"."default" "pg_catalog"."text_ops" ASC NULLS LAST,
   "created_at" "pg_catalog"."timestamptz_ops" ASC NULLS LAST
@@ -4236,6 +4239,9 @@ ALTER TABLE "public"."multi_agent_sessions" ADD CONSTRAINT "multi_agent_sessions
 CREATE INDEX "idx_ma_specialist_session" ON "public"."multi_agent_specialist_results" USING btree (
   "session_id" "pg_catalog"."uuid_ops" ASC NULLS LAST,
   "execution_order" "pg_catalog"."int4_ops" ASC NULLS LAST
+);
+CREATE INDEX "idx_ma_specialist_tenant" ON "public"."multi_agent_specialist_results" USING btree (
+  "tenant_id" COLLATE "pg_catalog"."default" "pg_catalog"."text_ops" ASC NULLS LAST
 );
 CREATE INDEX "ix_multi_agent_specialist_results_session_id" ON "public"."multi_agent_specialist_results" USING btree (
   "session_id" "pg_catalog"."uuid_ops" ASC NULLS LAST
