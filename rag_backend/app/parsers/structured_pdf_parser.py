@@ -17,6 +17,10 @@ UNSTRUCTURED_API_URL = os.getenv("UNSTRUCTURED_API_URL", "http://unstructured-ap
 SCAN_THRESHOLD_RATIO = 0.08
 
 
+_PDF_IMAGE_MAX_COUNT = 20    # 单文档最多提取图片数量
+_PDF_IMAGE_MAX_BYTES = 10 * 1024 * 1024  # 单图最大 10 MB
+
+
 class StructuredPDFParser(FileParserStrategy):
     """
     结构化PDF解析器（混合模式）
@@ -31,6 +35,16 @@ class StructuredPDFParser(FileParserStrategy):
     - 如果提取文本量 < 文件大小的 8%，判定为扫描件，走 unstructured-api（如果启用）
     - 如果 pymupdf4llm 不可用或 unstructured 也不可用，最终降级到 PyMuPDF 启发式
     """
+
+    def __init__(self):
+        self._tenant_id: str = ""
+        self._document_id: str = ""
+        # 解析完成后可读：{img_id -> {object_path, description, ext, page, stored}}
+        self.image_map: Dict[str, Any] = {}
+
+    def set_ingest_context(self, tenant_id: str, document_id: str) -> None:
+        self._tenant_id = tenant_id
+        self._document_id = document_id
 
     def get_supported_mime_types(self) -> List[str]:
         return ["application/pdf"]
@@ -63,7 +77,7 @@ class StructuredPDFParser(FileParserStrategy):
                         f"pymupdf4llm 解析成功: 文本 {text_len} / 文件 {file_size} "
                         f"= {ratio:.1%}, 文字型 PDF"
                     )
-                    return markdown.strip()
+                    return await self._append_image_markers(markdown.strip(), file_bytes)
 
                 # 提取文本量 < 阈值 → 疑似扫描件，保存结果作为 fallback
                 logger.info(
@@ -83,16 +97,17 @@ class StructuredPDFParser(FileParserStrategy):
         if ENABLE_UNSTRUCTURED:
             logger.info(f"启用重型解析引擎 (OCR): {UNSTRUCTURED_API_URL}")
             try:
-                return await self._parse_with_unstructured(file_bytes)
+                result = await self._parse_with_unstructured(file_bytes)
+                return await self._append_image_markers(result, file_bytes)
             except Exception as e:
                 logger.warning(f"Unstructured API 解析失败: {e}")
                 if fallback_markdown:
                     logger.info("使用 pymupdf4llm 已有结果作为 fallback")
-                    return fallback_markdown
+                    return await self._append_image_markers(fallback_markdown, file_bytes)
         else:
             if fallback_markdown:
                 logger.info("重型解析引擎未启用，使用 pymupdf4llm 已有结果")
-                return fallback_markdown
+                return await self._append_image_markers(fallback_markdown, file_bytes)
 
         # ── 第3级: PyMuPDF 启发式解析（无条件兜底）──
         logger.info("启用轻量解析模式 (PyMuPDF + 启发式规则)")
@@ -101,7 +116,7 @@ class StructuredPDFParser(FileParserStrategy):
         )
         if not structured_content.strip():
             raise ValueError("PDF文件内容为空")
-        return structured_content.strip()
+        return await self._append_image_markers(structured_content.strip(), file_bytes)
 
     async def _parse_with_pymupdf4llm(self, file_bytes: bytes) -> str:
         """
@@ -375,6 +390,84 @@ class StructuredPDFParser(FileParserStrategy):
         
         return tables
     
+    async def _append_image_markers(self, markdown: str, file_bytes: bytes) -> str:
+        """
+        从 PDF 字节中提取嵌入图片，存入 MinIO，把 marker_block 追加到 markdown 末尾。
+        上限：最多 _PDF_IMAGE_MAX_COUNT 张、单图 ≤ _PDF_IMAGE_MAX_BYTES。
+        失败降级：任何异常都直接返回原 markdown，不影响文本解析结果。
+        """
+        if not self._tenant_id or not self._document_id:
+            return markdown  # 上下文未设置则跳过
+
+        try:
+            from app.services.multimodal_image_service import process_and_store_image
+
+            def _collect_images() -> List[dict]:
+                """同步：用 fitz 遍历页面收集图片 xref 和页码，去重，返回列表。"""
+                doc = fitz.open(stream=file_bytes, filetype="pdf")
+                seen_xrefs: set = set()
+                items = []
+                try:
+                    for page_num in range(doc.page_count):
+                        if len(items) >= _PDF_IMAGE_MAX_COUNT:
+                            break
+                        page = doc[page_num]
+                        for img in page.get_images(full=False):
+                            xref = img[0]
+                            if xref in seen_xrefs:
+                                continue
+                            seen_xrefs.add(xref)
+                            try:
+                                img_dict = doc.extract_image(xref)
+                                img_bytes = img_dict.get("image", b"")
+                                if not img_bytes or len(img_bytes) > _PDF_IMAGE_MAX_BYTES:
+                                    continue
+                                items.append({
+                                    "bytes": img_bytes,
+                                    "ext": img_dict.get("ext", "png"),
+                                    "page": page_num + 1,
+                                })
+                                if len(items) >= _PDF_IMAGE_MAX_COUNT:
+                                    break
+                            except Exception:
+                                continue
+                finally:
+                    doc.close()
+                return items
+
+            image_items = await asyncio.to_thread(_collect_images)
+            if not image_items:
+                return markdown
+
+            logger.info(f"[PDFParser] 提取到 {len(image_items)} 张图片，开始存储...")
+            extra_blocks: List[str] = []
+            for item in image_items:
+                try:
+                    ref = await process_and_store_image(
+                        image_bytes=item["bytes"],
+                        tenant_id=self._tenant_id,
+                        document_id=self._document_id,
+                        page=item["page"],
+                    )
+                    self.image_map[ref["img_id"]] = {
+                        "object_path": ref["object_path"],
+                        "description": ref["description"],
+                        "ext": ref["ext"],
+                        "page": ref["page"],
+                        "stored": ref["stored"],
+                    }
+                    extra_blocks.append(ref["marker_block"])
+                except Exception as e:
+                    logger.warning(f"[PDFParser] 图片处理失败: {e}")
+
+            if extra_blocks:
+                return markdown + "\n" + "".join(extra_blocks)
+
+        except Exception as e:
+            logger.warning(f"[PDFParser] 图片提取阶段异常（已降级）: {e}")
+
+        return markdown
+
     def _format_table_as_markdown(self, table_data: List[List[str]]) -> str:
         """将表格数据格式化为Markdown表格"""
         if not table_data:

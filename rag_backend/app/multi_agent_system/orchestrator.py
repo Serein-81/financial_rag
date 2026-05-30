@@ -698,15 +698,37 @@ class Nodes:
         if state.get("needs_clarification") and state.get("clarification_request"):
             clarification = state.get("clarification_request", {})
             question = clarification.get("question", "") if isinstance(clarification, dict) else str(clarification)
+            suggestions = clarification.get("suggestions", []) if isinstance(clarification, dict) else []
+            reason = clarification.get("reason", "") if isinstance(clarification, dict) else ""
+            placeholder = clarification.get("placeholder", "") if isinstance(clarification, dict) else ""
             logger.info("[最终答案] 需要追问: %s", question[:80])
-            # 把追问内容作为 final_answer，前端至少能显示，而不是"处理完成"
-            fallback = f"❓ {question}" if question else "请更详细地描述您的问题，以便我为您提供准确的帮助。"
+
+            # 构造前端可直接渲染的澄清卡片 HTML，带建议按钮
+            suggestion_btns = ""
+            if suggestions:
+                suggestion_btns = '<div class="suggestions">' + "".join(
+                    f'<button class="suggestion-btn" onclick="window.handleClarificationSelect(\'{s.replace(chr(39), chr(92)+chr(39))}\')">{s}</button>'
+                    for s in suggestions[:4]
+                ) + "</div>"
+
+            clarification_html = f"""<div class="clarification-container">
+{f'<div class="reason-badge">💡 {reason}</div>' if reason else ""}
+<div class="question-text">{question}</div>
+{suggestion_btns}
+<div class="custom-input-section">
+  <input type="text" id="clarification-input" class="clarification-input"
+         placeholder="{placeholder or '或者直接输入您的具体问题...'}"
+         onkeyup="if(event.key==='Enter') window.handleClarificationSubmit()" />
+  <button class="submit-btn" onclick="window.handleClarificationSubmit()">发送</button>
+</div>
+</div>"""
+
             return {
                 **state,
-                "final_answer": fallback,
-                "output": fallback,
+                "final_answer": clarification_html,
+                "output": clarification_html,
                 "needs_clarification": False,
-                "clarification_request": None
+                "clarification_request": None,
             }
         
         simple_response = state.get("metadata", {}).get("simple_response")
@@ -1134,6 +1156,9 @@ class AgentOrchestrator:
         # 🆕 技能系统
         self.skill_registry = SkillRegistry
         self.skill_matcher = SkillMatcher(registry=SkillRegistry)
+
+        # 流式 chunk 回调（工作流执行期间临时挂载，供 LangGraph 节点内专家使用）
+        self._chunk_callback: Optional[Callable] = None
 
         self.initialized = False
         
@@ -1723,20 +1748,28 @@ class AgentOrchestrator:
     ) -> Dict[str, Any]:
         """
         执行 LangGraph 工作流
-        
+
         使用 LangGraph 的 StateGraph 和条件边来实现意图驱动的动态路由。
-        
+        progress_callback 用于推送 LangGraph 阶段事件；专家逐 token 流式输出走独立的
+        self._chunk_callback（由流式 endpoint 预设，签名为 callback(token: str)）。
+
         Args:
             initial_state: 初始黑板状态
             context: 编排上下文
-            
+
         Returns:
             Dict: 最终状态
         """
         from langgraph.graph import StateGraph, END, START
-        
+
+        # 注意：_chunk_callback 与 progress_callback 签名不同——
+        #   _chunk_callback(token: str)            ← 专家逐 token 流式输出用，由流式 endpoint 预设
+        #   progress_callback(node_name, state)    ← LangGraph 阶段事件用
+        # 二者是独立的两条链路，绝不能互相赋值（否则单参调用两参回调会签名错误）。
+        # 这里不做任何兜底赋值：未走流式 endpoint 时 _chunk_callback 保持 None，专家自动跳过流式。
+
         logger.debug("[LangGraph] 构建工作流图")
-        
+
         # 初始化节点函数集合
         nodes = Nodes(self)
         
@@ -1924,7 +1957,10 @@ class AgentOrchestrator:
         
         context.metadata["execution_path"] = tracker.execution_path
         logger.info("[LangGraph] 执行完成: path=%s", " → ".join(tracker.execution_path))
-        
+
+        # 清除临时 chunk callback，避免跨请求污染
+        self._chunk_callback = None
+
         return final_state
     
     def _extract_entities(self, text: str) -> Dict[str, Any]:
@@ -2419,19 +2455,22 @@ class AgentOrchestrator:
                 tool_manager=self.tool_manager,
                 skill_registry=self.skill_registry,
             )
+            self.finance_specialist._orchestrator_ref = self
 
             self.tax_specialist = TaxSpecialist(
                 llm_adapter=self.llm_adapter,
                 tool_manager=self.tool_manager,
                 skill_registry=self.skill_registry,
             )
+            self.tax_specialist._orchestrator_ref = self
 
             self.legal_specialist = LegalSpecialist(
                 llm_adapter=self.llm_adapter,
                 tool_manager=self.tool_manager,
                 skill_registry=self.skill_registry,
             )
-            
+            self.legal_specialist._orchestrator_ref = self
+
             if self.enable_reflection:
                 print("🔍 [编排器] 启用质量审查函数...")
             
@@ -2448,13 +2487,23 @@ class AgentOrchestrator:
                 print("📚 [编排器] 初始化RAG检索器...")
                 await self._initialize_rag()
             
+            # ── 初始化技能注册表（扫描 skills/ 目录中的 SKILL.md 文件）──
+            print("🎯 [编排器] 扫描技能注册表...")
+            try:
+                from app.skills.skill_registry import SkillRegistry as _SkillRegistry
+                skill_count = await _SkillRegistry.initialize()
+                print(f"✅ [编排器] 技能注册完成: {skill_count} 个技能")
+                self.skill_registry = _SkillRegistry  # 更新为已初始化的 class
+            except Exception as _e:
+                logger.warning(f"技能注册表初始化失败（非致命，继续运行）: {_e}")
+
             print("🧠 [编排器] 初始化记忆管理器...")
             session_id = f"orchestrator_{self.tenant_id}_{uuid.uuid4().hex[:8]}"
             self.memory_manager = MemoryManager(
                 session_id=session_id,
                 user_id=self.user_id
             )
-            
+
             self.initialized = True
             print("✅ [编排器] 所有组件初始化完成")
             

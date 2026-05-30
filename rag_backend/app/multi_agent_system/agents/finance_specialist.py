@@ -956,9 +956,35 @@ class FinanceSpecialist(BaseSpecialistAgent):
             # ================================================================
             # 阶段 2: 多轮工具调用循环 — LLM 自主决策，可反复调用工具
             # ================================================================
-            TOOLS_NEEDING_CONTEXT = {"get_financial_overview", "query_financial_data", "get_financial_trend", "search_financial_data"}
+            TOOLS_NEEDING_CONTEXT = {
+                "get_financial_overview", "query_financial_data",
+                "get_financial_trend", "search_financial_data",
+                # ToolBase 工具也需要 tenant_id / user_id
+                "query_user_financial_data", "calculate_tax",
+                "get_tax_recommendations", "tax_compliance_checker",
+            }
             MAX_TOOL_ROUNDS = 5
             final_answer = ""
+
+            # 流式回调（由 orchestrator 挂载）：用于把最终回答实时推送到前端
+            chunk_cb = None
+            try:
+                if getattr(self, "_orchestrator_ref", None):
+                    chunk_cb = self._orchestrator_ref._chunk_callback
+            except Exception:
+                pass
+
+            async def _push_stream(text: str) -> None:
+                """把文本按小批次推送给前端，模拟流式打字机效果（零额外 API 消耗）。"""
+                if not chunk_cb or not text:
+                    return
+                _BATCH = 4
+                for _i in range(0, len(text), _BATCH):
+                    try:
+                        await chunk_cb(text[_i:_i + _BATCH])
+                    except Exception:
+                        pass
+                    await asyncio.sleep(0)
 
             for round_idx in range(MAX_TOOL_ROUNDS):
                 # 🆕 每次 chat() 前执行上下文优化（防止 context window 溢出）
@@ -986,6 +1012,8 @@ class FinanceSpecialist(BaseSpecialistAgent):
                     # LLM 选择直接回答，退出循环
                     logger.info(f"[FinanceSpecialist] 第{round_idx+1}轮: LLM 直接回答，工具调用结束")
                     final_answer = response.content if hasattr(response, 'content') else str(response)
+                    # 流式推送最终回答（分批模拟打字机，零额外 API 消耗）
+                    await _push_stream(final_answer)
                     break
 
                 logger.info(f"[FinanceSpecialist] 第{round_idx+1}轮: LLM 请求调用 {len(tool_calls)} 个工具")
@@ -1019,9 +1047,12 @@ class FinanceSpecialist(BaseSpecialistAgent):
                     except json.JSONDecodeError:
                         tool_args = {}
 
-                    # 只对金融数据工具添加 tenant_id（user_id 不被任何工具接受）
+                    # 补注上下文参数：tenant_id / user_id
                     if tool_name in TOOLS_NEEDING_CONTEXT:
-                        tool_args.setdefault("tenant_id", tenant_id)
+                        if tenant_id:
+                            tool_args.setdefault("tenant_id", tenant_id)
+                        if user_id and tool_name == "query_user_financial_data":
+                            tool_args.setdefault("user_id", user_id)
 
                     logger.info(f"[FinanceSpecialist] 执行工具: {tool_name}")
 
@@ -1053,6 +1084,7 @@ class FinanceSpecialist(BaseSpecialistAgent):
                 logger.warning(f"[FinanceSpecialist] 达到最大工具调用轮数 {MAX_TOOL_ROUNDS}")
                 if not final_answer:
                     final_answer = "抱歉，系统处理超时。请稍后重试。"
+                await _push_stream(final_answer)
 
             return {
                 "success": True,
@@ -1072,13 +1104,13 @@ class FinanceSpecialist(BaseSpecialistAgent):
 
     def _build_tool_schemas(self) -> List[Dict[str, Any]]:
         """
-        构建 OpenAI 兼容的工具定义（function calling schema），与 MCP 工具实际签名一致。
-
-        只有工具管理器初始化后才返回有效工具列表。
+        构建 OpenAI 兼容的工具定义（function calling schema）。
+        合并：硬编码基础工具 + 领域 ToolBase 工具（来自 _build_openai_tools）。
         """
         if not self.tool_manager:
             return []
-        return [
+
+        base_tools = [
             {
                 "type": "function",
                 "function": {
@@ -1107,6 +1139,15 @@ class FinanceSpecialist(BaseSpecialistAgent):
                 },
             },
         ]
+
+        # 加入领域 ToolBase 工具（确定性计算工具）
+        domain_tools = self._build_openai_tools()
+        existing_names = {t["function"]["name"] for t in base_tools}
+        for dt in domain_tools:
+            if dt["function"]["name"] not in existing_names:
+                base_tools.append(dt)
+
+        return base_tools
 
     @staticmethod
     def _is_financial_query(user_input: str) -> bool:

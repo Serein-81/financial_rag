@@ -36,6 +36,10 @@ class FileParserStrategy(ABC):
         """
         pass
     
+    def set_ingest_context(self, tenant_id: str, document_id: str) -> None:
+        """设置入库上下文（租户+文档 ID），供需要存储原始资源的解析器使用。默认空实现。"""
+        pass
+
     def validate_file(self, file_bytes: bytes) -> bool:
         """
         验证文件是否有效（可选实现）

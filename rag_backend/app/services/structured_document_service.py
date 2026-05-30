@@ -23,43 +23,58 @@ class StructuredDocumentService:
         self.chunker = StructuredDocumentChunker()
     
     async def parse_document(
-        self, 
-        file_bytes: bytes, 
-        filename: str, 
-        file_type: str
+        self,
+        file_bytes: bytes,
+        filename: str,
+        file_type: str,
+        tenant_id: str = "",
+        document_id: str = "",
     ) -> StructuredDocument:
         """
         解析文档为结构化格式
-        
+
         Args:
             file_bytes: 文件字节流
             filename: 文件名
             file_type: MIME类型
-            
+            tenant_id: 租户 ID（可选，供解析器存储原始图片用）
+            document_id: 文档 ID（可选，同上）
+
         Returns:
             StructuredDocument: 结构化文档对象
+            解析器产出的 image_map 写入 structured_doc.metadata.extra["image_map"]
         """
         # 1. 获取对应的解析器
         parser = FileParserFactory.get_parser(file_type)
         if not parser:
             raise ValueError(f"不支持的文件类型: {file_type}")
-        
+
+        # 传入库上下文（解析器按需使用，默认空实现无副作用）
+        if tenant_id and document_id:
+            parser.set_ingest_context(tenant_id, document_id)
+
         # 2. 解析文档内容
         try:
             # 检查是否为结构化解析器
             if hasattr(parser, '_extract_structured_content'):
                 # 结构化解析器直接返回Markdown格式
                 markdown_content = await parser.parse(file_bytes)
-                return self._parse_markdown_to_structured(
+                structured_doc = self._parse_markdown_to_structured(
                     markdown_content, filename, file_type
                 )
             else:
                 # 基础解析器，提取纯文本后转换
                 plain_text = await parser.parse(file_bytes)
-                return self._parse_plain_text_to_structured(
+                structured_doc = self._parse_plain_text_to_structured(
                     plain_text, filename, file_type
                 )
-        
+
+            # 把解析器产出的 image_map 带回上层
+            if hasattr(parser, 'image_map') and parser.image_map:
+                structured_doc.metadata.extra["image_map"] = parser.image_map
+
+            return structured_doc
+
         except Exception as e:
             raise Exception(f"文档解析失败: {str(e)}")
     

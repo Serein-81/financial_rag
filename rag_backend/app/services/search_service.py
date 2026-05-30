@@ -268,7 +268,8 @@ class SearchService:
                         score=round(row["similarity"], 4),
                         content=row["content"],
                         source_file=row["filename"],
-                        page_number=meta.get("page_number")
+                        page_number=meta.get("page_number"),
+                        images=meta.get("images") or None,
                     ))
 
             return results
@@ -377,7 +378,8 @@ class SearchService:
                         score=float(row["keyword_score"]),
                         content=row["content"],
                         source_file=row["filename"],
-                        page_number=meta.get("page_number")
+                        page_number=meta.get("page_number"),
+                        images=meta.get("images") or None,
                     ))
 
             return results
@@ -803,7 +805,8 @@ class SearchService:
                         score=round(row["similarity"], 4),
                         content=row["content"],
                         source_file=row["filename"],
-                        page_number=meta.get("page_number")
+                        page_number=meta.get("page_number"),
+                        images=meta.get("images") or None,
                     ))
 
             latency = time.time() - start_time

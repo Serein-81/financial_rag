@@ -549,9 +549,12 @@ class LegalSpecialist(BaseSpecialistAgent):
 
             prompt = self._build_legal_prompt(user_input, entities, domain)
 
-            full_prompt = f"{self.system_prompt}\n\n{prompt}" if self.system_prompt else prompt
+            # 构建 chat messages（从 generate 模式迁移到 chat 模式以支持 function calling）
+            chat_messages = []
+            if self.system_prompt:
+                chat_messages.append({"role": "system", "content": self.system_prompt})
 
-            # 🆕 P2: 注入知识库 grounding，让法律分析基于检索到的法规/合同材料而非纯模型记忆
+            # 注入知识库 grounding
             if rag_context and rag_context.get("documents"):
                 doc_texts = []
                 for i, doc in enumerate(rag_context["documents"][:3], 1):
@@ -559,15 +562,36 @@ class LegalSpecialist(BaseSpecialistAgent):
                     if c:
                         doc_texts.append(f"### 文档{i}\n{c[:1000]}")
                 if doc_texts:
-                    full_prompt = "## 企业知识库相关文档\n" + "\n".join(doc_texts) + "\n\n" + full_prompt
-            llm_response = await self.llm_adapter.generate(
-                prompt=full_prompt,
-                temperature=0.3
+                    chat_messages.append({
+                        "role": "system",
+                        "content": "## 企业知识库相关文档\n" + "\n".join(doc_texts),
+                    })
+
+            chat_messages.append({"role": "user", "content": prompt})
+
+            # 上下文参数（供工具自动注入）+ 流式回调（由 orchestrator 挂载）
+            tenant_id = context.get("tenant_id", "default") if context else "default"
+            user_id = context.get("user_id", "default") if context else "default"
+            chunk_cb = None
+            try:
+                if getattr(self, "_orchestrator_ref", None):
+                    chunk_cb = self._orchestrator_ref._chunk_callback
+            except Exception:
+                pass
+
+            response_text, tool_results = await self._call_with_tool_loop(
+                messages=chat_messages,
+                temperature=0.3,
+                timeout=90.0,
+                context_params={"tenant_id": tenant_id, "user_id": user_id},
+                chunk_callback=chunk_cb,
+            )
+            logger.info(
+                f"[LegalSpecialist] response: {len(response_text)} chars, "
+                f"tool calls: {len(tool_results)}"
             )
 
-            response_text = llm_response.content if hasattr(llm_response, 'content') else str(llm_response)
             analysis = self._parse_llm_response(response_text, domain, contract_type)
-
             risk_assessment = self.assess_legal_risk(analysis, entities)
 
             return {
@@ -581,10 +605,11 @@ class LegalSpecialist(BaseSpecialistAgent):
                     "parties": entities.parties,
                     "amount": entities.amount,
                     "effective_date": entities.effective_date,
-                    "expiration_date": entities.expiration_date
+                    "expiration_date": entities.expiration_date,
                 },
                 "recommendations": self._generate_recommendations(analysis, domain),
-                "confidence": analysis.confidence
+                "confidence": analysis.confidence,
+                "tool_calls": tool_results,
             }
             
         except (ValueError, KeyError) as e:

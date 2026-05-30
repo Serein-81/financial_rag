@@ -112,7 +112,7 @@ class AgentState(BaseModel):
 
     # ── 路由信息 ──
     routing_strategy: Optional[str] = None
-    specialists_needed: Annotated[List[str], operator.add] = Field(default_factory=list)
+    specialists_needed: List[str] = Field(default_factory=list)
 
     # ── RAG 检索结果 ──
     rag_context: Annotated[List[Dict[str, Any]], operator.add] = Field(default_factory=list)

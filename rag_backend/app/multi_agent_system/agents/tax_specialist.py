@@ -600,21 +600,42 @@ class TaxSpecialist(BaseSpecialistAgent):
 
             logger.info(f"[TaxSpecialist] chat messages: {len(chat_messages)}, system: {len(self.system_prompt or '')} chars")
 
-            llm_response = await asyncio.wait_for(
-                self.llm_adapter.chat(messages=chat_messages, temperature=0.3),
-                timeout=60.0,
+            # 获取流式回调（由 orchestrator 在工作流执行期间挂载）
+            chunk_cb = None
+            try:
+                if hasattr(self, '_orchestrator_ref') and self._orchestrator_ref:
+                    chunk_cb = self._orchestrator_ref._chunk_callback
+            except Exception:
+                pass
+
+            response_text, tool_results = await self._call_with_tool_loop(
+                messages=chat_messages,
+                temperature=0.3,
+                timeout=90.0,
+                context_params={"tenant_id": tenant_id, "user_id": user_id},
+                chunk_callback=chunk_cb,
             )
-            response_text = llm_response.content if hasattr(llm_response, 'content') else str(llm_response)
-            logger.info(f"[TaxSpecialist] response: {len(response_text)} chars")
+            logger.info(
+                f"[TaxSpecialist] response: {len(response_text)} chars, "
+                f"tool calls: {len(tool_results)}"
+            )
 
             return {
                 "success": True,
                 "domain": "general",
                 "text_answer": response_text,
-                "analysis": {"domain": "general", "confidence": 1.0,
-                             "key_metrics": [], "risk_factors": [], "recommendations": []},
+                "analysis": {
+                    "domain": "general",
+                    "confidence": 1.0,
+                    "key_metrics": [],
+                    "risk_factors": [],
+                    "recommendations": [],
+                    "tool_calls": tool_results,
+                },
                 "confidence": 1.0,
-                "has_tax_db_data": False,
+                "has_tax_db_data": any(
+                    r.get("tool") == "query_user_financial_data" for r in tool_results
+                ),
             }
 
         except asyncio.TimeoutError:

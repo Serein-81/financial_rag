@@ -62,6 +62,50 @@ from app.multi_agent_system.agents import (
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+
+async def _save_ma_session_bg(
+    session_id: str,
+    tenant_id: str,
+    user_id: str,
+    user_query: str,
+    final_response: str,
+    intent: Optional[str] = None,
+    routing_strategy: Optional[str] = None,
+    complexity: Optional[str] = None,
+    specialists: Optional[List[str]] = None,
+    processing_time: float = 0.0,
+    enable_reflection: bool = True,
+) -> None:
+    """后台将多智能体会话持久化到专用表（fire-and-forget，不影响主流程）"""
+    try:
+        from app.db.session import AsyncSessionLocal
+        from app.multi_agent_system.session_manager import MultiAgentSessionManager
+
+        async with AsyncSessionLocal() as db:
+            manager = MultiAgentSessionManager(db)
+            existing = await manager.get_session(session_id)
+            if existing:
+                return
+            await manager.create_session(
+                session_id=session_id,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                user_query=user_query,
+                primary_intent=intent,
+                routing_strategy=routing_strategy,
+                complexity=complexity,
+                enable_reflection=enable_reflection,
+                metadata={
+                    "final_response": final_response,
+                    "processing_time": round(processing_time, 3),
+                    "specialists": specialists or [],
+                },
+            )
+            await manager.update_session_status(session_id, "completed")
+    except Exception as exc:
+        logger.warning("[MA保存失败] session=%s err=%s", session_id, exc)
+
+
 orchestrator: Optional[AgentOrchestrator] = None
 finance_specialist: Optional[FinanceSpecialist] = None
 tax_specialist: Optional[TaxSpecialist] = None
@@ -198,6 +242,15 @@ async def process_multi_agent_query_stream(
 
             await event_queue.put(event_data)
 
+        # 流式 token 回调：专家最终回答生成时逐 token 推送（真正的流式输出）
+        async def chunk_callback(token: str):
+            await event_queue.put({"type": "chunk", "content": token})
+            orch._streamed_chunks_count = getattr(orch, "_streamed_chunks_count", 0) + 1
+
+        # 初始化计数器 + 把 chunk_callback 挂到 orchestrator
+        orch._streamed_chunks_count = 0
+        orch._chunk_callback = chunk_callback
+
         # 启动后台工作流任务
         workflow_task = asyncio.create_task(
             orch.process_user_request(
@@ -226,25 +279,66 @@ async def process_multi_agent_query_stream(
                     break
 
         # 获取工作流结果
+        orch_result = None
         try:
-            result = workflow_task.result()
-            final_response = result.final_response or "处理完成"
+            orch_result = workflow_task.result()
+            final_response = orch_result.final_response or "处理完成"
         except Exception as e:
             logger.error(f"[SSE] 工作流结果获取失败: {e}")
             final_response = f"处理异常: {str(e)[:200]}"
 
-        # 发送 text 事件（前端依赖此填充 assistantMsg.content）
-        text_event = {"type": "text", "content": final_response}
-        yield f"data: {json.dumps(text_event, ensure_ascii=False)}\n\n"
+        # 如果专家已通过 chunk_callback 实时推送了 token（真流式），
+        # queue 中已有 chunk 事件，此处无需重复发送。
+        # 如果专家没有流式能力（降级路径），用后备的 chunk 分发保证用户看到内容。
+        # 判断方法：检查 queue 是否已消费过 chunk 事件（用标志位）
+        if not getattr(orch, "_streamed_chunks_count", 0):
+            # 后备：分批推送完整文本
+            CHUNK_SIZE = 4
+            for i in range(0, len(final_response), CHUNK_SIZE):
+                chunk_text = final_response[i:i + CHUNK_SIZE]
+                yield f"data: {json.dumps({'type': 'chunk', 'content': chunk_text}, ensure_ascii=False)}\n\n"
+                await asyncio.sleep(0)
 
-        # 发送完成事件
+        # 清理 chunk 计数
+        orch._streamed_chunks_count = 0
+
+        elapsed = time.time() - start_ts
+
+        # 发送完成事件（content 保留完整文本供前端兜底）
         done_event = {
             "type": "done",
             "content": final_response,
             "session_id": session_id,
-            "processing_time": time.time() - start_ts,
+            "processing_time": elapsed,
         }
         yield f"data: {json.dumps(done_event, ensure_ascii=False)}\n\n"
+
+        # 后台持久化到专用多智能体会话表（不阻塞 SSE 流）
+        intent_val = routing_val = complexity_val = None
+        specialists_val: List[str] = []
+        if orch_result and hasattr(orch_result, "intent_result") and orch_result.intent_result:
+            ir = orch_result.intent_result
+            intent_val = getattr(ir, "intent", None)
+            if hasattr(intent_val, "value"):
+                intent_val = intent_val.value
+            routing_val = getattr(ir, "routing_strategy", None)
+            if hasattr(routing_val, "value"):
+                routing_val = routing_val.value
+            complexity_val = getattr(ir, "complexity", None)
+            specialists_val = list(getattr(ir, "required_specialists", []) or [])
+        asyncio.create_task(_save_ma_session_bg(
+            session_id=session_id,
+            tenant_id=tenant_context['tenant_id'],
+            user_id=str(current_user.id),
+            user_query=request.query,
+            final_response=final_response,
+            intent=intent_val,
+            routing_strategy=routing_val,
+            complexity=complexity_val,
+            specialists=specialists_val,
+            processing_time=elapsed,
+            enable_reflection=enable_reflection,
+        ))
 
     return StreamingResponse(
         event_stream(),
@@ -382,9 +476,29 @@ async def process_multi_agent_query(
         )
         
         logger.info(f"查询处理完成 - 请求ID: {request_id}, 耗时: {processing_time:.2f}秒")
-        
+
+        # 后台持久化（不阻塞响应）
+        import asyncio as _asyncio
+        _ir = result.intent_result
+        _intent = getattr(getattr(_ir, "intent", None), "value", None) or getattr(_ir, "primary_intent", None)
+        _routing = getattr(getattr(_ir, "routing_strategy", None), "value", None) or str(getattr(_ir, "routing_strategy", "") or "")
+        _specialists = [str(s) for s in (getattr(_ir, "required_specialists", []) or [])]
+        _asyncio.create_task(_save_ma_session_bg(
+            session_id=session_id,
+            tenant_id=tenant_context['tenant_id'],
+            user_id=str(current_user.id),
+            user_query=request.query,
+            final_response=result.final_response or "",
+            intent=_intent,
+            routing_strategy=_routing,
+            complexity=getattr(_ir, "complexity", None),
+            specialists=_specialists,
+            processing_time=processing_time,
+            enable_reflection=request.enable_reflection,
+        ))
+
         return response
-        
+
     except (ValueError, KeyError) as e:
         logger.error(f"处理多智能体查询数据错误 - 请求ID: {request_id}, 错误: {str(e)}", exc_info=True)
         raise HTTPException(status_code=400, detail=f"处理查询数据错误: {str(e)}")
@@ -687,6 +801,46 @@ async def query_specialist(
             processing_time=time.time() - start_time,
             error_message=str(e)
         )
+
+
+@router.get("/history")
+async def list_ma_history(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(deps.get_current_user),
+    tenant_context: dict = Depends(deps.get_tenant_context),
+    db_session: AsyncSession = Depends(deps.get_db),
+):
+    """查询当前用户的多智能体对话历史（专用表，与普通对话隔离）"""
+    from app.multi_agent_system.session_manager import MultiAgentSessionManager
+
+    manager = MultiAgentSessionManager(db_session)
+    offset = (page - 1) * page_size
+    sessions = await manager.list_sessions(
+        tenant_id=tenant_context["tenant_id"],
+        user_id=str(current_user.id),
+        limit=page_size,
+        offset=offset,
+    )
+
+    return {
+        "sessions": [
+            {
+                "session_id": s.session_id,
+                "user_query": s.user_query,
+                "primary_intent": s.primary_intent,
+                "routing_strategy": s.routing_strategy,
+                "status": s.status,
+                "created_at": s.created_at.isoformat() if s.created_at else None,
+                "final_response": (s.extra_metadata or {}).get("final_response", ""),
+                "processing_time": (s.extra_metadata or {}).get("processing_time", 0),
+                "specialists": (s.extra_metadata or {}).get("specialists", []),
+            }
+            for s in sessions
+        ],
+        "page": page,
+        "page_size": page_size,
+    }
 
 
 @router.get("/sessions/{session_id}", response_model=SessionStatus)

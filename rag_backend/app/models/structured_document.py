@@ -34,7 +34,9 @@ class DocumentMetadata:
     language: Optional[str] = None
     source_format: Optional[str] = None
     extraction_method: Optional[str] = None
-    
+    # 解析器向上层传递的额外数据（如图片 map: {img_id -> {object_path, ...}}）
+    extra: Dict[str, Any] = field(default_factory=dict)
+
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典格式"""
         return {
@@ -45,7 +47,8 @@ class DocumentMetadata:
             "file_size": self.file_size,
             "language": self.language,
             "source_format": self.source_format,
-            "extraction_method": self.extraction_method
+            "extraction_method": self.extraction_method,
+            "extra": self.extra,
         }
 
 

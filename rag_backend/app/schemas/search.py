@@ -66,6 +66,14 @@ class HybridSearchResponse(BaseModel):
     search_time: float = 0.0  # 搜索耗时
     web_available: bool = True  # Web服务是否可用
 
+# 单个搜索结果中的图片引用（含预签名 URL，由检索端点即时签发）
+class SearchResultImage(BaseModel):
+    object_path: str                  # MinIO 存储路径（稳定）
+    url: Optional[str] = None         # 预签名 URL（1h 有效，由 endpoint 即时签发）
+    description: Optional[str] = None
+    page: Optional[int] = None
+
+
 # 单个搜索结果的结构
 class SearchResultItem(BaseModel):
     chunk_id: str
@@ -76,6 +84,7 @@ class SearchResultItem(BaseModel):
     page_number: Optional[int] = None
     answerability_score: Optional[float] = None
     evidence_flags: Optional[Dict[str, Any]] = None
+    images: Optional[List[SearchResultImage]] = None  # 原始图片引用（有图时才出现）
 
 # 接口返回的整体结构
 class SearchResponse(BaseModel):

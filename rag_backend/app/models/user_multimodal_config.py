@@ -173,19 +173,19 @@ class UserMultiModalConfig(Base):
             total_cost += cost_per_1k["ai_enhanced"]["table"]
             details["table"] = f"${cost_per_1k['ai_enhanced']['table']:.2f}/1K"
         else:
-            details["table"] = "免费"
+            details["table"] = "基础"
 
         if self.chart_mode == "ai_enhanced":
             total_cost += cost_per_1k["ai_enhanced"]["chart"]
             details["chart"] = f"${cost_per_1k['ai_enhanced']['chart']:.2f}/1K"
         else:
-            details["chart"] = "免费"
+            details["chart"] = "基础"
 
         if self.image_mode == "ai_enhanced":
             total_cost += cost_per_1k["ai_enhanced"]["image"]
             details["image"] = f"${cost_per_1k['ai_enhanced']['image']:.2f}/1K"
         else:
-            details["image"] = "免费"
+            details["image"] = "基础"
 
         return {
             "modes": {

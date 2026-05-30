@@ -7,6 +7,12 @@ import type { ParseMode, MultimodalConfigCreate } from '@/api/multimodal'
 
 const store = useMultimodalStore()
 
+// ────────────────── API Key 显示控制 ──────────────────
+
+const showApiKey = ref(false)
+
+// ────────────────── 主表单状态 ──────────────────
+
 const local = ref<MultimodalConfigCreate>({
   enabled: true,
   table_mode: 'rule_based',
@@ -21,8 +27,6 @@ const local = ref<MultimodalConfigCreate>({
   ai_timeout: 30,
   max_concurrent: 3,
 })
-
-const showApiKey = ref(false)
 
 onMounted(async () => {
   await Promise.all([
@@ -55,58 +59,63 @@ function syncFromStore() {
   }
 }
 
-const isAIEnhanced = computed(() => {
-  return local.value.table_mode === 'ai_enhanced'
-    || local.value.chart_mode === 'ai_enhanced'
-    || local.value.image_mode === 'ai_enhanced'
-})
+/** 是否已在后端保存过用户自己的 API Key */
+const hasUserApiKey = computed(() => store.config?.use_own_api_key && (store.config as any)?.has_user_api_key)
+
+// ────────────────── 计算属性 ──────────────────
+
+// 图片 ai_enhanced 后端未实现，不计入判断
+const isAIEnhanced = computed(() =>
+  local.value.table_mode === 'ai_enhanced'
+  || local.value.chart_mode === 'ai_enhanced'
+)
 
 const usagePercent = computed(() => store.usagePercent)
 
-const modeOptions: { value: ParseMode; label: string; cost: string; desc: string }[] = [
-  { value: 'basic', label: '基础提取', cost: '免费', desc: '只提取原始数据，不做分析' },
-  { value: 'rule_based', label: '规则分析', cost: '免费', desc: '提取 + 自动统计分析（推荐默认）' },
-  { value: 'ai_enhanced', label: 'AI 增强', cost: '付费', desc: '调用 LLM/Vision 模型深度理解' },
+interface ModeOption {
+  value: ParseMode
+  label: string
+  tier: string
+  desc: string
+}
+
+// 表格 / 图表：三种模式均有后端实现
+const tableModeOptions: ModeOption[] = [
+  { value: 'basic',       label: '基础提取', tier: '基础', desc: '结构化提取，仅保留原始数据' },
+  { value: 'rule_based',  label: '规则增强', tier: '标准', desc: '结构化提取 + 规则统计分析（推荐默认）' },
+  { value: 'ai_enhanced', label: 'AI 理解',  tier: '高级', desc: '调用 LLM API 深度摘要与洞察' },
 ]
 
-// 实时刷新成本估算（模式变化时）
-watch(
-  () => [local.value.table_mode, local.value.chart_mode, local.value.image_mode],
-  async () => {
-    // 仅当配置已经持久化过才能获取成本估算，这里仅做 UI 预览
-  }
-)
+const chartModeOptions: ModeOption[] = [
+  { value: 'basic',       label: '基础提取', tier: '基础', desc: 'OCR 文字提取' },
+  { value: 'rule_based',  label: '规则增强', tier: '标准', desc: 'OCR + 规则检测图表类型与趋势（推荐默认）' },
+  { value: 'ai_enhanced', label: 'AI 理解',  tier: '高级', desc: '调用 Vision API 深度理解图表语义' },
+]
+
+// 图片：rule_based / ai_enhanced 后端尚未实现，禁用并标注待开发
+const imageModeOptions: (ModeOption & { todo?: boolean })[] = [
+  { value: 'basic',       label: '基础提取', tier: '基础', desc: 'OCR 文字提取（当前可用）' },
+  { value: 'rule_based',  label: '规则增强', tier: '标准', desc: '规则分析',       todo: true },
+  { value: 'ai_enhanced', label: 'AI 理解',  tier: '高级', desc: 'Vision 模型识别', todo: true },
+]
+
+// ────────────────── 操作 ──────────────────
 
 async function save() {
-  // AI Key 风险提示
-  if (isAIEnhanced.value && !local.value.use_own_api_key) {
-    try {
-      await ElMessageBox.confirm(
-        '检测到启用了 AI 增强模式但未使用自己的 API Key，将由平台代付。是否继续？',
-        '使用平台 API Key',
-        { confirmButtonText: '继续保存', cancelButtonText: '取消', type: 'info' }
-      )
-    } catch {
-      return
-    }
-  }
-
-  // 如果选择了使用自己的 API Key 但没填，警告
-  if (local.value.use_own_api_key && !local.value.user_api_key && !store.config?.use_own_api_key) {
-    ElMessage.warning('请填入您的 API Key')
+  // 选择了使用自己的 Key 但未填且未保存过，则警告
+  if (local.value.use_own_api_key && !local.value.user_api_key && !hasUserApiKey.value) {
+    ElMessage.warning('请填写您的 API Key')
     return
   }
 
   try {
-    const payload = { ...local.value }
-    // 如果 user_api_key 为空，说明未修改 (后端保留原值)
-    if (!payload.user_api_key) {
-      delete payload.user_api_key
-    }
+    const payload: MultimodalConfigCreate = { ...local.value }
+    // user_api_key 为空表示不修改已保存的值
+    if (!payload.user_api_key) delete payload.user_api_key
+
     await store.saveConfig(payload)
     ElMessage.success('配置已保存')
-    // 重新拉一次
-    await store.refresh()
+    store.refresh().catch(() => {})
   } catch (e: any) {
     ElMessage.error('保存失败：' + (e?.message || '未知错误'))
   }
@@ -186,66 +195,70 @@ async function refreshStats() {
           <div class="text-base font-medium text-gray-900">解析模式</div>
         </template>
         <div class="space-y-5">
-          <!-- 表格 -->
+          <!-- 表格（三种模式均已实现） -->
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-2">📊 表格解析</label>
             <el-radio-group v-model="local.table_mode" class="w-full">
               <el-radio
-                v-for="opt in modeOptions"
+                v-for="opt in tableModeOptions"
                 :key="opt.value"
                 :value="opt.value"
                 class="!mr-3"
               >
                 {{ opt.label }}
-                <span class="text-xs ml-1" :class="opt.cost === '免费' ? 'text-emerald-600' : 'text-amber-600'">
-                  ({{ opt.cost }})
-                </span>
+                <span class="text-xs ml-1 text-gray-400">({{ opt.tier }})</span>
               </el-radio>
             </el-radio-group>
             <div class="text-xs text-gray-500 mt-1">
-              {{ modeOptions.find(o => o.value === local.table_mode)?.desc }}
+              {{ tableModeOptions.find(o => o.value === local.table_mode)?.desc }}
             </div>
           </div>
 
-          <!-- 图表 -->
+          <!-- 图表（三种模式均已实现） -->
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-2">📈 图表解析</label>
             <el-radio-group v-model="local.chart_mode" class="w-full">
               <el-radio
-                v-for="opt in modeOptions"
+                v-for="opt in chartModeOptions"
                 :key="opt.value"
                 :value="opt.value"
                 class="!mr-3"
               >
                 {{ opt.label }}
-                <span class="text-xs ml-1" :class="opt.cost === '免费' ? 'text-emerald-600' : 'text-amber-600'">
-                  ({{ opt.cost }})
-                </span>
+                <span class="text-xs ml-1 text-gray-400">({{ opt.tier }})</span>
               </el-radio>
             </el-radio-group>
             <div class="text-xs text-gray-500 mt-1">
-              {{ modeOptions.find(o => o.value === local.chart_mode)?.desc }}
+              {{ chartModeOptions.find(o => o.value === local.chart_mode)?.desc }}
             </div>
           </div>
 
-          <!-- 图片 -->
+          <!-- 图片（rule_based / ai_enhanced 后端未实现，禁用） -->
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-2">🖼️ 图片解析</label>
-            <el-radio-group v-model="local.image_mode" class="w-full">
-              <el-radio
-                v-for="opt in modeOptions"
+            <div class="flex flex-wrap gap-3">
+              <label
+                v-for="opt in imageModeOptions"
                 :key="opt.value"
-                :value="opt.value"
-                class="!mr-3"
+                class="flex items-center gap-1.5"
+                :class="opt.todo ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'"
               >
-                {{ opt.label }}
-                <span class="text-xs ml-1" :class="opt.cost === '免费' ? 'text-emerald-600' : 'text-amber-600'">
-                  ({{ opt.cost }})
+                <input
+                  type="radio"
+                  :value="opt.value"
+                  v-model="local.image_mode"
+                  :disabled="opt.todo"
+                  class="accent-blue-500"
+                />
+                <span class="text-sm" :class="opt.todo ? 'text-gray-400' : ''">
+                  {{ opt.label }}
+                  <span class="text-xs text-gray-400">({{ opt.tier }})</span>
+                  <el-tag v-if="opt.todo" size="small" type="info" effect="plain" class="ml-1 !text-xs">待开发</el-tag>
                 </span>
-              </el-radio>
-            </el-radio-group>
+              </label>
+            </div>
             <div class="text-xs text-gray-500 mt-1">
-              {{ modeOptions.find(o => o.value === local.image_mode)?.desc }}
+              {{ imageModeOptions.find(o => o.value === local.image_mode)?.desc }}
             </div>
           </div>
         </div>
@@ -293,23 +306,42 @@ async function refreshStats() {
         </div>
       </el-card>
 
-      <!-- API Key 设置 -->
-      <el-card v-if="isAIEnhanced" shadow="never">
+      <!-- API Key 配置（始终显示，便于提前配置） -->
+      <el-card shadow="never">
         <template #header>
-          <div class="text-base font-medium text-gray-900">API Key 设置</div>
+          <div class="flex items-center justify-between">
+            <div class="text-base font-medium text-gray-900">API Key 配置</div>
+            <el-tag v-if="isAIEnhanced" type="warning" size="small">AI 增强模式已启用</el-tag>
+            <el-tag v-else type="info" size="small" effect="plain">选填预配置</el-tag>
+          </div>
         </template>
-        <div class="space-y-3">
+        <div class="space-y-4">
+          <div class="flex items-start gap-2 p-3 bg-blue-50 rounded-lg text-sm text-blue-700">
+            <Info :size="16" class="mt-0.5 flex-shrink-0" />
+            <span>
+              各 LLM Provider 的 API Key 在
+              <router-link to="/settings/models" class="underline font-medium">模型配置中心</router-link>
+              统一管理。此处仅在 AI 增强模式下，允许用户提供自己的 API Key 覆盖平台默认密钥（计入您自己的账单）。
+            </span>
+          </div>
+
+          <!-- 计费来源选择 -->
           <el-radio-group v-model="local.use_own_api_key">
-            <el-radio :value="false">使用平台 API Key（计入平台账单）</el-radio>
-            <el-radio :value="true">使用自己的 API Key（计入您的账单）</el-radio>
+            <el-radio :value="false">使用平台配置的 API Key</el-radio>
+            <el-radio :value="true">使用我自己的 API Key（覆盖平台默认）</el-radio>
           </el-radio-group>
 
-          <div v-if="local.use_own_api_key">
-            <label class="block text-sm font-medium text-gray-700 mb-2">您的 API Key</label>
+          <!-- 自己的 Key 输入框 -->
+          <div v-if="local.use_own_api_key" class="space-y-2">
+            <label class="block text-sm font-medium text-gray-700">
+              API Key
+              <el-tag v-if="isAIEnhanced" size="small" type="danger" class="ml-1">AI 增强模式必填</el-tag>
+              <el-tag v-else size="small" type="info" effect="plain" class="ml-1">选填</el-tag>
+            </label>
             <el-input
               v-model="local.user_api_key"
               :type="showApiKey ? 'text' : 'password'"
-              :placeholder="store.config?.use_own_api_key ? '已保存 (留空则不修改)' : '请输入 API Key'"
+              :placeholder="hasUserApiKey ? '已保存（留空则不修改）' : '填写您的 API Key'"
             >
               <template #suffix>
                 <button class="text-gray-400 hover:text-gray-600 p-1" @click="showApiKey = !showApiKey">
@@ -317,9 +349,9 @@ async function refreshStats() {
                 </button>
               </template>
             </el-input>
-            <div class="text-xs text-gray-500 mt-1 flex items-start gap-1">
+            <div class="flex items-start gap-1 text-xs text-gray-500">
               <Info :size="12" class="mt-0.5 flex-shrink-0" />
-              <span>API Key 将加密存储。仅在 ai_enhanced 模式下使用</span>
+              <span>加密存储，仅用于 AI 增强模式的 Vision/LLM 调用，不会用于其他用途</span>
             </div>
           </div>
         </div>

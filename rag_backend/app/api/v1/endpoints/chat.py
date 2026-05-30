@@ -397,6 +397,8 @@ async def chat_with_rag(
         top_k=request.top_k,
         tenant_id=tenant_context['tenant_id']
     )
+    from app.services.multimodal_image_service import sign_result_images
+    search_results = await sign_result_images(search_results)
 
     if not search_results:
         return ChatResponse(
@@ -429,11 +431,18 @@ async def chat_with_rag_stream(request: ChatRequest):
     [V1] 流式 RAG 对话 (无数据库记录)
     """
     search_results = await search_service.search(request.query, request.top_k)
+    from app.services.multimodal_image_service import sign_result_images
+    search_results = await sign_result_images(search_results)
     context_texts = [item.content for item in search_results] if search_results else []
 
     async def generate_stream():
         sources_data = [
-            {"filename": res.source_file, "score": res.score, "content": res.content[:50]}
+            {
+                "filename": res.source_file,
+                "score": res.score,
+                "content": res.content[:50],
+                "images": [i.model_dump() for i in (res.images or [])],
+            }
             for res in search_results
         ]
         yield json.dumps({"type": "sources", "data": sources_data}, ensure_ascii=False) + "\n"
@@ -519,6 +528,8 @@ async def chat_stream_persistent(
         tenant_id=str(current_user.tenant_id),
         user_id=str(current_user.id)
     )
+    from app.services.multimodal_image_service import sign_result_images
+    search_results = await sign_result_images(search_results)
     context_texts = [item.content for item in search_results] if search_results else []
 
     async def generate_save_stream():
@@ -528,7 +539,12 @@ async def chat_stream_persistent(
         yield json.dumps({"type": "session", "id": session_id}, ensure_ascii=False) + "\n"
 
         sources_data = [
-            {"filename": res.source_file, "score": res.score, "content": res.content[:50] + "..."}
+            {
+                "filename": res.source_file,
+                "score": res.score,
+                "content": res.content[:50] + "...",
+                "images": [i.model_dump() for i in (res.images or [])],
+            }
             for res in search_results
         ]
         yield json.dumps({"type": "sources", "data": sources_data}, ensure_ascii=False) + "\n"

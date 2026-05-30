@@ -564,6 +564,7 @@ function getResultColor(type: 'local' | 'web') {
             :content="result.content"
             :score="result.score"
             :badge="enableSynonymSearch ? '同义词' : undefined"
+            :metaLine="result.images?.length ? `🖼️ 含 ${result.images.length} 张图片，点击查看原图` : undefined"
             type="local"
             @click="openDetail(result, 'local')"
           />
@@ -735,6 +736,38 @@ function getResultColor(type: 'local' | 'web') {
                   <div>
                     <span class="text-emerald-600 font-medium">来源文件:</span>
                     <p class="text-gray-700 mt-1">{{ selectedResult.source_file }}</p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 原始图片 -->
+              <div
+                v-if="selectedResultType === 'local' && (selectedResult as SearchResult).images?.length"
+                class="mt-6"
+              >
+                <h4 class="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
+                  <span>🖼️</span> 原始图片
+                </h4>
+                <div class="grid grid-cols-1 gap-4">
+                  <div
+                    v-for="(img, idx) in (selectedResult as SearchResult).images"
+                    :key="idx"
+                    class="rounded-xl border border-slate-200 overflow-hidden bg-slate-50"
+                  >
+                    <img
+                      v-if="img.url"
+                      :src="img.url"
+                      :alt="img.description || '图片'"
+                      class="w-full max-h-96 object-contain bg-white"
+                      loading="lazy"
+                    />
+                    <div v-else class="flex items-center justify-center h-20 text-slate-400 text-sm">
+                      图片加载失败
+                    </div>
+                    <div v-if="img.description" class="px-3 py-2 text-xs text-slate-500 border-t border-slate-100">
+                      {{ img.description }}
+                    </div>
+                    <div v-if="img.page" class="px-3 pb-2 text-xs text-slate-400">第 {{ img.page }} 页</div>
                   </div>
                 </div>
               </div>

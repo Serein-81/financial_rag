@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func, select
 from typing import Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel, Field
 
 from app.db.session import get_db
@@ -295,12 +295,12 @@ async def get_cost_estimate(
                 "image": "basic"
             },
             "cost_per_1k_objects": {
-                "table": "免费",
-                "chart": "免费",
-                "image": "免费"
+                "table": "基础",
+                "chart": "基础",
+                "image": "基础"
             },
-            "total_cost_per_1k_docs": "$0.00",
-            "note": "使用默认配置（免费）"
+            "total_cost_per_1k_docs": "-",
+            "note": "未启用 AI 增强，无额外 Vision/LLM API 调用"
         }
 
     return config.get_cost_estimate()
@@ -329,9 +329,12 @@ async def get_usage_stats(
             }
         }
 
-    # 检查是否需要重置每日计数
-    now = datetime.now()
-    if config.last_reset_at and (now - config.last_reset_at).days >= 1:
+    # 检查是否需要重置每日计数（使用 UTC aware datetime 避免与 PG timezone-aware 列相减报错）
+    now = datetime.now(timezone.utc)
+    last_reset = config.last_reset_at
+    if last_reset and last_reset.tzinfo is None:
+        last_reset = last_reset.replace(tzinfo=timezone.utc)
+    if last_reset and (now - last_reset).days >= 1:
         config.reset_daily_usage()
         await db.commit()
 
@@ -400,7 +403,7 @@ async def get_usage_summary(
 
     按内容类型、模式、成功率等维度统计。
     """
-    start_date = datetime.now() - timedelta(days=days)
+    start_date = datetime.now(timezone.utc) - timedelta(days=days)
 
     # 按内容类型统计
     content_type_stmt = (

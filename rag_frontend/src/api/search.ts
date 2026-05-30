@@ -1,5 +1,12 @@
 import { request } from '@/utils/request'
 
+export interface SearchResultImage {
+  object_path: string
+  url: string | null        // 预签名 URL，1h 有效，null 表示签发失败
+  description: string | null
+  page: number | null
+}
+
 export interface SearchResult {
   chunk_id: string
   document_id: string
@@ -7,6 +14,7 @@ export interface SearchResult {
   content: string
   source_file: string
   page_number: number | null
+  images?: SearchResultImage[] | null  // 原始图片引用（无图时为空）
 }
 
 export interface SearchResponse {

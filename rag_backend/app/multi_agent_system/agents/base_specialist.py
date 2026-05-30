@@ -457,3 +457,223 @@ class BaseSpecialistAgent(BaseAgent):
             "active_skill": bool(self._activated_skill_context),
             "execution_summary": self.get_execution_summary()
         }
+
+    # ─────────────────────────────────────────────────────────────
+    # 函数调用循环（Function Calling Loop）
+    # 让 LLM 通过 OpenAI-compatible tool_calls 主动调用确定性工具，
+    # 而非凭空生成文字答案。
+    # ─────────────────────────────────────────────────────────────
+
+    def _build_openai_tools(self) -> List[Dict[str, Any]]:
+        """
+        从 ToolManager 中筛选当前领域工具，转换为 OpenAI function calling 格式。
+        只包含已实际注册的工具（跳过 config 里列出但未注册的名字）。
+        """
+        if not self.tool_manager:
+            return []
+
+        from app.agent_framework.tools.agent_tool_registry import get_specialist_tools_config
+        config = get_specialist_tools_config(self.specialty)
+        allowed_names: set = set(config.get("mcp_tools", []) + config.get("local_tools", []))
+
+        # 如果配置为通配 "*" 则使用全部工具
+        use_all = "*" in allowed_names
+
+        openai_tools: List[Dict[str, Any]] = []
+        for name, info in self.tool_manager.tools.items():
+            if not use_all and name not in allowed_names:
+                continue
+            parameters = info.get("parameters") or {}
+            properties: Dict[str, Any] = {}
+            required: List[str] = []
+            for param_name, param_info in parameters.items():
+                prop: Dict[str, Any] = {
+                    "type": param_info.get("type", "string"),
+                    "description": param_info.get("description", param_name),
+                }
+                properties[param_name] = prop
+                if param_info.get("required", False):
+                    required.append(param_name)
+            openai_tools.append({
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": info.get("description", ""),
+                    "parameters": {
+                        "type": "object",
+                        "properties": properties,
+                        "required": required,
+                    },
+                },
+            })
+        return openai_tools
+
+    async def _call_with_tool_loop(
+        self,
+        messages: List[Dict[str, Any]],
+        temperature: float = 0.3,
+        timeout: float = 120.0,
+        max_tool_rounds: int = 5,
+        context_params: Optional[Dict[str, Any]] = None,
+        chunk_callback: Optional[Any] = None,
+    ) -> tuple:
+        """
+        LLM + 工具调用循环（并行执行 + 上下文参数自动注入 + 最终回答流式输出）。
+
+        参数：
+            context_params: 自动补注到工具调用参数里的上下文键值对
+                            （如 tenant_id / user_id），防止 LLM 遗漏必要参数。
+            chunk_callback: 最终回答生成时，每个 token 调用一次 callback(token)，
+                            用于向前端实时推送流式输出。
+        """
+        import asyncio
+        import json as _json
+
+        openai_tools = self._build_openai_tools()
+        tool_results_log: List[Dict[str, Any]] = []
+        current_messages = list(messages)
+        response_text = ""
+
+        # 需要自动注入的上下文参数名集合
+        CTX_KEYS = {"tenant_id", "user_id"}
+
+        for _round in range(max_tool_rounds + 1):
+            use_tools = bool(openai_tools) and _round < max_tool_rounds
+
+            # ── 最终轮（不再提供工具）→ 直接流式生成，无需先 chat() 再 stream_chat() ──
+            if not use_tools and chunk_callback:
+                try:
+                    stream_text = ""
+                    async for token in self.llm_adapter.stream_chat(
+                        messages=current_messages,
+                        temperature=temperature,
+                    ):
+                        if token:
+                            stream_text += token
+                            try:
+                                await chunk_callback(token)
+                            except Exception:
+                                pass
+                    if stream_text:
+                        response_text = stream_text
+                    logger.info(f"[{self.specialty}] 最终轮流式生成完成，{len(response_text)} 字符")
+                except Exception as e:
+                    logger.warning(f"[{self.specialty}] 流式生成失败，降级为非流式: {e}")
+                    fallback = await asyncio.wait_for(
+                        self.llm_adapter.chat(messages=current_messages, temperature=temperature),
+                        timeout=timeout,
+                    )
+                    response_text = fallback.content or ""
+                    # 降级时仍以分批推送模拟流式，保持前端体验一致
+                    if chunk_callback and response_text:
+                        _BATCH = 4
+                        for _i in range(0, len(response_text), _BATCH):
+                            try:
+                                await chunk_callback(response_text[_i:_i + _BATCH])
+                            except Exception:
+                                pass
+                            await asyncio.sleep(0)
+                break
+
+            # ── 中间轮：带工具的非流式 chat ──
+            kwargs: Dict[str, Any] = {"temperature": temperature}
+            if use_tools:
+                kwargs["tools"] = openai_tools
+                kwargs["tool_choice"] = "auto"
+
+            llm_response = await asyncio.wait_for(
+                self.llm_adapter.chat(messages=current_messages, **kwargs),
+                timeout=timeout,
+            )
+
+            raw = getattr(llm_response, "raw_response", None) or {}
+            choices = raw.get("choices", [])
+            message_dict = choices[0].get("message", {}) if choices else {}
+            raw_tool_calls = message_dict.get("tool_calls") or []
+            response_text = llm_response.content or message_dict.get("content", "")
+            finish_reason = (choices[0].get("finish_reason", "stop") if choices else "stop")
+
+            if not raw_tool_calls or finish_reason == "stop":
+                # LLM 提前结束（未满 max_tool_rounds 就停止调用工具）
+                # 把已收到的内容分批推送，无需重新调用 LLM（零额外 API 消耗）
+                if chunk_callback and response_text:
+                    _BATCH = 4
+                    for _i in range(0, len(response_text), _BATCH):
+                        try:
+                            await chunk_callback(response_text[_i:_i + _BATCH])
+                        except Exception:
+                            pass
+                        await asyncio.sleep(0)
+                break
+
+            # ── 追加 assistant tool_calls 消息 ──
+            current_messages.append({
+                "role": "assistant",
+                "content": response_text,
+                "tool_calls": raw_tool_calls,
+            })
+
+            tool_names = [tc.get("function", {}).get("name", "") for tc in raw_tool_calls]
+            logger.info(f"[{self.specialty}] 第 {_round + 1} 轮，并行执行 {len(raw_tool_calls)} 个工具：{tool_names}")
+
+            # ── 并行执行所有工具（自动注入上下文参数）──
+            async def _exec_one(tc: Dict[str, Any]) -> Dict[str, Any]:
+                fn = tc.get("function", {})
+                tool_name = fn.get("name", "")
+                call_id = tc.get("id", tool_name)
+                try:
+                    arguments = _json.loads(fn.get("arguments", "{}"))
+                except Exception:
+                    arguments = {}
+
+                # 自动补注上下文参数：tenant_id / user_id 等必要字段
+                # 用 inspect.signature 直接读实际函数签名，比依赖 metadata 更可靠
+                if context_params and self.tool_manager:
+                    tool_info = self.tool_manager.tools.get(tool_name, {})
+                    func = tool_info.get("func")
+                    if func:
+                        import inspect as _inspect
+                        try:
+                            sig_params = _inspect.signature(func).parameters
+                            for key in CTX_KEYS:
+                                if key in sig_params and key not in arguments and key in context_params:
+                                    arguments[key] = context_params[key]
+                        except Exception:
+                            pass
+
+                try:
+                    result = await self.tool_manager.call_tool_raw(tool_name, **arguments)
+                    result_str = (
+                        _json.dumps(result, ensure_ascii=False)
+                        if isinstance(result, (dict, list)) else str(result)
+                    )
+                    tool_results_log.append({"tool": tool_name, "args": arguments, "result": result})
+                except Exception as exc:
+                    exc_str = str(exc)
+                    # 给 LLM 有针对性的修复建议
+                    if "missing" in exc_str and "argument" in exc_str:
+                        result_str = (
+                            f"[工具错误] {tool_name} 调用失败，缺少必需参数：{exc_str}。"
+                            f"已传入参数：{list(arguments.keys())}。"
+                            f"请先调用 query_user_financial_data 获取财务数据，"
+                            f"再用返回数据构建完整参数后重新调用此工具。"
+                            f"不要在没有真实数据的情况下调用计算或合规检查工具。"
+                        )
+                    else:
+                        result_str = (
+                            f"[工具错误] {tool_name} 调用失败：{exc_str}。"
+                            f"参数：{arguments}。请检查参数或选用其他工具。"
+                        )
+                    tool_results_log.append({"tool": tool_name, "args": arguments, "error": exc_str})
+                return {"call_id": call_id, "content": result_str}
+
+            exec_results = await asyncio.gather(*[_exec_one(tc) for tc in raw_tool_calls])
+
+            for res in exec_results:
+                current_messages.append({
+                    "role": "tool",
+                    "tool_call_id": res["call_id"],
+                    "content": res["content"],
+                })
+
+        return response_text, tool_results_log

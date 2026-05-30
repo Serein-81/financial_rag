@@ -28,7 +28,10 @@ import {
   TrendingUp,
   Shield,
   Lightbulb,
-  AlertCircle
+  AlertCircle,
+  History,
+  Trash2,
+  ChevronLeft
 } from 'lucide-vue-next'
 
 import { marked } from 'marked'
@@ -287,6 +290,135 @@ function getAgentIcon(stageId: string) {
 const STORAGE_KEY = 'multi_agent_chat_state'
 
 const SETTINGS_KEY = 'multi_agent_chat_settings'
+
+const HISTORY_KEY = 'multi_agent_chat_history'
+const MAX_HISTORY = 10
+
+// ─── 历史记录类型 ───────────────────────────────────────────────────────────
+interface DbHistoryItem {
+  session_id: string
+  user_query: string
+  primary_intent: string | null
+  routing_strategy: string | null
+  status: string
+  created_at: string | null
+  final_response: string
+  processing_time: number
+  specialists: string[]
+}
+
+interface LocalHistoryItem {
+  id: string
+  savedAt: number
+  sessionId: string | null
+  preview: string
+  messageCount: number
+  messages: Message[]
+}
+
+const dbHistory = ref<DbHistoryItem[]>([])
+const localHistory = ref<LocalHistoryItem[]>([])
+const showHistory = ref(false)
+const historyLoading = ref(false)
+
+// ─── 本地备份（当前浏览器完整消息列表）──────────────────────────────────────
+function _loadLocalHistory() {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY)
+    localHistory.value = raw ? JSON.parse(raw) : []
+  } catch {
+    localHistory.value = []
+  }
+}
+
+function archiveCurrentChat() {
+  if (!messages.value.length) return
+  const firstUserMsg = messages.value.find(m => m.role === 'user')
+  if (!firstUserMsg) return
+  const item: LocalHistoryItem = {
+    id: `hist_${Date.now()}`,
+    savedAt: Date.now(),
+    sessionId: sessionId.value,
+    preview: firstUserMsg.content.slice(0, 60),
+    messageCount: messages.value.length,
+    messages: messages.value.map(m => ({ ...m, timestamp: new Date(m.timestamp) })),
+  }
+  const history = localHistory.value.slice()
+  history.unshift(item)
+  localHistory.value = history.slice(0, MAX_HISTORY)
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(localHistory.value))
+  } catch {}
+}
+
+// ─── 从后端 API 加载历史（主数据源）─────────────────────────────────────────
+async function loadChatHistory() {
+  historyLoading.value = true
+  try {
+    const { request } = await import('@/utils/request')
+    const data = await request<{ sessions: DbHistoryItem[] }>('/multi-agent/history?page=1&page_size=30')
+    dbHistory.value = data.sessions || []
+  } catch {
+    dbHistory.value = []
+  } finally {
+    _loadLocalHistory()
+    historyLoading.value = false
+  }
+}
+
+// ─── 从 DB 历史恢复（只显示问和答两条消息）──────────────────────────────────
+function restoreDbChat(item: DbHistoryItem) {
+  const userMsg: Message = {
+    id: `restore_u_${Date.now()}`,
+    role: 'user',
+    content: item.user_query,
+    timestamp: item.created_at ? new Date(item.created_at) : new Date(),
+  }
+  const assistantMsg: Message = {
+    id: `restore_a_${Date.now()}`,
+    role: 'assistant',
+    content: item.final_response || '（无回复内容）',
+    timestamp: item.created_at ? new Date(item.created_at) : new Date(),
+    specialists: item.specialists,
+    processing_time: item.processing_time * 1000,
+  }
+  messages.value = [userMsg, assistantMsg]
+  sessionId.value = item.session_id
+  showHistory.value = false
+}
+
+// ─── 从本地历史恢复（完整消息列表）──────────────────────────────────────────
+function restoreLocalChat(item: LocalHistoryItem) {
+  messages.value = item.messages.map(m => ({ ...m, timestamp: new Date(m.timestamp) }))
+  sessionId.value = item.sessionId
+  showHistory.value = false
+}
+
+function deleteLocalHistoryItem(id: string) {
+  localHistory.value = localHistory.value.filter(h => h.id !== id)
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(localHistory.value))
+  } catch {}
+}
+
+function clearAllHistory() {
+  localHistory.value = []
+  dbHistory.value = []
+  try { localStorage.removeItem(HISTORY_KEY) } catch {}
+}
+
+// 统一的 chatHistory computed，DB 优先，本地补充没有 DB 记录的项
+const chatHistory = computed(() => dbHistory.value)
+
+function formatHistoryDate(isoOrTs: string | number): string {
+  const d = typeof isoOrTs === 'number' ? new Date(isoOrTs) : new Date(isoOrTs)
+  const now = new Date()
+  const diffDays = Math.floor((now.getTime() - d.getTime()) / 86400000)
+  if (diffDays === 0) return `今天 ${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
+  if (diffDays === 1) return '昨天'
+  if (diffDays < 7) return `${diffDays}天前`
+  return `${d.getMonth() + 1}/${d.getDate()}`
+}
 
 
 
@@ -547,7 +679,23 @@ function sanitizeErrorMessage(errorMsg: string | undefined | null): string {
 
 onMounted(async () => {
   loadSettings()
-  
+  loadChatHistory()
+
+  // 持久注册澄清卡片的全局事件处理器（无论走哪条渲染路径都能响应）
+  window.handleClarificationSelect = (suggestion: string) => {
+    handleUserClarification(suggestion)
+  }
+  window.handleClarificationSubmit = () => {
+    const input = document.getElementById('clarification-input') as HTMLInputElement
+    if (input?.value?.trim()) {
+      handleUserClarification(input.value.trim())
+    }
+  }
+  window.handleClarificationDismiss = () => {
+    currentStage.value = null
+    intentAnalysis.value = null
+  }
+
   const hasAsyncTask = hasPendingAsyncTask()
   const hasRestoredState = loadState()
   
@@ -1009,11 +1157,20 @@ async function streamQuery(query: string, assistantMsg: Message, token: string |
             currentResponse.value = assistantMsg.content
             receivedText = true
           }
-        } else if (event.type === 'text') {
+        } else if (event.type === 'chunk') {
+          // 流式打字机效果：逐批追加字符
           assistantMsg.content += event.content || ''
           currentResponse.value = assistantMsg.content
           receivedText = true
           scrollToBottom()
+        } else if (event.type === 'text') {
+          // 兼容旧格式：一次性文本（已被 chunk 替代，保留作兜底）
+          if (!receivedText) {
+            assistantMsg.content += event.content || ''
+            currentResponse.value = assistantMsg.content
+            receivedText = true
+            scrollToBottom()
+          }
         } else if (event.type === 'error') {
           const errorMsg = sanitizeErrorMessage(event.error)
           if (!receivedText) {
@@ -1400,6 +1557,8 @@ function resetAgentStages() {
 
 function clearChat() {
 
+  archiveCurrentChat()
+
   messages.value = []
 
   sessionId.value = null
@@ -1482,7 +1641,10 @@ function getStatusIcon(status: AgentStage['status']) {
 
 function renderMarkdown(content: string): string {
   try {
-    const html = marked.parse(content) as string
+    // 澄清卡片是原生 HTML，不需要 Markdown 解析
+    const trimmed = content?.trimStart() || ''
+    const isRawHtml = trimmed.startsWith('<div class="clarification-container">')
+    const html = isRawHtml ? trimmed : (marked.parse(content) as string)
     if (DOMPurify?.sanitize) {
       return DOMPurify.sanitize(html, {
         ALLOWED_TAGS: [
@@ -1494,9 +1656,14 @@ function renderMarkdown(content: string): string {
           'blockquote',
           'table', 'thead', 'tbody', 'tr', 'th', 'td',
           'a', 'img',
-          'span', 'div'
+          'span', 'div',
+          'button', 'input',  // 澄清卡片需要
         ],
-        ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'class', 'id', 'style']
+        ALLOWED_ATTR: [
+          'href', 'src', 'alt', 'title', 'class', 'id', 'style',
+          'onclick', 'onkeyup',  // 澄清卡片按钮事件
+          'type', 'placeholder', // input 属性
+        ]
       }) || html || content
     }
     return html || content
@@ -1677,7 +1844,13 @@ function renderMarkdown(content: string): string {
                 class="p-3 rounded-xl text-left shadow-sm hover:shadow-md transition-shadow"
                 :class="msg.role === 'user' ? 'bg-blue-50 border border-blue-100' : 'bg-white border border-gray-200'"
               >
-                <div v-if="msg.role === 'assistant' && msg.content" class="prose prose-sm max-w-none markdown-content" v-html="renderMarkdown(msg.content)"></div>
+                <div v-if="msg.role === 'assistant' && msg.content" class="prose prose-sm max-w-none markdown-content">
+                  <span v-html="renderMarkdown(msg.content)"></span>
+                  <span
+                    v-if="isLoading && index === messages.length - 1"
+                    class="inline-block w-0.5 h-4 bg-cyan-500 animate-pulse ml-0.5 align-middle"
+                  ></span>
+                </div>
                 <div v-else-if="msg.role === 'assistant' && isLoading && index === messages.length - 1" class="flex items-center gap-2 text-gray-500">
                   <Loader2 :size="16" class="animate-spin" />
                   <span>思考中...</span>
@@ -1965,7 +2138,7 @@ function renderMarkdown(content: string): string {
               <Clock :size="10" class="text-cyan-600" />
               <span class="text-xs text-cyan-700 font-medium">耗时</span>
             </div>
-            <p class="text-lg font-bold text-cyan-900">{{ processingTime ? `${processingTime}ms` : '-' }}</p>
+            <p class="text-lg font-bold text-cyan-900">{{ processingTime ? `${processingTime.toFixed(2)}s` : '-' }}</p>
           </div>
         </div>
         
@@ -2065,12 +2238,77 @@ function renderMarkdown(content: string): string {
               新建对话
             </button>
             <button
-              @click="showSettings = !showSettings"
+              @click="showHistory = !showHistory; loadChatHistory()"
               class="flex items-center justify-center gap-1 px-2 py-1.5 bg-white border border-gray-200 rounded text-xs text-gray-600 hover:bg-gray-50 hover:border-gray-300 transition-all"
+              :class="{ 'border-blue-300 text-blue-600 bg-blue-50': showHistory }"
+            >
+              <History :size="10" />
+              历史记录
+              <span v-if="dbHistory.length" class="ml-0.5 w-3.5 h-3.5 bg-blue-500 text-white text-[9px] rounded-full flex items-center justify-center font-bold">{{ dbHistory.length }}</span>
+            </button>
+            <button
+              @click="showSettings = !showSettings"
+              class="col-span-2 flex items-center justify-center gap-1 px-2 py-1.5 bg-white border border-gray-200 rounded text-xs text-gray-600 hover:bg-gray-50 hover:border-gray-300 transition-all"
             >
               <Settings :size="10" />
               设置
             </button>
+          </div>
+        </div>
+
+        <!-- 历史记录面板 -->
+        <div v-if="showHistory" class="mt-2 border-t border-gray-200 pt-2">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-medium text-gray-700 flex items-center gap-1">
+              <History :size="11" class="text-blue-500" />
+              历史对话 ({{ dbHistory.length }})
+            </span>
+            <Loader2 v-if="historyLoading" :size="11" class="text-gray-400 animate-spin" />
+          </div>
+
+          <!-- DB 历史（服务端，跨设备持久）-->
+          <div v-if="!historyLoading && !dbHistory.length && !localHistory.length" class="text-xs text-gray-400 text-center py-4">暂无历史记录</div>
+          <div v-if="dbHistory.length" class="space-y-1.5 max-h-56 overflow-y-auto pr-0.5 mb-2">
+            <div
+              v-for="item in dbHistory"
+              :key="item.session_id"
+              class="group bg-white border border-gray-200 rounded p-2 cursor-pointer hover:border-blue-300 hover:bg-blue-50 transition-all"
+              @click="restoreDbChat(item)"
+            >
+              <p class="text-xs text-gray-800 line-clamp-2 leading-relaxed">{{ item.user_query }}</p>
+              <div class="flex items-center gap-2 mt-1 flex-wrap">
+                <span class="text-[10px] text-gray-400">{{ formatHistoryDate(item.created_at || '') }}</span>
+                <span v-if="item.primary_intent" class="text-[10px] px-1 bg-blue-100 text-blue-700 rounded">{{ item.primary_intent }}</span>
+                <span v-if="item.specialists?.length" class="text-[10px] text-gray-400">{{ item.specialists.join('·') }}</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 本地历史（浏览器缓存，有完整消息）-->
+          <div v-if="localHistory.length" class="mt-2 pt-2 border-t border-dashed border-gray-200">
+            <p class="text-[10px] text-gray-400 mb-1.5">本地缓存（含完整消息）</p>
+            <div class="space-y-1.5 max-h-40 overflow-y-auto pr-0.5">
+              <div
+                v-for="item in localHistory"
+                :key="item.id"
+                class="group bg-gray-50 border border-gray-200 rounded p-2 cursor-pointer hover:border-blue-300 hover:bg-blue-50 transition-all"
+                @click="restoreLocalChat(item)"
+              >
+                <div class="flex items-start justify-between gap-1">
+                  <p class="text-xs text-gray-700 line-clamp-2 flex-1 leading-relaxed">{{ item.preview }}</p>
+                  <button
+                    @click.stop="deleteLocalHistoryItem(item.id)"
+                    class="opacity-0 group-hover:opacity-100 p-0.5 text-gray-400 hover:text-red-500 transition-all flex-shrink-0"
+                  >
+                    <Trash2 :size="10" />
+                  </button>
+                </div>
+                <div class="flex items-center gap-2 mt-1">
+                  <span class="text-[10px] text-gray-400">{{ formatHistoryDate(item.savedAt) }}</span>
+                  <span class="text-[10px] text-gray-400">{{ item.messageCount }} 条消息</span>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>

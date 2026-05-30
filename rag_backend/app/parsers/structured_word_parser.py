@@ -9,14 +9,25 @@ from .base_parser import FileParserStrategy
 class StructuredWordParser(FileParserStrategy):
     """
     结构化Word文档解析器
-    
+
     核心功能:
     1. 样式分析 -> 识别标题样式
     2. 段落层级 -> 构建文档结构
     3. 表格提取 -> 结构化表格数据
     4. 列表处理 -> 保留列表格式
+    5. 图片保留 -> 存 MinIO + marker 关联（需先调 set_ingest_context）
     """
-    
+
+    def __init__(self):
+        self._tenant_id: str = ""
+        self._document_id: str = ""
+        # 解析完成后可读：{img_id -> {object_path, description, ext, page, stored}}
+        self.image_map: Dict[str, Any] = {}
+
+    def set_ingest_context(self, tenant_id: str, document_id: str) -> None:
+        self._tenant_id = tenant_id
+        self._document_id = document_id
+
     def get_supported_mime_types(self) -> List[str]:
         return [
             "application/msword",  # .doc
@@ -48,10 +59,10 @@ class StructuredWordParser(FileParserStrategy):
         
         if extracted_images:
             print(f"[WordParser] 检测到 {len(extracted_images)} 张图片，开始VLM识别...", file=sys.stderr)
-            structured_content = await self._process_images_with_vlm(
+            structured_content, self.image_map = await self._process_images_with_vlm(
                 structured_content, extracted_images
             )
-        
+
         return structured_content.strip()
     
     def _extract_structured_content(self, file_bytes: bytes) -> tuple:
@@ -539,68 +550,67 @@ class StructuredWordParser(FileParserStrategy):
             return [], []
     
     async def _process_images_with_vlm(
-        self, 
-        markdown_content: str, 
-        extracted_images: List[Dict[str, Any]]
-    ) -> str:
+        self,
+        markdown_content: str,
+        extracted_images: List[Dict[str, Any]],
+    ) -> tuple:
         """
-        使用VLM处理图片，生成描述并替换占位符
-        
-        Args:
-            markdown_content: Markdown格式的文档内容
-            extracted_images: 提取的图片列表
-            
+        VLM 描述 + 存 MinIO + 替换占位符为稳定 marker。
+
         Returns:
-            str: 替换图片占位符后的内容
+            (processed_content: str, image_map: dict)
+            image_map: {img_id -> {object_path, description, ext, page, stored}}
         """
         import sys
-        
+
         if not extracted_images:
-            return markdown_content
-        
-        try:
-            from app.services.vlm_service import vlm_service
-            
-            if not vlm_service.is_enabled:
-                print("[WordParser] VLM服务未启用，跳过图片OCR", file=sys.stderr)
-                return markdown_content
-            
-            print(f"[WordParser] 开始VLM处理 {len(extracted_images)} 张图片...", file=sys.stderr)
-            
-            processed_content = markdown_content
-            
-            for img_info in extracted_images:
-                placeholder = img_info.get("placeholder", "")
-                image_bytes = img_info.get("bytes")
-                
-                if not placeholder or not image_bytes:
-                    continue
-                
-                try:
-                    print(f"[WordParser] 处理图片 {img_info['id'] + 1}/{len(extracted_images)}...", file=sys.stderr)
-                    
-                    image_description = await vlm_service.describe_image(image_bytes)
-                    
-                    replacement = f"\n\n[图片内容说明]:\n{image_description}\n\n"
-                    
-                    processed_content = processed_content.replace(placeholder, replacement)
-                    
-                    print(f"[WordParser] 图片 {img_info['id'] + 1} 处理完成，描述长度: {len(image_description)}", file=sys.stderr)
-                    
-                except Exception as e:
-                    print(f"[WordParser] 图片 {img_info['id']} VLM处理失败: {e}", file=sys.stderr)
-                    replacement = f"\n\n[图片内容 - VLM处理失败]\n\n"
-                    processed_content = processed_content.replace(placeholder, replacement)
-            
-            print(f"[WordParser] VLM图片处理完成", file=sys.stderr)
-            return processed_content
-            
-        except ImportError:
-            print("[WordParser] VLM服务导入失败，跳过图片OCR", file=sys.stderr)
-            return markdown_content
-        except Exception as e:
-            print(f"[WordParser] VLM处理异常: {e}", file=sys.stderr)
-            return markdown_content
+            return markdown_content, {}
+
+        from app.services.multimodal_image_service import process_and_store_image
+
+        print(f"[WordParser] 开始处理 {len(extracted_images)} 张图片（VLM+存储）...", file=sys.stderr)
+
+        processed_content = markdown_content
+        image_map: Dict[str, Any] = {}
+
+        for img_info in extracted_images:
+            placeholder = img_info.get("placeholder", "")
+            image_bytes = img_info.get("bytes")
+
+            if not placeholder or not image_bytes:
+                continue
+
+            try:
+                ref = await process_and_store_image(
+                    image_bytes=image_bytes,
+                    tenant_id=self._tenant_id,
+                    document_id=self._document_id,
+                    caption=img_info.get("caption"),
+                    page=img_info.get("page"),
+                )
+                image_map[ref["img_id"]] = {
+                    "object_path": ref["object_path"],
+                    "description": ref["description"],
+                    "ext": ref["ext"],
+                    "page": ref["page"],
+                    "stored": ref["stored"],
+                }
+                processed_content = processed_content.replace(
+                    placeholder, ref["marker_block"]
+                )
+                print(
+                    f"[WordParser] 图片 {img_info['id'] + 1}/{len(extracted_images)} "
+                    f"处理完成 stored={ref['stored']} img_id={ref['img_id']}",
+                    file=sys.stderr,
+                )
+            except Exception as e:
+                print(f"[WordParser] 图片 {img_info.get('id')} 处理失败: {e}", file=sys.stderr)
+                processed_content = processed_content.replace(
+                    placeholder, "\n\n[图片内容 - 处理失败]\n\n"
+                )
+
+        print(f"[WordParser] 图片处理完成，共 {len(image_map)} 张成功存储", file=sys.stderr)
+        return processed_content, image_map
     
     def _is_list_paragraph(self, paragraph) -> bool:
         """判断段落是否为列表项"""

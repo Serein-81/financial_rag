@@ -45,6 +45,10 @@ async def search_knowledge_base(
         user_id=str(current_user.id)
     )
 
+    # 为含图片的 chunk 签发预签名 URL
+    from app.services.multimodal_image_service import sign_result_images
+    results = await sign_result_images(results)
+
     total_time = time.time() - t0
 
     return SearchResponse(
@@ -352,3 +356,5 @@ async def hybrid_search_with_synonym(
     except Exception as e:
         logger.error(f"❌ 混合搜索（同义词扩展）失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"混合搜索失败: {str(e)}")
+
+

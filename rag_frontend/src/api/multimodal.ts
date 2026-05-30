@@ -14,7 +14,10 @@ export interface MultimodalConfigCreate {
   vision_model?: string
   llm_model?: string
   use_own_api_key: boolean
+  /** 主 API Key（向后兼容，取 provider_api_keys 中必填 provider 的值） */
   user_api_key?: string
+  /** 各 provider 独立 API Key，存入 custom_config.provider_api_keys */
+  provider_api_keys?: Record<string, string>
   daily_ai_limit: number
   enable_cache?: boolean
   ai_timeout?: number
@@ -30,6 +33,7 @@ export interface MultimodalConfigUpdate {
   llm_model?: string
   use_own_api_key?: boolean
   user_api_key?: string
+  provider_api_keys?: Record<string, string>
   daily_ai_limit?: number
   enable_cache?: boolean
   ai_timeout?: number
@@ -58,6 +62,11 @@ export interface MultimodalConfig {
     enable_cache: boolean
     ai_timeout: number
     max_concurrent: number
+  }
+  /** 自定义配置，包含 provider_api_keys 等扩展字段 */
+  custom_config?: {
+    provider_api_keys?: Record<string, boolean>  // 仅返回是否已配置，不返回明文
+    [key: string]: unknown
   }
   is_default?: boolean
 }

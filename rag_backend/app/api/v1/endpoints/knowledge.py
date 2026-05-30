@@ -280,7 +280,8 @@ async def process_document_task(doc_id: UUID, tenant_id: str):
     try:
         file_bytes = await minio_service.download_document_async(doc_obj.file_path)
         structured_doc = await structured_document_service.parse_document(
-            file_bytes, doc_filename, doc_obj.file_type
+            file_bytes, doc_filename, doc_obj.file_type,
+            tenant_id=tenant_id, document_id=str(doc_id),
         )
         doc_stats = structured_document_service.get_document_statistics(structured_doc)
     except Exception as e:
@@ -330,6 +331,9 @@ async def process_document_task(doc_id: UUID, tenant_id: str):
     chunk_results = metadata_injector.inject(structured_doc, chunk_results)
     chunk_results = relationship_builder.build(chunk_results, domain)
 
+    # 图片引用 map（来自解析阶段）
+    _image_map: dict = structured_doc.metadata.extra.get("image_map", {})
+
     # ── Step 6: 向量化 + 存储（短会话，逐块写入）──
     first_error_msg = None
     for idx, chunk_result in enumerate(chunk_results):
@@ -356,6 +360,20 @@ async def process_document_task(doc_id: UUID, tenant_id: str):
             meta_info = {"chunk_index": idx, "source": doc_filename, "domain": domain}
             if chunk_result.metadata:
                 meta_info.update(chunk_result.metadata)
+            # 扫描 chunk 内容里的图片 marker，写入 images 引用列表
+            if _image_map:
+                import re as _re
+                found_ids = _re.findall(r"⟦IMG:([a-f0-9]+)⟧", chunk_result.content)
+                if found_ids:
+                    meta_info["images"] = [
+                        _image_map[iid]
+                        for iid in found_ids
+                        if iid in _image_map
+                    ]
+                    # 从展示文本中去掉 marker（描述保留）
+                    chunk_result.content = _re.sub(
+                        r"⟦IMG:[a-f0-9]+⟧\n?", "", chunk_result.content
+                    )
             chunk = DocumentChunk(
                 document_id=doc_id, content=chunk_result.content, embedding=vector,
                 chunk_index=idx, meta_info=meta_info, heading_path=chunk_result.heading_path,
