@@ -172,6 +172,10 @@ rag_backend/pytest.ini
 CLAUDE.md
 SETUP.md
 
+# Alembic 迁移文件，不入库（530.sql 是发布快照；alembic 仅本地开发用）
+rag_backend/alembic/versions/*.py
+!rag_backend/alembic/versions/__init__.py
+
 # 操作系统产生的文件
 .DS_Store
 Thumbs.db
