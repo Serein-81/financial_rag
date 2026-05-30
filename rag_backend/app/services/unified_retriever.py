@@ -201,45 +201,49 @@ class UnifiedRetriever:
         if len(scored) <= top_k:
             return scored
 
-        selected = [scored[0]]
-        candidates_pool = scored[1:]
-
+        # ⚡ 性能关键：一次性批量计算所有候选向量 + 查询向量（2 次网络请求），
+        # 之后纯内存做 MMR。旧实现在双重循环里逐个 get_embedding，对 ~20 候选
+        # 会发起 O(top_k × pool) ≈ 上百次串行 embedding 网络请求，单轮检索阻塞 ~40s。
         try:
             query_emb = await embedding_service.get_embedding(query)
             if not query_emb:
                 return scored[:top_k]
-
-            selected_embs = [query_emb]
-            for _ in range(min(top_k - 1, len(candidates_pool))):
-                best_idx = -1
-                best_score = -float("inf")
-
-                for i, cand in enumerate(candidates_pool):
-                    cand_emb = await embedding_service.get_embedding(
-                        cand["content"][:500]
-                    )
-                    if not cand_emb:
-                        continue
-
-                    sim_to_query = self._cosine_sim(query_emb, cand_emb)
-                    max_sim_to_sel = max(
-                        self._cosine_sim(cand_emb, se) for se in selected_embs
-                    )
-                    mmr_score = lambda_param * sim_to_query - (1 - lambda_param) * max_sim_to_sel
-
-                    if mmr_score > best_score:
-                        best_score = mmr_score
-                        best_idx = i
-
-                if best_idx >= 0:
-                    selected.append(candidates_pool.pop(best_idx))
-                    selected_embs.append(query_emb)
-
+            cand_embs = await embedding_service.get_embeddings(
+                [c["content"][:500] for c in scored]
+            )
+            if not cand_embs or len(cand_embs) != len(scored):
+                logger.warning("[MMR] 候选向量数量不匹配，跳过 MMR")
+                return scored[:top_k]
         except Exception as e:
-            logger.warning(f"[MMR] 失败，跳过: {e}")
+            logger.warning(f"[MMR] 向量计算失败，跳过: {e}")
             return scored[:top_k]
 
-        return selected
+        # 预计算每个候选与查询的相似度，纯内存 MMR 选择
+        sim_to_query = [self._cosine_sim(emb, query_emb) for emb in cand_embs]
+
+        selected_idx = [0]
+        selected_embs = [cand_embs[0]]
+        pool_idx = list(range(1, len(scored)))
+
+        while len(selected_idx) < top_k and pool_idx:
+            best_pos = -1
+            best_score = -float("inf")
+            for pos, idx in enumerate(pool_idx):
+                # 🔧 修复：与已选**文档**向量比较（旧代码错误地用 query_emb，导致多样性失效）
+                max_sim_to_sel = max(
+                    self._cosine_sim(cand_embs[idx], se) for se in selected_embs
+                )
+                mmr_score = lambda_param * sim_to_query[idx] - (1 - lambda_param) * max_sim_to_sel
+                if mmr_score > best_score:
+                    best_score = mmr_score
+                    best_pos = pos
+            if best_pos < 0:
+                break
+            chosen = pool_idx.pop(best_pos)
+            selected_idx.append(chosen)
+            selected_embs.append(cand_embs[chosen])
+
+        return [scored[i] for i in selected_idx]
 
     @staticmethod
     def _cosine_sim(a: List[float], b: List[float]) -> float:

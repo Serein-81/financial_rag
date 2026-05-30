@@ -300,16 +300,18 @@ async def test_result_evaluator_empty_results(basic_state):
 
 @pytest.mark.asyncio
 async def test_result_evaluator_decides_continuation(basic_state):
-    """测试继续检索决策"""
+    """测试继续检索决策（不充分但分数不算无用 → 继续）"""
     evaluator = ResultEvaluator()
 
-    basic_state["all_results"] = [{"content": "少量内容"}]
+    # 提供 3 条结果，使规则评估综合分约 0.3：低于充分性阈值（不充分）、
+    # 但高于前置短路阈值 0.2（不会被短路），从而应继续检索。
+    basic_state["all_results"] = [{"content": f"一些内容{i}"} for i in range(3)]
     basic_state["iteration_count"] = 1
     basic_state["max_iterations"] = 3
 
     state = await evaluator.evaluate(basic_state)
 
-    # 结果不充分且未达到最大迭代次数，应该继续
+    # 结果不充分、分数不算无用、且未达到最大迭代次数，应该继续
     if not state["evaluation"].is_sufficient:
         assert state["should_continue"] is True
 

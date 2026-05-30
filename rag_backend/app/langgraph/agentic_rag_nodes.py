@@ -400,7 +400,7 @@ class ResultEvaluator:
     评估检索结果是否足够回答问题。
     """
 
-    def __init__(self, llm_service=None, threshold: float = 0.7):
+    def __init__(self, llm_service=None, threshold: float = 0.7, min_useful_score: float = 0.2):
         """
         初始化评估器
 
@@ -410,6 +410,10 @@ class ResultEvaluator:
         """
         self.llm_service = llm_service
         self.threshold = threshold
+        # 前置短路阈值：某一轮结果整体分低于此值，视为"知识库基本无相关内容"，
+        # 再检索/改写也无意义 → 提前停止，避免对通用知识类问题白跑后续轮次。
+        # 取值保守（远低于充分性阈值 threshold），真正相关的企业问题分数会明显更高，不受影响。
+        self.min_useful_score = min_useful_score
 
     async def evaluate(self, state: AgenticRAGState) -> AgenticRAGState:
         """
@@ -444,6 +448,13 @@ class ResultEvaluator:
             iteration < max_iterations
         )
 
+        # 🔌 前置短路：本轮整体分极低（知识库基本无相关内容，如通用知识类问题），
+        # 继续改写/检索也无意义，提前停止，避免白跑后续轮次的 检索+rerank+评估 LLM。
+        short_circuited = False
+        if should_continue and evaluation.overall_score < self.min_useful_score:
+            should_continue = False
+            short_circuited = True
+
         state["should_continue"] = should_continue
 
         logger.info(
@@ -451,6 +462,7 @@ class ResultEvaluator:
             f"sufficient={evaluation.is_sufficient}, "
             f"score={evaluation.overall_score:.2f}, "
             f"continue={should_continue}"
+            + (f" | 🔌 前置短路(score<{self.min_useful_score})" if short_circuited else "")
         )
 
         return state
