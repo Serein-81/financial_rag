@@ -146,9 +146,10 @@ docker pull ghcr.io/serein-81/rag-backend:latest
 
 ### 🔎 重点功能入口
 
+- ⚙️ **模型配置中心**：管理员可在 `/settings/models` 一页配置三类模型——对话（按租户·主对话/金融/税务/法务专家）/ 向量（部署级·维度强校验保护索引）/ 重排（部署级·启用开关）；本地 Ollama 一等公民、不改 `.env`、附带使用概览（各企业当前生效模型 + 最近对话实际模型 + 各模型调用次数）。
 - 🧰 **智能体工具构建器**：管理员可在 `/custom-tools` 通过自然语言生成工具规格和代码草稿，发布后的配置型工具可供同企业成员查看和使用。
 - 🕸️ **知识图谱编辑器**：用户可在 `/knowledge-graph-editor` 加载中心实体子图，增删实体与关系，导入/导出 JSON 图谱，并将编辑结果保存回 Neo4j。
-- 📥 **拉取项目并启动**：执行 `git clone https://github.com/Serein-81/My_rag.git` 后进入 `My_rag/rag_backend`，可用 `docker compose up -d` 快速启动后端依赖与服务；完整步骤见下方“本地快速启动”。
+- 📥 **拉取项目并启动**：执行 `git clone https://github.com/Serein-81/financial_rag.git` 后进入 `financial_rag/rag_backend`，可用 `docker compose up -d` 快速启动后端依赖与服务；完整步骤见下方“本地快速启动”。
 
 ### 💡 前端亮点
 
@@ -374,6 +375,40 @@ docker pull ghcr.io/serein-81/rag-backend:latest
 
 ---
 
+### 8. 模型配置中心（管理员可视化配置）
+
+> **不改 `.env`、不向普通用户暴露密钥**。管理员在一个页面里管掉对话/向量/重排三类模型，保存即生效；普通用户透明继承企业设置、看不到入口也访问不了配置 API。
+
+入口：`/settings/models`（管理员可见，`requiresAdmin` 路由守卫 + 后端 `require_admin_user` 双重保护）。
+
+#### 三类模型 · 职责分明
+
+| 分类 | 作用域 | 存储位置 | 关键约束 |
+|---|---|---|---|
+| **对话模型** | **按租户（企业）** | `tenant_settings.extra_settings.llm_config` | 主对话 + 金融/税务/法务专家可分别配置；不同租户互不影响 |
+| **向量模型（Embedding）** | **部署级** | `system_settings.embedding_config` | **维度强校验**：保存前实际编码取维度，必须等于主检索维度（1024），否则后端拒绝——保护已建索引不被破坏 |
+| **重排模型（Rerank）** | **部署级** | `system_settings.rerank_config` | 启用开关 + Top K；关闭则检索直接用融合排序结果，跳过重排 |
+
+> 为何对话按租户、向量/重排部署级？因 `chunk.embedding=Vector(1024)` 维度固定共享 + 服务为全局单例，向量/重排无法真正按租户各用各的；对话无此约束。
+
+#### 体验要点
+
+- **本地 Ollama 一等公民**：对话复用 `DeepSeekAdapter` 走 OpenAI 兼容端点（保留 Function Calling，工具调用不丢），向量走 Ollama 原生 `/api/embeddings`；前端「检测本地模型」自动列出已 `ollama pull` 的模型。Docker 部署时 Base URL 用 `host.docker.internal:11434/v1`。
+- **测试连接 / 维度守卫 / 说明详情**：每页保存前可一键发最小请求验证；向量保存额外做维度校验；右上角「说明详情」抽屉详尽介绍各字段含义。
+- **使用概览**：管理员一页看到各企业 × 各角色当前生效模型 + 最近一次对话**实际使用的模型** + 各模型调用次数——数据来自 `agent_traces.model_name` 真实落库（写入在 ReAct 路径执行）。
+- **DB 覆盖 → `.env` 兜底**：任何未配置项自动回退到服务端 `.env`，**前端永不回写 `.env`**；DB 读失败也异常兜底回退，不会打断现网检索。
+- **热重载**：保存后调用 `embedding_service.reload()` / `rerank_service.reload()` / `reset_agent_service()`，下一次调用按新配置重建，**无需重启容器**。
+
+#### 主要 API（均管理员鉴权）
+
+- `GET/POST /api/v1/agents/llm-config*` — 对话模型（按租户）CRUD + `/test-connection` + `/ollama/models`
+- `GET/PUT /api/v1/agents/llm-config/embedding` + `/embedding/test` + `/embedding/catalog` — 向量（部署级）
+- `GET/PUT /api/v1/agents/llm-config/rerank` + `/rerank/test` + `/rerank/catalog` — 重排（部署级）
+- `GET /api/v1/agents/llm-config/usage-overview` — 使用概览（各企业生效模型 + 调用统计）
+- `GET /api/v1/agents/supported-providers` — 对话提供商目录（自动注入 `.env` 当前在用模型并置顶）
+
+---
+
 
 ### 🆕 当前代码能力概览
 
@@ -388,6 +423,7 @@ docker pull ghcr.io/serein-81/rag-backend:latest
 | **知识库与 RAG** | 文档上传、知识库管理、向量检索、混合检索、查询改写、MMR、知识图谱增强、检索结果缓存 |
 | **文档解析** | 文本、Markdown、Word、PDF、Excel、图片解析；支持 OCR、MinerU、Unstructured API 等解析路径 |
 | **智能体框架** | ReAct / Plan / Reflect Agent、智能体 LLM 独立配置、工具路由、工具调用追踪、Agent Trace |
+| **模型配置中心** | 管理员可视化配置三类模型：对话（按租户·主对话/金融/税务/法务专家）+ 向量（部署级·维度强校验保护索引）+ 重排（部署级·启用开关）；本地 Ollama 一等公民；不改 `.env`；保存即生效；使用概览（各企业生效模型 + 最近对话实际模型 + 各模型调用次数） |
 | **智能体工具构建器** | 管理员可通过自然语言生成工具规格与代码草稿，支持 `echo`、`http`、`rag_query`、`python_code` 等工具类型，提供 Schema 预览、测试入参生成、发布注册、企业内可见、操作日志追踪；生成代码默认仅保存待审核，不直接执行 |
 | **知识图谱编辑器** | 支持中心实体子图加载、实体类型筛选、节点/关系新增删除、连接高亮、缩放适屏、JSON 导入导出，以及批量保存编辑快照到 Neo4j |
 | **多智能体系统** | LangGraph 状态机编排、意图路由(三级降级)、多专家并行、原生函数调用(多轮循环)、ResultSynthesizer 合并、质量审查(Reflection)、SSE 流式响应、异步轮询(进度持久化) |
@@ -418,6 +454,7 @@ docker pull ghcr.io/serein-81/rag-backend:latest
 | `/contract-review`、`/enterprise-match` | 合同审查与企业政策匹配 |
 | `/group-chat`、`/notifications` | 群组聊天与通知中心 |
 | `/analytics`、`/agent-center`、`/hitl-approval`、`/intent-debug`、`/security-audit`、`/logs` | 分析、Agent 管理、人机审核、意图调试、安全审计与日志 |
+| `/settings/models` | 模型配置中心（管理员）：对话（按租户）/ 向量（部署级·维度守卫）/ 重排（部署级·开关）+ 本地 Ollama 检测 + 测试连接 + 使用概览 |
 | `/custom-tools` | 智能体工具构建器：自然语言生成规格与代码草稿、发布配置型工具、测试入参、查看企业已发布工具 |
 | `/task-management`、`/chat-logs`、`/profile`、`/test-data-guide` | 任务管理、对话日志、个人资料与测试数据指南 |
 
@@ -436,7 +473,7 @@ docker pull ghcr.io/serein-81/rag-backend:latest
 | `/api/v1/documents`、`/api/v1/knowledge`、`/api/v1/search`、`/api/v1/knowledge_graph` | 文档、知识库、搜索、知识图谱 |
 | `/api/v1/chat`、`/api/v1/sessions`、`/api/v1/groups`、`/api/v1/ws/groups` | 对话、会话、群聊与 WebSocket |
 | `/api/v1/multi-agent`、`/api/v1/human-review`、`/api/v1/agent_trace`、`/api/v1/agent-trace`、`/api/v1/tool_trace`、`/api/v1/tool-trace` | 多智能体、人机审核、Agent/工具追踪 |
-| `/api/v1/agents`、`/api/v1/agent-discovery`、`/api/v1/agent-task` | 智能体 LLM 配置、智能体发现与任务状态恢复 |
+| `/api/v1/agents`、`/api/v1/agents/llm-config/*`、`/api/v1/agent-discovery`、`/api/v1/agent-task` | 智能体路由、**模型配置中心**（管理员：对话/向量/重排 CRUD + 测试连接 + Ollama 检测 + 使用概览）、智能体发现、任务状态恢复 |
 | `/api/v1/custom-tools` | 自定义智能体工具：生成规格、生成代码草稿、创建、发布、测试执行；管理接口仅管理员可用，企业成员可查看和使用已发布工具 |
 | `/api/v1/tax-reports`、`/api/v1/tax-intelligence`、`/api/v1/policy`、`/api/v1/policy-tracking`、`/api/v1/financial-tools-test` | 税务报告、税务智能分析、政策管理、政策追踪、财务工具测试 |
 | `/api/v1/financial-health`、`/api/v1/financial-data`、`/api/v1/contract-review` | 财务健康、财务数据管理、合同审查 |
@@ -913,7 +950,7 @@ def reciprocal_rank_fusion(
 ## 📁 项目结构
 
 ```
-My_rag/
+financial_rag/
 ├── rag_backend/                       # 后端服务 (200+ 源文件)
 │   ├── app/
 │   │   ├── main.py                    # FastAPI 入口，50+ Router，lifespan 管理
@@ -1077,13 +1114,17 @@ My_rag/
 #### 一键启动后端完整依赖
 
 ```bash
-git clone https://github.com/Serein-81/My_rag.git
-cd My_rag/rag_backend
+git clone https://github.com/Serein-81/financial_rag.git
+cd financial_rag/rag_backend
 
 # 首次运行需要创建本地环境变量文件
 cp .env.example .env
 
 # 按需编辑 .env，至少填写数据库、Redis、Neo4j 密码和你要使用的大模型 API Key
+
+# 渲染 PgBouncer 配置（从 *.template 生成实际 ini，注入 POSTGRES_PASSWORD）
+# 注意：实际 ini 文件已加入 .gitignore，不渲染会导致 pgbouncer 容器启动失败
+python docker/render_pgbouncer.py
 
 # 启动 PostgreSQL/pgvector、Redis、PgBouncer、Neo4j、MinIO 和后端服务
 docker compose up -d
@@ -1142,7 +1183,7 @@ docker compose up -d
 停止环境：
 
 ```bash
-cd My_rag/rag_backend
+cd financial_rag/rag_backend
 docker compose down
 ```
 
@@ -1151,8 +1192,8 @@ docker compose down
 ### 1. 克隆项目
 
 ```bash
-git clone https://github.com/Serein-81/My_rag.git
-cd My_rag
+git clone https://github.com/Serein-81/financial_rag.git
+cd financial_rag
 ```
 
 ### 2. 配置后端环境变量
@@ -1175,6 +1216,9 @@ cp .env.example .env
 
 ```bash
 cd rag_backend
+
+# 渲染 PgBouncer 配置模板（首次运行必做，详见上文「一键启动」）
+python docker/render_pgbouncer.py
 
 # 使用 Docker Compose 启动所有服务
 docker compose up -d
@@ -1222,20 +1266,35 @@ curl http://localhost:8000/api/health
 
 ### 5. 数据库初始化
 
-首次部署需要执行数据库迁移：
+> ⚠️ **必做步骤**。`docker compose up -d` 只起空容器，不建表；不做这一步后端接口会全部 500。
+
+**推荐方式 · 一键导入完整 schema（最快最稳）**
+
+仓库根目录提供了完整的 PostgreSQL schema 导出 `530.sql`（140+ 表，含所有枚举、索引、外键），首次部署直接导入即可：
 
 ```bash
-# 进入后端容器
+# 在仓库根目录执行
+docker cp 530.sql rag_db:/tmp/530.sql
+docker exec -it rag_db psql -U postgres -d rag_db -f /tmp/530.sql
+```
+
+**备选方式 · Alembic 增量迁移（适合开发者）**
+
+若你要在开发分支上继续做 schema 演进，请用 alembic：
+
+```bash
 docker exec -it rag_backend bash
-
-# 运行数据库迁移
 alembic upgrade head
-
-# 创建初始超级管理员用户
-python -m app.scripts.create_admin --email admin@example.com --password your_password
-
-# 退出容器
 exit
+```
+
+**创建初始管理员账号**
+
+无论用哪种方式，初始化后都需要建一个管理员：
+
+```bash
+docker exec -it rag_backend python -m app.scripts.create_admin \
+  --email admin@example.com --password your_password
 ```
 
 ---
