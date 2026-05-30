@@ -168,6 +168,10 @@ rag_backend/pytest.ini
 # Claude Code 本地配置（机器相关，不入库）
 .claude/settings.local.json
 
+# Claude Code / 本地工程笔记，不入库（保留在本地）
+CLAUDE.md
+SETUP.md
+
 # 操作系统产生的文件
 .DS_Store
 Thumbs.db
