@@ -79,7 +79,7 @@ services:
       - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD}
       - NEO4J_PLUGINS=["apoc"]
       - NEO4J_dbms_security_procedures_unrestricted=apoc.*
-      - NEO4J_dbms_memory_heap_max__size=512M # 这个你原来写得非常好，限制了 Java 堆内存！
+      - NEO4J_server_memory_heap_max__size=512M # 限制 Java 堆内存（Neo4j 5 新键名，原 dbms.* 已弃用）
     volumes:
       - ./neo4j_data:/data
     # Neo4j 的真实健康探测，确保图谱引擎真正 Ready

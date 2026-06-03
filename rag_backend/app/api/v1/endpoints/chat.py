@@ -5,7 +5,7 @@ import uuid
 import logging
 from datetime import datetime
 from typing import Optional, Dict, Set, Any
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from starlette.concurrency import iterate_in_threadpool
 from sqlalchemy import select
 from pydantic import BaseModel
@@ -25,6 +25,8 @@ from app.api import deps  # 鉴权依赖
 from app.models.user import User
 from app.models.chat import ChatSession, ChatMessage
 from app.db import AsyncSessionLocal
+from app.core.config import settings
+from app.services.redis_service import redis_service
 
 # 引入日志装饰器
 from app.utils.log_decorators import log_user_action
@@ -104,6 +106,11 @@ def looks_like_incomplete_answer(text: str) -> bool:
 # 模块级引用确保后台任务不被 GC 回收，直到完成。
 _background_tasks: Set[asyncio.Task] = set()
 
+# ── 会话 → 后台生成任务 映射 ──
+# 供 POST /chat/cancel/{session_id} 主动停止某会话正在进行的流式生成。
+# 任务完成（含正常结束/取消/异常）后由 done_callback 自动注销。
+_session_tasks: Dict[str, asyncio.Task] = {}
+
 
 def _safe_put(q: asyncio.Queue, item: tuple) -> None:
     """非阻塞写入队列，满时静默丢弃（后台任务不应被队列阻塞）。"""
@@ -123,6 +130,13 @@ _stream_buffer_done_at: Dict[str, float] = {}
 _STREAM_BUFFER_MAX_ITEMS = 500
 _STREAM_BUFFER_TTL = 300  # 5 分钟
 
+# ── 续传缓冲可选 Redis 后端 ──
+# 默认 False = 仅进程内内存（与原行为完全一致）。
+# 设 .env 的 CHAT_STREAM_REDIS_BUFFER=true 且 Redis 可用时，缓冲镜像到 Redis，
+# 实现「重启不丢 / 多 worker 跨进程」断点续传。读写均带内存兜底，Redis 异常自动降级。
+_REDIS_BUFFER_ENABLED = bool(getattr(settings, "CHAT_STREAM_REDIS_BUFFER", False))
+_REDIS_BUFFER_PREFIX = "chat:stream:"
+
 
 def _sweep_expired_buffers() -> None:
     """惰性清理：移除已完成且超过 TTL 的会话缓冲。
@@ -136,8 +150,15 @@ def _sweep_expired_buffers() -> None:
         _stream_buffer_done_at.pop(sid, None)
 
 
+def _redis_buffer_active() -> bool:
+    """Redis 缓冲是否启用且可用。"""
+    return _REDIS_BUFFER_ENABLED and getattr(redis_service, "client", None) is not None
+
+
 def _add_to_buffer(session_id: str, seq: int, event_type: str, payload: any) -> None:
-    """添加事件到会话缓冲（chunk/sources/progress/done/error 均入缓冲，供断点续传回放）"""
+    """添加事件到会话缓冲（chunk/sources/progress/done/error 均入缓冲，供断点续传回放）。
+    默认进程内内存；开启 Redis 时同时镜像到 Redis（跨进程/多 worker 续传）。"""
+    # 进程内内存（始终写，保证同进程续传最快、且 Redis 异常时可兜底）
     _sweep_expired_buffers()
     if session_id not in _stream_buffers:
         _stream_buffers[session_id] = []
@@ -149,17 +170,65 @@ def _add_to_buffer(session_id: str, seq: int, event_type: str, payload: any) -> 
     # 终止事件：登记完成时间，TTL 后由 _sweep_expired_buffers 清理
     if event_type in ("done", "error"):
         _stream_buffer_done_at[session_id] = time.time()
+    # Redis 镜像（可选）
+    if _redis_buffer_active():
+        try:
+            _k = f"{_REDIS_BUFFER_PREFIX}{session_id}"
+            redis_service.client.rpush(_k, json.dumps({"seq": seq, "type": event_type, "payload": payload}, ensure_ascii=False))
+            redis_service.client.ltrim(_k, -_STREAM_BUFFER_MAX_ITEMS, -1)
+            redis_service.client.expire(_k, _STREAM_BUFFER_TTL)
+        except Exception as _e:
+            logger.warning(f"[CHAT] Redis 缓冲写入失败（降级内存）: {_e}")
 
 
 def _get_buffer_since(session_id: str, last_seq: int) -> list:
-    """获取会话缓冲中序号大于 last_seq 的所有条目"""
+    """获取会话缓冲中序号大于 last_seq 的所有条目（开启 Redis 时优先读 Redis）"""
+    if _redis_buffer_active():
+        try:
+            _raw = redis_service.client.lrange(f"{_REDIS_BUFFER_PREFIX}{session_id}", 0, -1)
+            if _raw:
+                _out = []
+                for _s in _raw:
+                    try:
+                        _d = json.loads(_s)
+                        if _d["seq"] > last_seq:
+                            _out.append((_d["seq"], _d["type"], _d["payload"]))
+                    except Exception:
+                        continue
+                return _out
+        except Exception as _e:
+            logger.warning(f"[CHAT] Redis 缓冲读取失败（降级内存）: {_e}")
     buf = _stream_buffers.get(session_id, [])
     return [item for item in buf if item[0] > last_seq]
 
 
 def _buffer_has_terminal(session_id: str) -> bool:
-    """会话缓冲是否已包含终止事件（done/error）"""
+    """会话缓冲是否已包含终止事件（done/error）（开启 Redis 时优先读 Redis）"""
+    if _redis_buffer_active():
+        try:
+            _raw = redis_service.client.lrange(f"{_REDIS_BUFFER_PREFIX}{session_id}", 0, -1)
+            if _raw:
+                for _s in _raw:
+                    try:
+                        if json.loads(_s).get("type") in ("done", "error"):
+                            return True
+                    except Exception:
+                        continue
+                return False
+        except Exception:
+            pass
     return any(item[1] in ("done", "error") for item in _stream_buffers.get(session_id, []))
+
+
+def _buffer_exists(session_id: str) -> bool:
+    """会话缓冲是否存在（开启 Redis 时检查 Redis，支持跨进程/多 worker）"""
+    if _redis_buffer_active():
+        try:
+            if redis_service.client.exists(f"{_REDIS_BUFFER_PREFIX}{session_id}"):
+                return True
+        except Exception:
+            pass
+    return session_id in _stream_buffers
 
 
 def _cleanup_buffer(session_id: str) -> None:
@@ -738,9 +807,9 @@ async def get_chat_task_status(
             # 优先看流缓冲：存在且未终止 → 后台仍在实时生成，可走断点续传。
             # （这也修复了同会话连续提问时，因旧 assistant 回答存在而被误判 completed 的问题）
             _sweep_expired_buffers()
-            if session_id in _stream_buffers and not _buffer_has_terminal(session_id):
-                _buf = _stream_buffers.get(session_id, [])
-                _max_seq = max((it[0] for it in _buf), default=0)
+            if _buffer_exists(session_id) and not _buffer_has_terminal(session_id):
+                _items = _get_buffer_since(session_id, -1)
+                _max_seq = max((it[0] for it in _items), default=0)
                 return {"status": "generating", "resumable": True, "buffer_seq": _max_seq}
 
             # 检查是否有 assistant 回答
@@ -757,6 +826,35 @@ async def get_chat_task_status(
     except Exception as _e:
         logger.warning(f"[CHAT] 任务状态查询失败: {_e}")
         return {"status": "unknown", "error": str(_e)}
+
+
+@router.post("/cancel/{session_id}")
+async def cancel_chat_generation(
+    session_id: str,
+    current_user: User = Depends(deps.get_current_user),
+):
+    """主动停止某会话正在进行的流式生成（前端点击「停止」按钮）。
+
+    取消后台 Agent 任务 → 随 async-gen 关闭触发上游 LLM HTTP 流断开，
+    立即停止烧 token。已流式输出的部分会 best-effort 持久化，并向续传缓冲
+    写入带 cancelled 标记的 done 事件，使续传/状态查询不会卡住。
+    """
+    # 会话归属校验（与 /task/status 一致，避免越权取消他人会话）
+    try:
+        _su = uuid.UUID(str(session_id))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="无效的 session_id")
+    async with AsyncSessionLocal() as _db:
+        _session = await _db.get(ChatSession, _su)
+        if not _session or str(_session.user_id) != str(current_user.id):
+            raise HTTPException(status_code=404, detail="会话不存在")
+
+    _task = _session_tasks.get(session_id)
+    if _task is not None and not _task.done():
+        _task.cancel()
+        logger.info(f"[CHAT] 用户主动停止生成 | session={session_id[:8]}")
+        return {"cancelled": True, "session_id": session_id}
+    return {"cancelled": False, "session_id": session_id, "reason": "no_active_task"}
 
 
 @router.get("/agent_chat_resume/{session_id}")
@@ -783,7 +881,7 @@ async def agent_chat_resume(
         _sweep_expired_buffers()
         # 缓冲不存在：后台任务已结束并被清理（或本就无任务）。
         # 让前端走 loadSession 兜底拉取已存库的完整回答。
-        if session_id not in _stream_buffers:
+        if not _buffer_exists(session_id):
             yield f"data: {json.dumps({'type': 'done', 'resume': 'no_buffer'}, ensure_ascii=False)}\n\n"
             return
 
@@ -841,6 +939,7 @@ async def agent_chat_resume(
 )
 async def chat_with_agent_stream(
         request: AgentChatRequest,
+        http_request: Request,
         current_user: User = Depends(deps.get_current_user),
         tenant_context: dict = Depends(deps.get_tenant_context)
 ):
@@ -1063,6 +1162,34 @@ async def chat_with_agent_stream(
             _safe_put(bg_queue, ("done", _final_meta, _seq))
             _add_to_buffer(bg_session_id, _seq, "done", _final_meta)
 
+        except asyncio.CancelledError:
+            # 用户主动停止生成（/chat/cancel → task.cancel()）。
+            # 上游 LLM 流随 async-gen 关闭而中断，停止烧 token。
+            # 已生成的部分内容前端已渲染；此处：① 下发带 cancelled 标记的 done
+            # ② 用分离任务 best-effort 持久化部分回答（不受本次取消影响）。
+            print(f"[CHAT] [后台] 收到取消，停止生成 | session={bg_session_id[:8]} | 已生成 {len(full_response)} 字")
+            _seq += 1
+            _cancel_meta: Dict[str, Any] = {
+                "message_id": None,
+                "cancelled": True,
+                "retrieval_method": _meta_from_service.get("retrieval_method") or bg_retrieval_method or "simple",
+                "kb_id": bg_kb_id,
+                "token_count": len(full_response),
+            }
+            _safe_put(bg_queue, ("done", _cancel_meta, _seq))
+            _add_to_buffer(bg_session_id, _seq, "done", _cancel_meta)
+            if full_response.strip():
+                _p = asyncio.create_task(
+                    persist_chat_message(
+                        session_id=bg_session_id, role="assistant",
+                        content=full_response, tenant_id=bg_persist_tenant_id,
+                        sources=current_sources or None, agent_name="agent",
+                    )
+                )
+                _background_tasks.add(_p)
+                _p.add_done_callback(_background_tasks.discard)
+            raise
+
         except Exception as e:
             print(f"[CHAT] [后台] 处理异常: {e}")
             _seq += 1
@@ -1121,12 +1248,32 @@ async def chat_with_agent_stream(
         )
         _background_tasks.add(_bg_task)
         _bg_task.add_done_callback(_background_tasks.discard)
+        # 注册 会话→任务 映射，供 /chat/cancel 主动停止；完成后自动注销
+        _session_tasks[session_id] = _bg_task
+        _bg_task.add_done_callback(lambda _t, _sid=session_id: _session_tasks.pop(_sid, None))
 
         _last_meta: Optional[Dict[str, Any]] = None
         _last_done_seq: Optional[int] = None
+        _pending_get: Optional[asyncio.Task] = None
         try:
             while True:
-                item = await _queue.get()
+                # 用 shield 保护 queue.get()：wait_for 超时只取消「等待」，不取消底层
+                # getter，未取到的事件留到下一轮继续 await，避免超时瞬间丢事件导致流卡死。
+                if _pending_get is None:
+                    _pending_get = asyncio.ensure_future(_queue.get())
+                try:
+                    item = await asyncio.wait_for(asyncio.shield(_pending_get), timeout=15.0)
+                    _pending_get = None
+                except asyncio.TimeoutError:
+                    # 长间隔（如 Agentic 多轮检索）时周期检测客户端是否已断开。
+                    # 断开则停止推送；后台任务继续运行、缓冲保留，供切回后断点续传。
+                    # 注意：这里不取消后台生成任务——「切页」要保留续传；只有用户显式
+                    # 「停止」（/chat/cancel）才真正取消生成。
+                    if await http_request.is_disconnected():
+                        _pending_get.cancel()
+                        print(f"[CHAT] 检测到客户端断开，停止推送（后台继续，缓冲保留）| session={session_id[:8]}")
+                        return
+                    continue
                 if item is None:
                     break
                 event_type = item[0]

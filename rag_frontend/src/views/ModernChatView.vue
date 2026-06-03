@@ -273,7 +273,7 @@ function handleAgentEvent(event: AgentStreamEvent, state: StreamState): boolean 
           streamingStatus.value = ''  // 首个正文到达，清空进度提示
           state.aiContent += event.content
           sessionStore.updateLastMessage(state.aiContent, state.currentSources.length > 0 ? state.currentSources : undefined)
-          scrollToBottom()
+          scrollToBottom(false)
         }
       }
       break
@@ -399,6 +399,103 @@ async function recoverGeneratingSession() {
   }
 }
 
+// 执行一次 Agent 流式生成（sendMessage 与「重新生成」共用）。
+// 约定：调用方已准备好末尾的空 assistant 气泡，并已置 isLoading=true。
+async function _streamAgentResponse(query: string) {
+  // 👇 创建新的 AbortController（停止/卸载/切会话时中止）
+  streamAbortController = new AbortController()
+  const signal = streamAbortController.signal
+  try {
+    // 重置本次生成的续传状态
+    lastSeq.value = 0
+    streamingStatus.value = ''
+    const streamState: StreamState = { aiContent: '', currentSources: [] }
+
+    const idempotencyKey = crypto.randomUUID?.() // 幂等键：防止重复请求写库
+    for await (const event of chatApi.streamAgentChat({
+      query,
+      kb_id: selectedKB.value!.id,
+      session_id: sessionStore.currentSessionId || undefined,
+      idempotency_key: idempotencyKey,
+      retrieval_method: retrievalSettings.value.retrieval_method,
+      max_iterations: retrievalSettings.value.max_iterations,
+      top_k: retrievalSettings.value.top_k,
+      enable_rerank: retrievalSettings.value.enable_rerank,
+      enable_graph_expansion: retrievalSettings.value.enable_graph_expansion,
+    }, signal)) {
+      if (signal.aborted) {
+        console.log('[ChatView] 流已被中止，停止处理事件')
+        break
+      }
+      if (handleAgentEvent(event, streamState)) break
+    }
+  } catch (error: any) {
+    // 👇 忽略因 abort（停止/卸载）触发的错误
+    if (error?.name === 'AbortError') {
+      console.log('[ChatView] 流式请求被中止')
+      return
+    }
+    console.error('Error:', error)
+    let errorMessage = '抱歉，发生了错误，请稍后重试。'
+    if (error.message) {
+      if (error.message.includes('429')) {
+        errorMessage = '请求过于频繁，请稍后再试。如果问题持续存在，请联系管理员调整限流配置。'
+      } else if (error.message.includes('401')) {
+        errorMessage = '登录已过期，请重新登录。'
+      } else if (error.message.includes('403')) {
+        errorMessage = '没有权限访问，请检查您的权限设置。'
+      } else if (error.message.includes('500')) {
+        errorMessage = '服务器错误，请稍后重试。'
+      }
+    }
+    sessionStore.updateLastMessage(errorMessage)
+  } finally {
+    isLoading.value = false
+    streamAbortController = null
+  }
+}
+
+// 用户主动停止生成：中止本地流 + 通知后端取消后台任务（停止烧 token）
+async function stopGeneration() {
+  // 1) 中止本地 SSE/续传读取（sendMessage 与 resumeAgentStream 共用同一 controller）
+  if (streamAbortController) {
+    streamAbortController.abort()
+    streamAbortController = null
+  }
+  // 2) 停止可能在进行的后台轮询
+  isPolling.value = false
+  if (pollingTimer) { clearTimeout(pollingTimer); pollingTimer = null }
+  // 3) 通知后端取消后台生成（关闭上游 LLM 流，持久化已生成的部分）
+  const sid = sessionStore.currentSessionId
+  if (sid) {
+    try { await chatApi.cancelAgentChat(sid) } catch {}
+  }
+  // 4) 复位 UI 状态
+  isLoading.value = false
+  streamingStatus.value = ''
+}
+
+// 重新生成最后一条 AI 回答：清空末尾气泡并用上一条用户问题重新流式生成
+async function regenerateLast() {
+  if (isLoading.value || !isComponentReady.value) return
+  if (!selectedKB.value) { alert('请先选择一个知识库'); return }
+  const msgs = sessionStore.currentMessages
+  if (msgs.length < 2) return
+  const lastMsg = msgs[msgs.length - 1]
+  if (!lastMsg || lastMsg.role !== 'assistant') return
+  // 取最近一条用户消息作为重新生成的 query
+  const prevUser = [...msgs].reverse().find(m => m.role === 'user')
+  const q = prevUser?.content?.trim()
+  if (!q) return
+  // 复用末尾 assistant 气泡：清空内容/来源/meta，准备重新填充
+  sessionStore.updateLastMessage('')
+  const am = sessionStore.currentMessages[sessionStore.currentMessages.length - 1] as any
+  if (am) { am.sources = undefined; am.meta = undefined; am.id = undefined }
+  isLoading.value = true
+  scrollToBottom()
+  await _streamAgentResponse(q)
+}
+
 async function sendMessage() {
   // ⚡ 同步锁：在 JS 事件循环中，同步代码按调用栈顺序原子执行，
   // 不存在被其他事件中断的可能。此检查+设置作为函数**第一行**，
@@ -439,72 +536,24 @@ async function sendMessage() {
 
   scrollToBottom()
 
-  // 👇 创建新的 AbortController
-  streamAbortController = new AbortController()
-  const signal = streamAbortController.signal
-
-  try {
-    // 重置本次生成的续传状态
-    lastSeq.value = 0
-    streamingStatus.value = ''
-    const streamState: StreamState = { aiContent: '', currentSources: [] }
-
-    const idempotencyKey = crypto.randomUUID?.() // 幂等键：防止重复请求写库
-    for await (const event of chatApi.streamAgentChat({
-      query,
-      kb_id: selectedKB.value.id,
-      session_id: sessionStore.currentSessionId || undefined,
-      idempotency_key: idempotencyKey,
-      retrieval_method: retrievalSettings.value.retrieval_method,
-      max_iterations: retrievalSettings.value.max_iterations,
-      top_k: retrievalSettings.value.top_k,
-      enable_rerank: retrievalSettings.value.enable_rerank,
-      enable_graph_expansion: retrievalSettings.value.enable_graph_expansion,
-    }, signal)) {
-      if (signal.aborted) {
-        console.log('[ChatView] 流已被中止，停止处理事件')
-        break
-      }
-      if (handleAgentEvent(event, streamState)) break
-    }
-  } catch (error: any) {
-    // 👇 忽略因 abort 触发的错误
-    if (error?.name === 'AbortError') {
-      console.log('[ChatView] 流式请求被中止（组件卸载）')
-      return
-    }
-
-    console.error('Error:', error)
-
-    let errorMessage = '抱歉，发生了错误，请稍后重试。'
-
-    if (error.message) {
-      if (error.message.includes('429')) {
-        errorMessage = '请求过于频繁，请稍后再试。如果问题持续存在，请联系管理员调整限流配置。'
-      } else if (error.message.includes('401')) {
-        errorMessage = '登录已过期，请重新登录。'
-      } else if (error.message.includes('403')) {
-        errorMessage = '没有权限访问，请检查您的权限设置。'
-      } else if (error.message.includes('500')) {
-        errorMessage = '服务器错误，请稍后重试。'
-      }
-    }
-
-    sessionStore.updateLastMessage(errorMessage)
-  } finally {
-    isLoading.value = false
-    streamAbortController = null
-  }
+  // 流式生成（与「重新生成」共用同一执行体）
+  await _streamAgentResponse(query)
   } finally {
     sendLock.value = false
   }
 }
 
-function scrollToBottom() {
+function scrollToBottom(force = true) {
   nextTick(() => {
-    if (chatContainerRef.value) {
-      chatContainerRef.value.scrollTop = chatContainerRef.value.scrollHeight
+    const el = chatContainerRef.value
+    if (!el) return
+    // force=false（流式逐 token）时，仅当用户已在底部附近才自动滚动，
+    // 避免用户上滑查看历史时被强制拽回底部。
+    if (!force) {
+      const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120
+      if (!nearBottom) return
     }
+    el.scrollTop = el.scrollHeight
   })
 }
 
@@ -649,8 +698,23 @@ function renderMarkdown(content: string): string {
   html = html.replace(/<em>/g, '<em class="ai-italic">')
   html = html.replace(/<a /g, '<a class="ai-link" target="_blank" rel="noopener noreferrer" ')
   html = html.replace(/<code>(?!<)/g, '<code class="ai-inline-code">')
-  
+
   return html
+}
+
+// 流式中用轻量渲染：仅转义 HTML + 换行，避免每个 token 都对整段累积文本重跑
+// marked + DOMPurify + hljs（原实现是 O(n²) 卡顿）。流结束后再由 renderMarkdown 完整渲染一次。
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+function renderStreamingText(content: string): string {
+  return escapeHtml(content).replace(/\n/g, '<br>')
+}
+
+// 根据是否正在流式，选择轻量/完整渲染
+function renderMessageBody(content: string, index: number): string {
+  return isStreamingMessage(index) ? renderStreamingText(content) : renderMarkdown(content)
 }
 
 async function createKnowledgeBase() {
@@ -856,7 +920,7 @@ function createNewChat() {
               </div>
               <div class="bg-white border border-gray-200 px-4 py-3 rounded-2xl rounded-bl-md">
                 <div v-if="message.content" class="prose prose-sm max-w-none">
-                  <span v-html="renderMarkdown(message.content)"></span>
+                  <span v-html="renderMessageBody(message.content, index)"></span>
                   <span v-if="isStreamingMessage(index)" class="streaming-cursor" aria-hidden="true"></span>
                 </div>
                 <div v-else class="flex items-center gap-2">
@@ -937,6 +1001,15 @@ function createNewChat() {
                 >
                   <CheckCircle v-if="copiedMessageIndex === index" :size="16" class="text-green-600" />
                   <Copy v-else :size="16" class="text-gray-400 hover:text-gray-600" />
+                </button>
+                <!-- 重新生成（仅最后一条 AI 回答，空闲时可用）-->
+                <button
+                  v-if="index === messages.length - 1 && !isLoading"
+                  @click="regenerateLast"
+                  class="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                  title="重新生成"
+                >
+                  <RotateCw :size="16" class="text-gray-400 hover:text-gray-600" />
                 </button>
               </div>
             </div>
@@ -1029,13 +1102,23 @@ function createNewChat() {
               :disabled="isLoading || !isComponentReady"
             />
 
+            <!-- 生成中显示「停止」按钮，否则显示「发送」 -->
             <button
+              v-if="isLoading"
+              @click="stopGeneration"
+              class="h-11 px-4 bg-gradient-to-r from-rose-500 to-red-600 text-white font-medium rounded-xl hover:from-rose-600 hover:to-red-700 flex items-center justify-center gap-2 shadow-md hover:shadow-lg transition-all"
+              title="停止生成"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+              <span class="hidden sm:inline">停止</span>
+            </button>
+            <button
+              v-else
               @click="sendMessage"
-              :disabled="isLoading || !userInput.trim()"
+              :disabled="!userInput.trim()"
               class="h-11 px-4 bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-medium rounded-xl hover:from-emerald-700 hover:to-teal-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-md hover:shadow-lg transition-all"
             >
-              <Loader2 v-if="isLoading" :size="18" class="animate-spin" />
-              <Send v-else :size="18" />
+              <Send :size="18" />
             </button>
           </div>
 

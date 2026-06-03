@@ -1335,8 +1335,10 @@ class AgentOrchestrator:
 
             # 2️⃣ 执行 LangGraph 状态机（带超时保护）
             logger.debug("[状态机] 执行 LangGraph 工作流")
-            MAX_WORKFLOW_TIMEOUT = 120  # 最大执行时间 120 秒
-            
+            # 最大执行时间（可在 .env 用 MULTI_AGENT_WORKFLOW_TIMEOUT 调整）。
+            # 默认放宽到 240s：当 RAG/embedding 不可用时模型会多调几轮工具，120s 容易超时被砍。
+            MAX_WORKFLOW_TIMEOUT = getattr(settings, "MULTI_AGENT_WORKFLOW_TIMEOUT", 240)
+
             try:
                 final_state = await asyncio.wait_for(
                     self._execute_langgraph_workflow(initial_state, context, progress_callback),

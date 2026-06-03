@@ -140,6 +140,8 @@ const backgroundTaskActive = computed(() => taskStore.hasActiveTask)
 
 
 const messages = ref<Message[]>([])
+const activeAgent = ref<string | null>(null) // 当前正在输出的专家节点（多智能体分 agent 标注）
+const manualStopped = ref(false) // 用户是否主动点了「停止」（用于抑制中止流后误触发的异步回退）
 
 const currentResponse = ref('')
 
@@ -913,11 +915,32 @@ function stopStreaming() {
   }
 }
 
+// 用户主动停止生成：中止本地流 + 停止轮询 + 通知后端取消多智能体工作流（停止烧 token）
+async function stopGeneration() {
+  manualStopped.value = true
+  stopStreaming()
+  stopPolling()
+  const sid = sessionId.value
+  if (sid) {
+    try {
+      const token = localStorage.getItem('rag_token')
+      await fetch(`/api/v1/multi-agent/query-cancel/${sid}`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      })
+    } catch (e) {
+      console.warn('[MultiAgent] 取消请求失败:', e)
+    }
+  }
+  isLoading.value = false
+}
+
 
 async function sendMessage() {
   if (!userInput.value.trim() || isLoading.value) return
 
   streamInterrupted.value = false
+  manualStopped.value = false
   let handedOffToPolling = false
   const query = userInput.value.trim()
   userInput.value = ''
@@ -1006,6 +1029,12 @@ async function submitAsyncQuery(query: string, assistantMsg: Message): Promise<b
     // PartialStreamError = 已收到部分事件但连接中断，不回退避免重复
     if (streamError?.name === 'PartialStreamError') {
       console.warn('⚠️ 流式请求已收到部分事件但连接中断。不回退到异步任务以避免重复处理。')
+      return false
+    }
+
+    // 用户主动点了「停止」：中止流不应触发异步回退（否则后台继续跑、停止失效）
+    if (manualStopped.value) {
+      console.warn('用户已主动停止，不回退到异步任务')
       return false
     }
 
@@ -1160,6 +1189,7 @@ async function streamQuery(query: string, assistantMsg: Message, token: string |
           }
         } else if (event.type === 'chunk') {
           // 流式打字机效果：逐批追加字符
+          if (event.agent) activeAgent.value = event.agent
           assistantMsg.content += event.content || ''
           currentResponse.value = assistantMsg.content
           receivedText = true
@@ -1182,6 +1212,7 @@ async function streamQuery(query: string, assistantMsg: Message, token: string |
           processingTime.value = event.processing_time ?? processingTime.value
           latencySummary.value = event.latency_summary || latencySummary.value
           currentStage.value = 'response'
+          activeAgent.value = null
           taskStore.completeTask(assistantMsg.content || currentResponse.value)
           return
         }
@@ -1684,6 +1715,32 @@ function renderMarkdown(content: string): string {
   }
 }
 
+// 专家节点 → 友好显示名（多智能体分 agent 标注）
+function agentDisplayName(node: string | null): string {
+  const map: Record<string, string> = {
+    finance_specialist: '财务专家',
+    tax_specialist: '税务专家',
+    legal_specialist: '法律专家',
+  }
+  return node ? (map[node] || node) : ''
+}
+
+// 流式中用轻量渲染（仅转义+换行），避免每个 token 都对整段文本重跑 marked/hljs（O(n²) 卡顿）；
+// 流结束后再完整渲染一次。澄清卡片是原生 HTML，需始终走 renderMarkdown。
+function renderMessageBody(content: string, index: number): string {
+  const streaming = isLoading.value && index === messages.value.length - 1
+  const trimmed = content?.trimStart() || ''
+  const isRawHtml = trimmed.startsWith('<div class="clarification-container">')
+  if (streaming && !isRawHtml) {
+    return (content || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/\n/g, '<br>')
+  }
+  return renderMarkdown(content)
+}
+
 </script>
 
 
@@ -1850,6 +1907,10 @@ function renderMarkdown(content: string): string {
             <div class="flex flex-col max-w-[75%]" :class="msg.role === 'user' ? 'items-end' : 'items-start'">
               <div class="flex items-center gap-2 mb-1" :class="msg.role === 'user' ? 'flex-row-reverse' : ''">
                 <span class="text-sm font-medium text-gray-700">{{ msg.role === 'user' ? authStore.userName : 'AI助手' }}</span>
+                <span
+                  v-if="msg.role === 'assistant' && isLoading && index === messages.length - 1 && activeAgent"
+                  class="text-xs px-1.5 py-0.5 bg-cyan-100 text-cyan-700 rounded font-medium"
+                >{{ agentDisplayName(activeAgent) }}</span>
                 <span class="text-xs text-gray-400">{{ formatChatTime(msg.timestamp) }}</span>
               </div>
               <div
@@ -1857,7 +1918,7 @@ function renderMarkdown(content: string): string {
                 :class="msg.role === 'user' ? 'bg-blue-50 border border-blue-100' : 'bg-white border border-gray-200'"
               >
                 <div v-if="msg.role === 'assistant' && msg.content" class="prose prose-sm max-w-none markdown-content">
-                  <span v-html="renderMarkdown(msg.content)"></span>
+                  <span v-html="renderMessageBody(msg.content, index)"></span>
                   <span
                     v-if="isLoading && index === messages.length - 1"
                     class="inline-block w-0.5 h-4 bg-cyan-500 animate-pulse ml-0.5 align-middle"
@@ -1960,13 +2021,22 @@ function renderMarkdown(content: string): string {
               class="min-h-[44px] max-h-[148px] flex-1 p-2 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-700 placeholder-gray-400 text-sm leading-6"
               rows="1"
             ></textarea>
+            <!-- 生成中显示「停止」按钮，否则显示「发送」 -->
             <button
+              v-if="isLoading"
+              @click="stopGeneration"
+              class="p-3 bg-gradient-to-r from-rose-500 to-red-600 text-white rounded-xl hover:from-rose-600 hover:to-red-700 transition-all shadow-lg hover:shadow-xl flex items-center justify-center min-w-[48px]"
+              title="停止生成"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+            </button>
+            <button
+              v-else
               @click="sendMessage"
-              :disabled="!userInput.trim() || isLoading"
+              :disabled="!userInput.trim()"
               class="p-3 bg-gradient-to-r from-blue-600 to-cyan-600 text-white rounded-xl hover:from-blue-700 hover:to-cyan-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg hover:shadow-xl disabled:shadow-none flex items-center justify-center min-w-[48px]"
             >
-              <Loader2 v-if="isLoading" :size="20" class="animate-spin" />
-              <Send v-else :size="20" />
+              <Send :size="20" />
             </button>
           </div>
           <div class="mt-2 flex items-center justify-between text-xs text-gray-500">
@@ -2515,6 +2585,50 @@ function renderMarkdown(content: string): string {
 
   padding: 0;
 
+}
+
+/* 代码块修复：统一深色底 + 浅色字（与标题栏一致），解决 plaintext 等无高亮 token 时
+   浅底浅字几乎不可见的问题。pre.hljs 比 .markdown-content pre 更具体，稳定胜出。 */
+.markdown-content pre.hljs {
+  background-color: #1f2937;
+  color: #f9fafb;
+  padding: 0;
+  overflow: hidden;
+}
+.markdown-content pre.hljs code {
+  display: block;
+  padding: 0.875rem 1rem;
+  background: transparent;
+  color: #f9fafb;
+  white-space: pre;
+  overflow-x: auto;
+}
+.markdown-content pre.hljs .code-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 1rem;
+  background-color: #374151;
+  font-size: 0.75em;
+}
+.markdown-content pre.hljs .code-lang {
+  color: #9ca3af;
+  text-transform: uppercase;
+}
+.markdown-content pre.hljs .copy-btn {
+  background: transparent;
+  border: none;
+  color: #9ca3af;
+  cursor: pointer;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.markdown-content pre.hljs .copy-btn:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+  color: #f9fafb;
 }
 
 

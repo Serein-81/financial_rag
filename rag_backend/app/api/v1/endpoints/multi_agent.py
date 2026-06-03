@@ -4,6 +4,7 @@
 """
 
 import uuid
+import asyncio
 import time
 import logging
 import json
@@ -61,6 +62,10 @@ from app.multi_agent_system.agents import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# ── 会话 → 多智能体工作流任务 映射 ──
+# 供 POST /query-cancel/{session_id} 主动停止正在进行的流式生成。任务完成后自动注销。
+_ma_session_tasks: Dict[str, asyncio.Task] = {}
 
 
 async def _save_ma_session_bg(
@@ -216,10 +221,16 @@ async def process_multi_agent_query_stream(
             "final": "final",
         }
 
+        # 记录当前活跃的专家节点，供 chunk 事件标注 agent（前端据此区分/标注是哪个专家在输出）
+        _active_agent = {"name": None}
+        _SPECIALIST_NODES = {"finance_specialist", "tax_specialist", "legal_specialist"}
+
         # 进度回调：每个 LangGraph 节点执行时触发
         async def progress_callback(node_name: str, node_state: dict):
             if node_name == "__end__":
                 return
+            if node_name in _SPECIALIST_NODES:
+                _active_agent["name"] = node_name
             stage = stage_map.get(node_name, node_name)
             event_data = {"type": "stage", "stage": stage}
 
@@ -244,7 +255,10 @@ async def process_multi_agent_query_stream(
 
         # 流式 token 回调：专家最终回答生成时逐 token 推送（真正的流式输出）
         async def chunk_callback(token: str):
-            await event_queue.put({"type": "chunk", "content": token})
+            evt = {"type": "chunk", "content": token}
+            if _active_agent["name"]:
+                evt["agent"] = _active_agent["name"]
+            await event_queue.put(evt)
             orch._streamed_chunks_count = getattr(orch, "_streamed_chunks_count", 0) + 1
 
         # 初始化计数器 + 把 chunk_callback 挂到 orchestrator
@@ -265,6 +279,9 @@ async def process_multi_agent_query_stream(
                 progress_callback=progress_callback,
             )
         )
+        # 注册 会话→任务 映射，供 /query-cancel 主动停止；完成后自动注销
+        _ma_session_tasks[session_id] = workflow_task
+        workflow_task.add_done_callback(lambda _t, _sid=session_id: _ma_session_tasks.pop(_sid, None))
 
         # 从队列读取事件并流式发送，直到工作流完成
         final_response = "处理完成"
@@ -280,9 +297,15 @@ async def process_multi_agent_query_stream(
 
         # 获取工作流结果
         orch_result = None
+        _cancelled = False
         try:
             orch_result = workflow_task.result()
             final_response = orch_result.final_response or "处理完成"
+        except asyncio.CancelledError:
+            # 用户主动停止（/query-cancel）：保留已流式输出的部分，下发 cancelled 标记
+            _cancelled = True
+            final_response = "（已停止生成）"
+            logger.info(f"[SSE] 多智能体生成被用户停止 | session={session_id[:8]}")
         except Exception as e:
             logger.error(f"[SSE] 工作流结果获取失败: {e}")
             final_response = f"处理异常: {str(e)[:200]}"
@@ -291,7 +314,7 @@ async def process_multi_agent_query_stream(
         # queue 中已有 chunk 事件，此处无需重复发送。
         # 如果专家没有流式能力（降级路径），用后备的 chunk 分发保证用户看到内容。
         # 判断方法：检查 queue 是否已消费过 chunk 事件（用标志位）
-        if not getattr(orch, "_streamed_chunks_count", 0):
+        if not _cancelled and not getattr(orch, "_streamed_chunks_count", 0):
             # 后备：分批推送完整文本
             CHUNK_SIZE = 4
             for i in range(0, len(final_response), CHUNK_SIZE):
@@ -310,6 +333,7 @@ async def process_multi_agent_query_stream(
             "content": final_response,
             "session_id": session_id,
             "processing_time": elapsed,
+            "cancelled": _cancelled,
         }
         yield f"data: {json.dumps(done_event, ensure_ascii=False)}\n\n"
 
@@ -359,6 +383,24 @@ async def process_multi_agent_query_stream(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.post("/query-cancel/{session_id}")
+async def cancel_multi_agent_query(
+    session_id: str,
+    current_user: User = Depends(deps.get_current_user),
+):
+    """主动停止某会话正在进行的多智能体流式生成（前端点击「停止」按钮）。
+
+    取消后台 LangGraph 工作流任务 → 随之关闭各专家正在进行的上游 LLM 流，停止烧 token。
+    已流式输出的部分前端已渲染；done 事件会带 cancelled=true 标记。
+    """
+    _task = _ma_session_tasks.get(session_id)
+    if _task is not None and not _task.done():
+        _task.cancel()
+        logger.info(f"[MULTI-AGENT] 用户主动停止生成 | session={session_id[:8]}")
+        return {"cancelled": True, "session_id": session_id}
+    return {"cancelled": False, "session_id": session_id, "reason": "no_active_task"}
 
 
 @router.post("/query", response_model=MultiAgentResponse)

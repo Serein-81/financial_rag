@@ -227,6 +227,12 @@ class Settings(BaseSettings):
     REDIS_PORT: int = 6379
     REDIS_DB: int = 0
     REDIS_PASSWORD: str = ""
+    # 聊天流式断点续传缓冲是否镜像到 Redis（跨进程/多 worker 续传）。
+    # 默认 False = 仅进程内内存（与原行为一致）。多 worker 部署时设为 true。
+    CHAT_STREAM_REDIS_BUFFER: bool = False
+    # 多智能体编排器单次执行的最大秒数。RAG/embedding 不可用时模型会多调工具，
+    # 默认 240s 避免被过早超时砍断；环境快可调小、慢可调大。
+    MULTI_AGENT_WORKFLOW_TIMEOUT: int = 240
     
     # 记忆缓存配置
     ENABLE_MEMORY_CACHE: bool = True

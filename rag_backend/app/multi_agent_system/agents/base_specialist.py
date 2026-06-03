@@ -508,6 +508,59 @@ class BaseSpecialistAgent(BaseAgent):
             })
         return openai_tools
 
+    async def _emit_paced(self, chunk_callback: Any, text: str) -> None:
+        """非流式回退时，把整段文本按小块带真实节奏推送，模拟打字机效果。
+        （区别于旧的 4 字符 + sleep(0)：sleep(0) 不分帧，整段几乎一次性到达，看不出流式。）"""
+        import asyncio
+        if not (chunk_callback and text):
+            return
+        _size = max(6, len(text) // 400)  # 长文本自动增大分片，整体控制在 ~400 帧内
+        for _i in range(0, len(text), _size):
+            try:
+                await chunk_callback(text[_i:_i + _size])
+            except Exception:
+                pass
+            await asyncio.sleep(0.012)
+
+    async def _stream_final_answer(
+        self,
+        messages: List[Dict[str, Any]],
+        temperature: float,
+        timeout: float,
+        chunk_callback: Optional[Any],
+    ) -> str:
+        """生成最终答案并真流式推送：优先 stream_chat 逐 token 推送；
+        流式失败/为空时回退到非流式 chat() + 带节奏分帧。
+        返回完整文本（已通过 chunk_callback 推送，调用方无需再次推送）。"""
+        import asyncio
+        stream_text = ""
+        try:
+            async for token in self.llm_adapter.stream_chat(messages=messages, temperature=temperature):
+                if token:
+                    stream_text += token
+                    if chunk_callback:
+                        try:
+                            await chunk_callback(token)
+                        except Exception:
+                            pass
+            if stream_text.strip():
+                return stream_text
+        except Exception as e:
+            logger.warning(f"[{self.specialty}] 流式生成失败，回退非流式: {e}")
+        # 回退：非流式 + 带节奏分帧推送
+        try:
+            resp = await asyncio.wait_for(
+                self.llm_adapter.chat(messages=messages, temperature=temperature),
+                timeout=timeout,
+            )
+            text = (resp.content or "").strip()
+            if text:
+                await self._emit_paced(chunk_callback, text)
+            return text
+        except Exception as e:
+            logger.warning(f"[{self.specialty}] 回退非流式生成也失败: {e}")
+            return stream_text
+
     async def _call_with_tool_loop(
         self,
         messages: List[Dict[str, Any]],
@@ -540,39 +593,12 @@ class BaseSpecialistAgent(BaseAgent):
         for _round in range(max_tool_rounds + 1):
             use_tools = bool(openai_tools) and _round < max_tool_rounds
 
-            # ── 最终轮（不再提供工具）→ 直接流式生成，无需先 chat() 再 stream_chat() ──
+            # ── 最终轮（不再提供工具）→ 真流式生成最终答案 ──
             if not use_tools and chunk_callback:
-                try:
-                    stream_text = ""
-                    async for token in self.llm_adapter.stream_chat(
-                        messages=current_messages,
-                        temperature=temperature,
-                    ):
-                        if token:
-                            stream_text += token
-                            try:
-                                await chunk_callback(token)
-                            except Exception:
-                                pass
-                    if stream_text:
-                        response_text = stream_text
-                    logger.info(f"[{self.specialty}] 最终轮流式生成完成，{len(response_text)} 字符")
-                except Exception as e:
-                    logger.warning(f"[{self.specialty}] 流式生成失败，降级为非流式: {e}")
-                    fallback = await asyncio.wait_for(
-                        self.llm_adapter.chat(messages=current_messages, temperature=temperature),
-                        timeout=timeout,
-                    )
-                    response_text = fallback.content or ""
-                    # 降级时仍以分批推送模拟流式，保持前端体验一致
-                    if chunk_callback and response_text:
-                        _BATCH = 4
-                        for _i in range(0, len(response_text), _BATCH):
-                            try:
-                                await chunk_callback(response_text[_i:_i + _BATCH])
-                            except Exception:
-                                pass
-                            await asyncio.sleep(0)
+                response_text = await self._stream_final_answer(
+                    current_messages, temperature, timeout, chunk_callback
+                )
+                logger.info(f"[{self.specialty}] 最终轮流式生成完成，{len(response_text)} 字符")
                 break
 
             # ── 中间轮：带工具的非流式 chat ──
@@ -596,16 +622,10 @@ class BaseSpecialistAgent(BaseAgent):
             finish_reason = (choices[0].get("finish_reason", "stop") if choices else "stop")
 
             if not raw_tool_calls or finish_reason == "stop":
-                # LLM 提前结束（未满 max_tool_rounds 就停止调用工具）
-                # 把已收到的内容分批推送，无需重新调用 LLM（零额外 API 消耗）
-                if chunk_callback and response_text:
-                    _BATCH = 4
-                    for _i in range(0, len(response_text), _BATCH):
-                        try:
-                            await chunk_callback(response_text[_i:_i + _BATCH])
-                        except Exception:
-                            pass
-                        await asyncio.sleep(0)
+                # LLM 不再调用工具 = 最终答案已在 response_text 中（带工具的非流式调用产出）。
+                # 这里不重复调用 LLM（省一次 API），改为带真实节奏分帧推送，呈现打字机效果。
+                if chunk_callback and (response_text or "").strip():
+                    await self._emit_paced(chunk_callback, response_text)
                 break
 
             # ── 追加 assistant tool_calls 消息 ──
@@ -683,26 +703,22 @@ class BaseSpecialistAgent(BaseAgent):
         # 此时工具结果已在 current_messages 里，用一次无工具的强制合成把答案救回来。
         if not (response_text or "").strip():
             logger.warning(f"[{self.specialty}] 模型返回空回复，触发强制合成兜底")
+            _synth_messages = current_messages + [{
+                "role": "user",
+                "content": "请基于以上已获取的信息，用中文给出完整、结构化的分析回答。",
+            }]
             try:
-                forced = await asyncio.wait_for(
-                    self.llm_adapter.chat(
-                        messages=current_messages + [{
-                            "role": "user",
-                            "content": "请基于以上已获取的信息，用中文给出完整、结构化的分析回答。",
-                        }],
-                        temperature=temperature,
-                    ),
-                    timeout=timeout,
-                )
-                response_text = (forced.content or "").strip()
-                if chunk_callback and response_text:
-                    _BATCH = 4
-                    for _i in range(0, len(response_text), _BATCH):
-                        try:
-                            await chunk_callback(response_text[_i:_i + _BATCH])
-                        except Exception:
-                            pass
-                        await asyncio.sleep(0)
+                if chunk_callback:
+                    # 强制合成也走真流式，逐 token 推送
+                    response_text = (await self._stream_final_answer(
+                        _synth_messages, temperature, timeout, chunk_callback
+                    )).strip()
+                else:
+                    forced = await asyncio.wait_for(
+                        self.llm_adapter.chat(messages=_synth_messages, temperature=temperature),
+                        timeout=timeout,
+                    )
+                    response_text = (forced.content or "").strip()
             except Exception as e:
                 logger.warning(f"[{self.specialty}] 空回复兜底合成失败: {e}")
 

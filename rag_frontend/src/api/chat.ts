@@ -117,6 +117,26 @@ export const chatApi = {
 
     yield* parseSSEStream(response, signal)
   },
+
+  // 主动停止当前会话正在进行的流式生成（点击「停止」按钮）。
+  // 后端会取消后台 Agent 任务、关闭上游 LLM 流，并持久化已生成的部分内容。
+  async cancelAgentChat(sessionId: string): Promise<{ cancelled: boolean; reason?: string }> {
+    const token = localStorage.getItem('rag_token')
+    try {
+      const response = await fetch(`/api/v1/chat/cancel/${sessionId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token && { 'Authorization': `Bearer ${token}` }),
+        },
+      })
+      if (!response.ok) return { cancelled: false, reason: `HTTP ${response.status}` }
+      return await response.json()
+    } catch (e) {
+      console.error('[Chat] 取消生成请求失败:', e)
+      return { cancelled: false, reason: 'network_error' }
+    }
+  },
 }
 
 // Agent SSE 事件统一类型（普通流与断点续传共用）

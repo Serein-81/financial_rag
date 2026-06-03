@@ -235,4 +235,11 @@ export const multiAgentApi = {
     })
     return response.body as ReadableStream
   },
+
+  // 主动停止多智能体流式生成（点击「停止」按钮）
+  async cancelQuery(sessionId: string): Promise<{ cancelled: boolean; reason?: string }> {
+    return request(`/multi-agent/query-cancel/${sessionId}`, {
+      method: 'POST',
+    })
+  },
 }

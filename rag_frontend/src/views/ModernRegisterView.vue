@@ -32,16 +32,6 @@ const companyName = ref('')
 const error = ref('')
 const isLoading = ref(false)
 
-const particles = Array.from({ length: 58 }, (_, index) => ({
-  id: index,
-  left: `${(index * 29) % 100}%`,
-  top: `${(index * 47) % 100}%`,
-  size: `${2 + (index % 5)}px`,
-  delay: `${(index % 11) * 0.36}s`,
-  duration: `${9 + (index % 8)}s`,
-  opacity: 0.18 + (index % 6) * 0.07
-}))
-
 const progress = computed(() => {
   const required = [username.value.trim(), email.value.trim(), password.value, confirmPassword.value]
   const optional = [fullName.value.trim(), phone.value.trim()]
@@ -146,70 +136,52 @@ async function handleRegister() {
 </script>
 
 <template>
-  <div class="auth-shell relative min-h-screen overflow-x-hidden overflow-y-auto bg-slate-950 px-4 py-6 text-slate-100 lg:py-8">
+  <div class="auth-shell relative min-h-screen overflow-x-hidden overflow-y-auto bg-slate-50 px-4 py-6 text-slate-900 lg:py-8">
     <div class="aurora aurora-one"></div>
     <div class="aurora aurora-two"></div>
-    <div class="matrix-grid"></div>
-    <div class="particle-field" aria-hidden="true">
-      <span
-        v-for="particle in particles"
-        :key="particle.id"
-        class="particle"
-        :style="{
-          left: particle.left,
-          top: particle.top,
-          width: particle.size,
-          height: particle.size,
-          animationDelay: particle.delay,
-          animationDuration: particle.duration,
-          opacity: particle.opacity
-        }"
-      ></span>
-    </div>
 
     <div class="relative z-10 mx-auto flex min-h-[calc(100vh-3rem)] w-full max-w-7xl items-center">
-      <section class="auth-frame grid max-h-none w-full overflow-hidden rounded-2xl border border-white/10 bg-white/[0.055] shadow-2xl shadow-emerald-950/30 backdrop-blur-2xl lg:max-h-[calc(100vh-4rem)] lg:grid-cols-[0.95fr_1.25fr]">
-        <aside class="hero-panel relative hidden min-h-[680px] overflow-hidden border-r border-white/10 p-10 lg:flex lg:flex-col lg:justify-between">
-          <div class="scanline"></div>
+      <section class="auth-frame grid max-h-none w-full overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-xl lg:max-h-[calc(100vh-4rem)] lg:grid-cols-[0.95fr_1.25fr]">
+        <aside class="hero-panel relative hidden min-h-[680px] overflow-hidden border-r border-slate-200/80 p-10 lg:flex lg:flex-col lg:justify-between">
           <div class="relative">
             <div class="mb-12 flex items-center gap-3">
               <div class="brand-mark">
                 <Sparkles :size="24" />
               </div>
               <div>
-                <p class="text-sm font-semibold tracking-wide text-white">RAG Terminal</p>
-                <p class="text-xs text-emerald-100/60">Enterprise Knowledge Workspace</p>
+                <p class="text-sm font-semibold tracking-wide text-slate-900">RAG Terminal</p>
+                <p class="text-xs text-emerald-600/80">Enterprise Knowledge Workspace</p>
               </div>
             </div>
 
             <p class="eyebrow">Account Provisioning</p>
-            <h1 class="mt-5 max-w-md text-5xl font-semibold leading-tight text-white">
+            <h1 class="mt-5 max-w-md text-5xl font-semibold leading-tight text-slate-900">
               创建你的知识协作空间
             </h1>
-            <p class="mt-6 max-w-md text-sm leading-7 text-slate-300">
+            <p class="mt-6 max-w-md text-sm leading-7 text-slate-600">
               先完成登录所需的核心信息。手机号和姓名可以稍后在个人中心补充，注册完成后将回到登录页。
             </p>
           </div>
 
           <div class="relative space-y-4">
             <div class="status-card">
-              <div class="flex items-center justify-between text-xs text-slate-400">
+              <div class="flex items-center justify-between text-xs text-slate-500">
                 <span>Profile readiness</span>
-                <span class="text-emerald-300">{{ progress }}%</span>
+                <span class="text-emerald-600">{{ progress }}%</span>
               </div>
-              <div class="mt-3 h-2 overflow-hidden rounded-full bg-slate-800">
-                <div class="h-full rounded-full bg-gradient-to-r from-emerald-400 to-cyan-300 transition-all duration-500" :style="{ width: `${progress}%` }"></div>
+              <div class="mt-3 h-2 overflow-hidden rounded-full bg-slate-200">
+                <div class="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-600 transition-all duration-500" :style="{ width: `${progress}%` }"></div>
               </div>
             </div>
 
             <div class="grid grid-cols-2 gap-3 text-xs">
               <div class="metric-card">
-                <Shield :size="17" class="mb-2 text-emerald-300" />
+                <Shield :size="17" class="mb-2 text-emerald-600" />
                 <p>租户隔离</p>
                 <strong>Scoped</strong>
               </div>
               <div class="metric-card">
-                <CheckCircle :size="17" class="mb-2 text-emerald-300" />
+                <CheckCircle :size="17" class="mb-2 text-emerald-600" />
                 <p>注册流程</p>
                 <strong>Login First</strong>
               </div>
@@ -219,23 +191,23 @@ async function handleRegister() {
 
         <main class="register-scroll relative overflow-y-auto p-5 sm:p-8 lg:max-h-[calc(100vh-4rem)] lg:p-10">
           <div class="mx-auto max-w-3xl pb-2">
-            <div class="mb-7 flex flex-col gap-4 border-b border-white/10 pb-6 sm:flex-row sm:items-end sm:justify-between">
+            <div class="mb-7 flex flex-col gap-4 border-b border-slate-200 pb-6 sm:flex-row sm:items-end sm:justify-between">
               <div>
                 <p class="eyebrow">Create account</p>
-                <h2 class="mt-3 text-3xl font-semibold text-white">注册账号</h2>
-                <p class="mt-3 text-sm text-slate-400">用户名、密码和邮箱用于登录；个人资料稍后可修改。</p>
+                <h2 class="mt-3 text-3xl font-semibold text-slate-900">注册账号</h2>
+                <p class="mt-3 text-sm text-slate-500">用户名、密码和邮箱用于登录；个人资料稍后可修改。</p>
               </div>
-              <router-link to="/login" class="text-sm font-semibold text-emerald-300 transition hover:text-emerald-200">
+              <router-link to="/login" class="text-sm font-semibold text-emerald-600 transition hover:text-emerald-700">
                 去登录
               </router-link>
             </div>
 
-            <div class="mb-6 grid grid-cols-2 gap-3 rounded-xl border border-white/10 bg-slate-900/60 p-2 backdrop-blur-xl">
+            <div class="mb-6 grid grid-cols-2 gap-3 rounded-xl border border-slate-200 bg-white p-2">
               <button
                 type="button"
                 @click="selectUserType('normal')"
                 class="mode-button"
-                :class="userType === 'normal' ? 'mode-button-active' : 'text-slate-400 hover:bg-white/5 hover:text-white'"
+                :class="userType === 'normal' ? 'mode-button-active' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-900'"
               >
                 <div class="flex items-center gap-2">
                   <UserCircle2 :size="18" />
@@ -248,7 +220,7 @@ async function handleRegister() {
                 type="button"
                 @click="selectUserType('admin')"
                 class="mode-button"
-                :class="userType === 'admin' ? 'mode-button-active' : 'text-slate-400 hover:bg-white/5 hover:text-white'"
+                :class="userType === 'admin' ? 'mode-button-active' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-900'"
               >
                 <div class="flex items-center gap-2">
                   <Building2 :size="18" />
@@ -258,12 +230,12 @@ async function handleRegister() {
               </button>
             </div>
 
-            <div v-if="error" class="mb-5 flex items-start gap-3 rounded-lg border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm text-red-100">
+            <div v-if="error" class="mb-5 flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
               <AlertCircle :size="18" class="mt-0.5 shrink-0" />
               <p>{{ error }}</p>
             </div>
 
-            <div class="form-card rounded-xl border border-white/10 bg-slate-900/70 p-5 shadow-2xl shadow-slate-950/30 backdrop-blur-xl sm:p-6">
+            <div class="form-card rounded-xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
               <div class="grid gap-5 sm:grid-cols-2">
                 <label class="space-y-2 sm:col-span-2">
                   <span class="auth-label"><User :size="16" /> 用户名 <b>*</b></span>
@@ -310,16 +282,16 @@ async function handleRegister() {
                 type="button"
                 @click="handleRegister"
                 :disabled="isLoading"
-                class="primary-button mt-7 flex w-full items-center justify-center gap-2 rounded-lg px-5 py-3.5 text-sm font-semibold text-slate-950 transition disabled:cursor-not-allowed disabled:opacity-60"
+                class="primary-button mt-7 flex w-full items-center justify-center gap-2 rounded-lg px-5 py-3.5 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <span>{{ isLoading ? '注册中...' : '创建账号' }}</span>
                 <ArrowRight v-if="!isLoading" :size="18" />
               </button>
             </div>
 
-            <p class="mt-6 text-center text-sm text-slate-400">
+            <p class="mt-6 text-center text-sm text-slate-500">
               已有账号？
-              <router-link to="/login" class="font-semibold text-emerald-300 transition hover:text-emerald-200">
+              <router-link to="/login" class="font-semibold text-emerald-600 transition hover:text-emerald-700">
                 立即登录
               </router-link>
             </p>
@@ -333,14 +305,14 @@ async function handleRegister() {
 <style scoped>
 .auth-shell {
   background:
-    radial-gradient(circle at 12% 16%, rgba(16, 185, 129, 0.2), transparent 30%),
-    radial-gradient(circle at 86% 20%, rgba(59, 130, 246, 0.16), transparent 28%),
-    linear-gradient(135deg, #020617 0%, #07111f 48%, #020617 100%);
+    radial-gradient(circle at 12% 16%, rgba(16, 185, 129, 0.10), transparent 32%),
+    radial-gradient(circle at 86% 20%, rgba(14, 165, 233, 0.08), transparent 30%),
+    linear-gradient(135deg, #f8fafc 0%, #eef6f5 48%, #f8fafc 100%);
 }
 
 .aurora {
   position: absolute;
-  filter: blur(54px);
+  filter: blur(60px);
   pointer-events: none;
 }
 
@@ -349,7 +321,7 @@ async function handleRegister() {
   top: 8%;
   width: 360px;
   height: 360px;
-  background: rgba(16, 185, 129, 0.16);
+  background: rgba(16, 185, 129, 0.10);
   animation: drift 12s ease-in-out infinite alternate;
 }
 
@@ -358,35 +330,17 @@ async function handleRegister() {
   bottom: 8%;
   width: 440px;
   height: 440px;
-  background: rgba(14, 165, 233, 0.14);
+  background: rgba(14, 165, 233, 0.08);
   animation: drift 16s ease-in-out infinite alternate-reverse;
 }
 
-.matrix-grid {
-  position: absolute;
-  inset: 0;
-  background-image:
-    linear-gradient(rgba(148, 163, 184, 0.055) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(148, 163, 184, 0.055) 1px, transparent 1px);
-  background-size: 42px 42px;
-  mask-image: radial-gradient(circle at center, black 0%, transparent 78%);
-}
-
-.particle {
-  position: absolute;
-  border-radius: 999px;
-  background: rgb(167 243 208);
-  box-shadow: 0 0 18px rgba(110, 231, 183, 0.9);
-  animation: floatParticle linear infinite;
-}
-
 .auth-frame {
-  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  box-shadow: 0 24px 64px rgba(15, 23, 42, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.9);
 }
 
 .register-scroll {
   scrollbar-width: thin;
-  scrollbar-color: rgba(52, 211, 153, 0.45) rgba(15, 23, 42, 0.5);
+  scrollbar-color: rgba(16, 185, 129, 0.45) rgba(226, 232, 240, 0.6);
 }
 
 .register-scroll::-webkit-scrollbar {
@@ -394,26 +348,18 @@ async function handleRegister() {
 }
 
 .register-scroll::-webkit-scrollbar-track {
-  background: rgba(15, 23, 42, 0.45);
+  background: rgba(226, 232, 240, 0.5);
 }
 
 .register-scroll::-webkit-scrollbar-thumb {
   border-radius: 999px;
-  background: linear-gradient(180deg, rgba(52, 211, 153, 0.78), rgba(103, 232, 249, 0.58));
+  background: linear-gradient(180deg, rgba(16, 185, 129, 0.7), rgba(13, 148, 136, 0.55));
 }
 
 .hero-panel {
   background:
-    linear-gradient(160deg, rgba(15, 23, 42, 0.94), rgba(4, 47, 46, 0.72)),
-    radial-gradient(circle at 74% 18%, rgba(16, 185, 129, 0.28), transparent 34%);
-}
-
-.scanline {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(120deg, transparent 0%, rgba(255, 255, 255, 0.13) 48%, transparent 58%);
-  transform: translateX(-120%);
-  animation: scan 7s ease-in-out infinite;
+    linear-gradient(160deg, rgba(255, 255, 255, 0.96), rgba(240, 253, 250, 0.9)),
+    radial-gradient(circle at 74% 18%, rgba(16, 185, 129, 0.10), transparent 36%);
 }
 
 .brand-mark {
@@ -422,9 +368,9 @@ async function handleRegister() {
   height: 46px;
   place-items: center;
   border-radius: 12px;
-  background: linear-gradient(135deg, #34d399, #67e8f9);
-  color: #020617;
-  box-shadow: 0 16px 36px rgba(16, 185, 129, 0.3);
+  background: linear-gradient(135deg, #059669, #0d9488);
+  color: #ffffff;
+  box-shadow: 0 12px 26px rgba(16, 185, 129, 0.22);
 }
 
 .eyebrow {
@@ -432,26 +378,25 @@ async function handleRegister() {
   font-weight: 700;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: rgb(110 231 183);
+  color: rgb(5 150 105);
 }
 
 .status-card,
 .metric-card {
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid rgb(226 232 240);
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.055);
+  background: #ffffff;
   padding: 0.9rem;
-  backdrop-filter: blur(16px);
 }
 
 .metric-card p {
-  color: rgb(148 163 184);
+  color: rgb(100 116 139);
 }
 
 .metric-card strong {
   margin-top: 0.25rem;
   display: block;
-  color: white;
+  color: rgb(15 23 42);
 }
 
 .mode-button {
@@ -462,9 +407,9 @@ async function handleRegister() {
 }
 
 .mode-button-active {
-  background: linear-gradient(135deg, rgba(52, 211, 153, 0.95), rgba(103, 232, 249, 0.92));
-  color: #020617;
-  box-shadow: 0 14px 34px rgba(16, 185, 129, 0.22);
+  background: linear-gradient(135deg, #059669, #0d9488);
+  color: #ffffff;
+  box-shadow: 0 12px 28px rgba(16, 185, 129, 0.22);
 }
 
 .auth-label {
@@ -473,62 +418,51 @@ async function handleRegister() {
   gap: 0.5rem;
   font-size: 0.875rem;
   font-weight: 600;
-  color: rgb(203 213 225);
+  color: rgb(51 65 85);
 }
 
 .auth-label b {
-  color: rgb(248 113 113);
+  color: rgb(220 38 38);
 }
 
 .auth-label em {
   font-style: normal;
   font-size: 0.75rem;
   font-weight: 400;
-  color: rgb(100 116 139);
+  color: rgb(148 163 184);
 }
 
 .auth-input {
   width: 100%;
   border-radius: 0.75rem;
-  border: 1px solid rgba(148, 163, 184, 0.22);
-  background: rgba(15, 23, 42, 0.76);
+  border: 1px solid rgb(226 232 240);
+  background: #ffffff;
   padding: 0.9rem 1rem;
-  color: white;
+  color: #0f172a;
   outline: none;
   transition: border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
 
 .auth-input::placeholder {
-  color: rgb(100 116 139);
+  color: rgb(148 163 184);
 }
 
 .auth-input:focus {
-  border-color: rgb(52 211 153);
-  background: rgba(2, 6, 23, 0.86);
-  box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.14), 0 0 32px rgba(16, 185, 129, 0.12);
+  border-color: rgb(16 185 129);
+  background: #ffffff;
+  box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.12);
   transform: translateY(-1px);
 }
 
 .primary-button {
-  background: linear-gradient(135deg, #34d399, #67e8f9);
-  box-shadow: 0 16px 38px rgba(16, 185, 129, 0.28);
+  background: linear-gradient(135deg, #059669, #0d9488);
+  box-shadow: 0 12px 28px rgba(16, 185, 129, 0.24);
 }
 
 .primary-button:hover {
+  background: linear-gradient(135deg, #047857, #0f766e);
   transform: translateY(-1px);
-  box-shadow: 0 20px 46px rgba(16, 185, 129, 0.36);
-}
-
-@keyframes floatParticle {
-  0% {
-    transform: translate3d(0, 0, 0) scale(0.8);
-  }
-  50% {
-    transform: translate3d(18px, -38px, 0) scale(1.25);
-  }
-  100% {
-    transform: translate3d(-8px, -76px, 0) scale(0.85);
-  }
+  box-shadow: 0 16px 34px rgba(16, 185, 129, 0.30);
 }
 
 @keyframes drift {
@@ -537,15 +471,6 @@ async function handleRegister() {
   }
   to {
     transform: translate3d(34px, -24px, 0) scale(1.08);
-  }
-}
-
-@keyframes scan {
-  0%, 42% {
-    transform: translateX(-120%);
-  }
-  68%, 100% {
-    transform: translateX(120%);
   }
 }
 </style>
