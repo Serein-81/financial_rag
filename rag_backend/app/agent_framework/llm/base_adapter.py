@@ -100,14 +100,20 @@ class BaseLLMAdapter(ABC):
         self.tools: List[Dict[str, Any]] = []
         self.toolcall_session = None
 
-    def _get_delay(self) -> float:
+    def _get_delay(self, attempt: int = 0) -> float:
         """
-        获取重试延迟时间
+        获取重试延迟时间（指数退避 + 抖动）
+
+        Args:
+            attempt: 当前已尝试次数（从 0 开始），用于指数退避
 
         Returns:
-            延迟秒数（带随机抖动）
+            延迟秒数
         """
-        return self.base_delay * random.uniform(10, 150)
+        # 指数退避：base_delay * 2^attempt，封顶 max_delay，叠加 ±25% 抖动避免重试风暴
+        max_delay = float(os.environ.get("LLM_MAX_RETRY_DELAY", 60.0))
+        backoff = min(self.base_delay * (2 ** attempt), max_delay)
+        return backoff * random.uniform(0.75, 1.25)
 
     def _should_retry(self, error_code: LLMErrorCode) -> bool:
         """
@@ -149,7 +155,7 @@ class BaseLLMAdapter(ABC):
             return msg
 
         if llm_error.retryable:
-            delay = self._get_delay()
+            delay = self._get_delay(attempt)
             logger.warning(
                 f"[重试] 错误: {llm_error.code.value}, "
                 f"{delay:.2f} 秒后重试... (尝试 {attempt + 1}/{self.max_retries})"

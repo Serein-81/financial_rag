@@ -134,6 +134,10 @@ class MultiAgentWorkflowBuilder:
                          self.node_factory.create_specialist_node(SpecialistType.LEGAL))
         workflow.add_node("report_specialist",
                          self.node_factory.create_specialist_node(SpecialistType.REPORT))
+
+        # 路由枢纽节点（自身不改状态，真正的分支逻辑在其条件边上）
+        workflow.add_node("single_specialist_router", self._create_router_passthrough("single_specialist_router"))
+        workflow.add_node("multi_specialist_router", self._create_router_passthrough("multi_specialist_router"))
         
         workflow.add_node("multi_specialist_coordinator", 
                          self._create_multi_specialist_coordinator())
@@ -265,6 +269,16 @@ class MultiAgentWorkflowBuilder:
         
         logger.info("[WorkflowBuilder] 条件边添加完成")
     
+    def _create_router_passthrough(self, name: str) -> Callable:
+        """创建纯路由枢纽节点：自身不修改状态，分支决策由其条件边完成。
+
+        返回空 dict（不触发任何 reducer），避免对 operator.add 通道造成重复累加。
+        """
+        async def _router_node(state: AgentState) -> Dict[str, Any]:
+            logger.debug(f"[Router] 经过路由枢纽: {name}")
+            return {}
+        return _router_node
+
     def _create_multi_specialist_coordinator(self) -> Callable:
         """创建多专家协调器节点"""
         async def coordinator_node(state: AgentState) -> AgentState:
@@ -404,6 +418,23 @@ class MultiAgentWorkflowBuilder:
                 logger.warning("[WorkflowBuilder] 未配置数据库会话，使用 MemorySaver（断电丢失）")
                 checkpointer = MemorySaver()
         
+        # 防御：自定义 LangGraphPostgresSaver 未实现 LangGraph 原生 BaseCheckpointSaver
+        # 协议（缺 aget_tuple/aput/get_next_version），直接作为 checkpointer 会在运行期抛
+        # AttributeError。此处校验，不达标则降级为 MemorySaver 并告警，避免崩溃；
+        # 如需 PostgreSQL 持久化，请改用官方 AsyncPostgresSaver 或实现原生接口。
+        if checkpointer is not None:
+            try:
+                from langgraph.checkpoint.base import BaseCheckpointSaver
+                if not isinstance(checkpointer, BaseCheckpointSaver):
+                    logger.warning(
+                        "[WorkflowBuilder] 检查点保存器 %s 未实现 LangGraph 原生 "
+                        "BaseCheckpointSaver 接口，降级为 MemorySaver（进程内、断电丢失）。",
+                        type(checkpointer).__name__
+                    )
+                    checkpointer = MemorySaver()
+            except ImportError:
+                logger.warning("[WorkflowBuilder] 无法导入 BaseCheckpointSaver，跳过检查点一致性校验")
+
         self.compiled_graph = self.graph.compile(
             checkpointer=checkpointer,
             interrupt_before=["human_review"] if self.enable_reflection else None

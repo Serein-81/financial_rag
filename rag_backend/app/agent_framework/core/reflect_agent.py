@@ -78,7 +78,6 @@ class ReflectAgent(BaseAgent):
         
         logger.info("✅ Reflect Agent 初始化完成")
         logger.info("   - 模式: Reflect-Refine")
-        logger.info(f"   - 模板: {self.template_name}")
         logger.info(f"   - 最大迭代: {max_iterations}")
         logger.info(f"   - 最大反思: {max_reflections}")
     

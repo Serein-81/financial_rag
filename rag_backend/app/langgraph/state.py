@@ -113,6 +113,8 @@ class AgentState(BaseModel):
     # ── 路由信息 ──
     routing_strategy: Optional[str] = None
     specialists_needed: List[str] = Field(default_factory=list)
+    # 目标专家列表：由意图识别节点写入，供单/多专家路由消费（extra=forbid 下必须显式声明）
+    target_specialists: List[Any] = Field(default_factory=list)
 
     # ── RAG 检索结果 ──
     rag_context: Annotated[List[Dict[str, Any]], operator.add] = Field(default_factory=list)

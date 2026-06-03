@@ -107,6 +107,7 @@ rag_backend/*.temp
 rag_backend/*~
 rag_backend/.#*
 rag_backend/#*#
+.git_backup/
 
 # ==========================
 # 7. Jupyter Notebook 相关
@@ -164,6 +165,10 @@ rag_backend/pytest.ini
 .vscode/
 *.swp
 *.swo
+
+对话系统_流式打断续传_分析与改进方案.md
+多智能体系统深度分析报告.md
+高风险人工审核闸门_设计方案.md
 
 # Claude Code 本地配置（机器相关，不入库）
 .claude/settings.local.json

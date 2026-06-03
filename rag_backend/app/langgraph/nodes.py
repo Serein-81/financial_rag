@@ -380,7 +380,7 @@ def create_retry_node(max_retries: int = 3) -> Callable:
             }
         
         logger.info(f"[Retry] 重试 {current_retry + 1}/{max_retries}")
-        return increment_iteration(state)
+        return {**increment_iteration(state), "retry_count": current_retry + 1}
     
     return retry_node
 

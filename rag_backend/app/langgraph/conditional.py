@@ -121,12 +121,26 @@ def route_reflection_result(state: AgentState) -> str:
         logger.info("[路由] 无反思结果，转向最终答案")
         return "final_answer"
     
-    quality = reflection.quality_level
-    score = reflection.overall_score
+    # 兼容 dict（review_quality 实际返回 {"is_quality_acceptable", "scores": {"overall": ...}}）
+    # 与 ReflectionResult 对象两种形态，避免对 dict 访问 .quality_level 抛 AttributeError
+    if isinstance(reflection, dict):
+        is_acceptable = reflection.get("is_quality_acceptable", True)
+        score = (reflection.get("scores") or {}).get("overall", reflection.get("score", 0.0)) or 0.0
+        needs_human = reflection.get("needs_human_review", False)
+        if not is_acceptable:
+            quality = QualityLevel.POOR
+        elif score >= 0.8:
+            quality = QualityLevel.EXCELLENT
+        else:
+            quality = QualityLevel.ACCEPTABLE
+    else:
+        quality = getattr(reflection, "quality_level", QualityLevel.ACCEPTABLE)
+        score = getattr(reflection, "overall_score", 0.0) or 0.0
+        needs_human = getattr(reflection, "needs_human_review", False)
     
     logger.info(f"[路由] 质量评估: {quality.value}, 分数: {score:.2f}")
     
-    if reflection.needs_human_review:
+    if needs_human:
         logger.info("[路由] 需要人工审核")
         return "human_review"
     

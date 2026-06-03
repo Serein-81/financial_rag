@@ -1098,10 +1098,10 @@ class ReActAgent(BaseAgent):
         
         return None
     
-    def _calculate_similarity(self, text1: str, text2: str) -> float:
+    def _calculate_similarity_seqmatch(self, text1: str, text2: str) -> float:
         """
-        计算两个文本的相似度
-        
+        计算两个文本的相似度（基于 difflib 序列匹配；当前未被调用，保留备用）
+
         Args:
             text1: 第一个文本
             text2: 第二个文本
