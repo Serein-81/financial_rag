@@ -47,6 +47,19 @@ ContextBuilder / ModelContextManager
 LLM prompt context
 ```
 
+## 关键参数与机制（与代码同步）
+
+| 层 | 容量/阈值 | 持久化 | 检索打分 |
+|---|---|---|---|
+| WorkingMemory | 默认 50 条，30 分钟过期，FIFO | 内存 | 全量返回 |
+| EpisodicMemory | 100 条；准入过滤（闲聊/错误响应/<3 字不写入） | PostgreSQL `episodic_memories` + pgvector(1024) | 向量相似度×0.7 + 时间衰减×0.3，乘重要性权重 |
+| SemanticMemory | 1000 条；`importance ≥ 0.8` 才写入；0.9 相似度去重合并 | PostgreSQL `semantic_memories` + pgvector(1024) | 向量检索 + 可选图谱混合检索（HybridRetriever） |
+
+- **重要性评估** `_evaluate_importance()`：意图关键词（"记住/重要"）→ ≥0.9；重要话题（健康/财务/偏好等）→ ≥0.85；同话题出现 ≥3 次 → ≥0.88。
+- **Redis 旁路缓存** `memory_cache.py`：Key 格式 `{prefix}{session_id}:{memory_type}`，TTL 默认 1800s；三重防御 —— 空值缓存（60s）防穿透、per-key asyncio.Lock 防击穿、±10% 随机 TTL 防雪崩。
+- **用户记忆提取** `user_memory_extractor.py`：从对话提取 facts / preferences / corrections 三类，写入语义记忆（`extraction_type` 区分），可注入 System Prompt。
+- **实体关系**：由 Neo4j 知识图谱承担（`app/knowledge_graph/`），是语义记忆的图谱增强路径，**不是独立的第四层记忆**。
+
 ## 主要导出
 
 `app.memory_system.__init__` 当前导出：

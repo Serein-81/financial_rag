@@ -11,7 +11,7 @@
 ![Docker](https://img.shields.io/badge/Docker-24+-2496ED?logo=docker)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
 
-**自研 Agent 框架 · 多智能体 LangGraph 编排 · 知识图谱增强 · 10+ LLM 全适配**
+**自研 Agent 框架 · 多智能体 LangGraph 编排 · 知识图谱增强 · 12 家 LLM 全适配**
 
 [设计亮点](#-设计亮点) · [系统架构](#-系统架构) · [核心特性](#-核心特性详解) · [部署](#-本地部署docker) · [API](#-后端-api-分组)
 
@@ -23,17 +23,17 @@
 
 本项目是一套**面向财税法务专业领域的 RAG（Retrieval-Augmented Generation）知识库平台**，围绕"检索增强 + 多智能体协作 + 知识图谱"三大核心能力构建。
 
-系统采用 **FastAPI + Vue 3** 前后端分离架构，后端 200+ 源文件、50+ API 路由、80+ 业务服务类。核心模块包括自研的 **ReAct/Plan/Reflect Agent 框架**、基于 **LangGraph StateGraph** 的多专家并行编排引擎、**领域感知的 15 种文档分块器**、以及带类型约束的 **Neo4j 知识图谱提取管线**。支持 DeepSeek / OpenAI / Claude / 智谱 / Qwen / Ollama 等 10+ 大模型厂商，通过工厂模式实现零代码切换。
+系统采用 **FastAPI + Vue 3** 前后端分离架构，后端 200+ 源文件、50 个 API 路由模块、100+ 业务服务文件。核心模块包括自研的 **ReAct/Plan/Reflect Agent 框架**、基于 **LangGraph StateGraph** 的多专家并行编排引擎（含 CRAG 检索自校正与忠实度校验闭环）、**领域感知的文档解析/分块体系**（财务/税务/法务/通用四领域自适应路由）、以及带类型约束的 **Neo4j 知识图谱提取管线**。支持 DeepSeek / OpenAI / Claude / 智谱 / Qwen / Ollama 等 12 家大模型厂商，通过工厂模式实现零代码切换。
 
 ### 核心能力矩阵
 
 | 能力维度 | 技术实现 | 关键指标 |
 |----------|----------|----------|
 | **智能问答** | RAG + ReAct Agent + 原生 Function Calling | 支持 SSE 流式、断线恢复、异步轮询 |
-| **知识管理** | 15 种领域解析器/分块器 + 自动向量化 | 财务/税务/法务/通用四领域自适应 |
-| **专业智能体** | 自研框架 + LangGraph 编排 + 多专家并行 | 40 个注册工具，最多 5 轮循环调用 |
+| **知识管理** | 6 类结构化解析器 + 9 种分块器（领域自适应路由） + 自动向量化 | 财务/税务/法务/通用四领域自适应 |
+| **专业智能体** | 自研框架 + LangGraph 编排 + 多专家并行 | 37 个 MCP 工具（27 本地 + 10 云端），专家最多 5 轮工具循环 |
 | **混合检索** | Dense(pgvector) + Sparse(BM25) → RRF → Rerank | Context Recall 0.89, Precision 0.79 |
-| **知识图谱** | Neo4j + 领域类型约束实体/关系提取 | 21 种实体类型 + 26 种关系类型 |
+| **知识图谱** | Neo4j + 领域类型约束实体/关系提取 | 21 种实体类型 + 24 种关系类型 |
 | **企业级安全** | 多租户隔离 + RBAC + HITL 人工审核 + 熔断 | JWT 黑名单、10 类高风险行为检测 |
 
 ### 架构特点 — 为什么这样设计
@@ -41,7 +41,7 @@
 | 设计选择 | 常规方案 | 我们的方案 | 设计意图 |
 |----------|----------|------------|----------|
 | **Agent 执行** | LangChain Agent | **自研 ReAct/Plan/Reflect 框架** | 轻量可控，摆脱 LangChain 臃肿依赖 |
-| **Agent 编排** | 硬编码 if-else | **LangGraph StateGraph 状态机** | 可视化流程，Postgres 持久化 checkpoint |
+| **Agent 编排** | 硬编码 if-else | **LangGraph StateGraph 状态机** | 可视化流程 + CRAG 检索自校正 + 忠实度校验闭环 |
 | **工具调用** | LLM 输出 JSON → 正则解析 | **OpenAI tools 参数 → 结构化 tool_calls** | API 级可靠性，杜绝解析失败 |
 | **文档处理** | 通用固定窗口分块 | **领域感知自适应分块 + AST/表格原子化** | 专业文档结构不丢失 |
 | **LLM 接入** | 单一厂商绑定 | **适配器工厂模式，10+ 厂商零代码切换** | 不被任何厂商锁定 |
@@ -58,20 +58,21 @@
 系统独有**两层 Agent 架构**，兼顾编排灵活性与执行可控性：
 
 ```
-LangGraph 状态机（编排层）          自研 Agent Framework（执行层）
-┌────────────────────────┐       ┌─────────────────────────┐
-│ Intent Router           │       │ ReActAgent              │
-│   → 三级降级路由         │       │   → 推理-行动-观察 循环   │
-│ Specialist Selector     │       │   → 循环检测+语义去重    │
-│   → 单/多专家分发        │  ──→  │   → 提前终止+结果合成    │
-│ Reflection Gate         │       │ Native Function Calling │
-│   → 质量审查 + 重试      │       │   → 多轮 tools 循环     │
-│ ResultSynthesizer       │       │ Token 预算 + 三级压缩   │
-│   → 多专家结果合并       │       │   → 防 Context 溢出     │
-└────────────────────────┘       └─────────────────────────┘
+LangGraph 状态机（编排层）          专家执行层（multi_agent_system + agent_framework）
+┌────────────────────────┐       ┌──────────────────────────────┐
+│ Intent Router           │       │ Specialist Agents            │
+│   → 三级降级路由         │       │   → 原生 Function Calling    │
+│ CRAG 检索闭环           │       │   → 最多 5 轮并行工具循环      │
+│   → 评分→改写→重检索     │  ──→  │ ReActAgent（自研框架）        │
+│ Faithfulness Checker    │       │   → 推理-行动-观察循环        │
+│   → 逐句校验→重生成      │       │   → 循环检测+语义去重+提前终止 │
+│ Reflection Gate         │       │ ContextOptimizer             │
+│   → 质量审查 + 重试(≤3)  │       │   → 三级压缩防 Context 溢出   │
+│ Aggregator/Synthesizer  │       │ Token 预算（tiktoken 精确计数）│
+└────────────────────────┘       └──────────────────────────────┘
 ```
 
-**为什么需要两层？** LangGraph 负责宏观调度（选哪个专家、要不要反思），自研框架负责微观执行（ReAct 循环、工具调用、循环检测）。这种分层避免了 LangChain 的臃肿，同时保留了灵活的状态机编排能力。
+**为什么需要两层？** LangGraph 负责宏观调度（选哪个专家、检索质量是否达标、要不要反思），专家执行层负责微观执行（Function Calling 工具循环、循环检测、上下文压缩）。这种分层避免了 LangChain 的臃肿，同时保留了灵活的状态机编排能力。
 
 ### 原生 Function Calling — 彻底告别正则解析
 
@@ -79,9 +80,13 @@ LangGraph 状态机（编排层）          自研 Agent Framework（执行层�
 |---------|-------------|--------|
 | ~~旧方案~~ | LLM 输出 JSON 文本 → 正则匹配 → 提取参数 | ❌ 格式不稳定，频繁失败 |
 | **当前方案** | API `tools` 参数传入定义 → 结构化 `tool_calls` 返回 | ✅ API 级保证 |
-| **多轮循环** | `for _ in range(5)` 每轮都传 tools，LLM 逐步调用 | ✅ 自主决策停止 |
+| **多轮循环** | `max_tool_rounds=5`，每轮都传 tools，多个 `tool_calls` 经 `asyncio.gather` 并行执行 | ✅ 自主决策停止 |
 
-### 领域感知文档处理 — 15 种分块器
+> 实现位置：`multi_agent_system/agents/base_specialist.py`（编排层专家走原生 Function Calling）。自研框架中的 `ReActAgent` 保留文本协议解析路径，并配套语义循环检测/连续失败计数等防护，供独立 Agent 场景使用。
+
+### 领域感知文档处理 — 分块器体系
+
+`DomainDetector` 三级路由（用户指定 → 文件名启发 → LLM 分类）自动选择领域分块器，配套 AST 净化、元数据注入、实体消解、摘要生成、关系构建五个管道组件：
 
 | 领域 | 分块器 | 核心技术 |
 |------|--------|----------|
@@ -89,10 +94,11 @@ LangGraph 状态机（编排层）          自研 Agent Framework（执行层�
 | **税务** | `TaxChunker` | 条款级正则（按「第X条」），生命周期打标，PREVIOUS/NEXT 链 |
 | **法务** | `LegalChunker` | AST 双层节点（章节 PARENT + 条款 LEAF），异步实体替换 |
 | **通用** | `GeneralChunker` | Auto-Merging 双粒度（256-token 精准 + 1024-token 上下文展开） |
+| **兜底/语义** | `AdaptiveChunker` / `PropositionChunker` | LLM 语义边界切分 / 原子命题提取，另有 Markdown、纯文本、结构化文档三种基础策略 |
 
 ### 知识图谱 — 类型约束的提取管线
 
-区别于通用 NER，系统预设 21 种实体类型 + 26 种关系类型，采用**两阶段提取 + 四层校验**：
+区别于通用 NER，系统预设 21 种实体类型 + 24 种关系类型，采用**两阶段提取 + 多层校验**：
 
 ```
 文本 → 规则预提取(60%+) → LLM 补全(复杂) → 类型白名单 → 置信度≥0.7 → 关系源验证 → Neo4j
@@ -111,7 +117,7 @@ LangGraph 状态机（编排层）          自研 Agent Framework（执行层�
 
 ### Agent Skill 系统
 
-受 Claude Code Skills 规范启发的自研框架，三级渐进加载（元数据 → SKILL.md → scripts），域范围隔离（`skills/{finance,tax,legal,public}/`），内置 4 个技能。**Skills ≠ Tools**：Tools 是原子 API 调用，Skills 是包含引导流程的完整业务工作流。
+受 Claude Code Skills 规范启发的自研框架，三级渐进加载（元数据 → SKILL.md → scripts/references），域范围隔离（`skills/{finance,tax,legal,public}/`），内置 7 个技能。**Skills ≠ Tools**：Tools 是原子 API 调用，Skills 是包含引导流程的完整业务工作流。
 
 ---
 
@@ -190,74 +196,72 @@ docker pull ghcr.io/serein-81/rag-backend:latest
 │   Intent Router  │  ← 三级分类：正则 → 规则 → LLM
 │                  │     输出：意图 + 复杂度 + 所需专家
 └────────┬────────┘
-         │
-         ▼
-    ┌────┴────┐
-    │         │
-    ▼         ▼
-┌────────┐ ┌──────────────────────────┐
-│ 单专家  │ │ 多专家并行 (compliance,  │
-│ (简单)  │ │ complex, high-complexity)│
-└───┬────┘ └────┬────┬────┬──────────┘
-    │           │    │    │
-    ▼           ▼    ▼    ▼
-┌────────┐ ┌────┐ ┌────┐ ┌────┐
-│finance │ │fina│ │tax │ │legal│
-│ /tax/  │ │nce │ │    │ │     │
-│ legal  │ └────┘ └────┘ └────┘
-└───┬────┘   │    │    │
-    │        └────┴────┘
-    ▼           │
-┌────────┐      ▼
-│Reflect │  ┌────────┐
-│(质量审  │  │Synthes. │  ← ResultSynthesizer 合并
-│ 查)    │  │izer    │
-└───┬────┘  └───┬────┘
-    ▼           ▼
-┌─────────────────┐
-│   Final Answer   │  ← SSE 流式 / 异步轮询
-└─────────────────┘
+         │ trivial → Direct Answer ──────────────────────┐
+         ▼                                               │
+┌──────────────────────────────┐                         │
+│ RAG Retrieval → Grader(CRAG) │ ← 评分 <0.6 →           │
+│   Query Rewriter ←───────────│   改写查询重新检索        │
+└────────┬─────────────────────┘   (最多 2 轮)            │
+         ▼                                               │
+    ┌────┴────┐                                          │
+    │         │                                          │
+    ▼         ▼                                          │
+┌────────┐ ┌──────────────────────────┐                  │
+│ 单专家  │ │ 多专家并行                │                  │
+│ (简单)  │ │ finance / tax / legal /  │                  │
+└───┬────┘ │ report （Send 并行分发）  │                  │
+    │      └────┬────┬────┬───────────┘                  │
+    │           └────┴────┘                              │
+    │               ▼                                    │
+    │      ┌─────────────────┐                           │
+    │      │   Aggregator     │ ← 多专家结果合并           │
+    │      └───────┬─────────┘                           │
+    ▼              ▼                                     │
+┌──────────────────────────────┐                         │
+│ Faithfulness Checker          │ ← 逐句核对引用，<0.7      │
+│   → Regenerate (最多 1 轮)    │   触发重新生成            │
+└────────┬─────────────────────┘                         │
+         ▼                                               │
+┌────────────────┐  POOR → Retry(≤3) → 重回专家           │
+│ Reflection 质量 │  超限 → Human Review (interrupt)       │
+│ 审查（可开关）   │                                        │
+└───────┬────────┘                                       │
+        ▼                                                ▼
+┌─────────────────────────────────────────────────────────┐
+│   Final Answer  ← SSE 流式 / 异步轮询                     │
+└─────────────────────────────────────────────────────────┘
 ```
 
 **关键流程**：
 
 | 步骤 | 组件 | 说明 |
 |------|------|------|
-| ① 意图路由 | `IntentRouterAgent` | 三级降级：正则(问候) → 规则(关键词匹配，置信度≥0.9跳过LLM) → LLM分类 |
-| ② 专家路由 | `route_after_intent()` | `single_specialist` → 单专家；`compliance_check` 或 `len(specialists)>1` → 多专家并行 |
-| ③ 工具调用 | native function calling | 通过 OpenAI 兼容 `tools` 参数传入，LLM 返回结构化 `tool_calls`，**无需文本正则解析** |
-| ④ 多轮循环 | `for _ in range(5)` | 每轮携带 `tools` 参数，LLM 可反复调用工具直到直接回答 |
-| ⑤ 结果合并 | `ResultSynthesizer` | 多专家场景自动调用合成器，单专家直接返回 `text_answer` |
-| ⑥ 质量审查 | `QualityReviewFunction` | LLM 评估准确性/完整性/逻辑性，不达标触发重试（最多3次） |
+| ① 意图路由 | `IntentRouterAgent` | 三级降级：正则(问候等速通) → 规则(关键词匹配，置信度≥0.9跳过LLM) → LLM分类(置信度≤0.7回退规则结果) |
+| ② 检索质量闭环 (CRAG) | `RetrievalGrader` + `QueryRewriter` | 检索结果评分 <0.6 时自动改写查询并重新检索，最多 2 轮 |
+| ③ 专家路由 | `route_by_specialists` / 并行 Send | 单专家直达；多专家经 `multi_specialist_router` 并行分发到 finance/tax/legal/report |
+| ④ 工具调用 | native function calling | 通过 OpenAI 兼容 `tools` 参数传入，LLM 返回结构化 `tool_calls`，**无需文本正则解析** |
+| ⑤ 多轮循环 | `max_tool_rounds=5` | 每轮携带 `tools` 参数，多个 tool_calls 并行执行，LLM 可反复调用工具直到直接回答 |
+| ⑥ 结果合并 | `Aggregator` / `ResultSynthesizer` | 多专家场景自动合并，单专家直接返回 |
+| ⑦ 忠实度校验 | `FaithfulnessChecker` | 逐句核对回答与检索上下文，评分 <0.7 触发重新生成（最多 1 轮） |
+| ⑧ 质量审查 | `QualityReviewFunction` | LLM 评估准确性/完整性/逻辑性，POOR 触发重试（最多3次），超限转人工审核（interrupt） |
 
-**可用工具**（通过 MCP 注册，共 40 个）：
+**可用工具**（MCP 双模式注册，共 37 个：27 本地 `@local_tool` + 10 云端 `@cloud_tool`）：
 
-- **财务**: `get_financial_overview`（获取财务概览摘要）、`query_financial_data`（查询明细）
-- **税务/法务/通用**: 30 个本地工具 + 10 个云端工具
+- **财务**: `get_financial_overview`（获取财务概览摘要）、`query_financial_data`（查询明细）等
+- **税务/法务/通用**: 税务计算、法规合规、企业查询、天气/地图/网络搜索等
 - **时间锚点**: `get_current_time_and_context`（时间相关查询必须调用）
+- 另有 6 个知识库检索工具（LangChain `@tool`）与数据库中动态加载的自定义工具
 
 ### 2. 自研轻量级 Agent 框架 + 原生函数调用
 
-不同于 LangChain 的臃肿，我们实现了轻量级的 Agent 框架，核心采用 **OpenAI 兼容的原生 Function Calling**：
-
-```
-> 框架核心模块包括：**ReAct/Plan/Reflect 推理引擎**、**多 LLM 适配器层**（OpenAI、DeepSeek、智谱、Claude、Qwen 等，通过工厂模式零代码切换）、**工具管理器**（工具注册与智能路由）。整个框架不依赖 LangChain，保持轻量独立，便于定制和调试。
-```
-
-**工具调用演进**：
-
-| 阶段 | 方式 | 可靠性 |
-|------|------|--------|
-| ~~旧方案~~ | ~~LLM 文本输出 JSON → 正则解析~~ | ❌ 不可靠，LLM 输出格式不稳定 |
-| **新方案** | **API `tools` 参数 → 结构化 `tool_calls` 返回** | ✅ API 级保证，无需文本解析 |
-| **多轮循环** | `for` 循环，每轮都传 `tools`，LLM 可逐步调用 | ✅ 支持先查时间基准、再查财务数据 |
+不同于 LangChain 的臃肿，我们实现了轻量级的 Agent 框架：**ReAct/Plan/Reflect 推理引擎** + **12 家 LLM 适配器层**（工厂模式零代码切换）+ **工具管理器**（注册与智能路由），整个框架不依赖 LangChain，便于定制和调试。
 
 **设计亮点**：
 
-- 🧠 **ReAct 推理** - 推理与行动交替执行
-- 🔧 **原生函数调用** - 通过 API `tools` 参数，非文本正则解析
-- 🔄 **多轮工具循环** - 最多 5 轮，LLM 自主决策何时直接回答
-- 🎯 **适配器模式** - 零代码切换不同 LLM 提供商
+- 🧠 **ReAct 推理** - 推理与行动交替执行（`ReActAgent` 默认最多 10 轮，内置语义循环检测 + 连续失败计数 + 提前终止）
+- 🔧 **原生函数调用** - 编排层专家通过 API `tools` 参数调用，非文本正则解析
+- 🔄 **多轮工具循环** - 专家最多 5 轮（`max_tool_rounds=5`），LLM 自主决策何时直接回答
+- 🎯 **适配器模式** - 12 家 LLM 提供商零代码切换（`llm/factory.py`）
 
 ### 3. Agent Skill 系统（技术亮点）
 
@@ -274,14 +278,19 @@ docker pull ghcr.io/serein-81/rag-backend:latest
 | **运行时守卫** | `_is_meta_question()` 跳过 RAG/反思/数据查询；`_sanitize_llm_text()` 后处理 JSON 输出 |
 | **LLM 驱动执行** | 不硬编码工具调用，通过 API `tools` 参数传递工具定义，LLM 返回结构化 `tool_calls`；多轮循环直到直接回答 |
 
-#### 4 个内置技能
+#### 7 个内置技能（`rag_backend/skills/{domain}/`）
 
-| 技能 | 归属 | 功能 | 脚本 | 参考文档 |
-|------|------|------|------|---------|
-| `financial-data-entry` | Finance | 财务数据录入校验与提交 | validate_entry.py + submit_entry.py | categories.md |
-| `legal-compliance-search` | Legal | 法规合规检索与匹配 | search_compliance.py (Tavily) | registration_requirements.md |
-| `tax-law-research` | Legal | 联网搜索最新税务法律知识 | search_tax_law.py (Tavily fallback) | tax_terms.md |
-| `policy-crawl` | Public | 爬取政府政策到本地 + 企业匹配 + SSE 通知 | crawl_policies.py | — |
+| 技能 | 归属 | 功能 |
+|------|------|------|
+| `financial-data-entry` | Finance | 财务数据录入校验与提交（validate_entry.py + submit_entry.py） |
+| `corporate-tax-check` | Tax | 企业所得税合规检查 |
+| `vat-calculation` | Tax | 增值税计算 |
+| `legal-compliance-search` | Legal | 法规合规检索与匹配（Tavily） |
+| `tax-law-research` | Legal | 联网搜索最新税务法律知识（Tavily fallback） |
+| `policy-crawl` | Public | 爬取政府政策到本地 + 企业匹配 + SSE 通知 |
+| `enterprise-profile` | Public | 企业画像信息整理 |
+
+> 另在 `app/prompts/skills/` 下维护 8 个提示词型技能模板（enterprise_knowledge_search、web_research、policy_impact_analysis 等），与 SKILL.md 技能包属不同层次。
 
 **设计原则**：Skills ≠ Tools。Tools 是基础 API 调用，Skills 是复杂业务工作流（如数据录入引导、合规搜索匹配）。Skill 通过 `SKILL.md` 定义流程步骤，scripts/ 执行 LLM 不擅长的精确计算，references/ 提供按需加载的领域知识。
 
@@ -292,62 +301,31 @@ docker pull ghcr.io/serein-81/rag-backend:latest
 ```
 每次 chat() 前检查消息总 token 数
     │
-    ├── < 阈值（如 80% context window）→ 正常发送
+    ├── < 阈值 → 正常发送
     │
     └── > 阈值 → 触发三级压缩:
          │
-         ├─ Level 1: 删除冗余（始终执行）
+         ├─ Level 1: 删除冗余（始终执行，零成本）
          │    - 移除空 content 的 assistant 消息
          │    - 合并重复 system 消息
          │
-         ├─ Level 2: JSON → 单行摘要（始终执行）
-         │    原始: {"status":"success","data":{...},"summary":{...},"fiscal_year":2024}
+         ├─ Level 2: 工具 JSON → 单行摘要（始终执行，零成本）
+         │    原始: {"status":"success","data":{...},"fiscal_year":2024}
          │    压缩: status=success | fy=2024 | 营收=42,918,130.00 | 利润率=37.42%
          │    压缩比: 5:1 ~ 10:1
          │
-         └─ Level 3: 多轮滚动摘要（token 超阈值时执行）
+         └─ Level 3: 多轮滚动摘要（仅超阈值触发，安全网）
               - 将最早的 N 轮 (assistant + tool) 打包为 system(summary)
               - 保留首次 system prompt + 最新用户问题
 ```
 
-**设计要点**：
-- 仅 `FinanceSpecialist` 有多轮工具调用，优化器只在此生效
-- 默认阈值 100K tokens（deepseek-v4-flash 原生 128K，留 28K 给生成）
-- Level 1/2 零成本，Level 3 为安全网，日常查询不触发
+**设计要点**：阈值按模型自适应（deepseek 系列 100K，默认 80K）；Level 1/2 零成本、Level 3 需 LLM 摘要，日常查询不触发；另配套 tiktoken 精确计数与组件级 Token 预算管理。
+
+> 📖 实现与参数详见 [services/README.md](rag_backend/app/services/README.md) 与 [agent_framework/README.md](rag_backend/app/agent_framework/README.md)。
 
 ### 5. 混合检索系统
 
-结合多种检索技术，实现精准的知识召回：
-
-```
-用户查询
-    │
-    ▼
-┌──────────────────────────────────────────┐
-│           混合检索管理器                    │
-├──────────────────────────────────────────┤
-│  ┌────────────┐  ┌────────────┐          │
-│  │  向量检索   │  │  关键词检索  │          │
-│  │ (pgvector) │  │  (BM25/FTS)│          │
-│  └─────┬──────┘  └─────┬──────┘          │
-│        │               │                  │
-│        └─────────┬─────┘                  │
-│                  ▼                        │
-│        ┌─────────────────┐                │
-│        │   RRF 融合排序   │                │
-│        └────────┬────────┘                │
-│                 ▼                          │
-│        ┌─────────────────┐                │
-│        │  知识图谱增强    │                │
-│        │  (Neo4j)        │                │
-│        └─────────────────┘                │
-└──────────────────────────────────────────┘
-    │
-    ▼
-精准检索结果
-```
-
-当前向量检索主要基于 PostgreSQL + pgvector，结合全文检索、同义词扩展、RRF 融合和可选 MMR/Rerank 进行结果优化。
+向量检索（pgvector）+ 关键词检索（BM25/FTS）→ RRF 融合 → 知识图谱增强（Neo4j），结合同义词扩展和可选 MMR/Rerank 优化结果。完整链路图见[设计亮点](#-设计亮点)，算法细节见[技术实现详解](#5-搜索查询算法详解)。
 
 #### 智能对话的三种检索模式
 
@@ -366,17 +344,18 @@ docker pull ghcr.io/serein-81/rag-backend:latest
 
 ### 6. 记忆系统
 
-完整的 Agent 记忆体系，支持上下文理解：
+完整的 Agent 记忆体系（`MemoryManager` 统一调度的**三层记忆**），支持上下文理解：
 
 <details>
 <summary>🧠 记忆类型说明（点击展开）</summary>
 
-| 记忆类型 | 说明 | 持久化 |
-|---------|------|--------|
-| 工作记忆 | 当前对话上下文 | 内存 |
-| 情景记忆 | 对话历史摘要 | PostgreSQL |
-| 语义记忆 | 长期知识存储 | Vector DB |
-| 关系记忆 | 实体关系图谱 | Neo4j |
+| 记忆类型 | 说明 | 持久化 | 检索方式 |
+|---------|------|--------|---------|
+| 工作记忆 | 当前对话上下文（默认 50 条，30 分钟过期） | 内存 FIFO | 全量返回 |
+| 情景记忆 | 对话历史摘要（准入过滤闲聊/错误响应） | PostgreSQL + pgvector(1024) | 向量相似度×0.7 + 时间衰减×0.3 |
+| 语义记忆 | 长期知识/用户事实（importance≥0.8 才写入） | PostgreSQL + pgvector(1024) | 向量检索 + 可选图谱混合检索 |
+
+> 实体关系沉淀由**知识图谱（Neo4j）**承担，作为语义记忆的图谱增强路径，不是独立的第四层记忆。另有 Redis 旁路缓存（空值缓存防穿透 / per-key 锁防击穿 / 随机 TTL 防雪崩）。
 
 </details>
 
@@ -464,7 +443,7 @@ docker pull ghcr.io/serein-81/rag-backend:latest
 | `/knowledge-graph`、`/knowledge-graph-editor` | 知识图谱查看与编辑：实体检索、子图探索、节点/关系维护、JSON 导入导出 |
 | `/audit/upload`、`/audit/result/:id` | 多智能体审计上传与结果页 |
 | `/tax-submission`、`/tax-intelligence` | 税务申报与税务智能分析 |
-| `/policy`、`/policy/:id`、`/policy-search`、`/policy-notifications` | 政策列表、详情、检索与通知 |
+| `/policy`、`/policy/:id`、`/policy-notifications` | 政策列表、详情与通知（`/policy-search` 已重定向至 `/policy`） |
 | `/financial-health`、`/financial-data-entry`、`/financial-data-list` | 财务健康、财务数据录入与列表 |
 | `/contract-review`、`/enterprise-match` | 合同审查与企业政策匹配 |
 | `/group-chat`、`/notifications` | 群组聊天与通知中心 |
@@ -472,6 +451,8 @@ docker pull ghcr.io/serein-81/rag-backend:latest
 | `/settings/models` | 模型配置中心（管理员）：对话（按租户）/ 向量（部署级·维度守卫）/ 重排（部署级·开关）+ 本地 Ollama 检测 + 测试连接 + 使用概览 |
 | `/custom-tools` | 智能体工具构建器：自然语言生成规格与代码草稿、发布配置型工具、测试入参、查看企业已发布工具 |
 | `/task-management`、`/chat-logs`、`/profile`、`/test-data-guide` | 任务管理、对话日志、个人资料与测试数据指南 |
+| `/settings/multimodal`、`/multimodal-usage` | 多模态配置与用量 |
+| `/feedback-management`、`/failure-analysis` | 反馈管理与失败案例分析（管理员） |
 
 </details>
 
@@ -496,6 +477,8 @@ docker pull ghcr.io/serein-81/rag-backend:latest
 | `/api/v1/logs`、`/api/v1/chat-logs`、`/api/v1/security`、`/api/v1/rate-limit`、`/api/v1/observability` | 系统日志、对话日志、安全监控、限流管理与可观测性 |
 | `/api/v1/workflow*`、`/api/v1/task-manager`、`/api/v1/notifications`、`/api/v1/policy-notifications`、`/api/v1/policy-agent` | 工作流事件、任务管理、通知、政策通知与政策通知智能体 |
 | `/api/v1/a2a*`、`/api/v1/circuit-breaker*`、`/api/v1/langsmith` | A2A 协议、熔断器管理与 LangSmith 集成 |
+| `/api/v1/memory`、`/api/v1/prompt`、`/api/v1/audit`、`/api/v1/feedback`、`/api/v1/multimodal` | 记忆系统、Prompt 优化、多智能体审计、用户反馈、多模态配置 |
+| 流式增强（streaming/snapshot/suggestion） | 流式断点续传、会话快照、问题建议 |
 | `/health`、`/health/quick`、`/health/{component}`、`/api/health` | 健康检查与组件级诊断 |
 
 </details>
@@ -504,132 +487,61 @@ docker pull ghcr.io/serein-81/rag-backend:latest
 
 ## 🔬 技术实现详解
 
+> 本章展示各核心模块的设计思路与技术方案；类名、函数级实现与完整参数表收录在各模块 README（见[相关文档](#-相关文档)）。
+
 ### 1. 智能体设计详解
 
 #### 1.1 ReAct 推理模式
 
-ReAct（Reasoning + Acting）模式是本系统智能体的核心推理范式，它将推理与行动交替执行，使智能体能够像人类一样边思考边行动：
+ReAct（Reasoning + Acting）是本系统智能体的核心推理范式，将推理与行动交替执行，使智能体像人类一样边思考边行动：
 
-> ReAct 推理引擎通过 **推理->行动->观察->更新** 的四阶段循环实现智能决策。推理阶段由 LLM 分析当前上下文并决定下一步操作（是否需要调用工具），行动阶段执行工具调用获取外部数据，观察阶段收集执行结果，最后更新上下文继续下一轮推理，直到得出最终答案。
+> ReAct 推理引擎通过 **推理 → 行动 → 观察 → 更新** 的四阶段循环实现智能决策。推理阶段由 LLM 分析当前上下文并决定下一步操作，行动阶段执行工具调用获取外部数据，观察阶段收集执行结果，最后更新上下文继续下一轮推理，直到得出最终答案。同时内置**三重防失控机制**：语义循环检测（嵌入相似度比对最近几轮思考）、连续工具失败计数、强制提前终止。
 
 **ReAct 模式的优势**：
 
 - ✅ **可解释性** - 每一步推理都有明确的思考过程
-- ✅ **可控性** - 可随时干预或修正推理方向
+- ✅ **可控性** - 可随时干预或修正推理方向，循环/失败自动熔断
 - ✅ **灵活性** - 支持多种工具调用和条件分支
-- ✅ **可调试性** - 便于追踪问题出在哪一步
+- ✅ **可调试性** - 全程 Agent Trace 落库，便于追踪问题出在哪一步
 
 #### 1.2 Plan 规划模式
 
-Plan 模式用于复杂任务的分解和规划，特别适合需要多步骤处理的专业咨询场景：
-
-```
-用户问题：某企业重组涉及哪些税务问题？
-    │
-    ▼
-┌─────────────────────────────────────────────┐
-│           任务规划阶段                        │
-├─────────────────────────────────────────────┤
-│  Step 1: 识别企业类型和重组方式               │
-│  Step 2: 分析增值税影响                      │
-│  Step 3: 分析企业所得税影响                   │
-│  Step 4: 分析个人所得税影响（如涉及）         │
-│  Step 5: 检查地方性优惠政策                  │
-│  Step 6: 生成综合税务建议报告                 │
-└─────────────────────────────────────────────┘
-    │
-    ▼
-按计划逐步执行，各步骤可独立也可相互依赖
-```
-
-**规划模式的特点**：
-
-- 📋 **结构化分解** - 将复杂问题拆解为可执行的子任务
-- 🔗 **依赖管理** - 处理步骤间的数据依赖关系
-- 🎯 **目标导向** - 每个子任务都有明确的交付目标
-- 🔄 **动态调整** - 根据中间结果调整后续计划
+复杂任务先分解后执行，适合多步骤专业咨询。例如「企业重组涉及哪些税务问题」会被拆解为：识别重组方式 → 增值税/企业所得税/个税影响逐项分析 → 检查地方优惠 → 生成综合建议。特点：📋 结构化分解 · 🔗 步骤间依赖管理 · 🎯 目标导向交付 · 🔄 根据中间结果动态调整
 
 #### 1.3 Reflect 反思模式
 
 Reflect 模式负责答案质量的评估和改进，确保输出的专业性和准确性：
 
-> 反思机制从 **准确性、完整性、一致性、安全性、清晰度** 五个维度对智能体的回答进行质量评估。当问题复杂度超出阈值或涉及计算类、多领域交叉等场景时，自动触发反思流程，进行交叉验证和补充完善，确保最终输出的专业性和可靠性。
-
-**反思机制的作用**：
-
-- 🛡️ **质量保障** - 在最终回答前进行多维度检查
-- ⚠️ **风险预警** - 识别可能的法律和税务风险
-- 📝 **补充完善** - 自动添加必要的说明和限制条件
-- 🔍 **交叉验证** - 用不同方法验证关键结论
+> 反思机制从 **准确性、完整性、一致性、安全性、清晰度** 五个维度对智能体的回答进行质量评估。当问题复杂度超出阈值或涉及计算类、多领域交叉等场景时，自动触发反思流程，进行交叉验证和补充完善。在 LangGraph 编排层，质量不达标会触发重试（最多 3 次），仍不达标则转人工审核。
 
 #### 1.4 工具集成架构
 
-智能体通过统一的工具接口调用各类外部服务：
+> 智能体通过统一的工具调用协议与外部服务交互，协议定义工具名称、输入参数、执行结果、置信度和结果来源等标准字段。工具管理器负责注册和路由：装饰器自动注册 + 启动扫描发现，支持税务计算器、法律检索引擎、财务分析器等工具热插拔；智能路由组件根据查询分析自动选择工具，并内置失败熔断（连续失败进入冷却期）。
 
-> 智能体通过统一的工具调用协议与外部服务交互。协议定义了工具名称、输入参数、执行结果、置信度和结果来源等标准字段。工具管理器负责注册和路由，支持税务计算器、法律检索引擎、财务分析器等各类工具的热插拔注册。智能路由组件根据查询分析结果自动选择最合适的工具执行。
+> 📖 类继承关系、迭代上限、防失控阈值、12 家 LLM 适配器详见 [agent_framework/README.md](rag_backend/app/agent_framework/README.md)；专家的原生 Function Calling 工具循环详见 [multi_agent_system/README.md](rag_backend/app/multi_agent_system/README.md)。
 
 ---
 
-### 2. 记忆模式详解
+### 2. 记忆体系详解
 
-系统实现了完整的四层记忆体系，模拟人类认知的不同层面：
+三层记忆（工作/情景/语义，分层表见[核心特性 · 记忆系统](#6-记忆系统)）由 `MemoryManager` 统一调度，查询时四路并发召回（工作上下文 / 历史相似案例 / 专业知识 / 图谱关联）→ 权重融合去重 → 注入推理；推理后新实体入图谱、新知识入语义、新经验入情景。
 
-#### 2.1 工作记忆（Working Memory）
+**四大特色机制**：
 
-工作记忆是智能体在当前对话中的临时工作空间：
+- **智能准入** - 闲聊、错误响应不入库；重要性评估（意图关键词 / 重要话题 / 话题频次三路加成）决定是否沉淀为长期记忆
+- **混合召回** - 情景记忆按"向量相似度 + 时间衰减 + 重要性"加权；语义记忆可叠加图检索扩展关联知识
+- **缓存防御** - Redis 旁路缓存自带空值缓存防穿透、per-key 锁防击穿、随机 TTL 防雪崩
+- **用户画像** - 自动从对话提取 facts / preferences / corrections 三类用户记忆，注入 System Prompt
 
-> 工作记忆维护当前对话的临时上下文窗口（默认容量 10 条），实时追踪识别的实体和待处理任务。采用滑动窗口机制自动淘汰旧消息，并支持基于语义相似度的上下文检索，确保智能体始终聚焦于当前任务相关的信息。
+> 📖 各层容量/阈值/打分公式与缓存机制详见 [memory_system/README.md](rag_backend/app/memory_system/README.md)。
 
-**特点**：
+---
 
-- ⚡ **高速访问** - 存储在内存中，延迟极低
-- 🔄 **动态更新** - 根据对话进展实时调整
-- 🎯 **聚焦当前** - 专注于当前任务相关的上下文
+### 3. 领域知识图谱提取机制
 
-#### 2.2 情景记忆（Episodic Memory）
+系统采用 **领域类型约束 + 规则/LLM 混合提取 + 多层校验** 的专用提取管线，区别于通用 NER 或纯 LLM 方案。
 
-情景记忆存储对话历史的压缩摘要，便于快速回顾：
-
-> 情景记忆将完整对话压缩为结构化摘要存储到 PostgreSQL，包含关键要点、情感倾向、话题标签和时间戳等元数据。支持按用户隔离、话题相似度等多维度检索，定期自动清理归档过期记录。
-
-**存储策略**：
-
-- 📦 **自动摘要** - 对话结束后自动生成摘要
-- 🏷️ **多维索引** - 支持按主题、情感、时间等维度检索
-- 👤 **用户隔离** - 每个用户的情景记忆独立存储
-- 🗜️ **定期清理** - 过期或无价值的记忆自动归档
-
-#### 2.3 语义记忆（Semantic Memory）
-
-语义记忆存储长期知识，采用向量数据库实现高效语义检索：
-
-> 语义记忆采用向量数据库存储长期知识。将知识内容通过 Embedding 模型编码为稠密向量后写入向量存储，检索时基于余弦相似度进行语义级别的精准匹配，支持元数据过滤和增量更新。
-
-**知识组织**：
-
-- 🧠 **向量化存储** - 使用深度学习模型将文本转为稠密向量
-- 🔍 **语义相似度** - 支持基于语义的精准检索
-- 🏷️ **元数据过滤** - 支持按来源、时间、类型等过滤
-- 🔄 **增量更新** - 支持知识的实时更新和版本管理
-
-#### 2.4 关系记忆（Relational Memory）
-
-关系记忆使用知识图谱存储实体间的复杂关系：
-
-> 关系记忆基于 Neo4j 图数据库构建知识图谱，将财税领域实体（法条、税种、企业类型等）作为节点，实体间关系（适用条件、关联法规、税收优惠等）作为边。支持图遍历扩展查询，通过路径发现和关系推理为检索结果补充丰富的上下文信息。
-
-**图谱能力**：
-
-- 🔗 **关系建模** - 表达实体间的复杂关联关系
-- 🚀 **路径发现** - 找出实体间的关联路径
-- 📊 **图推理** - 基于图结构的逻辑推理
-- 🎯 **上下文增强** - 为检索结果提供关系上下文
-
-#### 2.4.1 领域知识图谱提取机制
-
-系统采用 **领域类型约束 + 规则/LLM 混合提取 + 多层校验** 的专用实体/关系提取管线，区别于通用的 NER 或纯 LLM 方案：
-
-**实体类型定义** — 面向财税法务领域预设 21 种实体类型，分组如下：
+**实体类型定义** — 面向财税法务领域预设 21 种实体类型：
 
 | 领域 | 实体类型 |
 |------|---------|
@@ -639,7 +551,7 @@ Reflect 模式负责答案质量的评估和改进，确保输出的专业性和
 | **法务** | CONTRACT（合同）、CLAUSE（条款）、REGULATION（法规）、LEGAL_CASE（案件） |
 | **通用** | PRODUCT（产品）、SERVICE（服务）、LOCATION（地点）、DATE_PERIOD（日期）、EVENT（事件）、TECHNOLOGY（技术） |
 
-**关系类型定义** — 预设 26 种有向关系类型，涵盖公司治理、财务、税务、法务四大领域：`WORKS_AT`、`SIGNED`、`SUBJECT_TO`、`HAS_METRIC`、`OWNS`、`COMPETES_WITH`、`CONTAINS_CLAUSE` 等。
+**关系类型定义** — 预设 24 种有向关系类型，涵盖公司治理（10 种）、财务（3 种）、税务（4 种）、法务（5 种）、通用（4 种）：`WORKS_AT`、`SIGNED`、`SUBJECT_TO`、`HAS_METRIC`、`OWNS`、`COMPETES_WITH`、`CONTAINS_CLAUSE` 等。
 
 **两阶段提取流程**：
 
@@ -653,224 +565,59 @@ Reflect 模式负责答案质量的评估和改进，确保输出的专业性和
         └ FINANCIAL_METRIC（正则）
 ```
 
-**多层校验机制**：
+**多层校验**：类型白名单（提示词限定 + 返回结果二次过滤）→ 置信度 ≥0.7 → 关系 source/target 必须存在于已提取实体（防幻觉）。
 
-1. **类型约束** — LLM 提示词中明确限定只能使用预定义的 21 种类型，不允许编造
-2. **白名单过滤** — LLM 返回结果经过 `VALID_ENTITY_TYPES` / `VALID_RELATION_TYPES` 集合校验，未定义类型自动过滤并记录日志
-3. **置信度过滤** — 低于 0.7 置信度的实体/关系自动剔除
-4. **关系源验证** — 关系提取要求 source 和 target 必须在已提取的实体列表中，防止幻觉
+**工程优化**：规则预提取覆盖 60%+ 简单实体，LLM 仅补复杂场景；关系提取只传 Top 10 核心实体；LLM 调用 120s 超时保护；Neo4j **UNWIND 批量写入**（一次往返替代 N 次）；查询阶段实体提取用 jieba 分词（毫秒级、零 LLM）。
 
-**性能优化**：
+**Neo4j 数据模型** — 多标签设计（`(:Entity:Company)`），既兼容 `MATCH (e:Entity)` 旧查询，又支持 `MATCH (c:Company)` 类型限定的高效遍历；所有查询附加租户软隔离条件。
 
-- 规则预提取处理 60% 以上简单实体（日期、税率、金额、常见公司名），LLM 仅用于补充复杂实体
-- 关系提取时只传入 Top 10 核心实体（按置信度排序），避免提示词过长
-- 所有 LLM 调用设置 120 秒超时保护
-- Neo4j 写入使用 UNWIND 批量操作，一次网络往返替代 N 次
-
-**Neo4j 数据模型** — 多标签设计，兼容旧查询与新式精细检索：
-
-```cypher
-(:Entity:Company {name: "阿里巴巴", type: "COMPANY", unique_key: "..."})
-(:Entity:TaxType {name: "企业所得税", type: "TAX_TYPE", unique_key: "..."})
-(:Entity:Contract {name: "5G技术合作协议", type: "CONTRACT", unique_key: "..."})
-(:Entity)-[:RELATED {type: "SUBJECT_TO"}]->(:Entity)
-```
-
-查询时既可用 `MATCH (e:Entity)` 保持向后兼容，也可用 `MATCH (c:Company)` 进行类型限定的高效遍历。
-
-**查询阶段实体提取** — 对用户查询使用 jieba 中文分词提取实体名，无需 LLM，毫秒级响应：
-
-```
-"财务专家有什么工具或" → jieba 分词 → ["财务", "专家", "工具"]
-"阿里巴巴2024年营收多少" → jieba 分词 → ["阿里巴巴", "2024", "营收"]
-```
-
-#### 2.5 记忆协同机制
-
-四种记忆相互协作，共同支撑智能体的上下文理解能力：
-
-```
-用户问题输入
-    │
-    ▼
-┌─────────────────────────────────────────────────────┐
-│                 记忆查询阶段                          │
-├─────────────────────────────────────────────────────┤
-│  1. 工作记忆 → 提取当前对话的实体和上下文             │
-│  2. 情景记忆 → 召回该用户历史相似案例                │
-│  3. 语义记忆 → 检索相关的专业知识                      │
-│  4. 关系记忆 → 扩展概念间的关联信息                   │
-└─────────────────────────────────────────────────────┘
-    │
-    ▼
-┌─────────────────────────────────────────────────────┐
-│                 记忆融合阶段                          │
-├─────────────────────────────────────────────────────┤
-│  • 权重融合 → 根据相关性分配各记忆的权重              │
-│  • 去重合并 → 消除冗余信息，保留核心内容              │
-│  • 时序整理 → 按时间顺序组织历史信息                 │
-│  • 重要性排序 → 突出关键信息                         │
-└─────────────────────────────────────────────────────┘
-    │
-    ▼
-增强后的上下文 → 传递给智能体进行推理
-    │
-    ▼
-┌─────────────────────────────────────────────────────┐
-│                 记忆更新阶段                          │
-├─────────────────────────────────────────────────────┤
-│  • 新实体 → 存入关系记忆                             │
-│  • 新知识 → 存入语义记忆                             │
-│  • 新经验 → 存入情景记忆                             │
-│  • 当前状态 → 更新工作记忆                           │
-└─────────────────────────────────────────────────────┘
-```
+> 📖 完整类型枚举、规则正则清单、Cypher 模型与批量写入实现详见 [knowledge_graph/README.md](rag_backend/app/knowledge_graph/README.md)。
 
 ---
 
-### 3. 提示词模块设计
+### 4. 提示词模块设计
 
-#### 3.1 分层提示词架构
+**分层提示词架构** — 三层叠加组装，实现专业领域定制：
 
-系统采用分层设计的提示词模板，实现专业领域定制：
+> **系统基础层**定义智能体身份和核心原则（准确性、合规性、法规引用）；**领域专家层**为税务、法律、财务分别定制专业能力描述；**任务指令层**注入任务类型、输出格式和检索到的参考资料。
 
-> 系统采用三层提示词架构：**系统基础层**定义智能体身份和核心原则（准确性、合规性、法规引用）；**领域专家层**为税务、法律、财务分别定制专业能力描述；**任务指令层**注入任务类型、输出格式和检索到的参考资料。三层叠加组装，确保各领域智能体输出专业、规范的答案。
+**动态提示词组装** — 五步自动化流程：获取角色系统提示 → 注入领域专业指令 → 嵌入检索知识片段 → 压缩插入对话历史摘要 → 组装最终提示交给 LLM。
 
-#### 3.2 动态提示词组装
+**Few-Shot 示例模板** — 为复杂任务嵌入典型问答范例：税务计算给出「销售额 → 纳税人类型 → 适用税率 → 销项税额 → 应纳税额」完整推理链；法律分析给出「识别相关法律 → 法条原文 → 对照分析 → 结论判断 → 风险提示」分析框架。
 
-根据对话上下文动态组装最合适的提示词：
+**Chain-of-Thought 引导** — 复杂问题按「问题拆解 → 条件分析 → 方案推导 → 综合结论」链式思考，以【思考】/【结论】标记区分推理过程与最终答案，提升可追溯性。
 
-> 提示词组装器根据对话上下文动态构建最优提示。流程分为五步：获取智能体角色的系统提示 → 注入对应领域的专业指令 → 格式化并嵌入检索到的知识片段 → 压缩并插入对话历史摘要 → 组装最终提示交给 LLM 推理。整个过程完全自动化，开发者只需关注业务逻辑。
-
-#### 3.3 Few-Shot 示例模板
-
-为复杂任务提供示例参考，通过嵌入典型问答范例帮助 LLM 更好理解输出格式和推理路径。例如税务计算任务中给出「销售额 → 确定纳税人类型 → 适用税率 → 计算销项税额 → 应纳税额 = 销项税额 - 进项税额」的完整推理链，法律任务中给出「识别相关法律 → 法条原文 → 对照分析 → 结论判断 → 风险提示」的分析框架。
-
-#### 3.4 Chain-of-Thought 引导
-
-针对复杂问题启用逐步推理模式：
-
-> 针对复杂问题启用逐步推理模式，引导 LLM 按照「问题拆解 → 条件分析 → 方案推导 → 综合结论」的链式路径进行思考。每步推理要求明确标注依据和中间结论，最终以【思考】和【结论】标记区分推理过程和最终答案，提升回答的可追溯性。
+**工程化管理** — 提示词以 YAML + Markdown 文件维护（`app/prompts/agents/{agent}/system.md`，9 个 Agent 目录 + 8 个提示词型技能模板），支持 Jinja2 变量注入（如 `{skill_descriptions}`），**改提示词不改代码**。
 
 ---
 
-### 4. 搜索查询算法详解
+### 5. 搜索查询算法详解
 
-#### 4.1 混合检索架构
+#### 5.1 混合检索架构
 
-系统采用多路召回 + 融合排序的混合检索策略：
+> 混合检索器采用 **意图分析 → 并行多路召回 → RRF 融合 → 重排序** 的四阶段流水线：分析查询意图后，并行从向量检索、关键词检索、知识图谱三条路径召回候选，RRF 合并排序，最后交叉编码器精排输出 Top-K。
 
-> 混合检索器采用 **意图分析 → 并行多路召回 → RRF 融合 → 重排序** 的四阶段流水线。首先分析用户查询意图，然后并行从向量检索、关键词检索、知识图谱三条路径召回候选结果，使用 RRF（倒数排名融合）算法合并排序，最后通过交叉编码器精排输出 Top-K 结果。
+#### 5.2 向量检索
 
-#### 4.2 向量检索算法
+> 查询文本经 Embedding 模型编码为 **1024 维**稠密向量（数据库列固定 `Vector(1024)`，模型配置中心保存前做维度强校验以保护已建索引），HNSW 近似最近邻索引实现毫秒级语义匹配，支持查询扩展（多个相似查询取平均向量提升召回）与元数据过滤。
 
-使用稠密向量进行语义级别的相似度匹配：
+- 🔮 **语义理解** - 理解查询真实含义而非字面匹配，支持中英文混合
+- 📏 **维度约束** - 全局 1024 维，SiliconFlow bge-m3 / 智谱 embedding-3 / OpenAI / Ollama 四类提供商可选
+- ⚡ **ANN 加速** - HNSW 索引毫秒级检索
 
-> 向量检索将查询文本通过 Embedding 模型编码为 1536 维稠密向量，支持查询扩展（生成多个语义相似查询取平均向量以提升召回）。使用 HNSW 近似最近邻索引实现毫秒级语义匹配，支持基于元数据的过滤筛选。
+#### 5.3 BM25 + RRF 融合
 
-**向量检索特点**：
+BM25（PostgreSQL tsvector 全文索引）与向量检索互补——BM25 管精确词汇匹配，向量管语义理解。多路结果用 **RRF（倒数排名融合）**合并：$RRF\_score(d) = \sum_i \frac{1}{k + rank_i(d)}$（k=60），无需训练、单路召回劣化不拖垮整体。
 
-- 🔮 **语义理解** - 理解查询的真实含义，而非字面匹配
-- 🌐 **跨语言** - 支持中英文混合检索
-- 📏 **维度选择** - 1536维 Embedding-3 模型
-- ⚡ **ANN 加速** - 使用 HNSW 索引实现毫秒级检索
+#### 5.4 查询改写与扩展
 
-#### 4.3 BM25 关键词检索
+> 查询扩展器通过 **意图识别 → 同义词扩展 → LLM 生成替代查询 → 领域术语标准化** 四步优化原始查询：同义词字典覆盖财税领域等效词汇（税务/税收/税金），LLM 生成语义相近表述（"如何办理" → "办理流程/步骤/方法"），多个扩展查询融合提升召回覆盖面；另支持可选 HyDE。
 
-经典的关键词检索算法，基于词频和文档频率：
+#### 5.5 重排序与后处理
 
-> BM25 关键词检索基于经典的词频-逆文档频率算法，通过分词、倒排索引和 BM25 评分公式计算查询与文档的相关性。结合过滤器筛选后按分数排序返回结果，与向量检索形成互补——BM25 擅长精确词汇匹配，向量检索擅长语义理解。
+> 重排序器调用 SiliconFlow Rerank API（`Pro/BAAI/bge-reranker-v2-m3` 交叉编码器）对候选集配对批量打分，精排筛选 Top-K 并过滤低分结果。之后依次叠加：**MMR 多样性重排**（批量向量纯内存计算，避免逐条网络请求）→ **Cliff Prune 断崖裁剪**（相关性分数骤降处截断，宁缺毋滥）→ 时序去重 → 知识图谱关系展开 → Auto-Merging 父块展开。
 
-**BM25 公式**：
-
-$$score(D, Q) = \sum_{i=1}^{n} IDF(q_i) \cdot \frac{f(q_i, D) \cdot (k_1 + 1)}{f(q_i, D) + k_1 \cdot (1 - b + b \cdot \frac{|D|}{avgdl})}$$
-
-其中：
-- $f(q_i, D)$：词项 $q_i$ 在文档 $D$ 中的频率
-- $|D|$：文档 $D$ 的长度
-- $avgdl$：平均文档长度
-- $k_1$, $b$：调参参数（通常 $k_1=1.5$, $b=0.75$）
-- $IDF(q_i)$：逆文档频率
-
-#### 4.4 RRF 融合排序
-
-Reciprocal Rank Fusion（倒数排名融合）将多路检索结果综合排序：
-
-```python
-def reciprocal_rank_fusion(
-    result_lists: List[List[SearchResult]],
-    k: int = 60
-) -> List[FusedResult]:
-    """
-    RRF 融合算法
-    
-    RRF_score(d) = Σ 1/(k + rank_i(d))
-    
-    其中：
-    - k: 融合参数（通常 60）
-    - rank_i(d): 文档 d 在第 i 路检索结果中的排名
-    """
-    scores = defaultdict(float)
-    doc_metadata = {}
-    
-    for result_list in result_lists:
-        for rank, result in enumerate(result_list, start=1):
-            # 累加 RRF 分数
-            scores[result.doc_id] += 1.0 / (k + rank)
-            # 记录文档元数据（取最高分数对应的）
-            if result.doc_id not in doc_metadata or \
-               result.score > scores.get(result.doc_id + "_raw", 0):
-                doc_metadata[result.doc_id] = result
-    
-    # 按 RRF 分数排序
-    sorted_docs = sorted(
-        scores.items(),
-        key=lambda x: x[1],
-        reverse=True
-    )
-    
-    return [
-        FusedResult(
-            doc_id=doc_id,
-            rrf_score=score,
-            metadata=doc_metadata[doc_id]
-        )
-        for doc_id, score in sorted_docs
-    ]
-```
-
-**RRF 的优势**：
-
-- 🎯 **简单有效** - 无需训练，规则驱动
-- ⚖️ **公平融合** - 平衡不同检索方法的优势
-- 🛡️ **鲁棒性** - 单路召回差也不影响整体效果
-- ⚡ **高效** - 时间复杂度 O(n log n)
-
-#### 4.5 查询改写与扩展
-
-自动优化用户查询，提升召回效果：
-
-> 查询扩展器通过 **意图识别 → 同义词扩展 → LLM 生成替代查询 → 领域术语标准化** 四步优化用户原始查询。同义词字典覆盖财税领域等效词汇（如税务/税收/税金），LLM 生成语义相近的不同表述，最终将多个扩展查询融合以提升召回覆盖面。
-
-**扩展策略**：
-
-- 📚 **同义词扩展** - 税务/税收/税金等效词汇
-- 🔄 **表述改写** - "如何办理" → "办理流程/步骤/方法"
-- 🏷️ **领域归一化** - 统一专业术语表述
-- 🎭 **意图分解** - 复杂查询拆分为多个简单查询
-
-#### 4.6 重排序策略
-
-使用交叉编码器对初筛结果进行精细排序：
-
-> 重排序器使用交叉编码器对初筛候选集进行精细评估。将每个候选文档与查询组成配对，批量计算深度语义相关性分数，按照「30% 原始召回分数 + 70% 交叉编码器分数」的权重组合作综合排序，最终筛选出 Top-K 高质量结果，兼顾召回广度和排序精度。
-
-**重排序的作用**：
-
-- 🎯 **精度提升** - 交叉编码器比向量检索更精准
-- ⚖️ **分数校准** - 结合多信号进行综合评估
-- 📊 **多样性控制** - 避免结果过于集中同一来源
-- 🏷️ **质量筛选** - 过滤低质量或无关内容
+> 📖 各环节函数与默认参数（RRF k 值、MMR λ、Cliff 阈值、Agentic 短路阈值、两条检索链路差异）详见 [services/README.md](rag_backend/app/services/README.md)。
 
 ---
 
@@ -979,44 +726,50 @@ financial_rag/
 │   │   │       ├── multi_agent.py, group_chat.py   # 多智能体 + 群聊
 │   │   │       ├── tax_report.py, financial_health.py  # 财税业务
 │   │   │       └── workflow.py, security.py, ...   # 工作流 + 运维
-│   │   ├── models/                    # 34 个 ORM 模型 (User, Document, Chunk 等)
-│   │   ├── schemas/                   # 26 个 Pydantic 验证模型
-│   │   ├── services/                  # 80+ 业务服务
-│   │   │   ├── search_service.py      # 向量/关键词/混合/文档级检索
-│   │   │   ├── llm_service.py         # LLM 统一调用门面
-│   │   │   ├── hybrid_agent_service.py # 混合智能体管理
-│   │   │   ├── knowledge_graph_service.py # 图谱 CRUD + 路径查询
+│   │   ├── models/                    # 42 个 ORM 模型 (User, Document, Chunk 等)
+│   │   ├── schemas/                   # Pydantic 验证模型
+│   │   ├── repositories/              # 仓储层 (BaseRepository 自动注入租户过滤)
+│   │   ├── services/                  # 100+ 业务服务 → 详见 services/README.md
+│   │   │   ├── unified_retriever.py   # 主检索链路 (RRF→Rerank→MMR→Cliff Prune→关系展开)
+│   │   │   ├── hybrid_search_service.py # 三路 RRF 混合检索（旧链路）
+│   │   │   ├── context_optimizer.py   # 三级上下文压缩
+│   │   │   ├── agent_service.py       # 智能体服务入口 (单例+热重载)
+│   │   │   ├── graphrag_service.py    # GraphRAG 图谱增强检索
 │   │   │   ├── invoice/               # 发票识别/计算/风险评估
-│   │   │   └── policy_collector/      # 政策采集爬虫 (+ robots.txt)
-│   │   ├── agent_framework/           # ▸ 自研 Agent 执行框架 ◂
+│   │   │   └── policy_collector/      # 政策采集爬虫 (+ robots.txt + 限速)
+│   │   ├── agent_framework/           # ▸ 自研 Agent 执行框架 ◂ → README.md
 │   │   │   ├── core/                  # BaseAgent, ReActAgent, PlanAgent, ReflectAgent
-│   │   │   ├── llm/                   # 10+ LLM 适配器 (工厂模式)
+│   │   │   ├── llm/                   # 12 家 LLM 适配器 (工厂模式)
 │   │   │   ├── tools/                 # 工具管理器、路由、链式调用
-│   │   │   └── tokens/                # Token 预算管理
-│   │   ├── multi_agent_system/        # ▸ 多智能体编排系统 ◂
-│   │   │   ├── orchestrator.py        # 核心编排器 (~4700 行)
+│   │   │   └── tokens/                # TokenTracker + BudgetManager
+│   │   ├── multi_agent_system/        # ▸ 多智能体编排系统 ◂ → README.md
+│   │   │   ├── orchestrator.py        # 核心编排器
 │   │   │   ├── coordinator.py         # 审计审查协调器
-│   │   │   ├── message_bus.py         # 进程内 Pub/Sub 消息总线
-│   │   │   ├── agents/                # 税务/财务/法务/意图路由/报告生成
+│   │   │   ├── agents/                # 专家 Agent (原生 Function Calling, 5 轮工具循环)
 │   │   │   ├── routing/               # 统一请求路由
 │   │   │   └── config/                # Agent 能力 YAML 定义
-│   │   ├── langgraph/                 # ▸ LangGraph 工作流 ◂
-│   │   │   ├── graph.py               # StateGraph 构建与编译
-│   │   │   ├── hybrid/                # 混合编排 (黑板书模式)
-│   │   │   └── tax_workflow/          # 税务工作流示例
-│   │   ├── a2a_protocol/              # ▸ Agent 间通信协议 ◂
+│   │   ├── langgraph/                 # ▸ LangGraph 工作流 ◂ → README.md
+│   │   │   ├── graph.py               # StateGraph 构建与编译 (CRAG+忠实度+反思闭环)
+│   │   │   ├── agentic_rag_nodes.py   # Agentic RAG 规划-检索-评估循环
+│   │   │   └── tax_workflow/          # 税务申报子工作流
+│   │   ├── a2a_protocol/              # ▸ Agent 间通信协议 (A2A v0.2.5) ◂
 │   │   │   ├── transports/            # HTTP / Local / LangGraph 传输
-│   │   │   ├── dispatcher.py          # 混合调度器
-│   │   │   └── registry.py            # Agent 注册发现
-│   │   ├── chunkers/                  # 15 种领域感知分块器
-│   │   ├── parsers/                   # 多格式文档解析器 (PDF/Word/Excel/Markdown)
+│   │   │   └── registry.py            # Agent 注册发现 (/.well-known/agent.json)
+│   │   ├── knowledge_graph/           # ▸ 知识图谱提取管线 ◂ → README.md
+│   │   ├── chunkers/                  # 领域感知分块器体系 → README.md
+│   │   ├── parsers/                   # 多格式结构化解析器 → README.md
+│   │   ├── memory_system/             # 三层记忆体系 → README.md
+│   │   ├── mcp/                       # MCP 工具 (27 本地 + 10 云端, stdio/http 双模式)
 │   │   ├── prompts/                   # YAML + Markdown 提示词模板体系
-│   │   │   └── agents/{react,plan,tax,finance,legal,...}/
-│   │   ├── skills/                    # Agent Skill 系统 (YAML 定义)
+│   │   │   ├── agents/{react,plan,tax,finance,legal,...}/
+│   │   │   └── skills/                # 8 个提示词型技能模板
+│   │   ├── skills/                    # Skill 框架 (注册/加载/匹配/执行)
 │   │   ├── middleware/                # 租户上下文/日志/限流 中间件
-│   │   ├── observability/             # 自研链路追踪 + 指标 + 日志
-│   │   └── memory_system/             # 四层记忆体系
-│   ├── tests/                         # 100+ 测试文件 (unit/integration/api/agent)
+│   │   ├── observability/             # 链路追踪 + 指标 + 日志
+│   │   ├── security/、tasks/、workflow/、state/  # 安全、定时任务、工作流、状态
+│   │   └── utils/、config/、migrations/
+│   ├── skills/                        # 7 个内置技能包 (SKILL.md, 按 finance/tax/legal/public 分域)
+│   ├── tests/                         # 70+ 测试文件 (unit ~35 / integration ~33 / agent_system)
 │   ├── docker-compose.yml             # 7 服务容器编排 (DB/Redis/PgBouncer/Neo4j/MinIO/Backend)
 │   ├── Dockerfile                     # 多阶段构建 (builder → runner, 非 root)
 │   └── requirements.txt               # 170+ 依赖
@@ -1088,7 +841,7 @@ financial_rag/
 │  ┌────────────────────┐    │  │  ┌────────────────────┐    │
 │  │  MCP Server         │    │  │  │  Frontend (Nginx)  │    │
 │  │  (Docker)           │    │  │  │  npm build         │    │    │
-│  │  - 税务计算工具     │    │  │  │  端口 80/5173       │    │
+│  │  - 税务计算工具     │    │  │  │  端口 80/5500       │    │
 │  │  - 法律匹配工具     │    │  │  └────────────────────┘    │
 │  │  - 财务分析工具     │    │  │                            │
 │  │  - 企业查询工具     │    │  │                            │
@@ -1150,6 +903,16 @@ docker compose ps
 # 查看后端日志
 docker compose logs -f backend
 ```
+
+> 💡 **重型图像/扫描件解析服务可以先不拉取**。`unstructured-api`（内含 YOLOX + Detectron2 版面分析模型，镜像体积数 GB、运行需 2-3GB 内存）已被放入 `heavy`/`full` profile，**默认的 `docker compose up -d` 不会拉取也不会启动它**，不影响文字型 PDF/Word/Excel 的正常解析（PDF 自动走 pymupdf4llm → PyMuPDF 启发式降级链）。
+>
+> 后续需要高质量扫描件 OCR 时再启用：
+>
+> ```bash
+> docker compose --profile heavy up -d        # 拉取并启动 unstructured-api（端口 8001）
+> ```
+>
+> 并在 `.env` 中设置 `ENABLE_UNSTRUCTURED_PARSER=true`（如有需要再配 `UNSTRUCTURED_API_URL`，容器内默认 `http://unstructured-api:8000`），然后 `docker compose restart backend`。
 
 启动成功后访问：
 
@@ -1258,7 +1021,7 @@ docker compose logs -f backend
 | Neo4j | rag_neo4j | 7474, 7687 | 知识图谱 |
 | MinIO | rag_minio | 9000, 9001 | 对象存储 |
 | Backend | rag_backend | 8000 | 后端 API |
-| Unstructured API | rag_unstructured_api | 8001 | 重型文档解析服务，需 `--profile heavy` 或 `--profile full` |
+| Unstructured API | rag_unstructured_api | 8001 | ⚠️ 重型图像/扫描件解析（YOLOX+Detectron2，镜像数 GB、需 2-3GB 内存）。**默认不拉取不启动**，首次部署可跳过；需要时 `--profile heavy` 启用并设 `ENABLE_UNSTRUCTURED_PARSER=true` |
 
 </details>
 
@@ -1288,29 +1051,40 @@ curl http://localhost:8000/api/health
 仓库根目录提供了完整的 PostgreSQL schema 导出 `530.sql`（140+ 表，含所有枚举、索引、外键），首次部署直接导入即可：
 
 ```bash
-# 在仓库根目录执行
+# 在仓库根目录执行（-U / -d 替换为你 .env 中的 POSTGRES_USER / POSTGRES_DB，下同）
 docker cp 530.sql rag_db:/tmp/530.sql
-docker exec -it rag_db psql -U postgres -d rag_db -f /tmp/530.sql
+docker exec -it rag_db psql -U rag_user -d rag_db -f /tmp/530.sql
 ```
 
-**备选方式 · Alembic 增量迁移（适合开发者）**
+**增量迁移 · Alembic（仅用于后续 schema 演进）**
 
-若你要在开发分支上继续做 schema 演进，请用 alembic：
+> ⚠️ `alembic/versions/` 中的迁移是**增量补丁**（从政策表起步，共 18 个版本），**不能**从零建出全部核心表。首次部署请务必用上面的 `530.sql`；之后在开发分支上做 schema 演进时再用 alembic：
 
 ```bash
-docker exec -it rag_backend bash
-alembic upgrade head
-exit
+docker exec -it rag_backend alembic upgrade head
 ```
 
 **创建初始管理员账号**
 
-无论用哪种方式，初始化后都需要建一个管理员：
+两种方式任选其一：
+
+方式 A · 前端注册页（推荐）：启动前端后访问 `/register`，选择**企业管理员注册**（无需验证码），填写邮箱、用户名、密码（≥6 位）、真实姓名、企业名称即可，注册成功自动获得管理员权限并分配企业租户。
+
+方式 B · 直接调用注册接口：
 
 ```bash
-docker exec -it rag_backend python -m app.scripts.create_admin \
-  --email admin@example.com --password your_password
+curl -X POST http://localhost:8000/api/v1/auth/register/admin \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "admin@example.com",
+    "username": "admin",
+    "password": "your_password",
+    "full_name": "系统管理员",
+    "company_name": "示例企业"
+  }'
 ```
+
+> 接口返回 JWT Token 即创建成功；`email`、`username`、`password`、`full_name`、`company_name` 为必填字段。
 
 ---
 
@@ -1537,7 +1311,9 @@ cp .env.example .env
 # 启动开发服务器
 npm run dev
 
-# Vite 默认访问 http://localhost:5173
+# 开发服务器固定端口 5500（vite.config.ts 中 strictPort: true）
+# 访问 http://localhost:5500
+# /api 与 /ws-api 请求已由 Vite 代理到 http://localhost:8000，无需额外配置
 ```
 
 ### 方式二：Docker 部署生产环境
@@ -1637,13 +1413,15 @@ scp -r mcp_server/* user@your-cloud-server:/opt/mcp_server/
 cd /opt/mcp_server
 cat > .env << 'EOF'
 MCP_HOST=0.0.0.0
-MCP_PORT=8000
+MCP_PORT=8080
 MCP_API_KEY=your_mcp_api_key_here
 EOF
 
 docker build -t mcp-server .
 docker run -d --name mcp-server -p 8080:8080 --env-file .env --restart unless-stopped mcp-server
 ```
+
+> ⚠️ `MCP_PORT` 必须与端口映射保持一致（代码中 `config.py` 的默认端口是 5000，因此 `.env` 里要**显式**设置 `MCP_PORT=8080`，与 `-p 8080:8080` 对应），否则容器内监听端口与映射端口不一致会导致无法访问。
 
 ### 4. 验证服务
 
@@ -1736,8 +1514,9 @@ VITE_API_BASE_URL=http://localhost:8000
 - [ ] `SECRET_KEY` 已配置（至少32位字符）
 - [ ] 数据库密码已配置（PostgreSQL、Redis）
 - [ ] **LLM API Key 已配置**（至少一种大模型）
-- [ ] 数据库迁移已执行（`alembic upgrade head`）
-- [ ] 初始管理员用户已创建
+- [ ] 已渲染 PgBouncer 配置（`python docker/render_pgbouncer.py`）
+- [ ] 数据库已初始化（首次部署导入根目录 `530.sql`；alembic 仅用于后续增量迁移）
+- [ ] 初始管理员已创建（前端注册页「企业管理员注册」或 `POST /api/v1/auth/register/admin`）
 
 ### Docker 服务状态
 - [ ] PostgreSQL 服务运行正常（端口 5432）
@@ -1745,6 +1524,7 @@ VITE_API_BASE_URL=http://localhost:8000
 - [ ] Neo4j 服务运行正常（端口 7474, 7687）
 - [ ] MinIO 服务运行正常（端口 9000, 9001）
 - [ ] 后端 API 服务运行正常（端口 8000）
+- [ ] （可选）`rag_unstructured_api` 未启动属正常 —— 重型图像解析服务默认不拉取，按需 `--profile heavy` 启用
 
 ### 验证访问
 - [ ] 后端 API 可访问： http://localhost:8000/docs
@@ -1853,8 +1633,15 @@ docker compose restart backend
 |------|------|
 | [前端 README](rag_frontend/README.md) | 前端应用详细说明 |
 | [MCP README](mcp_server/README.md) | MCP 工具服务说明 |
-| [Agent 框架说明](rag_backend/app/agent_framework/README.md) | Agent 框架设计文档 |
-| [记忆系统说明](rag_backend/app/memory_system/README.md) | 记忆系统设计文档 |
+| [Agent 框架](rag_backend/app/agent_framework/README.md) | 自研 Agent 框架（核心类/适配器/工具/Token 预算） |
+| [LangGraph 编排](rag_backend/app/langgraph/README.md) | 状态机工作流（节点拓扑/CRAG/反思闭环） |
+| [多智能体系统](rag_backend/app/multi_agent_system/README.md) | 专家 Agent / 意图路由 / 审计协调器 |
+| [分块器体系](rag_backend/app/chunkers/README.md) | 领域感知分块管线 |
+| [解析器体系](rag_backend/app/parsers/README.md) | 多格式结构化解析与 OCR 降级链 |
+| [知识图谱](rag_backend/app/knowledge_graph/README.md) | 实体/关系提取管线与 Neo4j 数据模型 |
+| [服务层](rag_backend/app/services/README.md) | 检索链路与业务服务地图 |
+| [记忆系统](rag_backend/app/memory_system/README.md) | 三层记忆体系设计文档 |
+| [Skill 技能包](rag_backend/skills/README.md) | 7 个内置技能与三级加载机制 |
 
 </details>
 
@@ -1879,28 +1666,6 @@ docker compose restart backend
 - [知识图谱使用指南](rag_backend/知识图谱使用指南.md)
 - [OCR 集成指南](rag_backend/OCR_INTEGRATION_GUIDE.md)
 - [日志系统集成指南](rag_backend/日志系统集成指南.md)
-
----
-
-## 🎯 核心模块说明
-
-### Agent 框架
-
-自研的轻量级 Agent 框架，支持多种推理模式：
-
-> 通过几行代码即可创建专业领域 Agent，配置工具集和 LLM 适配器后，直接调用 `agent.run()` 执行推理任务。Agent 框架封装了 ReAct 推理循环、工具调用和上下文管理，开发者无需关心底层实现细节。
-
-### 工具系统
-
-灵活的外部工具集成机制：
-
-> HybridToolManager 提供统一的工具注册接口，支持自定义工具和 LangChain 工具的热插拔注册。工具被注册后，智能体可在推理过程中按需调用，实现能力扩展。
-
-### 检索增强
-
-混合检索 + 知识图谱增强：
-
-> HybridSearchService 封装了向量检索 + 关键词检索 + 知识图谱增强的完整混合检索引擎，通过 `search()` 方法一键获得 Top-K 高质量结果，支持动态开关知识图谱增强功能。
 
 ---
 
@@ -2013,110 +1778,17 @@ HITL（Human-In-The-Loop）是一种 **AI 安全机制**，用于在高风险操
 
 </details>
 
-### 🔄 工作流程
+### 🔄 工作流程与入口
 
 ```
-用户输入 → AI意图识别 → 风险检测
-                         │
-                         ▼
-              ┌─────────────────────┐
-              │  风险级别判定        │
-              └─────────────────────┘
-                    │         │
-           LOW     │         │  MEDIUM/HIGH/CRITICAL
-            │      │         │
-            ▼      │         ▼
-      正常执行      │   创建HITL审批
-                    │         │
-                    │         ▼
-                    │   通知所有管理员
-                    │         │
-                    │         ▼
-                    │   等待审批 (批准/拒绝)
-                    │         │
-                    │    ┌────┴────┐
-                    │    │         │
-                    │ 批准       拒绝
-                    │    │         │
-                    │    ▼         ▼
-                    │  执行   返回拒绝原因
+用户输入 → AI 意图识别 → 风险检测 → LOW：正常执行
+                                  └→ MEDIUM/HIGH/CRITICAL：创建审批 → WebSocket 通知管理员
+                                       → 批准：继续执行 / 拒绝：返回原因（CRITICAL 强制阻断）
 ```
 
-### 📂 核心组件
-
-#### 1. 管理员通知服务 (`app/services/admin_notification_service.py`)
-
-> AdminNotificationService 是 HITL 的核心服务，提供风险级别自动检测、审批请求创建、管理员通知推送和高风险操作拦截等功能。所有高风险操作都会经过该服务的统一入口处理。
-
-#### 2. HITL API 端点 (`app/api/v1/endpoints/multi_agent.py`)
-
-<details>
-<summary>🔌 HITL API 端点（点击展开）</summary>
-
-| 端点 | 方法 | 说明 |
-|------|------|------|
-| `/api/v1/multi-agent/hitl/pending` | GET | 获取待审批的HITL请求 |
-| `/api/v1/multi-agent/hitl/history` | GET | 获取审批历史记录 |
-| `/api/v1/multi-agent/hitl/approve` | POST | 创建HITL审批请求 |
-| `/api/v1/multi-agent/hitl/{approval_id}/review` | POST | 审核/批准/拒绝审批请求 |
-| `/api/v1/multi-agent/rbac/roles` | GET | 获取用户角色列表 |
-| `/api/v1/multi-agent/rbac/policies` | GET | 获取RBAC策略列表 |
-
-</details>
-
-### 💻 使用示例
-
-#### 1. 前端 HITL 审批界面
-
-访问 `/hitl-approval` 查看待审批请求：
-
-> 前端 `/hitl-approval` 页面展示待审批请求列表，管理员可直接在界面中批准或拒绝请求。列表显示申请人、风险级别、操作类型和申请时间等信息。
-
-#### 2. API 调用示例
-
-> 审批 API 支持获取待审批请求列表（GET）和审核请求（POST，含批准/拒绝操作），通过 JWT Token 认证管理员身份。
-
-### 🔧 配置说明
-
-#### 风险关键词配置
-
-在 `app/services/admin_notification_service.py` 中配置：
-
-> 风险关键词在 `admin_notification_service.py` 中以字典形式定义，每种高风险行为类型对应一组触发关键词，可随时扩展。
-
-#### 风险阈值配置
-
-> 风险阈值范围为 0-1，分为 LOW (<0.3)、MEDIUM (0.3-0.6)、HIGH (0.6-0.8)、CRITICAL (>0.8) 四级，可根据业务需求调整。
-
-### 📱 通知机制
-
-#### 1. WebSocket 实时推送
-
-管理员登录后，通过 WebSocket 接收实时通知：
-
-> 管理员登录后自动建立 WebSocket 连接，当有新的审批请求时，后端通过该连接实时推送通知，前端弹窗提醒管理员处理。
-
-#### 2. Redis 消息队列
-
-支持离线通知存储，通过 Redis 队列管理：
-
-> 离线通知通过 Redis 队列持久化存储，管理员上线后可拉取历史通知。通知记录设置 7 天过期自动清理。
-
-### 🎨 设计亮点
-
-1. **智能检测** - 基于关键词和上下文分析，自动识别高风险操作
-2. **多层防护** - 风险检测 + 审批机制 + 实时通知 + 审计日志
-3. **无缝集成** - 已集成到多智能体编排系统，无需修改前端
-4. **灵活扩展** - 易于添加新的风险检测规则和审批流程
-5. **实时通知** - WebSocket + Redis 双重通知机制
-
-### 📈 未来扩展方向
-
-- [ ] 支持自定义风险检测规则
-- [ ] 添加机器学习模型进行风险预测
-- [ ] 支持多级审批流程
-- [ ] 集成邮件/短信通知
-- [ ] 添加操作超时自动处理机制
+- **审批入口**：前端 `/hitl-approval` 页面（申请人、风险级别、操作类型一览，可直接批准/拒绝）；API 位于 `/api/v1/multi-agent/hitl/*`（pending / history / approve / review）+ RBAC 角色策略查询
+- **通知机制**：WebSocket 实时推送 + Redis 队列离线存储（7 天过期），管理员上线可拉取历史通知
+- **设计特点**：关键词+上下文双路检测 · 风险检测/审批/通知/审计日志多层防护 · 已集成进多智能体编排，规则可扩展
 
 ---
 
@@ -2146,18 +1818,18 @@ HITL（Human-In-The-Loop）是一种 **AI 安全机制**，用于在高风险操
 
 | Harness 核心模块 | 当前状态 | 待建设 |
 |----------------|---------|--------|
-| 编排循环引擎 | ✅ LangGraph StateGraph | — |
-| 工具调用框架 | ✅ 原生 Function Calling + MCP 注册 | — |
+| 编排循环引擎 | ✅ LangGraph StateGraph（CRAG + 忠实度 + 反思闭环） | LangGraph 原生 Checkpointer 接口适配（当前编译降级为 MemorySaver，Postgres 仅做业务快照） |
+| 工具调用框架 | ✅ 原生 Function Calling + MCP 双模式注册 | — |
 | 记忆管理系统 | ✅ 工作/情景/语义三级记忆 | 跨会话记忆召回优化 |
-| **上下文优化器** | ❌ 无 | 动态窗口管理，防止多轮调用后上下文溢出 |
-| **安全护栏模块** | ⚠️ 租户隔离 + JWT | Agent 级输入/输出过滤、注入检测、合规校验 |
+| 上下文优化器 | ✅ `services/context_optimizer.py` 三级压缩 | 扩展到 Finance 之外的多轮工具专家 |
+| **安全护栏模块** | ⚠️ 租户隔离 + JWT + HITL 风险检测 | Agent 级输入/输出过滤、注入检测、合规校验 |
 | 可观测系统 | ✅ LangSmith + Agent Trace | — |
 | 错误处理与容错 | ✅ 熔断器 + 超时回退 | — |
 | **技能学习闭环** | ❌ 无 | **从执行经验自动生成 Skills**（Hermes 核心能力） |
 
 **重点建设方向**：
 
-- **上下文优化器** — 多轮工具调用时，消息列表快速增长。需要实现智能摘要裁剪、历史消息分层压缩、关键信息保留策略
+- **LangGraph 原生持久化** — 现有 `LangGraphPostgresSaver` 未实现 LangGraph `BaseCheckpointSaver` 接口，`compile()` 实际降级为内存 checkpoint；需补齐 `aget_tuple/aput` 等接口实现真正的断点续传
 - **Agent 安全护栏** — 对 Agent 输入输出做内容安全检测，防止提示词注入、敏感数据泄露
 - **技能学习闭环** — Hermes Agent 能自动从执行经验中生成可复用的 Skills 文档。计划引入类似的机制：Agent 完成任务后自动提取成功模式，生成 Skill 描述，注册到 SkillRegistry
 
