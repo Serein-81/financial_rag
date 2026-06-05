@@ -182,8 +182,10 @@ export const feedbackApi = {
     limit?: number
   } = {}): Promise<{
     success: boolean
-    cases: FailureCase[]
+    failure_cases: FailureCase[]
     total: number
+    skip?: number
+    limit?: number
   }> {
     return get('/failure-cases', { params })
   },
@@ -221,7 +223,7 @@ export const feedbackApi = {
     return get('/statistics/feedback-summary')
   },
 
-  async getFailureTypesStats(): Promise<{ types: FailureTypeStat[] }> {
+  async getFailureTypesStats(): Promise<{ success: boolean; distribution: Record<string, number> }> {
     return get('/statistics/failure-types')
   },
 }

@@ -67,6 +67,16 @@ class SchedulerConfigRequest(BaseModel):
     time_of_day: str = Field("03:00", description="执行时间")
 
 
+class AcknowledgeNotificationRequest(BaseModel):
+    """确认通知请求"""
+    feedback: Optional[dict] = Field(None, description="用户反馈")
+
+
+class DismissNotificationRequest(BaseModel):
+    """忽略通知请求"""
+    reason: Optional[str] = Field(None, description="忽略原因")
+
+
 class SchedulerStatusResponse(BaseModel):
     """调度器状态响应"""
     running: bool
@@ -444,7 +454,7 @@ async def get_enterprise_notifications(
 @router.post("/notifications/{notification_id}/acknowledge")
 async def acknowledge_notification(
     notification_id: str,
-    feedback: Optional[dict] = None,
+    payload: Optional[AcknowledgeNotificationRequest] = None,
     current_user: User = Depends(deps.get_current_user)
 ):
     """
@@ -452,26 +462,23 @@ async def acknowledge_notification(
     """
     try:
         from uuid import UUID
-        from app.services.policy_notification_service import policy_notification_service
-        
+
         success = await policy_notification_service.acknowledge_notification(
             UUID(notification_id),
-            feedback
+            payload.feedback if payload else None
         )
-        
+
         if success:
             return {"status": "acknowledged", "notification_id": notification_id}
         else:
             raise HTTPException(status_code=404, detail="通知不存在")
-        
+
+    except HTTPException:
+        raise
     except ValueError:
         raise HTTPException(status_code=400, detail="无效的通知ID")
-    except (ValueError, KeyError) as e:
-        raise HTTPException(status_code=400, detail=f"确认数据错误: {str(e)}")
     except (OSError, IOError) as e:
         raise HTTPException(status_code=500, detail=f"确认IO错误: {str(e)}")
-    except (OSError, IOError) as e:
-        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"确认失败: {str(e)}")
 
@@ -479,7 +486,7 @@ async def acknowledge_notification(
 @router.post("/notifications/{notification_id}/dismiss")
 async def dismiss_notification(
     notification_id: str,
-    reason: Optional[str] = None,
+    payload: Optional[DismissNotificationRequest] = None,
     current_user: User = Depends(deps.get_current_user)
 ):
     """
@@ -487,25 +494,23 @@ async def dismiss_notification(
     """
     try:
         from uuid import UUID
-        
+
         success = await policy_notification_service.dismiss_notification(
             UUID(notification_id),
-            reason
+            payload.reason if payload else None
         )
-        
+
         if success:
             return {"status": "dismissed", "notification_id": notification_id}
         else:
             raise HTTPException(status_code=404, detail="通知不存在")
-        
+
+    except HTTPException:
+        raise
     except ValueError:
         raise HTTPException(status_code=400, detail="无效的通知ID")
-    except (ValueError, KeyError) as e:
-        raise HTTPException(status_code=400, detail=f"忽略数据错误: {str(e)}")
     except (OSError, IOError) as e:
         raise HTTPException(status_code=500, detail=f"忽略IO错误: {str(e)}")
-    except (OSError, IOError) as e:
-        raise HTTPException(status_code=500, detail=f"IO错误: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"忽略失败: {str(e)}")
 

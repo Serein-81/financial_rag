@@ -601,10 +601,15 @@ async def get_agent_status(
     )
     
     try:
+        llm_provider = None
+        if policy_notification_service._use_llm:
+            from app.core.config import settings
+            llm_provider = settings.get_llm_provider_for_agent("chat")
+
         return {
             "status": "healthy",
             "use_llm": policy_notification_service._use_llm,
-            "llm_provider": "ZhipuAI" if policy_notification_service._use_llm else None,
+            "llm_provider": llm_provider,
             "agent_capabilities": {
                 "policy_understanding": True,
                 "semantic_matching": policy_notification_service._use_llm,

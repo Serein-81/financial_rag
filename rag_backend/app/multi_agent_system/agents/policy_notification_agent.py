@@ -12,6 +12,7 @@
 
 from app.utils.json_compat import json
 import logging
+import re
 from typing import Dict, List, Any, Optional, TYPE_CHECKING
 from pydantic import BaseModel, Field
 
@@ -22,6 +23,81 @@ if TYPE_CHECKING:
     from app.skills.skill_registry import SkillRegistry
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_json_object(
+    text: str,
+    expected_keys: Optional[set] = None
+) -> Optional[Dict[str, Any]]:
+    """
+    从 LLM 输出中尽力提取 JSON 对象
+
+    依次处理以下常见情况：
+    1. 纯 JSON 输出
+    2. Markdown 代码块包裹（```json ... ```）
+    3. JSON 前后混有解释文字
+    4. 目标对象被包在 thought_process / analysis 等外层结构中
+
+    Args:
+        text: LLM 原始输出
+        expected_keys: 期望出现的字段名集合，用于在嵌套结构中定位目标对象
+
+    Returns:
+        Optional[Dict]: 提取到的 JSON 对象，失败返回 None
+    """
+    if not text:
+        return None
+
+    obj: Optional[Dict[str, Any]] = None
+
+    def _try_load(s: str) -> Optional[Dict[str, Any]]:
+        try:
+            parsed = json.loads(s)
+            return parsed if isinstance(parsed, dict) else None
+        except (json.JSONDecodeError, ValueError, TypeError):
+            return None
+
+    cleaned = text.strip()
+    obj = _try_load(cleaned)
+
+    if obj is None:
+        fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", cleaned, re.DOTALL)
+        if fence:
+            obj = _try_load(fence.group(1))
+
+    if obj is None:
+        start, end = cleaned.find("{"), cleaned.rfind("}")
+        if 0 <= start < end:
+            obj = _try_load(cleaned[start:end + 1])
+
+    if obj is None or not expected_keys:
+        return obj
+
+    if expected_keys & obj.keys():
+        return obj
+
+    # 在嵌套 dict 中寻找包含最多期望字段的子对象（处理 thought_process 包裹）
+    best, best_hits = None, 0
+    stack: List[Dict[str, Any]] = [obj]
+    while stack:
+        current = stack.pop()
+        for value in current.values():
+            if isinstance(value, dict):
+                hits = len(expected_keys & value.keys())
+                if hits > best_hits:
+                    best, best_hits = value, hits
+                stack.append(value)
+
+    return best or obj
+
+
+def _as_str_list(value: Any) -> List[str]:
+    """把 LLM 返回的字段安全转换为字符串列表"""
+    if isinstance(value, list):
+        return [str(v) for v in value if v]
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return []
 
 
 class MatchScore(BaseModel):
@@ -243,27 +319,71 @@ class PolicyNotificationAgent:
 }}
 
 注意：
-- 只返回有效的 JSON，不要有其他内容
+- 直接输出 JSON 对象本身：不要用 Markdown 代码块包裹，不要输出思考过程或其他说明文字
 - 如果信息不明确，confidence 可以适当降低
 - focus on 对企业有实际影响的内容
 """
-        
+
         try:
             response = await self.llm_adapter.generate(prompt)
-            
-            result = json.loads(response.content)
-            
-            understanding = PolicyUnderstanding(**result)
+
+            result = _extract_json_object(
+                response.content,
+                expected_keys={"summary", "core_objectives", "impact_level"}
+            )
+
+            if result is None:
+                logger.error(
+                    f"❌ JSON 解析失败: LLM 输出中未找到有效 JSON: "
+                    f"{(response.content or '')[:120]}..."
+                )
+                return self._fallback_understanding(policy_id, title)
+
+            understanding = self._build_understanding(result, policy_id, title)
             logger.info(f"✅ 政策理解完成: {understanding.impact_level} 级别")
-            
+
             return understanding
-            
-        except json.JSONDecodeError as e:
-            logger.error(f"❌ JSON 解析失败: {e}")
-            return self._fallback_understanding(policy_id, title)
+
         except Exception as e:
             logger.error(f"❌ 政策理解失败: {e}")
             return self._fallback_understanding(policy_id, title)
+
+    def _build_understanding(
+        self,
+        result: Dict[str, Any],
+        policy_id: str,
+        title: str
+    ) -> PolicyUnderstanding:
+        """
+        容错构建 PolicyUnderstanding
+
+        policy_id / title 以调用方传入为准（不依赖 LLM 回显），
+        缺失字段使用默认值，非法值自动归一化。
+        """
+        impact_level = str(result.get("impact_level", "medium")).lower()
+        if impact_level not in ("high", "medium", "low"):
+            impact_level = "medium"
+
+        try:
+            confidence = float(result.get("confidence", 0.85))
+        except (TypeError, ValueError):
+            confidence = 0.85
+        confidence = min(1.0, max(0.0, confidence))
+
+        return PolicyUnderstanding(
+            policy_id=policy_id or str(result.get("policy_id", "")),
+            title=title or str(result.get("title", "")),
+            summary=str(result.get("summary") or title or "政策摘要缺失"),
+            core_objectives=_as_str_list(result.get("core_objectives")),
+            applicable_conditions=_as_str_list(result.get("applicable_conditions")),
+            key_requirements=_as_str_list(result.get("key_requirements")),
+            deadlines=_as_str_list(result.get("deadlines")),
+            compliance_changes=_as_str_list(result.get("compliance_changes")),
+            opportunities=_as_str_list(result.get("opportunities")),
+            risks=_as_str_list(result.get("risks")),
+            impact_level=impact_level,
+            confidence=confidence,
+        )
     
     def _fallback_understanding(
         self,
@@ -402,9 +522,16 @@ class PolicyNotificationAgent:
         
         try:
             response = await self.llm_adapter.generate(prompt)
-            score = float(response.content.strip())
+            raw = (response.content or "").strip()
+
+            # 提取输出中第一个 0-1 范围的数字（容忍模型附带文字）
+            number_match = re.search(r"(?:0?\.\d+|[01](?:\.0+)?)", raw)
+            if not number_match:
+                raise ValueError(f"无法从 LLM 输出中提取分数: {raw[:50]}")
+
+            score = float(number_match.group(0))
             score = min(1.0, max(0.0, score))
-            
+
             return score, [
                 MatchReason(
                     category="semantic",
@@ -656,23 +783,44 @@ class PolicyNotificationAgent:
 2. 突出与企业最相关的要点
 3. 提供可操作的建议
 4. 语言亲切，符合企业管理者阅读习惯
-5. 只返回 JSON，不要有其他内容
+5. 直接输出 JSON 对象本身：不要用 Markdown 代码块包裹，不要输出思考过程或其他说明文字
 """
-        
+
         try:
             response = await self.llm_adapter.generate(prompt)
-            
-            result = json.loads(response.content)
-            
-            content = NotificationContent(**result)
-            
+
+            result = _extract_json_object(
+                response.content,
+                expected_keys={"title", "content", "key_points"}
+            )
+
+            if result is None:
+                logger.error(
+                    f"❌ JSON 解析失败: LLM 输出中未找到有效 JSON: "
+                    f"{(response.content or '')[:120]}..."
+                )
+                return self._fallback_notification(policy_title, match_score)
+
+            urgency_level = str(result.get("urgency_level", "medium")).lower()
+            if urgency_level not in ("high", "medium", "low"):
+                urgency_level = "medium"
+
+            content = NotificationContent(
+                title=str(result.get("title") or f"政策通知: {policy_title}"),
+                content=str(result.get("content") or "您有一条新的政策通知，请及时查看。"),
+                key_points=_as_str_list(result.get("key_points")),
+                action_items=_as_str_list(result.get("action_items")),
+                urgency_level=urgency_level,
+                recommended_actions=_as_str_list(result.get("recommended_actions")),
+                risk_warnings=_as_str_list(result.get("risk_warnings")),
+                related_policies=_as_str_list(result.get("related_policies")),
+                call_to_action=str(result.get("call_to_action") or "查看详情"),
+            )
+
             logger.info(f"✅ 个性化通知生成完成: {content.urgency_level} 级别")
-            
+
             return content
-            
-        except json.JSONDecodeError as e:
-            logger.error(f"❌ JSON 解析失败: {e}")
-            return self._fallback_notification(policy_title, match_score)
+
         except Exception as e:
             logger.error(f"❌ 通知生成失败: {e}")
             return self._fallback_notification(policy_title, match_score)
@@ -757,14 +905,17 @@ class PolicyNotificationAgent:
     }}
 }}
 
-只返回 JSON，不要有其他内容。
+直接输出 JSON 对象本身：不要用 Markdown 代码块包裹，不要输出思考过程或其他说明文字。
 """
-        
+
         try:
             response = await self.llm_adapter.generate(prompt)
-            
-            result = json.loads(response.content)
-            
+
+            result = _extract_json_object(
+                response.content,
+                expected_keys={"ordered_policy_ids"}
+            ) or {}
+
             ordered_ids = result.get("ordered_policy_ids", [])
             
             ordered_policies = []

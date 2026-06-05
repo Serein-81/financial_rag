@@ -22,7 +22,7 @@ from uuid import UUID
 
 from app.models.enterprise_policy_match import EnterprisePolicyMatch, NotificationStatus, MatchStatus
 from app.models.policy import Policy
-from app.db.session import SessionLocal
+from app.db.session import AsyncSessionLocal
 from sqlalchemy import select, and_
 
 logger = logging.getLogger(__name__)
@@ -124,42 +124,38 @@ class PolicyNotificationService:
         Args:
             policy_data: 政策数据
         """
-        db = SessionLocal()
-        
-        try:
-            from app.models.tenant_settings import TenantSettings
-            
-            tenants = db.execute(
+        from app.models.tenant_settings import TenantSettings
+
+        # 先取出企业画像并释放会话，避免在 LLM 匹配期间占用数据库连接
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
                 select(TenantSettings).where(TenantSettings.is_active.is_(True))
-            ).scalars().all()
-            
-            logger.info(f"🏢 匹配 {len(tenants)} 个企业")
-            
-            for tenant in tenants:
-                enterprise_profile = self._get_enterprise_profile(tenant)
-                
-                if self._use_llm and self._llm_agent:
-                    match_result = await self._llm_match(
-                        policy_data,
-                        enterprise_profile
-                    )
-                else:
-                    match_result = self._rule_based_match(
-                        policy_data,
-                        enterprise_profile
-                    )
-                
-                match_score = match_result.get("match_score", 0)
-                
-                if match_score >= self.match_threshold:
-                    await self._create_match_and_notification(
-                        enterprise_profile["enterprise_id"],
-                        policy_data,
-                        match_result
-                    )
-                    
-        finally:
-            db.close()
+            )
+            tenants = result.scalars().all()
+            profiles = [self._get_enterprise_profile(tenant) for tenant in tenants]
+
+        logger.info(f"🏢 匹配 {len(profiles)} 个企业")
+
+        for enterprise_profile in profiles:
+            if self._use_llm and self._llm_agent:
+                match_result = await self._llm_match(
+                    policy_data,
+                    enterprise_profile
+                )
+            else:
+                match_result = self._rule_based_match(
+                    policy_data,
+                    enterprise_profile
+                )
+
+            match_score = match_result.get("match_score", 0)
+
+            if match_score >= self.match_threshold:
+                await self._create_match_and_notification(
+                    enterprise_profile["enterprise_id"],
+                    policy_data,
+                    match_result
+                )
 
     async def _match_specific_enterprises(
         self,
@@ -328,22 +324,18 @@ class PolicyNotificationService:
         Returns:
             Optional[Dict]: 企业画像
         """
-        db = SessionLocal()
-        
-        try:
-            from app.models.tenant_settings import TenantSettings
-            
-            tenant = db.execute(
+        from app.models.tenant_settings import TenantSettings
+
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
                 select(TenantSettings).where(TenantSettings.tenant_id == enterprise_id)
-            ).scalar_one_or_none()
-            
+            )
+            tenant = result.scalar_one_or_none()
+
             if tenant:
                 return self._get_enterprise_profile(tenant)
-            
+
             return None
-            
-        finally:
-            db.close()
 
     def _get_enterprise_profile(self, tenant) -> Dict[str, Any]:
         """
@@ -387,8 +379,6 @@ class PolicyNotificationService:
             policy_data: 政策数据
             match_result: 匹配结果
         """
-        db = SessionLocal()
-        
         try:
             match_result = match_result or {
                 "match_score": match_score or 0,
@@ -396,68 +386,71 @@ class PolicyNotificationService:
                 "use_llm": False,
             }
             policy_id = policy_data.get("id") or policy_data.get("policy_id", "")
-            try:
-                policy_uuid = UUID(str(policy_id))
-            except (TypeError, ValueError):
-                policy = db.execute(
-                    select(Policy).where(Policy.policy_id == str(policy_id))
-                ).scalar_one_or_none()
-                if not policy:
-                    logger.warning(f"⚠️ 无法找到匹配记录对应的政策: {policy_id}")
-                    return
-                policy_uuid = policy.id
-            
-            existing = db.execute(
-                select(EnterprisePolicyMatch).where(
-                    and_(
-                        EnterprisePolicyMatch.enterprise_id == enterprise_id,
-                        EnterprisePolicyMatch.policy_id == policy_uuid
+            match_id = None
+
+            async with AsyncSessionLocal() as db:
+                try:
+                    policy_uuid = UUID(str(policy_id))
+                except (TypeError, ValueError):
+                    result = await db.execute(
+                        select(Policy).where(Policy.policy_id == str(policy_id))
+                    )
+                    policy = result.scalar_one_or_none()
+                    if not policy:
+                        logger.warning(f"⚠️ 无法找到匹配记录对应的政策: {policy_id}")
+                        return
+                    policy_uuid = policy.id
+
+                result = await db.execute(
+                    select(EnterprisePolicyMatch).where(
+                        and_(
+                            EnterprisePolicyMatch.enterprise_id == enterprise_id,
+                            EnterprisePolicyMatch.policy_id == policy_uuid
+                        )
                     )
                 )
-            ).scalar_one_or_none()
-            
-            if existing:
-                logger.debug(f"⏭️ 跳过已有匹配: {enterprise_id} - {policy_id}")
-                return
-            
-            match_reasons = [
-                r.get("reason", "")
-                for r in match_result.get("match_reasons", [])
-            ]
-            
-            match = EnterprisePolicyMatch(
-                enterprise_id=enterprise_id,
-                policy_id=policy_uuid,
-                match_score=match_result.get("match_score", 0),
-                match_status=MatchStatus.ACTIVE,
-                notification_status=NotificationStatus.PENDING,
-                match_reasons=match_reasons
-            )
-            
-            db.add(match)
-            db.commit()
-            db.refresh(match)
-            
+                existing = result.scalar_one_or_none()
+
+                if existing:
+                    logger.debug(f"⏭️ 跳过已有匹配: {enterprise_id} - {policy_id}")
+                    return
+
+                match_reasons = [
+                    r.get("reason", "")
+                    for r in match_result.get("match_reasons", [])
+                ]
+
+                match = EnterprisePolicyMatch(
+                    enterprise_id=enterprise_id,
+                    policy_id=policy_uuid,
+                    match_score=match_result.get("match_score", 0),
+                    match_status=MatchStatus.ACTIVE,
+                    notification_status=NotificationStatus.PENDING,
+                    match_reasons=match_reasons
+                )
+
+                db.add(match)
+                await db.commit()
+                await db.refresh(match)
+                match_id = match.id
+
             logger.info(
                 f"📬 创建匹配: {enterprise_id} - "
                 f"{policy_data.get('title', '')[:30]}... "
                 f"(分数: {match_result.get('match_score', 0):.2f})"
             )
-            
+
             await self._emit_notification_event(
                 enterprise_id=enterprise_id,
                 policy_data=policy_data,
                 match_result=match_result,
-                match_id=str(match.id)
+                match_id=str(match_id)
             )
-            
-            await self._update_notification_status(match.id)
-            
+
+            await self._update_notification_status(match_id)
+
         except Exception as e:
             logger.error(f"❌ 创建匹配失败: {e}", exc_info=True)
-            db.rollback()
-        finally:
-            db.close()
 
     async def _emit_notification_event(
         self,
@@ -487,9 +480,14 @@ class PolicyNotificationService:
             elif priority == "high":
                 impact_level = "medium"
             
+            # 取完整企业画像，让 LLM 生成真正个性化的文案（而非"未知企业"）
+            enterprise_profile = await self._get_enterprise_profile_by_id(enterprise_id)
+            if not enterprise_profile:
+                enterprise_profile = {"enterprise_id": enterprise_id}
+
             notification_content = await self.generate_notification(
                 policy_data,
-                {"enterprise_id": enterprise_id},
+                enterprise_profile,
                 match_result
             )
             
@@ -657,22 +655,20 @@ class PolicyNotificationService:
         Args:
             match_id: 匹配记录ID
         """
-        db = SessionLocal()
-        
         try:
-            match = db.execute(
-                select(EnterprisePolicyMatch).where(EnterprisePolicyMatch.id == match_id)
-            ).scalar_one_or_none()
-            
-            if match:
-                match.notification_status = NotificationStatus.SENT
-                match.notified_at = datetime.now()
-                db.commit()
-                
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(
+                    select(EnterprisePolicyMatch).where(EnterprisePolicyMatch.id == match_id)
+                )
+                match = result.scalar_one_or_none()
+
+                if match:
+                    match.notification_status = NotificationStatus.SENT
+                    match.notified_at = datetime.now()
+                    await db.commit()
+
         except Exception as e:
             logger.error(f"❌ 更新通知状态失败: {e}", exc_info=True)
-        finally:
-            db.close()
 
     async def get_enterprise_notifications(
         self,
@@ -691,26 +687,24 @@ class PolicyNotificationService:
         Returns:
             List[Dict]: 通知列表
         """
-        db = SessionLocal()
-        
-        try:
+        async with AsyncSessionLocal() as db:
             query = select(EnterprisePolicyMatch, Policy).join(
                 Policy, EnterprisePolicyMatch.policy_id == Policy.id
             ).where(
                 EnterprisePolicyMatch.enterprise_id == enterprise_id
             )
-            
+
             if status:
                 query = query.where(
                     EnterprisePolicyMatch.notification_status == status
                 )
-            
+
             query = query.order_by(
                 EnterprisePolicyMatch.created_at.desc()
             ).limit(limit)
-            
-            rows = db.execute(query).all()
-            
+
+            rows = (await db.execute(query)).all()
+
             results = []
             for match, policy in rows:
                 policy_data = {
@@ -744,16 +738,15 @@ class PolicyNotificationService:
                     "match_score": match.match_score,
                     "match_status": match.match_status.value,
                     "notification_status": match.notification_status.value,
+                    # 兼容前端 PolicyNotification.status 字段
+                    "status": match.notification_status.value,
                     "match_reasons": match.match_reasons,
                     "acknowledged": match.acknowledged_at is not None,
                     "acknowledged_at": match.acknowledged_at.isoformat() if match.acknowledged_at else None,
                     "created_at": match.created_at.isoformat() if match.created_at else None
                 })
-            
+
             return results
-            
-        finally:
-            db.close()
 
     async def prioritize_policies(
         self,
@@ -834,6 +827,88 @@ class PolicyNotificationService:
             ),
             reverse=True
         )
+
+    async def acknowledge_notification(
+        self,
+        match_id: UUID,
+        feedback: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """
+        确认通知
+
+        Args:
+            match_id: 匹配记录ID
+            feedback: 用户反馈
+
+        Returns:
+            bool: 是否成功
+        """
+        try:
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(
+                    select(EnterprisePolicyMatch).where(EnterprisePolicyMatch.id == match_id)
+                )
+                match = result.scalar_one_or_none()
+
+                if not match:
+                    logger.warning(f"⚠️ 确认通知失败，匹配记录不存在: {match_id}")
+                    return False
+
+                match.notification_status = NotificationStatus.ACKNOWLEDGED
+                match.acknowledged_at = datetime.now()
+
+                if feedback:
+                    match.feedback = feedback
+
+                await db.commit()
+
+            logger.info(f"✅ 通知已确认: {match_id}")
+            return True
+
+        except Exception as e:
+            logger.error(f"❌ 确认通知失败 [{match_id}]: {e}", exc_info=True)
+            return False
+
+    async def dismiss_notification(
+        self,
+        match_id: UUID,
+        reason: Optional[str] = None
+    ) -> bool:
+        """
+        忽略通知
+
+        Args:
+            match_id: 匹配记录ID
+            reason: 忽略原因
+
+        Returns:
+            bool: 是否成功
+        """
+        try:
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(
+                    select(EnterprisePolicyMatch).where(EnterprisePolicyMatch.id == match_id)
+                )
+                match = result.scalar_one_or_none()
+
+                if not match:
+                    logger.warning(f"⚠️ 忽略通知失败，匹配记录不存在: {match_id}")
+                    return False
+
+                match.notification_status = NotificationStatus.DISMISSED
+                match.dismissed_at = datetime.now()
+
+                if reason:
+                    match.feedback = {**(match.feedback or {}), "dismiss_reason": reason}
+
+                await db.commit()
+
+            logger.info(f"✅ 通知已忽略: {match_id}")
+            return True
+
+        except Exception as e:
+            logger.error(f"❌ 忽略通知失败 [{match_id}]: {e}", exc_info=True)
+            return False
 
 
 policy_notification_service = PolicyNotificationService()

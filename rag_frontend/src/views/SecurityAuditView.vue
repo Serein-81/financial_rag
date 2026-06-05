@@ -190,6 +190,10 @@ function getEventTypeIcon(eventType: string) {
 
 }
 
+onMounted(() => {
+  fetchData()
+})
+
 </script>
 
 

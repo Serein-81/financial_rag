@@ -47,8 +47,9 @@ async function loadList() {
       skip: (page.value - 1) * pageSize.value,
       limit: pageSize.value,
     })
-    cases.value = res.cases
-    total.value = res.total
+    // 后端返回键名为 failure_cases（见 feedback.py /failure-cases），兼容旧 cases 键
+    cases.value = res.failure_cases ?? (res as any).cases ?? []
+    total.value = res.total ?? 0
   } catch (e: any) {
     ElMessage.error('加载失败案例失败：' + (e?.message || ''))
   } finally {
@@ -60,7 +61,11 @@ async function loadStats() {
   statsLoading.value = true
   try {
     const res = await feedbackApi.getFailureTypesStats()
-    stats.value = res.types || []
+    // 后端返回 {distribution: {类型: 数量}}（见 feedback.py /statistics/failure-types），转为数组；兼容旧 {types: [...]} 形态
+    const legacyTypes = (res as any).types
+    stats.value = Array.isArray(legacyTypes)
+      ? legacyTypes
+      : Object.entries(res.distribution ?? {}).map(([type, count]) => ({ type, count: Number(count) || 0 }))
   } catch (e: any) {
     console.warn('loadStats failed:', e)
   } finally {

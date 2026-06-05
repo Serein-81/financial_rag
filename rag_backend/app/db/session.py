@@ -37,6 +37,19 @@ SessionLocal = sessionmaker(
 # - max_overflow: 最大溢出连接数
 # - pool_recycle: 连接回收时间，避免连接过期
 # - pool_pre_ping: 每次使用前检测连接是否有效
+_async_connect_args = {
+    "server_settings": {
+        "statement_timeout": "30000",  # 查询超时 30秒
+    },
+    "timeout": 30,  # 连接超时 30秒
+}
+
+# ⚠️ PgBouncer transaction 模式下必须关闭 asyncpg 的预编译语句缓存：
+# 1. 语句在服务端连接 A 上 prepare，下次事务可能路由到连接 B → 随机报错
+# 2. ALTER TABLE 后 PgBouncer 池中旧会话的语句计划失效 → InvalidCachedStatementError
+if settings.PGBOUNCER_ENABLED:
+    _async_connect_args["statement_cache_size"] = 0
+
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=False,
@@ -45,12 +58,7 @@ engine = create_async_engine(
     max_overflow=settings.DB_MAX_OVERFLOW,
     pool_timeout=settings.DB_POOL_TIMEOUT,
     pool_recycle=settings.DB_POOL_RECYCLE,
-    connect_args={
-        "server_settings": {
-            "statement_timeout": "30000",  # 查询超时 30秒
-        },
-        "timeout": 30,  # 连接超时 30秒
-    }
+    connect_args=_async_connect_args
 )
 
 # 记录连接池配置

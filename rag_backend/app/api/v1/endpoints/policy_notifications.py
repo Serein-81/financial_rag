@@ -5,12 +5,15 @@
 """
 
 import asyncio
+import json
 import logging
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from starlette import status
 
-from app.services.policy_event_service import policy_event_service, PolicyEventType
+from app.services.policy_event_service import policy_event_service
 from app.api.deps import get_current_user, CurrentUser
 
 router = APIRouter(prefix="/policy-notifications", tags=["政策通知推送"])
@@ -57,32 +60,30 @@ async def stream_policy_notifications(
     
     async def event_generator():
         queue = await policy_event_service.subscribe(enterprise_id)
-        
+
         try:
-            heartbeat_count = 0
-            
             while True:
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=30.0)
-                    
+
                     if event is None:
                         break
-                    
+
                     yield event.to_sse_data()
-                    heartbeat_count = 0
-                    
-                    if event.event_type == PolicyEventType.POLICY_NOTIFICATION_ACKNOWLEDGED:
-                        await asyncio.sleep(1)
-                        break
-                        
+
                 except asyncio.TimeoutError:
-                    heartbeat_count += 1
-                    if heartbeat_count > 3:
-                        logger.info(f"💓 政策通知心跳超时，关闭连接: enterprise_id={enterprise_id}")
+                    # 空闲时发送心跳保活；客户端断开时 yield 会抛错，
+                    # 由 finally 统一清理订阅，无需主动断连
+                    if await request.is_disconnected():
+                        logger.info(f"📡 客户端已断开: enterprise_id={enterprise_id}")
                         break
-                    
-                    yield f"data: {{'event_type': 'heartbeat', 'timestamp': '{__import__('datetime').datetime.now().isoformat()}'}}\n\n"
-                    
+
+                    heartbeat_payload = json.dumps({
+                        "event_type": "heartbeat",
+                        "timestamp": datetime.now().isoformat()
+                    })
+                    yield f"event: heartbeat\ndata: {heartbeat_payload}\n\n"
+
         except asyncio.CancelledError:
             logger.info(f"📡 政策通知SSE连接取消: enterprise_id={enterprise_id}")
         except Exception as e:
@@ -141,10 +142,10 @@ async def get_notification_status(
         dict: 订阅状态信息
     """
     enterprise_id = user.tenant_id
-    
+
     subscriber_count = policy_event_service.get_subscriber_count(enterprise_id)
-    recent_count = len(policy_event_service._notifications.get(enterprise_id, []))
-    
+    recent_count = await policy_event_service.get_notification_count(enterprise_id)
+
     return {
         "enterprise_id": enterprise_id,
         "active_subscribers": subscriber_count,

@@ -260,6 +260,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
+import { Users, Shield, CheckCircle, AlertCircle } from 'lucide-vue-next'
 import {
   securityApi,
   formatQuotaUsage,

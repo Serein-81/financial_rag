@@ -274,6 +274,36 @@ function formatDate(dateStr: string): string {
   return new Date(dateStr).toLocaleString('zh-CN')
 }
 
+// 历史记录中 tax_type 以英文代码存库（如 VAT/income/consumption），显示层统一映射为中文；
+// 中文/未知值原样返回，兼容"新建分析"弹窗传中文的链路
+const taxTypeLabels: Record<string, string> = {
+  // schemas/tax_report.py TaxTypeEnum
+  vat: '增值税',
+  income: '企业所得税',
+  personal: '个人所得税',
+  consumption: '消费税',
+  behavior: '行为税',
+  comprehensive: '全税种综合',
+  // multi_agent_system tax_specialist.TaxType 变体
+  income_tax: '企业所得税',
+  corporate_income: '企业所得税',
+  personal_income: '个人所得税',
+  personal_income_tax: '个人所得税',
+  consumption_tax: '消费税',
+  business_tax: '营业税',
+  property_tax: '房产税',
+  land_use_tax: '城镇土地使用税',
+  stamp: '印花税',
+  stamp_tax: '印花税',
+  environment_tax: '环境保护税',
+}
+
+function formatTaxType(t: any): string {
+  if (!t) return '综合分析'
+  const key = String(t).toLowerCase().trim()
+  return taxTypeLabels[key] || String(t)
+}
+
 
 
 function getRiskScoreColor(score: any): string {
@@ -325,7 +355,7 @@ interface FilingRecommendation {
 
 
 function calculateTotalSavings(): number {
-  const policies = matchedPolicies.length > 0 ? matchedPolicies : getApplicablePolicies()
+  const policies = matchedPolicies.value.length > 0 ? matchedPolicies.value : getApplicablePolicies()
   return policies.reduce((sum, policy) => sum + (policy.potential_savings || policy.savings || 0), 0)
 }
 
@@ -381,7 +411,7 @@ function getApplicablePolicies(): TaxPolicy[] {
 
     
 
-    if (selectedAnalysis.value.analysis_type?.includes('增值税')) {
+    if (selectedAnalysis.value.analysis_type?.includes('增值税') || String(selectedAnalysis.value.analysis_type || '').toLowerCase().includes('vat')) {
 
       policies.push({
 
@@ -913,7 +943,7 @@ onMounted(() => {
 
                       <div>
 
-                        <p class="font-medium text-slate-900">{{ item.analysis_type }}</p>
+                        <p class="font-medium text-slate-900">{{ formatTaxType(item.analysis_type) }}</p>
 
                         <p class="text-sm text-slate-500">{{ formatDate(item.created_at) }}</p>
 
@@ -1079,7 +1109,7 @@ onMounted(() => {
 
                       <div>
 
-                        <p class="font-medium text-slate-900">{{ item.analysis_type }} - {{ item.fiscal_year }}年{{ item.fiscal_period }}</p>
+                        <p class="font-medium text-slate-900">{{ formatTaxType(item.analysis_type) }} - {{ item.fiscal_year }}年{{ item.fiscal_period }}</p>
 
                         <p class="text-sm text-slate-500 mt-1">风险评分: {{ formatRiskScorePercent(item.risk_score) }}</p>
 
@@ -1267,7 +1297,7 @@ onMounted(() => {
 
                       >
 
-                        <td class="py-3 font-medium text-slate-900">{{ calc.tax_type }}</td>
+                        <td class="py-3 font-medium text-slate-900">{{ formatTaxType(calc.tax_type) }}</td>
 
                         <td class="py-3 text-right text-slate-600">{{ formatCurrency(calc.taxable_amount) }}</td>
 
@@ -1572,7 +1602,7 @@ onMounted(() => {
 
                     <span class="text-slate-500">分析类型</span>
 
-                    <span class="text-slate-900">{{ selectedAnalysis.analysis_type }}</span>
+                    <span class="text-slate-900">{{ formatTaxType(selectedAnalysis.analysis_type) }}</span>
 
                   </div>
 
